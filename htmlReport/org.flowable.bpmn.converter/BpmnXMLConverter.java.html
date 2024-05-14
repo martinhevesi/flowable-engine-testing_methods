@@ -1,0 +1,672 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BpmnXMLConverter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.bpmn.converter</a> &gt; <span class="el_source">BpmnXMLConverter.java</span></div><h1>BpmnXMLConverter.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.bpmn.converter;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.io.UnsupportedEncodingException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import javax.xml.XMLConstants;
+import javax.xml.stream.XMLInputFactory;
+import javax.xml.stream.XMLOutputFactory;
+import javax.xml.stream.XMLStreamException;
+import javax.xml.stream.XMLStreamReader;
+import javax.xml.stream.XMLStreamWriter;
+import javax.xml.transform.stax.StAXSource;
+import javax.xml.transform.stream.StreamSource;
+import javax.xml.validation.Schema;
+import javax.xml.validation.SchemaFactory;
+import javax.xml.validation.Validator;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.bpmn.constants.BpmnXMLConstants;
+import org.flowable.bpmn.converter.alfresco.AlfrescoStartEventXMLConverter;
+import org.flowable.bpmn.converter.alfresco.AlfrescoUserTaskXMLConverter;
+import org.flowable.bpmn.converter.child.DocumentationParser;
+import org.flowable.bpmn.converter.child.IOSpecificationParser;
+import org.flowable.bpmn.converter.child.MultiInstanceParser;
+import org.flowable.bpmn.converter.export.BPMNDIExport;
+import org.flowable.bpmn.converter.export.CollaborationExport;
+import org.flowable.bpmn.converter.export.DataStoreExport;
+import org.flowable.bpmn.converter.export.DefinitionsRootExport;
+import org.flowable.bpmn.converter.export.EscalationDefinitionExport;
+import org.flowable.bpmn.converter.export.FlowableListenerExport;
+import org.flowable.bpmn.converter.export.MultiInstanceExport;
+import org.flowable.bpmn.converter.export.ProcessExport;
+import org.flowable.bpmn.converter.export.SignalAndMessageDefinitionExport;
+import org.flowable.bpmn.converter.parser.BpmnEdgeParser;
+import org.flowable.bpmn.converter.parser.BpmnShapeParser;
+import org.flowable.bpmn.converter.parser.DataStoreParser;
+import org.flowable.bpmn.converter.parser.DefinitionsParser;
+import org.flowable.bpmn.converter.parser.ExtensionElementsParser;
+import org.flowable.bpmn.converter.parser.ImportParser;
+import org.flowable.bpmn.converter.parser.InterfaceParser;
+import org.flowable.bpmn.converter.parser.ItemDefinitionParser;
+import org.flowable.bpmn.converter.parser.LaneParser;
+import org.flowable.bpmn.converter.parser.MessageFlowParser;
+import org.flowable.bpmn.converter.parser.MessageParser;
+import org.flowable.bpmn.converter.parser.ParticipantParser;
+import org.flowable.bpmn.converter.parser.PotentialStarterParser;
+import org.flowable.bpmn.converter.parser.ProcessParser;
+import org.flowable.bpmn.converter.parser.ResourceParser;
+import org.flowable.bpmn.converter.parser.SignalParser;
+import org.flowable.bpmn.converter.parser.SubProcessParser;
+import org.flowable.bpmn.converter.util.BpmnXMLUtil;
+import org.flowable.bpmn.exceptions.XMLException;
+import org.flowable.bpmn.model.Activity;
+import org.flowable.bpmn.model.AdhocSubProcess;
+import org.flowable.bpmn.model.Artifact;
+import org.flowable.bpmn.model.Association;
+import org.flowable.bpmn.model.BaseElement;
+import org.flowable.bpmn.model.BooleanDataObject;
+import org.flowable.bpmn.model.BoundaryEvent;
+import org.flowable.bpmn.model.BpmnModel;
+import org.flowable.bpmn.model.DateDataObject;
+import org.flowable.bpmn.model.DoubleDataObject;
+import org.flowable.bpmn.model.EventSubProcess;
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.FlowNode;
+import org.flowable.bpmn.model.IntegerDataObject;
+import org.flowable.bpmn.model.JsonDataObject;
+import org.flowable.bpmn.model.LongDataObject;
+import org.flowable.bpmn.model.Pool;
+import org.flowable.bpmn.model.Process;
+import org.flowable.bpmn.model.SequenceFlow;
+import org.flowable.bpmn.model.StringDataObject;
+import org.flowable.bpmn.model.SubProcess;
+import org.flowable.bpmn.model.TextAnnotation;
+import org.flowable.bpmn.model.Transaction;
+import org.flowable.common.engine.api.io.InputStreamProvider;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.xml.sax.SAXException;
+
+/**
+ * @author Tijs Rademakers
+ * @author Joram Barrez
+ */
+<span class="nc" id="L105">public class BpmnXMLConverter implements BpmnXMLConstants {</span>
+
+<span class="nc" id="L107">    protected static final Logger LOGGER = LoggerFactory.getLogger(BpmnXMLConverter.class);</span>
+
+    protected static final String BPMN_XSD = &quot;org/flowable/impl/bpmn/parser/BPMN20.xsd&quot;;
+    protected static final String DEFAULT_ENCODING = &quot;UTF-8&quot;;
+
+<span class="nc" id="L112">    protected static Map&lt;String, BaseBpmnXMLConverter&gt; convertersToBpmnMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L113">    protected static Map&lt;Class&lt;? extends BaseElement&gt;, BaseBpmnXMLConverter&gt; convertersToXMLMap = new HashMap&lt;&gt;();</span>
+
+    protected ClassLoader classloader;
+    protected List&lt;String&gt; userTaskFormTypes;
+    protected List&lt;String&gt; startEventFormTypes;
+
+<span class="nc" id="L119">    protected BpmnEdgeParser bpmnEdgeParser = new BpmnEdgeParser();</span>
+<span class="nc" id="L120">    protected BpmnShapeParser bpmnShapeParser = new BpmnShapeParser();</span>
+<span class="nc" id="L121">    protected DefinitionsParser definitionsParser = new DefinitionsParser();</span>
+<span class="nc" id="L122">    protected DocumentationParser documentationParser = new DocumentationParser();</span>
+<span class="nc" id="L123">    protected ExtensionElementsParser extensionElementsParser = new ExtensionElementsParser();</span>
+<span class="nc" id="L124">    protected ImportParser importParser = new ImportParser();</span>
+<span class="nc" id="L125">    protected InterfaceParser interfaceParser = new InterfaceParser();</span>
+<span class="nc" id="L126">    protected ItemDefinitionParser itemDefinitionParser = new ItemDefinitionParser();</span>
+<span class="nc" id="L127">    protected IOSpecificationParser ioSpecificationParser = new IOSpecificationParser();</span>
+<span class="nc" id="L128">    protected DataStoreParser dataStoreParser = new DataStoreParser();</span>
+<span class="nc" id="L129">    protected LaneParser laneParser = new LaneParser();</span>
+<span class="nc" id="L130">    protected MessageParser messageParser = new MessageParser();</span>
+<span class="nc" id="L131">    protected MessageFlowParser messageFlowParser = new MessageFlowParser();</span>
+<span class="nc" id="L132">    protected MultiInstanceParser multiInstanceParser = new MultiInstanceParser();</span>
+<span class="nc" id="L133">    protected ParticipantParser participantParser = new ParticipantParser();</span>
+<span class="nc" id="L134">    protected PotentialStarterParser potentialStarterParser = new PotentialStarterParser();</span>
+<span class="nc" id="L135">    protected ProcessParser processParser = new ProcessParser();</span>
+<span class="nc" id="L136">    protected ResourceParser resourceParser = new ResourceParser();</span>
+<span class="nc" id="L137">    protected SignalParser signalParser = new SignalParser();</span>
+<span class="nc" id="L138">    protected SubProcessParser subProcessParser = new SubProcessParser();</span>
+
+    static {
+        // events
+<span class="nc" id="L142">        addConverter(new EndEventXMLConverter());</span>
+<span class="nc" id="L143">        addConverter(new StartEventXMLConverter());</span>
+
+        // tasks
+<span class="nc" id="L146">        addConverter(new BusinessRuleTaskXMLConverter());</span>
+<span class="nc" id="L147">        addConverter(new ManualTaskXMLConverter());</span>
+<span class="nc" id="L148">        addConverter(new ReceiveTaskXMLConverter());</span>
+<span class="nc" id="L149">        addConverter(new ScriptTaskXMLConverter());</span>
+<span class="nc" id="L150">        addConverter(new ServiceTaskXMLConverter());</span>
+<span class="nc" id="L151">        addConverter(new HttpServiceTaskXMLConverter());</span>
+<span class="nc" id="L152">        addConverter(new CaseServiceTaskXMLConverter());</span>
+<span class="nc" id="L153">        addConverter(new SendEventServiceTaskXMLConverter());</span>
+<span class="nc" id="L154">        addConverter(new ExternalWorkerServiceTaskXMLConverter());</span>
+<span class="nc" id="L155">        addConverter(new SendTaskXMLConverter());</span>
+<span class="nc" id="L156">        addConverter(new UserTaskXMLConverter());</span>
+<span class="nc" id="L157">        addConverter(new TaskXMLConverter());</span>
+<span class="nc" id="L158">        addConverter(new CallActivityXMLConverter());</span>
+
+        // gateways
+
+        
+<span class="nc" id="L163">        addConverter(new EventGatewayXMLConverter());</span>
+<span class="nc" id="L164">        addConverter(new ExclusiveGatewayXMLConverter());</span>
+<span class="nc" id="L165">        addConverter(new InclusiveGatewayXMLConverter());</span>
+<span class="nc" id="L166">        addConverter(new ParallelGatewayXMLConverter());</span>
+<span class="nc" id="L167">        addConverter(new ComplexGatewayXMLConverter());</span>
+
+        // connectors
+<span class="nc" id="L170">        addConverter(new SequenceFlowXMLConverter());</span>
+
+        // catch, throw and boundary event
+<span class="nc" id="L173">        addConverter(new CatchEventXMLConverter());</span>
+<span class="nc" id="L174">        addConverter(new ThrowEventXMLConverter());</span>
+<span class="nc" id="L175">        addConverter(new BoundaryEventXMLConverter());</span>
+
+        // artifacts
+<span class="nc" id="L178">        addConverter(new TextAnnotationXMLConverter());</span>
+<span class="nc" id="L179">        addConverter(new AssociationXMLConverter());</span>
+
+        // data store reference
+<span class="nc" id="L182">        addConverter(new DataStoreReferenceXMLConverter());</span>
+
+        // data objects
+<span class="nc" id="L185">        addConverter(new ValuedDataObjectXMLConverter(), StringDataObject.class);</span>
+<span class="nc" id="L186">        addConverter(new ValuedDataObjectXMLConverter(), BooleanDataObject.class);</span>
+<span class="nc" id="L187">        addConverter(new ValuedDataObjectXMLConverter(), IntegerDataObject.class);</span>
+<span class="nc" id="L188">        addConverter(new ValuedDataObjectXMLConverter(), LongDataObject.class);</span>
+<span class="nc" id="L189">        addConverter(new ValuedDataObjectXMLConverter(), DoubleDataObject.class);</span>
+<span class="nc" id="L190">        addConverter(new ValuedDataObjectXMLConverter(), DateDataObject.class);</span>
+<span class="nc" id="L191">        addConverter(new ValuedDataObjectXMLConverter(), JsonDataObject.class);</span>
+
+        // Alfresco types
+<span class="nc" id="L194">        addConverter(new AlfrescoStartEventXMLConverter());</span>
+<span class="nc" id="L195">        addConverter(new AlfrescoUserTaskXMLConverter());</span>
+<span class="nc" id="L196">    }</span>
+
+    public static void addConverter(BaseBpmnXMLConverter converter) {
+<span class="nc" id="L199">        addConverter(converter, converter.getBpmnElementType());</span>
+<span class="nc" id="L200">    }</span>
+
+    public static void addConverter(BaseBpmnXMLConverter converter, Class&lt;? extends BaseElement&gt; elementType) {
+<span class="nc" id="L203">        convertersToBpmnMap.put(converter.getXMLElementName(), converter);</span>
+<span class="nc" id="L204">        convertersToXMLMap.put(elementType, converter);</span>
+<span class="nc" id="L205">    }</span>
+
+    public void setClassloader(ClassLoader classloader) {
+<span class="nc" id="L208">        this.classloader = classloader;</span>
+<span class="nc" id="L209">    }</span>
+
+    public void setUserTaskFormTypes(List&lt;String&gt; userTaskFormTypes) {
+<span class="nc" id="L212">        this.userTaskFormTypes = userTaskFormTypes;</span>
+<span class="nc" id="L213">    }</span>
+
+    public void setStartEventFormTypes(List&lt;String&gt; startEventFormTypes) {
+<span class="nc" id="L216">        this.startEventFormTypes = startEventFormTypes;</span>
+<span class="nc" id="L217">    }</span>
+
+    public void validateModel(InputStreamProvider inputStreamProvider) throws Exception {
+<span class="nc" id="L220">        Schema schema = createSchema();</span>
+
+<span class="nc" id="L222">        Validator validator = schema.newValidator();</span>
+<span class="nc" id="L223">        validator.validate(new StreamSource(inputStreamProvider.getInputStream()));</span>
+<span class="nc" id="L224">    }</span>
+
+    public void validateModel(XMLStreamReader xmlStreamReader) throws Exception {
+<span class="nc" id="L227">        Schema schema = createSchema();</span>
+
+<span class="nc" id="L229">        Validator validator = schema.newValidator();</span>
+<span class="nc" id="L230">        validator.validate(new StAXSource(xmlStreamReader));</span>
+<span class="nc" id="L231">    }</span>
+
+    protected Schema createSchema() throws SAXException {
+<span class="nc" id="L234">        SchemaFactory factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);</span>
+<span class="nc" id="L235">        Schema schema = null;</span>
+<span class="nc bnc" id="L236" title="All 2 branches missed.">        if (classloader != null) {</span>
+<span class="nc" id="L237">            schema = factory.newSchema(classloader.getResource(BPMN_XSD));</span>
+        }
+
+<span class="nc bnc" id="L240" title="All 2 branches missed.">        if (schema == null) {</span>
+<span class="nc" id="L241">            schema = factory.newSchema(BpmnXMLConverter.class.getClassLoader().getResource(BPMN_XSD));</span>
+        }
+
+<span class="nc bnc" id="L244" title="All 2 branches missed.">        if (schema == null) {</span>
+<span class="nc" id="L245">            throw new XMLException(&quot;BPMN XSD could not be found&quot;);</span>
+        }
+<span class="nc" id="L247">        return schema;</span>
+    }
+
+    public BpmnModel convertToBpmnModel(InputStreamProvider inputStreamProvider, boolean validateSchema, boolean enableSafeBpmnXml) {
+<span class="nc" id="L251">        return convertToBpmnModel(inputStreamProvider, validateSchema, enableSafeBpmnXml, DEFAULT_ENCODING);</span>
+    }
+
+    public BpmnModel convertToBpmnModel(InputStreamProvider inputStreamProvider, boolean validateSchema, boolean enableSafeBpmnXml, String encoding) {
+<span class="nc" id="L255">        XMLInputFactory xif = XMLInputFactory.newInstance();</span>
+
+<span class="nc bnc" id="L257" title="All 2 branches missed.">        if (xif.isPropertySupported(XMLInputFactory.IS_REPLACING_ENTITY_REFERENCES)) {</span>
+<span class="nc" id="L258">            xif.setProperty(XMLInputFactory.IS_REPLACING_ENTITY_REFERENCES, false);</span>
+        }
+
+<span class="nc bnc" id="L261" title="All 2 branches missed.">        if (xif.isPropertySupported(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES)) {</span>
+<span class="nc" id="L262">            xif.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false);</span>
+        }
+
+<span class="nc bnc" id="L265" title="All 2 branches missed.">        if (xif.isPropertySupported(XMLInputFactory.SUPPORT_DTD)) {</span>
+<span class="nc" id="L266">            xif.setProperty(XMLInputFactory.SUPPORT_DTD, false);</span>
+        }
+
+<span class="nc bnc" id="L269" title="All 2 branches missed.">        if (validateSchema) {</span>
+<span class="nc" id="L270">            try (InputStreamReader in = new InputStreamReader(inputStreamProvider.getInputStream(), encoding)) {</span>
+<span class="nc bnc" id="L271" title="All 2 branches missed.">                if (!enableSafeBpmnXml) {</span>
+<span class="nc" id="L272">                    validateModel(inputStreamProvider);</span>
+                } else {
+<span class="nc" id="L274">                    validateModel(xif.createXMLStreamReader(in));</span>
+                }
+<span class="nc" id="L276">            } catch (UnsupportedEncodingException e) {</span>
+<span class="nc" id="L277">                throw new XMLException(&quot;The bpmn 2.0 xml is not properly encoded&quot;, e);</span>
+<span class="nc" id="L278">            } catch(XMLStreamException e){</span>
+<span class="nc" id="L279">                throw new XMLException(&quot;Error while reading the BPMN 2.0 XML&quot;, e);</span>
+<span class="nc" id="L280">            } catch(Exception e){</span>
+<span class="nc" id="L281">                throw new XMLException(e.getMessage(), e);</span>
+<span class="nc" id="L282">            }</span>
+        }
+        // The input stream is closed after schema validation
+<span class="nc" id="L285">        try (InputStreamReader in = new InputStreamReader(inputStreamProvider.getInputStream(), encoding)) {</span>
+            // XML conversion
+<span class="nc" id="L287">            return convertToBpmnModel(xif.createXMLStreamReader(in));</span>
+<span class="nc" id="L288">        } catch (UnsupportedEncodingException e) {</span>
+<span class="nc" id="L289">            throw new XMLException(&quot;The bpmn 2.0 xml is not properly encoded&quot;, e);</span>
+<span class="nc" id="L290">        } catch (XMLStreamException e) {</span>
+<span class="nc" id="L291">            throw new XMLException(&quot;Error while reading the BPMN 2.0 XML&quot;, e);</span>
+<span class="nc" id="L292">        } catch (IOException e) {</span>
+<span class="nc" id="L293">            throw new XMLException(e.getMessage(), e);</span>
+        }
+    }
+
+    public BpmnModel convertToBpmnModel(XMLStreamReader xtr) {
+<span class="nc" id="L298">        BpmnModel model = new BpmnModel();</span>
+<span class="nc" id="L299">        model.setStartEventFormTypes(startEventFormTypes);</span>
+<span class="nc" id="L300">        model.setUserTaskFormTypes(userTaskFormTypes);</span>
+        try {
+<span class="nc" id="L302">            Process activeProcess = new Process();</span>
+<span class="nc" id="L303">            List&lt;SubProcess&gt; activeSubProcessList = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L304" title="All 2 branches missed.">            while (xtr.hasNext()) {</span>
+                try {
+<span class="nc" id="L306">                    xtr.next();</span>
+<span class="nc" id="L307">                } catch (Exception e) {</span>
+<span class="nc" id="L308">                    LOGGER.debug(&quot;Error reading XML document&quot;, e);</span>
+<span class="nc" id="L309">                    throw new XMLException(&quot;Error reading XML&quot;, e);</span>
+<span class="nc" id="L310">                }</span>
+
+<span class="nc bnc" id="L312" title="All 4 branches missed.">                if (xtr.isEndElement() &amp;&amp; (ELEMENT_SUBPROCESS.equals(xtr.getLocalName()) ||</span>
+<span class="nc bnc" id="L313" title="All 2 branches missed.">                        ELEMENT_TRANSACTION.equals(xtr.getLocalName()) ||</span>
+<span class="nc bnc" id="L314" title="All 2 branches missed.">                        ELEMENT_ADHOC_SUBPROCESS.equals(xtr.getLocalName()))) {</span>
+
+<span class="nc" id="L316">                    activeSubProcessList.remove(activeSubProcessList.size() - 1);</span>
+                }
+
+<span class="nc bnc" id="L319" title="All 2 branches missed.">                if (!xtr.isStartElement()) {</span>
+<span class="nc" id="L320">                    continue;</span>
+                }
+
+<span class="nc bnc" id="L323" title="All 2 branches missed.">                if (ELEMENT_DEFINITIONS.equals(xtr.getLocalName())) {</span>
+<span class="nc" id="L324">                    definitionsParser.parse(xtr, model);</span>
+
+<span class="nc bnc" id="L326" title="All 2 branches missed.">                } else if (ELEMENT_RESOURCE.equals(xtr.getLocalName())) {</span>
+<span class="nc" id="L327">                    resourceParser.parse(xtr, model);</span>
+
+<span class="nc bnc" id="L329" title="All 2 branches missed.">                } else if (ELEMENT_SIGNAL.equals(xtr.getLocalName())) {</span>
+<span class="nc" id="L330">                    signalParser.parse(xtr, model);</span>
+
+<span class="nc bnc" id="L332" title="All 2 branches missed.">                } else if (ELEMENT_MESSAGE.equals(xtr.getLocalName())) {</span>
+<span class="nc" id="L333">                    messageParser.parse(xtr, model);</span>
+
+<span class="nc bnc" id="L335" title="All 2 branches missed.">                } else if (ELEMENT_ERROR.equals(xtr.getLocalName())) {</span>
+
+<span class="nc bnc" id="L337" title="All 2 branches missed.">                    if (StringUtils.isNotEmpty(xtr.getAttributeValue(null, ATTRIBUTE_ID))) {</span>
+<span class="nc" id="L338">                        model.addError(xtr.getAttributeValue(null, ATTRIBUTE_ID), xtr.getAttributeValue(null, ATTRIBUTE_ERROR_CODE));</span>
+                    }
+
+<span class="nc bnc" id="L341" title="All 2 branches missed.">                } else if (ELEMENT_ESCALATION.equals(xtr.getLocalName())) {</span>
+
+<span class="nc bnc" id="L343" title="All 2 branches missed.">                    if (StringUtils.isNotEmpty(xtr.getAttributeValue(null, ATTRIBUTE_ID))) {</span>
+<span class="nc" id="L344">                        model.addEscalation(xtr.getAttributeValue(null, ATTRIBUTE_ID), xtr.getAttributeValue(null, ATTRIBUTE_ESCALATION_CODE),</span>
+<span class="nc" id="L345">                                        xtr.getAttributeValue(null, ATTRIBUTE_NAME));</span>
+                    }
+
+<span class="nc bnc" id="L348" title="All 2 branches missed.">                } else if (ELEMENT_IMPORT.equals(xtr.getLocalName())) {</span>
+<span class="nc" id="L349">                    importParser.parse(xtr, model);</span>
+
+<span class="nc bnc" id="L351" title="All 2 branches missed.">                } else if (ELEMENT_ITEM_DEFINITION.equals(xtr.getLocalName())) {</span>
+<span class="nc" id="L352">                    itemDefinitionParser.parse(xtr, model);</span>
+
+<span class="nc bnc" id="L354" title="All 2 branches missed.">                } else if (ELEMENT_DATA_STORE.equals(xtr.getLocalName())) {</span>
+<span class="nc" id="L355">                    dataStoreParser.parse(xtr, model);</span>
+
+<span class="nc bnc" id="L357" title="All 2 branches missed.">                } else if (ELEMENT_INTERFACE.equals(xtr.getLocalName())) {</span>
+<span class="nc" id="L358">                    interfaceParser.parse(xtr, model);</span>
+
+<span class="nc bnc" id="L360" title="All 2 branches missed.">                } else if (ELEMENT_IOSPECIFICATION.equals(xtr.getLocalName())) {</span>
+<span class="nc" id="L361">                    ioSpecificationParser.parseChildElement(xtr, activeProcess, model);</span>
+
+<span class="nc bnc" id="L363" title="All 2 branches missed.">                } else if (ELEMENT_PARTICIPANT.equals(xtr.getLocalName())) {</span>
+<span class="nc" id="L364">                    participantParser.parse(xtr, model);</span>
+
+<span class="nc bnc" id="L366" title="All 2 branches missed.">                } else if (ELEMENT_MESSAGE_FLOW.equals(xtr.getLocalName())) {</span>
+<span class="nc" id="L367">                    messageFlowParser.parse(xtr, model);</span>
+
+<span class="nc bnc" id="L369" title="All 2 branches missed.">                } else if (ELEMENT_PROCESS.equals(xtr.getLocalName())) {</span>
+
+<span class="nc" id="L371">                    Process process = processParser.parse(xtr, model);</span>
+<span class="nc bnc" id="L372" title="All 2 branches missed.">                    if (process != null) {</span>
+<span class="nc" id="L373">                        activeProcess = process;</span>
+                        // copy over anything already parsed
+<span class="nc" id="L375">                        process.setAttributes(activeProcess.getAttributes());</span>
+<span class="nc" id="L376">                        process.setDocumentation(activeProcess.getDocumentation());</span>
+<span class="nc" id="L377">                        process.setExtensionElements(activeProcess.getExtensionElements());</span>
+                    }
+
+<span class="nc bnc" id="L380" title="All 2 branches missed.">                } else if (ELEMENT_POTENTIAL_STARTER.equals(xtr.getLocalName())) {</span>
+<span class="nc" id="L381">                    potentialStarterParser.parse(xtr, activeProcess);</span>
+
+<span class="nc bnc" id="L383" title="All 2 branches missed.">                } else if (ELEMENT_LANE.equals(xtr.getLocalName())) {</span>
+<span class="nc" id="L384">                    laneParser.parse(xtr, activeProcess, model);</span>
+
+<span class="nc bnc" id="L386" title="All 2 branches missed.">                } else if (ELEMENT_DOCUMENTATION.equals(xtr.getLocalName())) {</span>
+
+<span class="nc" id="L388">                    BaseElement parentElement = null;</span>
+<span class="nc bnc" id="L389" title="All 2 branches missed.">                    if (!activeSubProcessList.isEmpty()) {</span>
+<span class="nc" id="L390">                        parentElement = activeSubProcessList.get(activeSubProcessList.size() - 1);</span>
+<span class="nc bnc" id="L391" title="All 2 branches missed.">                    } else if (activeProcess != null) {</span>
+<span class="nc" id="L392">                        parentElement = activeProcess;</span>
+                    }
+<span class="nc" id="L394">                    documentationParser.parseChildElement(xtr, parentElement, model);</span>
+
+<span class="nc bnc" id="L396" title="All 4 branches missed.">                } else if (activeProcess == null &amp;&amp; ELEMENT_TEXT_ANNOTATION.equals(xtr.getLocalName())) {</span>
+<span class="nc" id="L397">                    String elementId = xtr.getAttributeValue(null, ATTRIBUTE_ID);</span>
+<span class="nc" id="L398">                    TextAnnotation textAnnotation = (TextAnnotation) new TextAnnotationXMLConverter().convertXMLToElement(xtr, model);</span>
+<span class="nc" id="L399">                    textAnnotation.setId(elementId);</span>
+<span class="nc" id="L400">                    model.getGlobalArtifacts().add(textAnnotation);</span>
+
+<span class="nc bnc" id="L402" title="All 4 branches missed.">                } else if (activeProcess == null &amp;&amp; ELEMENT_ASSOCIATION.equals(xtr.getLocalName())) {</span>
+<span class="nc" id="L403">                    String elementId = xtr.getAttributeValue(null, ATTRIBUTE_ID);</span>
+<span class="nc" id="L404">                    Association association = (Association) new AssociationXMLConverter().convertXMLToElement(xtr, model);</span>
+<span class="nc" id="L405">                    association.setId(elementId);</span>
+<span class="nc" id="L406">                    model.getGlobalArtifacts().add(association);</span>
+
+<span class="nc bnc" id="L408" title="All 2 branches missed.">                } else if (ELEMENT_EXTENSIONS.equals(xtr.getLocalName())) {</span>
+<span class="nc" id="L409">                    extensionElementsParser.parse(xtr, activeSubProcessList, activeProcess, model);</span>
+
+<span class="nc bnc" id="L411" title="All 6 branches missed.">                } else if (ELEMENT_SUBPROCESS.equals(xtr.getLocalName()) || ELEMENT_TRANSACTION.equals(xtr.getLocalName()) || ELEMENT_ADHOC_SUBPROCESS.equals(xtr.getLocalName())) {</span>
+<span class="nc" id="L412">                    subProcessParser.parse(xtr, activeSubProcessList, activeProcess);</span>
+
+<span class="nc bnc" id="L414" title="All 2 branches missed.">                } else if (ELEMENT_COMPLETION_CONDITION.equals(xtr.getLocalName())) {</span>
+<span class="nc bnc" id="L415" title="All 2 branches missed.">                    if (!activeSubProcessList.isEmpty()) {</span>
+<span class="nc" id="L416">                        SubProcess subProcess = activeSubProcessList.get(activeSubProcessList.size() - 1);</span>
+<span class="nc bnc" id="L417" title="All 2 branches missed.">                        if (subProcess instanceof AdhocSubProcess) {</span>
+<span class="nc" id="L418">                            AdhocSubProcess adhocSubProcess = (AdhocSubProcess) subProcess;</span>
+<span class="nc" id="L419">                            adhocSubProcess.setCompletionCondition(xtr.getElementText());</span>
+                        }
+<span class="nc" id="L421">                    }</span>
+
+<span class="nc bnc" id="L423" title="All 2 branches missed.">                } else if (ELEMENT_DI_SHAPE.equals(xtr.getLocalName())) {</span>
+<span class="nc" id="L424">                    bpmnShapeParser.parse(xtr, model);</span>
+
+<span class="nc bnc" id="L426" title="All 2 branches missed.">                } else if (ELEMENT_DI_EDGE.equals(xtr.getLocalName())) {</span>
+<span class="nc" id="L427">                    bpmnEdgeParser.parse(xtr, model);</span>
+
+                } else {
+
+<span class="nc bnc" id="L431" title="All 4 branches missed.">                    if (!activeSubProcessList.isEmpty() &amp;&amp; ELEMENT_MULTIINSTANCE.equalsIgnoreCase(xtr.getLocalName())) {</span>
+<span class="nc" id="L432">                        multiInstanceParser.parseChildElement(xtr, activeSubProcessList.get(activeSubProcessList.size() - 1), model);</span>
+
+<span class="nc bnc" id="L434" title="All 2 branches missed.">                    } else if (convertersToBpmnMap.containsKey(xtr.getLocalName())) {</span>
+<span class="nc bnc" id="L435" title="All 2 branches missed.">                        if (activeProcess != null) {</span>
+<span class="nc" id="L436">                            BaseBpmnXMLConverter converter = convertersToBpmnMap.get(xtr.getLocalName());</span>
+<span class="nc" id="L437">                            converter.convertToBpmnModel(xtr, model, activeProcess, activeSubProcessList);</span>
+<span class="nc" id="L438">                        }</span>
+                    }
+                }
+            }
+
+<span class="nc bnc" id="L443" title="All 2 branches missed.">            for (Process process : model.getProcesses()) {</span>
+<span class="nc bnc" id="L444" title="All 2 branches missed.">                for (Pool pool : model.getPools()) {</span>
+<span class="nc bnc" id="L445" title="All 2 branches missed.">                    if (process.getId().equals(pool.getProcessRef())) {</span>
+<span class="nc" id="L446">                        pool.setExecutable(process.isExecutable());</span>
+                    }
+<span class="nc" id="L448">                }</span>
+<span class="nc" id="L449">                processFlowElements(process.getFlowElements(), process);</span>
+<span class="nc" id="L450">            }</span>
+
+<span class="nc" id="L452">        } catch (XMLException e) {</span>
+<span class="nc" id="L453">            throw e;</span>
+
+<span class="nc" id="L455">        } catch (Exception e) {</span>
+<span class="nc" id="L456">            LOGGER.error(&quot;Error processing BPMN document&quot;, e);</span>
+<span class="nc" id="L457">            throw new XMLException(&quot;Error processing BPMN document&quot;, e);</span>
+<span class="nc" id="L458">        }</span>
+<span class="nc" id="L459">        return model;</span>
+    }
+
+    protected void processFlowElements(Collection&lt;FlowElement&gt; flowElementList, BaseElement parentScope) {
+<span class="nc bnc" id="L463" title="All 2 branches missed.">        for (FlowElement flowElement : flowElementList) {</span>
+<span class="nc bnc" id="L464" title="All 2 branches missed.">            if (flowElement instanceof SequenceFlow) {</span>
+<span class="nc" id="L465">                SequenceFlow sequenceFlow = (SequenceFlow) flowElement;</span>
+<span class="nc" id="L466">                FlowNode sourceNode = getFlowNodeFromScope(sequenceFlow.getSourceRef(), parentScope);</span>
+<span class="nc bnc" id="L467" title="All 2 branches missed.">                if (sourceNode != null) {</span>
+<span class="nc" id="L468">                    sourceNode.getOutgoingFlows().add(sequenceFlow);</span>
+<span class="nc" id="L469">                    sequenceFlow.setSourceFlowElement(sourceNode);</span>
+                }
+
+<span class="nc" id="L472">                FlowNode targetNode = getFlowNodeFromScope(sequenceFlow.getTargetRef(), parentScope);</span>
+<span class="nc bnc" id="L473" title="All 2 branches missed.">                if (targetNode != null) {</span>
+<span class="nc" id="L474">                    targetNode.getIncomingFlows().add(sequenceFlow);</span>
+<span class="nc" id="L475">                    sequenceFlow.setTargetFlowElement(targetNode);</span>
+                }
+
+<span class="nc bnc" id="L478" title="All 2 branches missed.">            } else if (flowElement instanceof BoundaryEvent) {</span>
+<span class="nc" id="L479">                BoundaryEvent boundaryEvent = (BoundaryEvent) flowElement;</span>
+<span class="nc" id="L480">                FlowElement attachedToElement = getFlowNodeFromScope(boundaryEvent.getAttachedToRefId(), parentScope);</span>
+<span class="nc bnc" id="L481" title="All 2 branches missed.">                if (attachedToElement instanceof Activity) {</span>
+<span class="nc" id="L482">                    Activity attachedActivity = (Activity) attachedToElement;</span>
+<span class="nc" id="L483">                    boundaryEvent.setAttachedToRef(attachedActivity);</span>
+<span class="nc" id="L484">                    attachedActivity.getBoundaryEvents().add(boundaryEvent);</span>
+                }
+
+<span class="nc bnc" id="L487" title="All 2 branches missed.">            } else if (flowElement instanceof SubProcess) {</span>
+<span class="nc" id="L488">                SubProcess subProcess = (SubProcess) flowElement;</span>
+<span class="nc" id="L489">                Collection&lt;FlowElement&gt; childFlowElements = subProcess.getFlowElements();</span>
+<span class="nc" id="L490">                processFlowElements(childFlowElements, subProcess);</span>
+            }
+<span class="nc" id="L492">        }</span>
+<span class="nc" id="L493">    }</span>
+
+    protected FlowNode getFlowNodeFromScope(String elementId, BaseElement scope) {
+<span class="nc" id="L496">        FlowNode flowNode = null;</span>
+<span class="nc bnc" id="L497" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(elementId)) {</span>
+<span class="nc bnc" id="L498" title="All 2 branches missed.">            if (scope instanceof Process) {</span>
+<span class="nc" id="L499">                flowNode = (FlowNode) ((Process) scope).getFlowElement(elementId);</span>
+<span class="nc bnc" id="L500" title="All 2 branches missed.">            } else if (scope instanceof SubProcess) {</span>
+<span class="nc" id="L501">                flowNode = (FlowNode) ((SubProcess) scope).getFlowElement(elementId);</span>
+            }
+        }
+<span class="nc" id="L504">        return flowNode;</span>
+    }
+
+    public byte[] convertToXML(BpmnModel model) {
+<span class="nc" id="L508">        return convertToXML(model, DEFAULT_ENCODING);</span>
+    }
+
+    public byte[] convertToXML(BpmnModel model, String encoding) {
+        try {
+
+<span class="nc" id="L514">            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();</span>
+
+<span class="nc" id="L516">            XMLOutputFactory xof = XMLOutputFactory.newInstance();</span>
+<span class="nc" id="L517">            OutputStreamWriter out = new OutputStreamWriter(outputStream, encoding);</span>
+
+<span class="nc" id="L519">            XMLStreamWriter writer = xof.createXMLStreamWriter(out);</span>
+<span class="nc" id="L520">            XMLStreamWriter xtw = new IndentingXMLStreamWriter(writer);</span>
+
+<span class="nc" id="L522">            DefinitionsRootExport.writeRootElement(model, xtw, encoding);</span>
+<span class="nc" id="L523">            CollaborationExport.writePools(model, xtw);</span>
+<span class="nc" id="L524">            DataStoreExport.writeDataStores(model, xtw);</span>
+<span class="nc" id="L525">            SignalAndMessageDefinitionExport.writeSignalsAndMessages(model, xtw);</span>
+<span class="nc" id="L526">            EscalationDefinitionExport.writeEscalations(model, xtw);</span>
+
+<span class="nc bnc" id="L528" title="All 2 branches missed.">            for (Process process : model.getProcesses()) {</span>
+
+<span class="nc bnc" id="L530" title="All 4 branches missed.">                if (process.getFlowElements().isEmpty() &amp;&amp; process.getLanes().isEmpty()) {</span>
+                    // empty process, ignore it
+<span class="nc" id="L532">                    continue;</span>
+                }
+
+<span class="nc" id="L535">                ProcessExport.writeProcess(process, model, xtw);</span>
+
+<span class="nc bnc" id="L537" title="All 2 branches missed.">                for (FlowElement flowElement : process.getFlowElements()) {</span>
+<span class="nc" id="L538">                    createXML(flowElement, model, xtw);</span>
+<span class="nc" id="L539">                }</span>
+
+<span class="nc bnc" id="L541" title="All 2 branches missed.">                for (Artifact artifact : process.getArtifacts()) {</span>
+<span class="nc" id="L542">                    createXML(artifact, model, xtw);</span>
+<span class="nc" id="L543">                }</span>
+
+                // end process element
+<span class="nc" id="L546">                xtw.writeEndElement();</span>
+<span class="nc" id="L547">            }</span>
+
+<span class="nc" id="L549">            BPMNDIExport.writeBPMNDI(model, xtw);</span>
+
+            // end definitions root element
+<span class="nc" id="L552">            xtw.writeEndElement();</span>
+<span class="nc" id="L553">            xtw.writeEndDocument();</span>
+
+<span class="nc" id="L555">            xtw.flush();</span>
+
+<span class="nc" id="L557">            outputStream.close();</span>
+
+<span class="nc" id="L559">            xtw.close();</span>
+
+<span class="nc" id="L561">            return outputStream.toByteArray();</span>
+
+<span class="nc" id="L563">        } catch (Exception e) {</span>
+<span class="nc" id="L564">            LOGGER.error(&quot;Error writing BPMN XML&quot;, e);</span>
+<span class="nc" id="L565">            throw new XMLException(&quot;Error writing BPMN XML&quot;, e);</span>
+        }
+    }
+
+    protected void createXML(FlowElement flowElement, BpmnModel model, XMLStreamWriter xtw) throws Exception {
+
+<span class="nc bnc" id="L571" title="All 2 branches missed.">        if (flowElement instanceof SubProcess) {</span>
+
+<span class="nc" id="L573">            SubProcess subProcess = (SubProcess) flowElement;</span>
+<span class="nc bnc" id="L574" title="All 2 branches missed.">            if (flowElement instanceof Transaction) {</span>
+<span class="nc" id="L575">                xtw.writeStartElement(ELEMENT_TRANSACTION);</span>
+<span class="nc bnc" id="L576" title="All 2 branches missed.">            } else if (flowElement instanceof AdhocSubProcess) {</span>
+<span class="nc" id="L577">                xtw.writeStartElement(ELEMENT_ADHOC_SUBPROCESS);</span>
+            } else {
+<span class="nc" id="L579">                xtw.writeStartElement(ELEMENT_SUBPROCESS);</span>
+            }
+
+<span class="nc" id="L582">            xtw.writeAttribute(ATTRIBUTE_ID, subProcess.getId());</span>
+<span class="nc bnc" id="L583" title="All 2 branches missed.">            if (StringUtils.isNotEmpty(subProcess.getName())) {</span>
+<span class="nc" id="L584">                xtw.writeAttribute(ATTRIBUTE_NAME, subProcess.getName());</span>
+            } else {
+<span class="nc" id="L586">                xtw.writeAttribute(ATTRIBUTE_NAME, &quot;subProcess&quot;);</span>
+            }
+
+<span class="nc bnc" id="L589" title="All 2 branches missed.">            if (subProcess instanceof EventSubProcess) {</span>
+<span class="nc" id="L590">                xtw.writeAttribute(ATTRIBUTE_TRIGGERED_BY, ATTRIBUTE_VALUE_TRUE);</span>
+
+<span class="nc bnc" id="L592" title="All 2 branches missed.">            } else if (subProcess instanceof AdhocSubProcess) {</span>
+<span class="nc" id="L593">                AdhocSubProcess adhocSubProcess = (AdhocSubProcess) subProcess;</span>
+<span class="nc" id="L594">                BpmnXMLUtil.writeDefaultAttribute(ATTRIBUTE_CANCEL_REMAINING_INSTANCES, String.valueOf(adhocSubProcess.isCancelRemainingInstances()), xtw);</span>
+<span class="nc bnc" id="L595" title="All 2 branches missed.">                if (StringUtils.isNotEmpty(adhocSubProcess.getOrdering())) {</span>
+<span class="nc" id="L596">                    BpmnXMLUtil.writeDefaultAttribute(ATTRIBUTE_ORDERING, adhocSubProcess.getOrdering(), xtw);</span>
+                }
+<span class="nc bnc" id="L598" title="All 2 branches missed.">            } else if (!(subProcess instanceof Transaction)) {</span>
+<span class="nc bnc" id="L599" title="All 2 branches missed.">                if (subProcess.isAsynchronous()) {</span>
+<span class="nc" id="L600">                    BpmnXMLUtil.writeQualifiedAttribute(ATTRIBUTE_ACTIVITY_ASYNCHRONOUS, ATTRIBUTE_VALUE_TRUE, xtw);</span>
+<span class="nc bnc" id="L601" title="All 2 branches missed.">                    if (subProcess.isNotExclusive()) {</span>
+<span class="nc" id="L602">                        BpmnXMLUtil.writeQualifiedAttribute(ATTRIBUTE_ACTIVITY_EXCLUSIVE, ATTRIBUTE_VALUE_FALSE, xtw);</span>
+                    }
+                }
+<span class="nc bnc" id="L605" title="All 2 branches missed.">                if (subProcess.isAsynchronousLeave()) {</span>
+<span class="nc" id="L606">                    BpmnXMLUtil.writeQualifiedAttribute(BpmnXMLConstants.ATTRIBUTE_ACTIVITY_ASYNCHRONOUS_LEAVE, ATTRIBUTE_VALUE_TRUE, xtw);</span>
+<span class="nc bnc" id="L607" title="All 2 branches missed.">                    if (subProcess.isAsynchronousLeaveNotExclusive()) {</span>
+<span class="nc" id="L608">                        BpmnXMLUtil.writeQualifiedAttribute(ATTRIBUTE_ACTIVITY_ASYNCHRONOUS_LEAVE_EXCLUSIVE, ATTRIBUTE_VALUE_FALSE, xtw);</span>
+                    }
+                }
+            }
+
+<span class="nc bnc" id="L613" title="All 2 branches missed.">            if (StringUtils.isNotEmpty(subProcess.getDocumentation())) {</span>
+
+<span class="nc" id="L615">                xtw.writeStartElement(ELEMENT_DOCUMENTATION);</span>
+<span class="nc" id="L616">                xtw.writeCharacters(subProcess.getDocumentation());</span>
+<span class="nc" id="L617">                xtw.writeEndElement();</span>
+            }
+
+<span class="nc" id="L620">            boolean didWriteExtensionStartElement = FlowableListenerExport.writeListeners(subProcess, false, xtw);</span>
+
+<span class="nc" id="L622">            didWriteExtensionStartElement = BpmnXMLUtil.writeExtensionElements(subProcess, didWriteExtensionStartElement, model.getNamespaces(), xtw);</span>
+<span class="nc bnc" id="L623" title="All 2 branches missed.">            if (didWriteExtensionStartElement) {</span>
+                // closing extensions element
+<span class="nc" id="L625">                xtw.writeEndElement();</span>
+            }
+
+<span class="nc" id="L628">            MultiInstanceExport.writeMultiInstance(subProcess, model, xtw);</span>
+
+<span class="nc bnc" id="L630" title="All 2 branches missed.">            for (FlowElement subElement : subProcess.getFlowElements()) {</span>
+<span class="nc" id="L631">                createXML(subElement, model, xtw);</span>
+<span class="nc" id="L632">            }</span>
+
+<span class="nc bnc" id="L634" title="All 2 branches missed.">            if (subProcess instanceof AdhocSubProcess) {</span>
+<span class="nc" id="L635">                AdhocSubProcess adhocSubProcess = (AdhocSubProcess) subProcess;</span>
+<span class="nc bnc" id="L636" title="All 2 branches missed.">                if (StringUtils.isNotEmpty(adhocSubProcess.getCompletionCondition())) {</span>
+<span class="nc" id="L637">                    xtw.writeStartElement(ELEMENT_COMPLETION_CONDITION);</span>
+<span class="nc" id="L638">                    xtw.writeCData(adhocSubProcess.getCompletionCondition());</span>
+<span class="nc" id="L639">                    xtw.writeEndElement();</span>
+                }
+            }
+
+<span class="nc bnc" id="L643" title="All 2 branches missed.">            for (Artifact artifact : subProcess.getArtifacts()) {</span>
+<span class="nc" id="L644">                createXML(artifact, model, xtw);</span>
+<span class="nc" id="L645">            }</span>
+
+<span class="nc" id="L647">            xtw.writeEndElement();</span>
+
+<span class="nc" id="L649">        } else {</span>
+
+<span class="nc" id="L651">            BaseBpmnXMLConverter converter = convertersToXMLMap.get(flowElement.getClass());</span>
+
+<span class="nc bnc" id="L653" title="All 2 branches missed.">            if (converter == null) {</span>
+<span class="nc" id="L654">                throw new XMLException(&quot;No converter for &quot; + flowElement.getClass() + &quot; found&quot;);</span>
+            }
+
+<span class="nc" id="L657">            converter.convertToXML(xtw, flowElement, model);</span>
+        }
+<span class="nc" id="L659">    }</span>
+
+    protected void createXML(Artifact artifact, BpmnModel model, XMLStreamWriter xtw) throws Exception {
+
+<span class="nc" id="L663">        BaseBpmnXMLConverter converter = convertersToXMLMap.get(artifact.getClass());</span>
+
+<span class="nc bnc" id="L665" title="All 2 branches missed.">        if (converter == null) {</span>
+<span class="nc" id="L666">            throw new XMLException(&quot;No converter for &quot; + artifact.getClass() + &quot; found&quot;);</span>
+        }
+
+<span class="nc" id="L669">        converter.convertToXML(xtw, artifact, model);</span>
+<span class="nc" id="L670">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

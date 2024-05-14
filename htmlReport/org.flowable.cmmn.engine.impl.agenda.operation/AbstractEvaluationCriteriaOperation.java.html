@@ -1,0 +1,775 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AbstractEvaluationCriteriaOperation.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.cmmn.engine.impl.agenda.operation</a> &gt; <span class="el_source">AbstractEvaluationCriteriaOperation.java</span></div><h1>AbstractEvaluationCriteriaOperation.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.cmmn.engine.impl.agenda.operation;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.cmmn.api.runtime.PlanItemInstance;
+import org.flowable.cmmn.api.runtime.PlanItemInstanceState;
+import org.flowable.cmmn.converter.util.CriterionUtil;
+import org.flowable.cmmn.converter.util.PlanItemUtil;
+import org.flowable.cmmn.engine.CmmnEngineConfiguration;
+import org.flowable.cmmn.engine.impl.agenda.PlanItemEvaluationResult;
+import org.flowable.cmmn.engine.impl.criteria.PlanItemLifeCycleEvent;
+import org.flowable.cmmn.engine.impl.persistence.entity.CaseInstanceEntity;
+import org.flowable.cmmn.engine.impl.persistence.entity.CountingPlanItemInstanceEntity;
+import org.flowable.cmmn.engine.impl.persistence.entity.EntityWithSentryPartInstances;
+import org.flowable.cmmn.engine.impl.persistence.entity.PlanItemInstanceContainer;
+import org.flowable.cmmn.engine.impl.persistence.entity.PlanItemInstanceEntity;
+import org.flowable.cmmn.engine.impl.persistence.entity.PlanItemInstanceEntityManager;
+import org.flowable.cmmn.engine.impl.persistence.entity.SentryPartInstanceEntity;
+import org.flowable.cmmn.engine.impl.persistence.entity.SentryPartInstanceEntityManager;
+import org.flowable.cmmn.engine.impl.repository.CaseDefinitionUtil;
+import org.flowable.cmmn.engine.impl.util.CaseInstanceUtil;
+import org.flowable.cmmn.engine.impl.util.CmmnLoggingSessionUtil;
+import org.flowable.cmmn.engine.impl.util.CommandContextUtil;
+import org.flowable.cmmn.engine.impl.util.CompletionEvaluationResult;
+import org.flowable.cmmn.engine.impl.util.ExpressionUtil;
+import org.flowable.cmmn.engine.impl.util.PlanItemInstanceContainerUtil;
+import org.flowable.cmmn.engine.impl.util.PlanItemInstanceUtil;
+import org.flowable.cmmn.engine.interceptor.MigrationContext;
+import org.flowable.cmmn.model.Criterion;
+import org.flowable.cmmn.model.EventListener;
+import org.flowable.cmmn.model.HasExitCriteria;
+import org.flowable.cmmn.model.ParentCompletionRule;
+import org.flowable.cmmn.model.PlanItem;
+import org.flowable.cmmn.model.Sentry;
+import org.flowable.cmmn.model.SentryIfPart;
+import org.flowable.cmmn.model.SentryOnPart;
+import org.flowable.cmmn.model.Stage;
+import org.flowable.common.engine.api.delegate.Expression;
+import org.flowable.common.engine.api.variable.VariableContainer;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * An abstract base class for operations using criteria evaluation like entry / exit sentries, repetition rule and parent completion rule.
+ *
+ * @author Micha Kiener
+ */
+public abstract class AbstractEvaluationCriteriaOperation extends AbstractCaseInstanceOperation {
+
+<span class="nc" id="L70">    private static final Logger LOGGER = LoggerFactory.getLogger(AbstractEvaluationCriteriaOperation.class);</span>
+
+    protected PlanItemLifeCycleEvent planItemLifeCycleEvent;
+
+    /** only the last evaluation planned on the agenda operation will have this true. */
+    protected boolean evaluateStagesAndCaseInstanceCompletion;
+
+    public AbstractEvaluationCriteriaOperation(CommandContext commandContext, String caseInstanceId, CaseInstanceEntity caseInstanceEntity, PlanItemLifeCycleEvent planItemLifeCycleEvent) {
+<span class="nc" id="L78">        super(commandContext, caseInstanceId, caseInstanceEntity);</span>
+<span class="nc" id="L79">        this.planItemLifeCycleEvent = planItemLifeCycleEvent;</span>
+<span class="nc" id="L80">    }</span>
+
+    /**
+     * Evaluates the given plan item for activation by looking at its entry criteria, repetition rule and whether the plan item is a special one like an
+     * event listener (they occur and will never actually be active).
+     *
+     * @param planItemInstanceEntity the plan item instance to evaluate
+     * @param planItemInstanceContainer the parent container of the plan item instance
+     * @param evaluationResult the object holding evaluation results, will be modified inside this method with gained information
+     */
+    public void evaluateForActivation(PlanItemInstanceEntity planItemInstanceEntity, PlanItemInstanceContainer planItemInstanceContainer,
+        PlanItemEvaluationResult evaluationResult) {
+<span class="nc" id="L92">        PlanItem planItem = planItemInstanceEntity.getPlanItem();</span>
+
+        // evaluate the entry criteria of the plan item and return it, if at least one was satisfied
+<span class="nc" id="L95">        Criterion satisfiedEntryCriterion = evaluateEntryCriteria(planItemInstanceEntity, planItem);</span>
+<span class="nc bnc" id="L96" title="All 6 branches missed.">        if ((planItem != null &amp;&amp; planItem.getEntryCriteria().isEmpty()) || satisfiedEntryCriterion != null) {</span>
+            // entry criteria is satisfied for this plan item instance, so we can basically activate it, but we need to check further options like
+            // repetition
+
+            // evaluate the repetition rule, if any, will also create new child plan items and add them to the result, if necessary
+<span class="nc" id="L101">            boolean activatePlanItemInstance = PlanItemInstanceUtil.evaluateRepetitionRule(planItemInstanceEntity, satisfiedEntryCriterion, </span>
+                    planItemInstanceContainer, evaluationResult, commandContext);
+
+<span class="nc bnc" id="L104" title="All 2 branches missed.">            if (planItem.getPlanItemDefinition() instanceof EventListener) {</span>
+<span class="nc" id="L105">                activatePlanItemInstance = false; // event listeners occur, they don't become active</span>
+            }
+
+            // if we need to activate the plan item, mark the result as some criteria changed and plan the activation of the plan item by adding
+            // this as an operation to the agenda
+<span class="nc bnc" id="L110" title="All 2 branches missed.">            if (activatePlanItemInstance) {</span>
+<span class="nc" id="L111">                planItemInstanceEntity.setPlannedForActivationInMigration(true);</span>
+<span class="nc" id="L112">                evaluationResult.markCriteriaChanged();</span>
+<span class="nc" id="L113">                CommandContextUtil.getAgenda(commandContext)</span>
+<span class="nc bnc" id="L114" title="All 2 branches missed.">                    .planActivatePlanItemInstanceOperation(planItemInstanceEntity, satisfiedEntryCriterion != null ? satisfiedEntryCriterion.getId() : null);</span>
+            }
+        }
+<span class="nc" id="L117">    }</span>
+
+    /**
+     * Evaluates the given plan item for completion or termination by looking at its state and exit criteria. If it is a stage, it will evaluate its child
+     * plan items as well.
+     *
+     * @param planItemInstanceEntity the plan item instance to evaluate for completion or termination
+     * @param evaluationResult the object holding evaluation results, will be modified inside this method with gained information
+     * @return true, if further evaluation should be skipped as the plan item can be ignored for further processing, false otherwise
+     */
+    public boolean evaluateForCompletion(PlanItemInstanceEntity planItemInstanceEntity, PlanItemEvaluationResult evaluationResult) {
+<span class="nc" id="L128">        PlanItem planItem = planItemInstanceEntity.getPlanItem();</span>
+<span class="nc bnc" id="L129" title="All 2 branches missed.">        if (planItem == null) {</span>
+<span class="nc" id="L130">            return false;</span>
+        }
+        
+<span class="nc" id="L133">        String state = planItemInstanceEntity.getState();</span>
+
+        // search and evaluate for exit criteria on the plan item, for at least one satisfied exit criterion
+<span class="nc" id="L136">        Criterion satisfiedExitCriterion = evaluateExitCriteria(planItemInstanceEntity, planItem);</span>
+<span class="nc bnc" id="L137" title="All 2 branches missed.">        if (satisfiedExitCriterion != null) {</span>
+<span class="nc" id="L138">            evaluationResult.markCriteriaChanged();</span>
+
+            // if we have a satisfied exit sentry, we also pass on its optional exit event type and exit type which has an effect on how the exit
+            // sentry gets executed and if the plan item is terminated (might transition using the complete event and be left in completion or by
+            // default, will transition using exit and be left as terminated
+<span class="nc" id="L143">            CommandContextUtil.getAgenda(commandContext).planExitPlanItemInstanceOperation(planItemInstanceEntity, satisfiedExitCriterion.getId(),</span>
+<span class="nc" id="L144">                satisfiedExitCriterion.getExitType(), satisfiedExitCriterion.getExitEventType());</span>
+
+<span class="nc bnc" id="L146" title="All 2 branches missed.">        } else if (planItem.getPlanItemDefinition() instanceof Stage) {</span>
+
+<span class="nc bnc" id="L148" title="All 2 branches missed.">            if (PlanItemInstanceState.ACTIVE.equals(state)) {</span>
+<span class="nc" id="L149">                boolean criteriaChangeOrActiveChildrenForStage = evaluatePlanItemsCriteria(planItemInstanceEntity, null);</span>
+<span class="nc bnc" id="L150" title="All 2 branches missed.">                if (criteriaChangeOrActiveChildrenForStage) {</span>
+<span class="nc" id="L151">                    evaluationResult.markCriteriaChanged();</span>
+<span class="nc" id="L152">                    planItemInstanceEntity.setCompletable(false); // an active child = stage cannot be completed anymore</span>
+                } else {
+<span class="nc" id="L154">                    Stage stage = (Stage) planItem.getPlanItemDefinition();</span>
+<span class="nc bnc" id="L155" title="All 2 branches missed.">                    if (isStageCompletable(planItemInstanceEntity, stage)) {</span>
+<span class="nc" id="L156">                        evaluationResult.markCriteriaChanged();</span>
+<span class="nc" id="L157">                        CommandContextUtil.getAgenda(commandContext).planCompletePlanItemInstanceOperation(planItemInstanceEntity);</span>
+                    }
+                }
+<span class="nc" id="L160">            }</span>
+<span class="nc bnc" id="L161" title="All 2 branches missed.">        } else if (PlanItemInstanceState.ACTIVE.equals(state)) {</span>
+            // check, if the plan item can be ignored for further processing and if so, immediately return
+<span class="nc bnc" id="L163" title="All 4 branches missed.">            if (planItem.getItemControl() != null &amp;&amp; planItem.getItemControl().getParentCompletionRule() != null) {</span>
+<span class="nc" id="L164">                ParentCompletionRule parentCompletionRule = planItem.getItemControl().getParentCompletionRule();</span>
+
+                // first check for the always ignore rule
+<span class="nc bnc" id="L167" title="All 2 branches missed.">                if (ParentCompletionRule.IGNORE.equals(parentCompletionRule.getType())) {</span>
+<span class="nc" id="L168">                    return true;</span>
+                }
+
+                // now check, if we can ignore it because it was completed before
+<span class="nc bnc" id="L172" title="All 2 branches missed.">                if (ParentCompletionRule.IGNORE_AFTER_FIRST_COMPLETION.equals(parentCompletionRule.getType())) {</span>
+<span class="nc bnc" id="L173" title="All 2 branches missed.">                    if (evaluationResult.hasCompletedPlanItemInstance(planItemInstanceEntity)) {</span>
+<span class="nc" id="L174">                        return true;</span>
+                    }
+                }
+            }
+
+<span class="nc" id="L179">            evaluationResult.increaseActiveChildren();</span>
+        }
+<span class="nc" id="L181">        return false;</span>
+    }
+
+    /**
+     * Evaluates the entry/exit criteria for the given plan item instances
+     * and plans new operations when its criteria are satisfied.
+     * &lt;p&gt;
+     * Returns true if any (part of a) sentry has fired (and didn't fire before)
+     * or if any of the passed plan items are still active.
+     * &lt;p&gt;
+     * Returns false if no sentry changes happened and none of the passed plan item instances are active.
+     * This means that the parent of these plan item instances also now can change its state.
+     */
+    protected boolean evaluatePlanItemsCriteria(PlanItemInstanceContainer planItemInstanceContainer, MigrationContext migrationContext) {
+<span class="nc" id="L195">        List&lt;PlanItemInstanceEntity&gt; planItemInstances = planItemInstanceContainer.getChildPlanItemInstances();</span>
+        
+        // needed because when doing case instance migration the child plan item instances can be null
+<span class="nc bnc" id="L198" title="All 8 branches missed.">        if ((planItemInstances == null || (migrationContext != null &amp;&amp; migrationContext.isFetchPlanItemInstances())) &amp;&amp; </span>
+                planItemInstanceContainer instanceof CaseInstanceEntity) {
+            
+<span class="nc" id="L201">            PlanItemInstanceEntityManager planItemInstanceEntityManager = CommandContextUtil.getPlanItemInstanceEntityManager(commandContext);</span>
+<span class="nc" id="L202">            CaseInstanceEntity caseInstance = (CaseInstanceEntity) planItemInstanceContainer;</span>
+<span class="nc" id="L203">            planItemInstances = planItemInstanceEntityManager.findByCaseInstanceId(caseInstance.getId());</span>
+<span class="nc" id="L204">            planItemInstanceContainer.setChildPlanItemInstances(planItemInstances);</span>
+            
+<span class="nc bnc" id="L206" title="All 4 branches missed.">            if (migrationContext != null &amp;&amp; migrationContext.isFetchPlanItemInstances()) {</span>
+<span class="nc" id="L207">                migrationContext.setFetchPlanItemInstances(false);</span>
+            }
+        }
+
+        // create an evaluation result object, holding all evaluation results as well as a list of newly created child plan items, as to avoid concurrent
+        // modification, we add them at the end of the evaluation loop to the parent container
+<span class="nc" id="L213">        PlanItemEvaluationResult evaluationResult = new PlanItemEvaluationResult(planItemInstances);</span>
+
+        // Check the existing plan item instances: this means the plan items that have been created and became available.
+        // This does not include the plan items which haven't been created (for example because they're part of a stage which isn't active yet).
+<span class="nc bnc" id="L217" title="All 2 branches missed.">        for (int planItemInstanceIndex = 0; planItemInstanceIndex &lt; planItemInstances.size(); planItemInstanceIndex++) {</span>
+
+<span class="nc" id="L219">            PlanItemInstanceEntity planItemInstanceEntity = planItemInstances.get(planItemInstanceIndex);</span>
+<span class="nc" id="L220">            String state = planItemInstanceEntity.getState();</span>
+
+            // check, if the plan item is in an evaluation state (e.g. available or waiting for repetition) to check for its activation
+<span class="nc bnc" id="L223" title="All 4 branches missed.">            if (PlanItemInstanceState.EVALUATE_ENTRY_CRITERIA_STATES.contains(state) &amp;&amp; !planItemInstanceEntity.isPlannedForActivationInMigration()) {</span>
+<span class="nc" id="L224">                evaluateForActivation(planItemInstanceEntity, planItemInstanceContainer, evaluationResult);</span>
+            }
+
+            // check the plan item, if it is not yet in a final end state to see whether it can be completed or terminated
+<span class="nc bnc" id="L228" title="All 2 branches missed.">            if (!PlanItemInstanceState.END_STATES.contains(state)) {</span>
+<span class="nc bnc" id="L229" title="All 2 branches missed.">                if (evaluateForCompletion(planItemInstanceEntity, evaluationResult)) {</span>
+<span class="nc" id="L230">                    continue;</span>
+                }
+            }
+
+<span class="nc bnc" id="L234" title="All 2 branches missed.">            if (planItemInstanceEntity.getState() == null) {</span>
+                // plan item is still being created
+<span class="nc" id="L236">                evaluationResult.markCriteriaChanged();</span>
+            }
+        }
+
+        // There are potentially plan items with an 'available condition' that haven't been created before
+<span class="nc bnc" id="L241" title="All 2 branches missed.">        if (evaluatePlanItemsWithAvailableCondition(planItemInstanceContainer)) {</span>
+<span class="nc" id="L242">            evaluationResult.markCriteriaChanged();</span>
+        }
+
+        // The direct child plan item instance have been checked.
+        // However, the event which triggered this evaluation could also impact cross border dependencies.
+<span class="nc" id="L247">        evaluateDependentPlanItems();</span>
+
+        // After the loop, the newly created plan item instances can be added
+<span class="nc bnc" id="L250" title="All 2 branches missed.">        if (evaluationResult.hasNewChildPlanItemInstances()) {</span>
+<span class="nc bnc" id="L251" title="All 2 branches missed.">            for (PlanItemInstanceEntity newChildPlanItemInstance : evaluationResult.getNewChildPlanItemInstances()) {</span>
+<span class="nc" id="L252">                planItemInstanceContainer.getChildPlanItemInstances().add(newChildPlanItemInstance);</span>
+<span class="nc" id="L253">            }</span>
+        }
+
+<span class="nc" id="L256">        return evaluationResult.criteriaChangedOrNewActiveChildren();</span>
+    }
+
+    protected void evaluateDependentPlanItems() {
+
+<span class="nc bnc" id="L261" title="All 2 branches missed.">        if (planItemLifeCycleEvent == null) {</span>
+<span class="nc" id="L262">            return;</span>
+        }
+
+        // The plan item instances that have passed or are at the available state have been evaluated.
+        // The plan items that have not yet been created but have an entry sentry that crosses the outer stage border
+        // are evaluated to see if they need to become available(see table 8.7 in the CMMN 1.1 spec).
+
+<span class="nc" id="L269">        List&lt;PlanItem&gt; entryDependentPlanItems = planItemLifeCycleEvent.getPlanItem().getEntryDependentPlanItems();</span>
+<span class="nc bnc" id="L270" title="All 2 branches missed.">        for (PlanItem entryDependentPlanItem : entryDependentPlanItems) {</span>
+            // Only needed for sentries that cross the outer stage border
+<span class="nc bnc" id="L272" title="All 2 branches missed.">            if (!planItemsShareDirectParentStage(entryDependentPlanItem, planItemLifeCycleEvent.getPlanItem())</span>
+<span class="nc bnc" id="L273" title="All 2 branches missed.">                &amp;&amp; CriterionUtil.planItemHasOneEntryCriterionDependingOnPlanItem(entryDependentPlanItem, planItemLifeCycleEvent.getPlanItem(), planItemLifeCycleEvent.getTransition())) {</span>
+
+<span class="nc" id="L275">                PlanItemInstanceEntityManager planItemInstanceEntityManager = CommandContextUtil.getPlanItemInstanceEntityManager(commandContext);</span>
+<span class="nc" id="L276">                List&lt;PlanItemInstanceEntity&gt; childPlanItemInstances = CaseInstanceUtil.findChildPlanItemInstances(caseInstanceEntity, entryDependentPlanItem);</span>
+<span class="nc" id="L277">                List&lt;PlanItemInstanceEntity&gt; potentialTerminatedPlanItemInstances = planItemInstanceEntityManager</span>
+<span class="nc" id="L278">                    .findByCaseInstanceIdAndPlanItemId(caseInstanceEntity.getId(), entryDependentPlanItem.getId());</span>
+
+<span class="nc bnc" id="L280" title="All 2 branches missed.">                if (childPlanItemInstances.isEmpty() // runtime state</span>
+<span class="nc bnc" id="L281" title="All 2 branches missed.">                    &amp;&amp; (potentialTerminatedPlanItemInstances.isEmpty()</span>
+                    // (terminated state) the plan item instance should not have been created anytime before
+<span class="nc bnc" id="L283" title="All 4 branches missed.">                    || (ExpressionUtil.hasRepetitionRule(entryDependentPlanItem) &amp;&amp; ExpressionUtil.evaluateRepetitionRule(commandContext, caseInstanceEntity, entryDependentPlanItem.getItemControl().getRepetitionRule().getCondition())))) {</span>
+
+                    // If the sentry satisfied, the plan item becomes active and all parent stages that are not yet activate are made active
+<span class="nc" id="L286">                    Criterion satisfiedCriterion = evaluateDependentPlanItemEntryCriteria(entryDependentPlanItem);</span>
+<span class="nc bnc" id="L287" title="All 2 branches missed.">                    if (satisfiedCriterion != null) {</span>
+
+                        // Creating plan item instances for all parent stages that do not exist yet
+<span class="nc" id="L290">                        List&lt;PlanItem&gt; parentPlanItems = PlanItemUtil.getAllParentPlanItems(entryDependentPlanItem);</span>
+<span class="nc" id="L291">                        Map&lt;String, List&lt;PlanItemInstanceEntity&gt;&gt; existingPlanItemInstancesMap = CaseInstanceUtil</span>
+<span class="nc" id="L292">                            .findChildPlanItemInstancesMap(caseInstanceEntity, parentPlanItems);</span>
+<span class="nc" id="L293">                        List&lt;PlanItemInstanceEntity&gt; parentPlanItemInstancesToActivate = new ArrayList&lt;&gt;();</span>
+
+<span class="nc" id="L295">                        PlanItemInstance previousParentPlanItemInstance = null;</span>
+<span class="nc bnc" id="L296" title="All 2 branches missed.">                        for (int i = parentPlanItems.size() - 1; i &gt;= 0; i--) { // going from outermost to direct parent</span>
+
+<span class="nc" id="L298">                            PlanItem parentPlanItem = parentPlanItems.get(i);</span>
+<span class="nc" id="L299">                            List&lt;PlanItemInstanceEntity&gt; parentPlanItemInstances = existingPlanItemInstancesMap.get(parentPlanItem.getId());</span>
+
+<span class="nc bnc" id="L301" title="All 4 branches missed.">                            if (parentPlanItemInstances == null || parentPlanItemInstances.isEmpty()) {</span>
+<span class="nc" id="L302">                                PlanItemInstanceEntity parentPlanItemInstance = planItemInstanceEntityManager</span>
+<span class="nc" id="L303">                                    .createPlanItemInstanceEntityBuilder()</span>
+<span class="nc" id="L304">                                    .planItem(parentPlanItem)</span>
+<span class="nc" id="L305">                                    .caseDefinitionId(caseInstanceEntity.getCaseDefinitionId())</span>
+<span class="nc" id="L306">                                    .caseInstanceId(caseInstanceEntity.getId())</span>
+<span class="nc" id="L307">                                    .stagePlanItemInstance(previousParentPlanItemInstance)</span>
+<span class="nc" id="L308">                                    .tenantId(caseInstanceEntity.getTenantId())</span>
+<span class="nc" id="L309">                                    .addToParent(true)</span>
+<span class="nc" id="L310">                                    .create();</span>
+
+<span class="nc" id="L312">                                parentPlanItemInstancesToActivate.add(parentPlanItemInstance);</span>
+
+<span class="nc" id="L314">                                previousParentPlanItemInstance = parentPlanItemInstance;</span>
+
+<span class="nc" id="L316">                            } else {</span>
+
+<span class="nc bnc" id="L318" title="All 2 branches missed.">                                for (PlanItemInstanceEntity parentPlanItemInstance : parentPlanItemInstances) {</span>
+<span class="nc bnc" id="L319" title="All 2 branches missed.">                                    if (!PlanItemInstanceState.ACTIVE.equals(parentPlanItemInstance.getState())) {</span>
+<span class="nc" id="L320">                                        parentPlanItemInstancesToActivate.add(parentPlanItemInstance);</span>
+                                    }
+<span class="nc" id="L322">                                }</span>
+
+<span class="nc" id="L324">                                previousParentPlanItemInstance = parentPlanItemInstances.get(0); // in case there are multiple parent plan item instances, select the first</span>
+
+                            }
+
+                        }
+
+                        // Creating plan item instance for the activated plan item
+<span class="nc" id="L331">                        PlanItemInstanceEntity entryDependentPlanItemInstance = planItemInstanceEntityManager</span>
+<span class="nc" id="L332">                            .createPlanItemInstanceEntityBuilder()</span>
+<span class="nc" id="L333">                            .planItem(entryDependentPlanItem)</span>
+<span class="nc" id="L334">                            .caseDefinitionId(caseInstanceEntity.getCaseDefinitionId())</span>
+<span class="nc" id="L335">                            .caseInstanceId(caseInstanceEntity.getId())</span>
+<span class="nc" id="L336">                            .stagePlanItemInstance(previousParentPlanItemInstance)</span>
+                            // previous is closest parent stage plan item instance
+<span class="nc" id="L338">                            .tenantId(caseInstanceEntity.getTenantId())</span>
+<span class="nc" id="L339">                            .addToParent(true)</span>
+<span class="nc" id="L340">                            .create();</span>
+
+<span class="nc" id="L342">                        CommandContextUtil.getAgenda(commandContext).planCreatePlanItemInstanceOperation(entryDependentPlanItemInstance);</span>
+
+                        // Special care needed in case the plan item instance is repeating
+<span class="nc bnc" id="L345" title="All 4 branches missed.">                        if (!entryDependentPlanItem.getEntryCriteria().isEmpty() &amp;&amp; ExpressionUtil.hasRepetitionRule(entryDependentPlanItemInstance)) {</span>
+<span class="nc bnc" id="L346" title="All 2 branches missed.">                            if (ExpressionUtil.evaluateRepetitionRule(commandContext, entryDependentPlanItemInstance, (PlanItemInstanceContainer) null)) {</span>
+<span class="nc" id="L347">                                PlanItemInstanceUtil.createPlanItemInstanceDuplicateForRepetition(entryDependentPlanItemInstance, commandContext);</span>
+                            }
+                        }
+
+                        // All plan item instances are created. Now activate them.
+<span class="nc" id="L352">                        CommandContextUtil.getAgenda(commandContext).planActivatePlanItemInstanceOperation(entryDependentPlanItemInstance, satisfiedCriterion.getId());</span>
+<span class="nc bnc" id="L353" title="All 2 branches missed.">                        for (int i = parentPlanItemInstancesToActivate.size() - 1; i &gt;= 0; i--) {</span>
+<span class="nc" id="L354">                            PlanItemInstanceEntity parentPlanItemInstance = parentPlanItemInstancesToActivate.get(i);</span>
+<span class="nc bnc" id="L355" title="All 2 branches missed.">                            if (parentPlanItemInstance.getState() == null) { // newly created one</span>
+<span class="nc" id="L356">                                CommandContextUtil.getAgenda(commandContext).planCreatePlanItemInstanceOperation(parentPlanItemInstance);</span>
+                            }
+<span class="nc" id="L358">                            CommandContextUtil.getAgenda(commandContext).planActivatePlanItemInstanceOperation(parentPlanItemInstance, null); // null -&gt; no sentry satisfied, activation is because of child activation</span>
+                        }
+                    }
+
+                }
+            }
+<span class="nc" id="L364">        }</span>
+<span class="nc" id="L365">    }</span>
+
+    protected boolean isStageCompletable(PlanItemInstanceEntity stagePlanItemInstanceEntity, Stage stage) {
+<span class="nc" id="L368">        boolean autoComplete = ExpressionUtil.evaluateAutoComplete(commandContext, stagePlanItemInstanceEntity, stage);</span>
+<span class="nc bnc" id="L369" title="All 4 branches missed.">        if (!autoComplete || evaluateStagesAndCaseInstanceCompletion) { // auto completion should only be evaluated when children are stable</span>
+<span class="nc" id="L370">            CompletionEvaluationResult completionEvaluationResult = PlanItemInstanceContainerUtil</span>
+<span class="nc" id="L371">                .shouldPlanItemContainerComplete(commandContext, stagePlanItemInstanceEntity, autoComplete);</span>
+
+<span class="nc bnc" id="L373" title="All 2 branches missed.">            if (completionEvaluationResult.isCompletable()) {</span>
+<span class="nc" id="L374">                stagePlanItemInstanceEntity.setCompletable(true);</span>
+            }
+
+<span class="nc" id="L377">            return completionEvaluationResult.shouldBeCompleted();</span>
+        }
+<span class="nc" id="L379">        return false;</span>
+    }
+
+    protected boolean evaluatePlanModelComplete() {
+<span class="nc" id="L383">        boolean isAutoComplete = ExpressionUtil.evaluateAutoComplete(commandContext, caseInstanceEntity,</span>
+<span class="nc" id="L384">            CaseDefinitionUtil.getCase(caseInstanceEntity.getCaseDefinitionId()).getPlanModel());</span>
+
+<span class="nc" id="L386">        CompletionEvaluationResult completionEvaluationResult = PlanItemInstanceContainerUtil</span>
+<span class="nc" id="L387">            .shouldPlanItemContainerComplete(commandContext, caseInstanceEntity, isAutoComplete);</span>
+
+        // update the completion state on the case and check, if it was changed
+<span class="nc" id="L390">        boolean previousCompletableState = caseInstanceEntity.isCompletable();</span>
+<span class="nc" id="L391">        caseInstanceEntity.setCompletable(completionEvaluationResult.isCompletable());</span>
+
+        // When the case entity changes, the plan items with an available condition can be become ready for creation
+<span class="nc bnc" id="L394" title="All 2 branches missed.">        if (previousCompletableState != caseInstanceEntity.isCompletable()) {</span>
+<span class="nc" id="L395">            boolean planItemInstancesChanged = evaluatePlanItemsWithAvailableCondition(caseInstanceEntity);</span>
+<span class="nc bnc" id="L396" title="All 2 branches missed.">            if (planItemInstancesChanged) {</span>
+                // If new plan items have changed, this could lead to changing of the fact that the case instance entity completable state is changed again
+<span class="nc" id="L398">                completionEvaluationResult = PlanItemInstanceContainerUtil.shouldPlanItemContainerComplete(commandContext, caseInstanceEntity, isAutoComplete);</span>
+<span class="nc bnc" id="L399" title="All 2 branches missed.">                if (completionEvaluationResult.isCompletable() != caseInstanceEntity.isCompletable()) {</span>
+<span class="nc" id="L400">                    caseInstanceEntity.setCompletable(completionEvaluationResult.isCompletable());</span>
+                }
+            }
+        }
+
+<span class="nc" id="L405">        return completionEvaluationResult.shouldBeCompleted();</span>
+    }
+
+    protected boolean evaluatePlanItemsWithAvailableCondition(PlanItemInstanceContainer planItemInstanceContainer) {
+<span class="nc bnc" id="L409" title="All 2 branches missed.">        if (!planItemInstanceContainer.getPlanItems().isEmpty()) {</span>
+
+            // Find event listeners with an available condition to become available
+<span class="nc" id="L412">            List&lt;PlanItemInstanceEntity&gt; planItemInstanceToInitiate = findChangedEventListenerInstances(planItemInstanceContainer,</span>
+                PlanItemInstanceState.UNAVAILABLE, true);
+<span class="nc bnc" id="L414" title="All 2 branches missed.">            if (!planItemInstanceToInitiate.isEmpty()) {</span>
+<span class="nc bnc" id="L415" title="All 2 branches missed.">                for (PlanItemInstanceEntity planItemInstanceEntity : planItemInstanceToInitiate) {</span>
+<span class="nc" id="L416">                    CommandContextUtil.getAgenda(commandContext).planInitiatePlanItemInstanceOperation(planItemInstanceEntity);</span>
+<span class="nc" id="L417">                }</span>
+<span class="nc" id="L418">                return true;</span>
+            }
+
+            // Find event listeners with an available condition to become unavailable
+<span class="nc" id="L422">            List&lt;PlanItemInstanceEntity&gt; planItemInstanceToDismiss = findChangedEventListenerInstances(planItemInstanceContainer,</span>
+                PlanItemInstanceState.AVAILABLE, false);
+<span class="nc bnc" id="L424" title="All 2 branches missed.">            if (!planItemInstanceToDismiss.isEmpty()) {</span>
+<span class="nc bnc" id="L425" title="All 2 branches missed.">                for (PlanItemInstanceEntity planItemInstanceEntity : planItemInstanceToDismiss) {</span>
+<span class="nc" id="L426">                    CommandContextUtil.getAgenda(commandContext).planDismissPlanItemInstanceOperation(planItemInstanceEntity);</span>
+<span class="nc" id="L427">                }</span>
+<span class="nc" id="L428">                return true;</span>
+            }
+
+        }
+
+<span class="nc" id="L433">        return false;</span>
+    }
+
+    protected Criterion evaluateEntryCriteria(PlanItemInstanceEntity planItemInstanceEntity, PlanItem planItem) {
+<span class="nc bnc" id="L437" title="All 2 branches missed.">        if (planItem != null) {</span>
+<span class="nc" id="L438">            List&lt;Criterion&gt; criteria = planItem.getEntryCriteria();</span>
+<span class="nc bnc" id="L439" title="All 4 branches missed.">            if (criteria != null &amp;&amp; !criteria.isEmpty()) {</span>
+<span class="nc" id="L440">                return evaluateCriteria(planItemInstanceEntity, criteria);</span>
+            }
+        }
+<span class="nc" id="L443">        return null;</span>
+    }
+
+    // EntityWithSentryPartInstances -&gt; can be used for both case instance and plan item instance
+    protected Criterion evaluateExitCriteria(EntityWithSentryPartInstances entityWithSentryPartInstances, HasExitCriteria hasExitCriteria) {
+<span class="nc bnc" id="L448" title="All 2 branches missed.">        if (hasExitCriteria != null) {</span>
+<span class="nc" id="L449">            List&lt;Criterion&gt; criteria = hasExitCriteria.getExitCriteria();</span>
+<span class="nc bnc" id="L450" title="All 4 branches missed.">            if (criteria != null &amp;&amp; !criteria.isEmpty()) {</span>
+<span class="nc" id="L451">                return evaluateCriteria(entityWithSentryPartInstances, criteria);</span>
+            }
+        }
+<span class="nc" id="L454">        return null;</span>
+    }
+
+    /**
+     * @return Returns the criterion that is satisfied. If none is satisfied, null is returned.
+     */
+    protected Criterion evaluateCriteria(EntityWithSentryPartInstances entityWithSentryPartInstances, List&lt;Criterion&gt; criteria) {
+<span class="nc bnc" id="L461" title="All 2 branches missed.">        for (Criterion criterion : criteria) {</span>
+
+<span class="nc" id="L463">            Sentry sentry = criterion.getSentry();</span>
+
+            // There can be zero or more on parts and zero or one if part.
+            // All defined parts need to be satisfied for the sentry to trigger.
+
+<span class="nc" id="L468">            CmmnEngineConfiguration cmmnEngineConfiguration = CommandContextUtil.getCmmnEngineConfiguration(commandContext);</span>
+<span class="nc bnc" id="L469" title="All 4 branches missed.">            if (sentry.getOnParts().size() == 1 &amp;&amp; sentry.getSentryIfPart() == null) { // Only one on part and no if part: no need to fetch the previously satisfied onparts</span>
+<span class="nc bnc" id="L470" title="All 2 branches missed.">                if (planItemLifeCycleEvent != null) {</span>
+<span class="nc" id="L471">                    SentryOnPart sentryOnPart = sentry.getOnParts().get(0);</span>
+<span class="nc bnc" id="L472" title="All 2 branches missed.">                    if (sentryOnPartMatchesCurrentLifeCycleEvent(entityWithSentryPartInstances, sentryOnPart)) {</span>
+
+<span class="nc bnc" id="L474" title="All 2 branches missed.">                        if (LOGGER.isDebugEnabled()) {</span>
+<span class="nc" id="L475">                            LOGGER.debug(&quot;{}: single onPart matches life cycle event: [{}]&quot;, criterion, planItemLifeCycleEvent);</span>
+                        }
+
+<span class="nc bnc" id="L478" title="All 2 branches missed.">                        if (cmmnEngineConfiguration.isLoggingSessionEnabled()) {</span>
+<span class="nc" id="L479">                            CmmnLoggingSessionUtil.addEvaluateSentryLoggingData(sentry.getOnParts(), entityWithSentryPartInstances, cmmnEngineConfiguration.getObjectMapper());</span>
+                        }
+
+<span class="nc" id="L482">                        return criterion;</span>
+                    }
+<span class="nc" id="L484">                }</span>
+
+<span class="nc bnc" id="L486" title="All 4 branches missed.">            } else if (sentry.getOnParts().isEmpty() &amp;&amp; sentry.getSentryIfPart() != null) { // Only an if part: simply evaluate the if part</span>
+<span class="nc bnc" id="L487" title="All 2 branches missed.">                if (evaluateSentryIfPart(entityWithSentryPartInstances, sentry, entityWithSentryPartInstances)) {</span>
+
+<span class="nc bnc" id="L489" title="All 2 branches missed.">                    if (cmmnEngineConfiguration.isLoggingSessionEnabled()) {</span>
+<span class="nc" id="L490">                        CmmnLoggingSessionUtil.addEvaluateSentryLoggingData(sentry.getSentryIfPart(), entityWithSentryPartInstances, cmmnEngineConfiguration.getObjectMapper());</span>
+                    }
+
+<span class="nc bnc" id="L493" title="All 2 branches missed.">                    if (LOGGER.isDebugEnabled()) {</span>
+<span class="nc" id="L494">                        LOGGER.debug(&quot;{}: single ifPart has evaluated to true&quot;, criterion);</span>
+                    }
+
+<span class="nc" id="L497">                    return criterion;</span>
+                }
+
+            } else {
+
+<span class="nc" id="L502">                boolean isDefaultTriggerMode = sentry.isDefaultTriggerMode();</span>
+
+<span class="nc" id="L504">                boolean sentryIfPartSatisfied = false;</span>
+<span class="nc" id="L505">                Set&lt;String&gt; satisfiedSentryOnPartIds = new HashSet&lt;&gt;(1);</span>
+
+                // Go through the previously satisfied sentry parts and see if the ifPart was already satisfied
+                // and collect the ids of all previously satisfied onParts
+<span class="nc bnc" id="L509" title="All 2 branches missed.">                for (SentryPartInstanceEntity sentryPartInstanceEntity : entityWithSentryPartInstances.getSatisfiedSentryPartInstances()) {</span>
+<span class="nc bnc" id="L510" title="All 2 branches missed.">                    if (sentryPartInstanceEntity.getOnPartId() != null) {</span>
+<span class="nc" id="L511">                        satisfiedSentryOnPartIds.add(sentryPartInstanceEntity.getOnPartId());</span>
+
+<span class="nc bnc" id="L513" title="All 2 branches missed.">                    } else if (sentryPartInstanceEntity.getIfPartId() != null</span>
+<span class="nc bnc" id="L514" title="All 2 branches missed.">                        &amp;&amp; sentryPartInstanceEntity.getIfPartId().equals(sentry.getSentryIfPart().getId())) {</span>
+
+<span class="nc" id="L516">                        sentryIfPartSatisfied = true;</span>
+                    }
+<span class="nc" id="L518">                }</span>
+
+                // Verify if the onParts which are not yet satisfied, become satisfied due to the new event
+<span class="nc bnc" id="L521" title="All 2 branches missed.">                for (SentryOnPart sentryOnPart : sentry.getOnParts()) {</span>
+<span class="nc bnc" id="L522" title="All 2 branches missed.">                    if (!satisfiedSentryOnPartIds.contains(sentryOnPart.getId())) {</span>
+<span class="nc bnc" id="L523" title="All 4 branches missed.">                        if (planItemLifeCycleEvent != null &amp;&amp; sentryOnPartMatchesCurrentLifeCycleEvent(entityWithSentryPartInstances, sentryOnPart)) {</span>
+
+<span class="nc bnc" id="L525" title="All 2 branches missed.">                            if (LOGGER.isDebugEnabled()) {</span>
+<span class="nc" id="L526">                                LOGGER.debug(&quot;{}: onPart matches life cycle event [{}]&quot;, criterion, planItemLifeCycleEvent);</span>
+                            }
+
+<span class="nc" id="L529">                            createSentryPartInstanceEntity(entityWithSentryPartInstances, sentry, sentryOnPart, null);</span>
+<span class="nc" id="L530">                            satisfiedSentryOnPartIds.add(sentryOnPart.getId());</span>
+                        }
+                    }
+<span class="nc" id="L533">                }</span>
+
+<span class="nc" id="L535">                boolean allOnPartsSatisfied = allOnPartsSatisfied(satisfiedSentryOnPartIds, sentry.getOnParts());</span>
+
+<span class="nc bnc" id="L537" title="All 4 branches missed.">                if (allOnPartsSatisfied &amp;&amp; LOGGER.isDebugEnabled()) {</span>
+<span class="nc" id="L538">                    LOGGER.debug(&quot;{}: all onParts have been satisfied&quot;, criterion);</span>
+                }
+
+                // Evaluate the if part of the sentry:
+                // In the onEvent triggerMode all onParts need to be satisfied before the if is evaluated
+<span class="nc bnc" id="L543" title="All 6 branches missed.">                if (sentry.getSentryIfPart() != null &amp;&amp; !sentryIfPartSatisfied</span>
+<span class="nc bnc" id="L544" title="All 4 branches missed.">                    &amp;&amp; (isDefaultTriggerMode || (sentry.isOnEventTriggerMode() &amp;&amp; allOnPartsSatisfied) )) {</span>
+
+<span class="nc bnc" id="L546" title="All 2 branches missed.">                    if (cmmnEngineConfiguration.isLoggingSessionEnabled()) {</span>
+<span class="nc" id="L547">                        CmmnLoggingSessionUtil.addEvaluateSentryLoggingData(sentry.getOnParts(), sentry.getSentryIfPart(), </span>
+<span class="nc" id="L548">                                entityWithSentryPartInstances, cmmnEngineConfiguration.getObjectMapper());</span>
+                    }
+
+<span class="nc bnc" id="L551" title="All 2 branches missed.">                    if (evaluateSentryIfPart(entityWithSentryPartInstances, sentry, entityWithSentryPartInstances)) {</span>
+
+<span class="nc bnc" id="L553" title="All 2 branches missed.">                        if (LOGGER.isDebugEnabled()) {</span>
+<span class="nc" id="L554">                            LOGGER.debug(&quot;{}: ifPart evaluates to true&quot;, criterion);</span>
+                        }
+
+<span class="nc" id="L557">                        createSentryPartInstanceEntity(entityWithSentryPartInstances, sentry, null, sentry.getSentryIfPart());</span>
+<span class="nc" id="L558">                        sentryIfPartSatisfied = true;</span>
+                    }
+
+                }
+
+<span class="nc bnc" id="L563" title="All 6 branches missed.">                if (allOnPartsSatisfied &amp;&amp; (sentryIfPartSatisfied || sentry.getSentryIfPart() == null)) {</span>
+
+<span class="nc bnc" id="L565" title="All 2 branches missed.">                    if (LOGGER.isDebugEnabled()) {</span>
+<span class="nc" id="L566">                        LOGGER.debug(&quot;{}: all onParts and ifParts are satisfied&quot;, criterion);</span>
+                    }
+
+<span class="nc" id="L569">                    return criterion;</span>
+                }
+            }
+<span class="nc" id="L572">        }</span>
+
+<span class="nc" id="L574">        return null;</span>
+    }
+
+    protected boolean evaluateAvailableCondition(CommandContext commandContext, PlanItemInstanceEntity planItemInstanceEntity) {
+<span class="nc" id="L578">        PlanItem planItem = planItemInstanceEntity.getPlanItem();</span>
+<span class="nc bnc" id="L579" title="All 2 branches missed.">        if (isEventListenerWithAvailableCondition(planItem)) {</span>
+<span class="nc" id="L580">            EventListener eventListener = (EventListener) planItem.getPlanItemDefinition();</span>
+<span class="nc bnc" id="L581" title="All 2 branches missed.">            if (StringUtils.isNotEmpty(eventListener.getAvailableConditionExpression())) {</span>
+<span class="nc" id="L582">                Expression expression = CommandContextUtil.getExpressionManager(commandContext).createExpression(eventListener.getAvailableConditionExpression());</span>
+<span class="nc" id="L583">                Object result = expression.getValue(planItemInstanceEntity);</span>
+
+<span class="nc bnc" id="L585" title="All 2 branches missed.">                if (LOGGER.isDebugEnabled()) {</span>
+<span class="nc" id="L586">                    LOGGER.debug(&quot;Evaluation of available condition {} results in '{}'&quot;, eventListener.getAvailableConditionExpression(), result);</span>
+                }
+
+<span class="nc bnc" id="L589" title="All 2 branches missed.">                if (result instanceof Boolean) {</span>
+<span class="nc" id="L590">                    return (Boolean) result;</span>
+                } else {
+<span class="nc" id="L592">                    return false;</span>
+                }
+            }
+        }
+<span class="nc" id="L596">        return true;</span>
+    }
+
+    /**
+     * Evaluate, if the sentries on-parts are all satisfied.
+     *
+     * @param satisfiedSentryOnPartIds the set of satisfied sentry on parts, which might also contain on-parts from other sentries on the same plan item.
+     * @param sentryOnParts the list of on-parts of the currently evaluated sentry
+     * @return true, if all on parts of the sentry are satisfied, false otherwise
+     */
+    protected boolean allOnPartsSatisfied(Set&lt;String&gt; satisfiedSentryOnPartIds, List&lt;SentryOnPart&gt; sentryOnParts) {
+<span class="nc bnc" id="L607" title="All 4 branches missed.">        if (satisfiedSentryOnPartIds.size() == 0 &amp;&amp; sentryOnParts.size() &gt; 0) {</span>
+<span class="nc" id="L608">            return false;</span>
+        }
+
+<span class="nc bnc" id="L611" title="All 2 branches missed.">        for (SentryOnPart sentryOnPart : sentryOnParts) {</span>
+<span class="nc bnc" id="L612" title="All 2 branches missed.">            if (!satisfiedSentryOnPartIds.contains(sentryOnPart.getId())) {</span>
+<span class="nc" id="L613">                return false;</span>
+            }
+<span class="nc" id="L615">        }</span>
+<span class="nc" id="L616">        return true;</span>
+    }
+
+    public boolean sentryOnPartMatchesCurrentLifeCycleEvent(EntityWithSentryPartInstances entityWithSentryPartInstances, SentryOnPart sentryOnPart) {
+
+        // Sentries match based on the planItemLifeCycleEvent comparing the transition and the plan item involved.
+        // When dealing with repetition of parent stages however, an additional check is needed: the plan item instance that is associated
+        // with the sentry and the plan item associated with the planItemLifeCycleEvent need to be part of the same scope (=stage).
+        // Otherwise, a sentry would fire for all repeated plan item instances.
+        //
+        // See CmmnEventRegistryConsumerTest#testEventListenerInRepeatableStage: without the code below all plan item instances
+        // would match and be terminated by the exit sentry.
+
+        // Setting it by default to true for backwards compatibility,
+        // as this check wasn't done earlier and might break old instances otherwise
+<span class="nc" id="L631">        boolean parentMatches = true;</span>
+<span class="nc bnc" id="L632" title="All 2 branches missed.">        if (hasSameParentInModel(entityWithSentryPartInstances, sentryOnPart)) {</span>
+<span class="nc" id="L633">            parentMatches = Objects.equals(planItemLifeCycleEvent.getPlanItemInstanceEntity().getStageInstanceId(),</span>
+<span class="nc" id="L634">                ((PlanItemInstanceEntity) entityWithSentryPartInstances).getStageInstanceId());</span>
+        }
+
+<span class="nc bnc" id="L637" title="All 2 branches missed.">        return parentMatches</span>
+<span class="nc bnc" id="L638" title="All 2 branches missed.">            &amp;&amp; planItemLifeCycleEvent.getPlanItem().getId().equals(sentryOnPart.getSourceRef())</span>
+<span class="nc bnc" id="L639" title="All 2 branches missed.">            &amp;&amp; planItemLifeCycleEvent.getTransition().equals(sentryOnPart.getStandardEvent());</span>
+    }
+
+    protected boolean hasSameParentInModel(EntityWithSentryPartInstances entityWithSentryPartInstances, SentryOnPart sentryOnPart) {
+<span class="nc bnc" id="L643" title="All 2 branches missed.">        if (entityWithSentryPartInstances instanceof PlanItemInstanceEntity) {</span>
+
+<span class="nc" id="L645">            PlanItem evaluatedPlanItem = ((PlanItemInstanceEntity) entityWithSentryPartInstances).getPlanItem();</span>
+<span class="nc bnc" id="L646" title="All 2 branches missed.">            if (evaluatedPlanItem != null) {</span>
+
+<span class="nc" id="L648">                Stage evaluatedPlanItemParenStage = evaluatedPlanItem.getParentStage();</span>
+
+<span class="nc" id="L650">                PlanItem sentrySourcePlanItem = sentryOnPart.getSource();</span>
+<span class="nc bnc" id="L651" title="All 2 branches missed.">                if (sentrySourcePlanItem != null) {</span>
+<span class="nc" id="L652">                    Stage sentrySourcePlanItemParenStage = sentrySourcePlanItem.getParentStage();</span>
+<span class="nc bnc" id="L653" title="All 4 branches missed.">                    if (sentrySourcePlanItemParenStage != null &amp;&amp; evaluatedPlanItemParenStage != null) {</span>
+<span class="nc" id="L654">                        return Objects.equals(sentrySourcePlanItemParenStage.getId(), evaluatedPlanItemParenStage.getId());</span>
+                    }
+                }
+
+            }
+
+        }
+<span class="nc" id="L661">        return false;</span>
+    }
+
+    protected List&lt;PlanItemInstanceEntity&gt; findChangedEventListenerInstances(PlanItemInstanceContainer planItemInstanceContainer, String state, boolean conditionValueToChange) {
+<span class="nc" id="L665">        return planItemInstanceContainer.getChildPlanItemInstances().stream()</span>
+<span class="nc bnc" id="L666" title="All 2 branches missed.">            .filter(planItemInstance -&gt; state.equals(planItemInstance.getState())</span>
+<span class="nc bnc" id="L667" title="All 2 branches missed.">                &amp;&amp; isEventListenerWithAvailableCondition(planItemInstance.getPlanItem())</span>
+<span class="nc bnc" id="L668" title="All 2 branches missed.">                &amp;&amp; conditionValueToChange == evaluateAvailableCondition(commandContext, planItemInstance))</span>
+<span class="nc" id="L669">            .collect(Collectors.toList());</span>
+    }
+
+    protected SentryPartInstanceEntity createSentryPartInstanceEntity(EntityWithSentryPartInstances entityWithSentryPartInstances, Sentry sentry,
+        SentryOnPart sentryOnPart, SentryIfPart sentryIfPart) {
+
+<span class="nc" id="L675">        SentryPartInstanceEntityManager sentryPartInstanceEntityManager = CommandContextUtil.getSentryPartInstanceEntityManager(commandContext);</span>
+<span class="nc" id="L676">        SentryPartInstanceEntity sentryPartInstanceEntity = sentryPartInstanceEntityManager.create();</span>
+<span class="nc" id="L677">        sentryPartInstanceEntity.setTimeStamp(CommandContextUtil.getCmmnEngineConfiguration(commandContext).getClock().getCurrentTime());</span>
+
+<span class="nc bnc" id="L679" title="All 2 branches missed.">        if (sentryOnPart != null) {</span>
+<span class="nc" id="L680">            sentryPartInstanceEntity.setOnPartId(sentryOnPart.getId());</span>
+<span class="nc bnc" id="L681" title="All 2 branches missed.">        } else if (sentryIfPart != null) {</span>
+<span class="nc" id="L682">            sentryPartInstanceEntity.setIfPartId(sentryIfPart.getId());</span>
+        }
+
+<span class="nc bnc" id="L685" title="All 2 branches missed.">        if (entityWithSentryPartInstances instanceof CaseInstanceEntity) {</span>
+<span class="nc" id="L686">            sentryPartInstanceEntity.setCaseInstanceId(((CaseInstanceEntity) entityWithSentryPartInstances).getId());</span>
+<span class="nc" id="L687">            sentryPartInstanceEntity.setCaseDefinitionId(((CaseInstanceEntity) entityWithSentryPartInstances).getCaseDefinitionId());</span>
+<span class="nc bnc" id="L688" title="All 2 branches missed.">        } else if (entityWithSentryPartInstances instanceof PlanItemInstanceEntity) {</span>
+<span class="nc" id="L689">            PlanItemInstanceEntity planItemInstanceEntity = (PlanItemInstanceEntity) entityWithSentryPartInstances;</span>
+<span class="nc" id="L690">            sentryPartInstanceEntity.setCaseInstanceId(planItemInstanceEntity.getCaseInstanceId());</span>
+<span class="nc" id="L691">            sentryPartInstanceEntity.setCaseDefinitionId(planItemInstanceEntity.getCaseDefinitionId());</span>
+<span class="nc" id="L692">            sentryPartInstanceEntity.setPlanItemInstanceId(planItemInstanceEntity.getId());</span>
+
+            // Update relationship count
+<span class="nc bnc" id="L695" title="All 4 branches missed.">            if (sentry.isDefaultTriggerMode() &amp;&amp; entityWithSentryPartInstances instanceof CountingPlanItemInstanceEntity) {</span>
+<span class="nc" id="L696">                CountingPlanItemInstanceEntity countingPlanItemInstanceEntity = (CountingPlanItemInstanceEntity) planItemInstanceEntity;</span>
+<span class="nc" id="L697">                countingPlanItemInstanceEntity.setSentryPartInstanceCount(countingPlanItemInstanceEntity.getSentryPartInstanceCount() + 1);</span>
+            }
+        }
+
+        // In the default triggerMode satisfied parts are remembered for subsequent evaluation cycles.
+        // In the onEvent triggerMode, they are stored for the duration of the transaction (which is the same as one evaluation cycle) but not inserted.
+<span class="nc bnc" id="L703" title="All 2 branches missed.">        if (sentry.isDefaultTriggerMode()) {</span>
+<span class="nc" id="L704">            sentryPartInstanceEntityManager.insert(sentryPartInstanceEntity);</span>
+        }
+
+<span class="nc" id="L707">        entityWithSentryPartInstances.getSatisfiedSentryPartInstances().add(sentryPartInstanceEntity);</span>
+<span class="nc" id="L708">        return sentryPartInstanceEntity;</span>
+    }
+
+    protected boolean evaluateSentryIfPart(EntityWithSentryPartInstances entityWithSentryPartInstances, Sentry sentry, VariableContainer variableContainer) {
+<span class="nc" id="L712">        CmmnEngineConfiguration cmmnEngineConfiguration = CommandContextUtil.getCmmnEngineConfiguration(commandContext);</span>
+        try { 
+<span class="nc" id="L714">            Expression conditionExpression = cmmnEngineConfiguration.getExpressionManager().createExpression(sentry.getSentryIfPart().getCondition());</span>
+<span class="nc" id="L715">            Object result = conditionExpression.getValue(variableContainer);</span>
+
+<span class="nc bnc" id="L717" title="All 2 branches missed.">            if (LOGGER.isDebugEnabled()) {</span>
+<span class="nc" id="L718">                LOGGER.debug(&quot;Evaluation of sentry if condition {} for {} results in '{}'&quot;, sentry.getSentryIfPart().getCondition(), entityWithSentryPartInstances, result);</span>
+            }
+
+<span class="nc bnc" id="L721" title="All 2 branches missed.">            if (result instanceof Boolean) {</span>
+<span class="nc" id="L722">                return (Boolean) result;</span>
+            }
+<span class="nc" id="L724">        } catch (RuntimeException e) {</span>
+<span class="nc bnc" id="L725" title="All 2 branches missed.">            if (cmmnEngineConfiguration.isLoggingSessionEnabled()) {</span>
+<span class="nc" id="L726">                CmmnLoggingSessionUtil.addEvaluateSentryFailedLoggingData(sentry.getSentryIfPart(), e, </span>
+<span class="nc" id="L727">                        entityWithSentryPartInstances, cmmnEngineConfiguration.getObjectMapper());</span>
+            }
+
+<span class="nc" id="L730">            throw e;</span>
+<span class="nc" id="L731">        }</span>
+<span class="nc" id="L732">        return false;</span>
+    }
+
+    protected Criterion evaluateDependentPlanItemEntryCriteria(PlanItem entryDependentPlanItem) {
+<span class="nc" id="L736">        List&lt;Criterion&gt; entryCriteria = entryDependentPlanItem.getEntryCriteria();</span>
+<span class="nc bnc" id="L737" title="All 2 branches missed.">        if (!entryCriteria.isEmpty()) {</span>
+
+            // According to the spec, only the sentries that actually reference the planitem of which the event happens should be evaluated
+<span class="nc" id="L740">            List&lt;Criterion&gt; matchingCriteria = entryCriteria.stream()</span>
+<span class="nc" id="L741">                .filter(criterion -&gt; CriterionUtil</span>
+<span class="nc" id="L742">                    .criterionHasOnPartDependingOnPlanItem(criterion, planItemLifeCycleEvent.getPlanItem(), planItemLifeCycleEvent.getTransition()))</span>
+<span class="nc" id="L743">                .collect(Collectors.toList());</span>
+
+<span class="nc bnc" id="L745" title="All 2 branches missed.">            if (!matchingCriteria.isEmpty()) {</span>
+<span class="nc" id="L746">                return evaluateCriteria(caseInstanceEntity, matchingCriteria);// Resolved against case entity as there's no plan item instance yet</span>
+            }
+        }
+
+<span class="nc" id="L750">        return null;</span>
+    }
+
+    protected boolean planItemsShareDirectParentStage(PlanItem planItemOne, PlanItem planItemTwo) {
+<span class="nc" id="L754">        Stage parentStage = planItemOne.getParentStage();</span>
+<span class="nc bnc" id="L755" title="All 2 branches missed.">        return parentStage.findPlanItemInPlanFragmentOrDownwards(planItemTwo.getId()) != null;</span>
+    }
+
+    public PlanItemLifeCycleEvent getPlanItemLifeCycleEvent() {
+<span class="nc" id="L759">        return planItemLifeCycleEvent;</span>
+    }
+
+    public void setPlanItemLifeCycleEvent(PlanItemLifeCycleEvent planItemLifeCycleEvent) {
+<span class="nc" id="L763">        this.planItemLifeCycleEvent = planItemLifeCycleEvent;</span>
+<span class="nc" id="L764">    }</span>
+
+
+    public boolean isEvaluateCaseInstanceCompleted() {
+<span class="nc" id="L768">        return evaluateStagesAndCaseInstanceCompletion;</span>
+    }
+
+    public void setEvaluateStagesAndCaseInstanceCompletion(boolean evaluateStagesAndCaseInstanceCompletion) {
+<span class="nc" id="L772">        this.evaluateStagesAndCaseInstanceCompletion = evaluateStagesAndCaseInstanceCompletion;</span>
+<span class="nc" id="L773">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,567 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ProcessInstanceHelper.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.util</a> &gt; <span class="el_source">ProcessInstanceHelper.java</span></div><h1>ProcessInstanceHelper.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.impl.util;
+
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.bpmn.constants.BpmnXMLConstants;
+import org.flowable.bpmn.model.BpmnModel;
+import org.flowable.bpmn.model.EventDefinition;
+import org.flowable.bpmn.model.EventSubProcess;
+import org.flowable.bpmn.model.ExtensionElement;
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.FlowElementsContainer;
+import org.flowable.bpmn.model.MessageEventDefinition;
+import org.flowable.bpmn.model.Process;
+import org.flowable.bpmn.model.Signal;
+import org.flowable.bpmn.model.SignalEventDefinition;
+import org.flowable.bpmn.model.StartEvent;
+import org.flowable.bpmn.model.TimerEventDefinition;
+import org.flowable.bpmn.model.ValuedDataObject;
+import org.flowable.bpmn.model.VariableListenerEventDefinition;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.delegate.event.FlowableEngineEventType;
+import org.flowable.common.engine.api.delegate.event.FlowableEventDispatcher;
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.impl.callback.CallbackData;
+import org.flowable.common.engine.impl.callback.RuntimeInstanceStateChangeCallback;
+import org.flowable.common.engine.impl.context.Context;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.common.engine.impl.logging.LoggingSessionConstants;
+import org.flowable.common.engine.impl.util.CollectionUtil;
+import org.flowable.engine.compatibility.Flowable5CompatibilityHandler;
+import org.flowable.engine.delegate.event.impl.FlowableEventBuilder;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.event.EventDefinitionExpressionUtil;
+import org.flowable.engine.impl.jobexecutor.TimerEventHandler;
+import org.flowable.engine.impl.jobexecutor.TriggerTimerEventJobHandler;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntity;
+import org.flowable.engine.impl.runtime.callback.ProcessInstanceState;
+import org.flowable.engine.interceptor.StartProcessInstanceAfterContext;
+import org.flowable.engine.interceptor.StartProcessInstanceBeforeContext;
+import org.flowable.engine.repository.ProcessDefinition;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.eventregistry.api.runtime.EventInstance;
+import org.flowable.eventregistry.impl.constant.EventConstants;
+import org.flowable.eventsubscription.service.impl.persistence.entity.EventSubscriptionEntity;
+import org.flowable.eventsubscription.service.impl.persistence.entity.MessageEventSubscriptionEntity;
+import org.flowable.eventsubscription.service.impl.persistence.entity.SignalEventSubscriptionEntity;
+import org.flowable.identitylink.api.IdentityLinkType;
+import org.flowable.job.service.impl.persistence.entity.TimerJobEntity;
+
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+/**
+ * @author Tijs Rademakers
+ * @author Joram Barrez
+ */
+<span class="nc" id="L74">public class ProcessInstanceHelper {</span>
+
+    public ProcessInstance createProcessInstance(ProcessDefinition processDefinition, String businessKey, String businessStatus, String processInstanceName,
+            Map&lt;String, Object&gt; variables, Map&lt;String, Object&gt; transientVariables, String ownerId, String assigneeId) {
+
+<span class="nc" id="L79">        return createProcessInstance(processDefinition, businessKey, businessStatus, processInstanceName, null, null, null,</span>
+                variables, transientVariables, null, null, null, null, ownerId, assigneeId, null, false);
+    }
+
+    public ProcessInstance createProcessInstance(ProcessDefinition processDefinition, String businessKey, String businessStatus, String processInstanceName,
+            String startEventId, String overrideDefinitionTenantId, String predefinedProcessInstanceId, Map&lt;String, Object&gt; variables, Map&lt;String, Object&gt; transientVariables,
+            String callbackId, String callbackType, String referenceId, String referenceType, String ownerId, String assigneeId,
+            String stageInstanceId, boolean startProcessInstance) {
+
+<span class="nc" id="L88">        CommandContext commandContext = Context.getCommandContext();</span>
+<span class="nc bnc" id="L89" title="All 2 branches missed.">        if (Flowable5Util.isFlowable5ProcessDefinition(processDefinition, commandContext)) {</span>
+<span class="nc" id="L90">            Flowable5CompatibilityHandler compatibilityHandler = Flowable5Util.getFlowable5CompatibilityHandler();</span>
+<span class="nc" id="L91">            return compatibilityHandler.startProcessInstance(processDefinition.getKey(), processDefinition.getId(),</span>
+<span class="nc" id="L92">                    variables, transientVariables, businessKey, processDefinition.getTenantId(), processInstanceName);</span>
+        }
+
+        // Do not start process a process instance if the process definition is suspended
+<span class="nc bnc" id="L96" title="All 2 branches missed.">        if (ProcessDefinitionUtil.isProcessDefinitionSuspended(processDefinition.getId())) {</span>
+<span class="nc" id="L97">            throw new FlowableException(&quot;Cannot start process instance. Process definition &quot; + processDefinition.getName() + &quot; (id = &quot; + processDefinition.getId() + &quot;) is suspended&quot;);</span>
+        }
+
+        // Get model from cache
+<span class="nc" id="L101">        Process process = ProcessDefinitionUtil.getProcess(processDefinition.getId());</span>
+<span class="nc bnc" id="L102" title="All 2 branches missed.">        if (process == null) {</span>
+<span class="nc" id="L103">            throw new FlowableException(&quot;Cannot start process instance. Process model &quot; + processDefinition.getName() + &quot; (id = &quot; + processDefinition.getId() + &quot;) could not be found&quot;);</span>
+        }
+        
+<span class="nc" id="L106">        FlowElement initialFlowElement = null;</span>
+<span class="nc bnc" id="L107" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(startEventId)) {</span>
+<span class="nc" id="L108">            FlowElement startEventFlowElement = process.getFlowElement(startEventId);</span>
+<span class="nc bnc" id="L109" title="All 2 branches missed.">            if (startEventFlowElement == null) {</span>
+<span class="nc" id="L110">                throw new FlowableException(&quot;No start element found with id &quot; + startEventId + &quot; for process definition &quot; + processDefinition.getId());</span>
+            }
+            
+<span class="nc bnc" id="L113" title="All 2 branches missed.">            if (!(startEventFlowElement instanceof StartEvent)) {</span>
+<span class="nc" id="L114">                throw new FlowableException(&quot;Provide start event id is not a start event &quot; + startEventId + &quot; for process definition &quot; + processDefinition.getId());</span>
+            }
+            
+<span class="nc" id="L117">            initialFlowElement = startEventFlowElement;</span>
+            
+<span class="nc" id="L119">        } else {</span>
+<span class="nc" id="L120">            initialFlowElement = process.getInitialFlowElement();</span>
+        }
+        
+<span class="nc bnc" id="L123" title="All 2 branches missed.">        if (initialFlowElement == null) {</span>
+<span class="nc" id="L124">            throw new FlowableException(&quot;No start element found for process definition &quot; + processDefinition.getId());</span>
+        }
+
+<span class="nc" id="L127">        return createAndStartProcessInstanceWithInitialFlowElement(processDefinition, businessKey, businessStatus, processInstanceName,</span>
+                overrideDefinitionTenantId,
+                predefinedProcessInstanceId, initialFlowElement, process, variables, transientVariables,
+                callbackId, callbackType, referenceId, referenceType, ownerId, assigneeId, stageInstanceId, startProcessInstance);
+    }
+
+    public ProcessInstance createAndStartProcessInstanceByMessage(ProcessDefinition processDefinition, String messageName, String businessKey,
+            String businessStatus, Map&lt;String, Object&gt; variables, Map&lt;String, Object&gt; transientVariables, String callbackId, String callbackType,
+            String referenceId, String referenceType, String ownerId, String assigneeId) {
+
+<span class="nc" id="L137">        CommandContext commandContext = Context.getCommandContext();</span>
+<span class="nc bnc" id="L138" title="All 2 branches missed.">        if (Flowable5Util.isFlowable5ProcessDefinition(processDefinition, commandContext)) {</span>
+<span class="nc" id="L139">            return CommandContextUtil.getProcessEngineConfiguration(commandContext).getFlowable5CompatibilityHandler().startProcessInstanceByMessage(</span>
+<span class="nc" id="L140">                    messageName, variables, transientVariables, businessKey, processDefinition.getTenantId());</span>
+        }
+
+        // Do not start process a process instance if the process definition is suspended
+<span class="nc bnc" id="L144" title="All 2 branches missed.">        if (ProcessDefinitionUtil.isProcessDefinitionSuspended(processDefinition.getId())) {</span>
+<span class="nc" id="L145">            throw new FlowableException(&quot;Cannot start process instance. Process definition &quot; + processDefinition.getName() + &quot; (id = &quot; + processDefinition.getId() + &quot;) is suspended&quot;);</span>
+        }
+
+        // Get model from cache
+<span class="nc" id="L149">        Process process = ProcessDefinitionUtil.getProcess(processDefinition.getId());</span>
+<span class="nc bnc" id="L150" title="All 2 branches missed.">        if (process == null) {</span>
+<span class="nc" id="L151">            throw new FlowableException(&quot;Cannot start process instance. Process model &quot; + processDefinition.getName() + &quot; (id = &quot; + processDefinition.getId() + &quot;) could not be found&quot;);</span>
+        }
+
+<span class="nc" id="L154">        FlowElement initialFlowElement = null;</span>
+<span class="nc bnc" id="L155" title="All 2 branches missed.">        for (FlowElement flowElement : process.getFlowElements()) {</span>
+<span class="nc bnc" id="L156" title="All 2 branches missed.">            if (flowElement instanceof StartEvent) {</span>
+<span class="nc" id="L157">                StartEvent startEvent = (StartEvent) flowElement;</span>
+<span class="nc bnc" id="L158" title="All 4 branches missed.">                if (CollectionUtil.isNotEmpty(startEvent.getEventDefinitions()) &amp;&amp; startEvent.getEventDefinitions().get(0) instanceof MessageEventDefinition) {</span>
+
+<span class="nc" id="L160">                    MessageEventDefinition messageEventDefinition = (MessageEventDefinition) startEvent.getEventDefinitions().get(0);</span>
+<span class="nc" id="L161">                    String actualMessageName = EventDefinitionExpressionUtil.determineMessageName(commandContext, messageEventDefinition, null);</span>
+<span class="nc bnc" id="L162" title="All 2 branches missed.">                    if (Objects.equals(actualMessageName, messageName)) {</span>
+<span class="nc" id="L163">                        initialFlowElement = flowElement;</span>
+<span class="nc" id="L164">                        break;</span>
+                    }
+                }
+            }
+<span class="nc" id="L168">        }</span>
+<span class="nc bnc" id="L169" title="All 2 branches missed.">        if (initialFlowElement == null) {</span>
+<span class="nc" id="L170">            throw new FlowableException(&quot;No message start event found for process definition &quot; + processDefinition.getId() + &quot; and message name &quot; + messageName);</span>
+        }
+
+<span class="nc" id="L173">        return createAndStartProcessInstanceWithInitialFlowElement(processDefinition, businessKey, businessStatus, null, null, null, initialFlowElement,</span>
+                process, variables, transientVariables, callbackId, callbackType, referenceId, referenceType, ownerId, assigneeId, null, true);
+    }
+    
+    public ProcessInstance createAndStartProcessInstanceWithInitialFlowElement(ProcessDefinition processDefinition,
+            String businessKey, String businessStatus, String processInstanceName, FlowElement initialFlowElement, Process process,
+            Map&lt;String, Object&gt; variables,
+            Map&lt;String, Object&gt; transientVariables, String ownerId, String assigneeId, boolean startProcessInstance) {
+        
+<span class="nc" id="L182">        return createAndStartProcessInstanceWithInitialFlowElement(processDefinition, businessKey, businessStatus, processInstanceName, null, null,</span>
+                initialFlowElement, process, variables, transientVariables, null, null, null, null,
+                ownerId, assigneeId, null, startProcessInstance);
+    }
+
+    public ProcessInstance createAndStartProcessInstanceWithInitialFlowElement(ProcessDefinition processDefinition,
+            String businessKey, String businessStatus, String processInstanceName,
+            String overrideDefinitionTenantId, String predefinedProcessInstanceId,
+            FlowElement initialFlowElement, Process process,
+            Map&lt;String, Object&gt; variables, Map&lt;String, Object&gt; transientVariables,
+            String callbackId, String callbackType, String referenceId, String referenceType, String ownerId, String assigneeId,
+            String stageInstanceId, boolean startProcessInstance) {
+
+<span class="nc" id="L195">        CommandContext commandContext = Context.getCommandContext();</span>
+
+        // Create the process instance
+<span class="nc" id="L198">        String initiatorVariableName = null;</span>
+<span class="nc bnc" id="L199" title="All 2 branches missed.">        if (initialFlowElement instanceof StartEvent) {</span>
+<span class="nc" id="L200">            initiatorVariableName = ((StartEvent) initialFlowElement).getInitiator();</span>
+        }
+        
+        String tenantId;
+<span class="nc bnc" id="L204" title="All 2 branches missed.">        if (overrideDefinitionTenantId != null) {</span>
+<span class="nc" id="L205">            tenantId = overrideDefinitionTenantId;</span>
+        } else {
+<span class="nc" id="L207">            tenantId = processDefinition.getTenantId();</span>
+        }
+        
+<span class="nc" id="L210">        StartProcessInstanceBeforeContext startInstanceBeforeContext = new StartProcessInstanceBeforeContext(businessKey, businessStatus, processInstanceName,</span>
+                callbackId, callbackType, referenceId, referenceType,
+<span class="nc" id="L212">                variables, transientVariables, tenantId, ownerId, assigneeId, initiatorVariableName, initialFlowElement.getId(),</span>
+                initialFlowElement, process, processDefinition, overrideDefinitionTenantId, predefinedProcessInstanceId);
+        
+<span class="nc" id="L215">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc bnc" id="L216" title="All 2 branches missed.">        if (processEngineConfiguration.getStartProcessInstanceInterceptor() != null) {</span>
+<span class="nc" id="L217">            processEngineConfiguration.getStartProcessInstanceInterceptor().beforeStartProcessInstance(startInstanceBeforeContext);</span>
+        }
+
+<span class="nc" id="L220">        ExecutionEntity processInstance = processEngineConfiguration.getExecutionEntityManager()</span>
+<span class="nc" id="L221">                .createProcessInstanceExecution(startInstanceBeforeContext.getProcessDefinition(), startInstanceBeforeContext.getPredefinedProcessInstanceId(),</span>
+<span class="nc" id="L222">                        startInstanceBeforeContext.getBusinessKey(), startInstanceBeforeContext.getBusinessStatus(),</span>
+<span class="nc" id="L223">                        startInstanceBeforeContext.getProcessInstanceName(), startInstanceBeforeContext.getCallbackId(),</span>
+<span class="nc" id="L224">                        startInstanceBeforeContext.getCallbackType(), startInstanceBeforeContext.getReferenceId(),</span>
+<span class="nc" id="L225">                        startInstanceBeforeContext.getReferenceType(), stageInstanceId, startInstanceBeforeContext.getTenantId(),</span>
+<span class="nc" id="L226">                        startInstanceBeforeContext.getInitiatorVariableName(), startInstanceBeforeContext.getInitialActivityId());</span>
+
+<span class="nc" id="L228">        processEngineConfiguration.getHistoryManager().recordProcessInstanceStart(processInstance);</span>
+        
+<span class="nc bnc" id="L230" title="All 2 branches missed.">        if (processEngineConfiguration.isLoggingSessionEnabled()) {</span>
+<span class="nc" id="L231">            BpmnLoggingSessionUtil.addLoggingData(LoggingSessionConstants.TYPE_PROCESS_STARTED, &quot;Started process instance with id &quot; + processInstance.getId(), processInstance);</span>
+        }
+
+        // add owner and assignee identity links, if set
+<span class="nc bnc" id="L235" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(startInstanceBeforeContext.getOwnerId())) {</span>
+<span class="nc" id="L236">            IdentityLinkUtil.createProcessInstanceIdentityLink(processInstance, ownerId, null, IdentityLinkType.OWNER);</span>
+        }
+<span class="nc bnc" id="L238" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(startInstanceBeforeContext.getAssigneeId())) {</span>
+<span class="nc" id="L239">            IdentityLinkUtil.createProcessInstanceIdentityLink(processInstance, assigneeId, null, IdentityLinkType.ASSIGNEE);</span>
+        }
+
+<span class="nc" id="L242">        FlowableEventDispatcher eventDispatcher = processEngineConfiguration.getEventDispatcher();</span>
+<span class="nc bnc" id="L243" title="All 4 branches missed.">        boolean eventDispatcherEnabled = eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled();</span>
+<span class="nc bnc" id="L244" title="All 2 branches missed.">        if (eventDispatcherEnabled) {</span>
+<span class="nc" id="L245">            eventDispatcher.dispatchEvent(FlowableEventBuilder.createEntityEvent(FlowableEngineEventType.PROCESS_CREATED, processInstance),</span>
+<span class="nc" id="L246">                    processEngineConfiguration.getEngineCfgKey());</span>
+        }
+
+<span class="nc" id="L249">        processInstance.setVariables(processDataObjects(process.getDataObjects()));</span>
+
+        // Set the variables passed into the start command
+<span class="nc bnc" id="L252" title="All 2 branches missed.">        if (startInstanceBeforeContext.getVariables() != null) {</span>
+<span class="nc bnc" id="L253" title="All 2 branches missed.">            for (String varName : startInstanceBeforeContext.getVariables().keySet()) {</span>
+<span class="nc" id="L254">                processInstance.setVariable(varName, startInstanceBeforeContext.getVariables().get(varName));</span>
+<span class="nc" id="L255">            }</span>
+        }
+        
+<span class="nc bnc" id="L258" title="All 2 branches missed.">        if (startInstanceBeforeContext.getTransientVariables() != null) {</span>
+            
+<span class="nc" id="L260">            Object eventInstance = startInstanceBeforeContext.getTransientVariables().get(EventConstants.EVENT_INSTANCE);</span>
+<span class="nc bnc" id="L261" title="All 2 branches missed.">            if (eventInstance instanceof EventInstance) {</span>
+<span class="nc" id="L262">                EventInstanceBpmnUtil.handleEventInstanceOutParameters(processInstance, startInstanceBeforeContext.getInitialFlowElement(), </span>
+                                (EventInstance) eventInstance);
+            }
+            
+<span class="nc bnc" id="L266" title="All 2 branches missed.">            for (String varName : startInstanceBeforeContext.getTransientVariables().keySet()) {</span>
+<span class="nc" id="L267">                processInstance.setTransientVariable(varName, startInstanceBeforeContext.getTransientVariables().get(varName));</span>
+<span class="nc" id="L268">            }</span>
+        }
+        
+        // Fire events
+<span class="nc bnc" id="L272" title="All 2 branches missed.">        if (eventDispatcherEnabled) {</span>
+<span class="nc" id="L273">            eventDispatcher.dispatchEvent(FlowableEventBuilder.createEntityWithVariablesEvent(FlowableEngineEventType.ENTITY_INITIALIZED, </span>
+<span class="nc" id="L274">                    processInstance, startInstanceBeforeContext.getVariables(), false), processEngineConfiguration.getEngineCfgKey());</span>
+        }
+
+        // Create the first execution that will visit all the process definition elements
+<span class="nc" id="L278">        ExecutionEntity execution = processEngineConfiguration.getExecutionEntityManager().createChildExecution(processInstance);</span>
+<span class="nc" id="L279">        execution.setCurrentFlowElement(startInstanceBeforeContext.getInitialFlowElement());</span>
+
+<span class="nc" id="L281">        processEngineConfiguration.getActivityInstanceEntityManager().recordActivityStart(execution);</span>
+
+<span class="nc bnc" id="L283" title="All 2 branches missed.">        if (startProcessInstance) {</span>
+<span class="nc" id="L284">            startProcessInstance(processInstance, commandContext, startInstanceBeforeContext.getVariables());</span>
+        }
+        
+<span class="nc bnc" id="L287" title="All 2 branches missed.">        if (callbackId != null) {</span>
+<span class="nc" id="L288">            callCaseInstanceStateChangeCallbacks(commandContext, processInstance, null, ProcessInstanceState.RUNNING);</span>
+        }
+        
+<span class="nc bnc" id="L291" title="All 2 branches missed.">        if (processEngineConfiguration.getStartProcessInstanceInterceptor() != null) {</span>
+<span class="nc" id="L292">            StartProcessInstanceAfterContext startInstanceAfterContext = new StartProcessInstanceAfterContext(processInstance, execution, </span>
+<span class="nc" id="L293">                            startInstanceBeforeContext.getVariables(), startInstanceBeforeContext.getTransientVariables(), </span>
+<span class="nc" id="L294">                            startInstanceBeforeContext.getInitialFlowElement(), startInstanceBeforeContext.getProcess(), </span>
+<span class="nc" id="L295">                            startInstanceBeforeContext.getProcessDefinition());</span>
+            
+<span class="nc" id="L297">            processEngineConfiguration.getStartProcessInstanceInterceptor().afterStartProcessInstance(startInstanceAfterContext);</span>
+        }
+
+<span class="nc" id="L300">        return processInstance;</span>
+    }
+
+    public void startProcessInstance(ExecutionEntity processInstance, CommandContext commandContext, Map&lt;String, Object&gt; variables) {
+
+<span class="nc" id="L305">        Process process = ProcessDefinitionUtil.getProcess(processInstance.getProcessDefinitionId());</span>
+        
+<span class="nc" id="L307">        processAvailableEventSubProcesses(processInstance, process, commandContext);</span>
+
+<span class="nc" id="L309">        ExecutionEntity execution = processInstance.getExecutions().get(0); // There will always be one child execution created</span>
+<span class="nc" id="L310">        CommandContextUtil.getAgenda(commandContext).planContinueProcessOperation(execution);</span>
+
+<span class="nc" id="L312">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc" id="L313">        FlowableEventDispatcher eventDispatcher = processEngineConfiguration.getEventDispatcher();</span>
+<span class="nc bnc" id="L314" title="All 4 branches missed.">        if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L315">            eventDispatcher.dispatchEvent(FlowableEventBuilder.createProcessStartedEvent(execution, variables, false),</span>
+<span class="nc" id="L316">                    processEngineConfiguration.getEngineCfgKey());</span>
+        }
+<span class="nc" id="L318">    }</span>
+    
+    public void processAvailableEventSubProcesses(ExecutionEntity parentExecution, FlowElementsContainer parentContainer, CommandContext commandContext) {
+
+<span class="nc bnc" id="L322" title="All 2 branches missed.">        for (FlowElement flowElement : parentContainer.getFlowElements()) {</span>
+<span class="nc bnc" id="L323" title="All 2 branches missed.">            if (!(flowElement instanceof EventSubProcess)) {</span>
+<span class="nc" id="L324">                continue;</span>
+            }
+<span class="nc" id="L326">            processEventSubProcess(parentExecution, (EventSubProcess) flowElement, commandContext);</span>
+<span class="nc" id="L327">        }</span>
+<span class="nc" id="L328">    }</span>
+
+    public void processEventSubProcess(ExecutionEntity parentExecution, EventSubProcess eventSubProcess, CommandContext commandContext) {
+<span class="nc" id="L331">        List&lt;EventSubscriptionEntity&gt; messageEventSubscriptions = new LinkedList&lt;&gt;();</span>
+<span class="nc" id="L332">        List&lt;EventSubscriptionEntity&gt; signalEventSubscriptions = new LinkedList&lt;&gt;();</span>
+
+<span class="nc" id="L334">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc bnc" id="L335" title="All 2 branches missed.">        for (FlowElement subElement : eventSubProcess.getFlowElements()) {</span>
+<span class="nc bnc" id="L336" title="All 2 branches missed.">            if (!(subElement instanceof StartEvent)) {</span>
+<span class="nc" id="L337">                continue;</span>
+            }
+            
+<span class="nc" id="L340">            processEventSubProcessStartEvent(subElement, parentExecution, messageEventSubscriptions, </span>
+                    signalEventSubscriptions, processEngineConfiguration, commandContext);
+<span class="nc" id="L342">        }</span>
+        
+<span class="nc" id="L344">        FlowableEventDispatcher eventDispatcher = processEngineConfiguration.getEventDispatcher();</span>
+<span class="nc bnc" id="L345" title="All 4 branches missed.">        if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc bnc" id="L346" title="All 2 branches missed.">            for (EventSubscriptionEntity messageEventSubscription : messageEventSubscriptions) {</span>
+<span class="nc" id="L347">                processEngineConfiguration.getEventDispatcher().dispatchEvent(FlowableEventBuilder.createMessageEvent(FlowableEngineEventType.ACTIVITY_MESSAGE_WAITING, messageEventSubscription.getActivityId(),</span>
+<span class="nc" id="L348">                        messageEventSubscription.getEventName(), null, messageEventSubscription.getExecutionId(),</span>
+<span class="nc" id="L349">                        messageEventSubscription.getProcessInstanceId(), messageEventSubscription.getProcessDefinitionId()),</span>
+<span class="nc" id="L350">                        processEngineConfiguration.getEngineCfgKey());</span>
+<span class="nc" id="L351">            }</span>
+
+<span class="nc bnc" id="L353" title="All 2 branches missed.">            for (EventSubscriptionEntity signalEventSubscription : signalEventSubscriptions) {</span>
+<span class="nc" id="L354">                processEngineConfiguration.getEventDispatcher().dispatchEvent(FlowableEventBuilder.createSignalEvent(FlowableEngineEventType.ACTIVITY_SIGNAL_WAITING, signalEventSubscription.getActivityId(),</span>
+<span class="nc" id="L355">                        signalEventSubscription.getEventName(), null, signalEventSubscription.getExecutionId(),</span>
+<span class="nc" id="L356">                        signalEventSubscription.getProcessInstanceId(), signalEventSubscription.getProcessDefinitionId()),</span>
+<span class="nc" id="L357">                        processEngineConfiguration.getEngineCfgKey());</span>
+<span class="nc" id="L358">            }</span>
+        }
+<span class="nc" id="L360">    }</span>
+    
+    public void processEventSubProcessStartEvent(FlowElement subElement, ExecutionEntity parentExecution, 
+            ProcessEngineConfigurationImpl processEngineConfiguration, CommandContext commandContext) {
+    
+<span class="nc" id="L365">        processEventSubProcessStartEvent(subElement, parentExecution, null, null, processEngineConfiguration, commandContext);</span>
+<span class="nc" id="L366">    }</span>
+    
+    public void processEventSubProcessStartEvent(FlowElement subElement, ExecutionEntity parentExecution, 
+            List&lt;EventSubscriptionEntity&gt; messageEventSubscriptions, List&lt;EventSubscriptionEntity&gt; signalEventSubscriptions,
+            ProcessEngineConfigurationImpl processEngineConfiguration, CommandContext commandContext) {
+        
+<span class="nc" id="L372">        StartEvent startEvent = (StartEvent) subElement;</span>
+<span class="nc bnc" id="L373" title="All 2 branches missed.">        if (CollectionUtil.isEmpty(startEvent.getEventDefinitions())) {</span>
+<span class="nc" id="L374">            List&lt;ExtensionElement&gt; eventTypeElements = startEvent.getExtensionElements().get(&quot;eventType&quot;);</span>
+<span class="nc bnc" id="L375" title="All 4 branches missed.">            if (eventTypeElements != null &amp;&amp; !eventTypeElements.isEmpty()) {</span>
+<span class="nc" id="L376">                String eventType = eventTypeElements.get(0).getElementText();</span>
+<span class="nc bnc" id="L377" title="All 2 branches missed.">                if (StringUtils.isNotEmpty(eventType)) {</span>
+<span class="nc" id="L378">                    ExecutionEntity eventRegistryExecution = processEngineConfiguration.getExecutionEntityManager().createChildExecution(parentExecution);</span>
+<span class="nc" id="L379">                    eventRegistryExecution.setCurrentFlowElement(startEvent);</span>
+<span class="nc" id="L380">                    eventRegistryExecution.setEventScope(true);</span>
+<span class="nc" id="L381">                    eventRegistryExecution.setActive(false);</span>
+
+<span class="nc" id="L383">                    EventSubscriptionEntity eventSubscription = (EventSubscriptionEntity) processEngineConfiguration.getEventSubscriptionServiceConfiguration()</span>
+<span class="nc" id="L384">                            .getEventSubscriptionService().createEventSubscriptionBuilder()</span>
+<span class="nc" id="L385">                                    .eventType(eventType)</span>
+<span class="nc" id="L386">                                    .executionId(eventRegistryExecution.getId())</span>
+<span class="nc" id="L387">                                    .processInstanceId(eventRegistryExecution.getProcessInstanceId())</span>
+<span class="nc" id="L388">                                    .activityId(eventRegistryExecution.getCurrentActivityId())</span>
+<span class="nc" id="L389">                                    .processDefinitionId(eventRegistryExecution.getProcessDefinitionId())</span>
+<span class="nc" id="L390">                                    .scopeType(ScopeTypes.BPMN)</span>
+<span class="nc" id="L391">                                    .tenantId(eventRegistryExecution.getTenantId())</span>
+<span class="nc" id="L392">                                    .configuration(CorrelationUtil.getCorrelationKey(BpmnXMLConstants.ELEMENT_EVENT_CORRELATION_PARAMETER, commandContext, eventRegistryExecution))</span>
+<span class="nc" id="L393">                                    .create();</span>
+                    
+<span class="nc" id="L395">                    CountingEntityUtil.handleInsertEventSubscriptionEntityCount(eventSubscription);</span>
+                }
+            }
+            
+<span class="nc" id="L399">            return;</span>
+        }
+
+<span class="nc" id="L402">        EventDefinition eventDefinition = startEvent.getEventDefinitions().get(0);</span>
+<span class="nc bnc" id="L403" title="All 2 branches missed.">        if (eventDefinition instanceof MessageEventDefinition) {</span>
+<span class="nc" id="L404">            handleMessageEventSubscription(eventDefinition, startEvent, parentExecution, messageEventSubscriptions, processEngineConfiguration, commandContext);</span>
+
+<span class="nc bnc" id="L406" title="All 2 branches missed.">        } else if (eventDefinition instanceof SignalEventDefinition) {</span>
+<span class="nc" id="L407">            handleSignalEventSubscription(eventDefinition, startEvent, parentExecution, signalEventSubscriptions, processEngineConfiguration, commandContext);</span>
+
+<span class="nc bnc" id="L409" title="All 2 branches missed.">        } else if (eventDefinition instanceof TimerEventDefinition) {</span>
+<span class="nc" id="L410">            handleTimerEvent(eventDefinition, startEvent, parentExecution, processEngineConfiguration);</span>
+        
+<span class="nc bnc" id="L412" title="All 2 branches missed.">        } else if (eventDefinition instanceof VariableListenerEventDefinition) {</span>
+<span class="nc" id="L413">            handleVariableListenerEventSubscription(eventDefinition, startEvent, parentExecution, processEngineConfiguration, commandContext);</span>
+        }
+<span class="nc" id="L415">    }</span>
+    
+    protected void handleMessageEventSubscription(EventDefinition eventDefinition, StartEvent startEvent, ExecutionEntity parentExecution, 
+            List&lt;EventSubscriptionEntity&gt; messageEventSubscriptions, ProcessEngineConfigurationImpl processEngineConfiguration, CommandContext commandContext) {
+        
+<span class="nc" id="L420">        MessageEventDefinition messageEventDefinition = (MessageEventDefinition) eventDefinition;</span>
+<span class="nc" id="L421">        BpmnModel bpmnModel = ProcessDefinitionUtil.getBpmnModel(parentExecution.getProcessDefinitionId());</span>
+<span class="nc bnc" id="L422" title="All 2 branches missed.">        if (bpmnModel.containsMessageId(messageEventDefinition.getMessageRef())) {</span>
+<span class="nc" id="L423">            messageEventDefinition.setMessageRef(bpmnModel.getMessage(messageEventDefinition.getMessageRef()).getName());</span>
+        }
+
+<span class="nc" id="L426">        ExecutionEntity messageExecution = processEngineConfiguration.getExecutionEntityManager().createChildExecution(parentExecution);</span>
+<span class="nc" id="L427">        messageExecution.setCurrentFlowElement(startEvent);</span>
+<span class="nc" id="L428">        messageExecution.setEventScope(true);</span>
+<span class="nc" id="L429">        messageExecution.setActive(false);</span>
+
+<span class="nc" id="L431">        String messageName = EventDefinitionExpressionUtil.determineMessageName(commandContext, messageEventDefinition, parentExecution);</span>
+<span class="nc" id="L432">        EventSubscriptionEntity eventSubscription = (EventSubscriptionEntity) processEngineConfiguration.getEventSubscriptionServiceConfiguration()</span>
+<span class="nc" id="L433">                .getEventSubscriptionService().createEventSubscriptionBuilder()</span>
+<span class="nc" id="L434">                        .eventType(MessageEventSubscriptionEntity.EVENT_TYPE)</span>
+<span class="nc" id="L435">                        .eventName(messageName)</span>
+<span class="nc" id="L436">                        .executionId(messageExecution.getId())</span>
+<span class="nc" id="L437">                        .processInstanceId(messageExecution.getProcessInstanceId())</span>
+<span class="nc" id="L438">                        .activityId(messageExecution.getCurrentActivityId())</span>
+<span class="nc" id="L439">                        .processDefinitionId(messageExecution.getProcessDefinitionId())</span>
+<span class="nc" id="L440">                        .tenantId(messageExecution.getTenantId())</span>
+<span class="nc" id="L441">                        .create();</span>
+        
+<span class="nc" id="L443">        CountingEntityUtil.handleInsertEventSubscriptionEntityCount(eventSubscription);</span>
+<span class="nc bnc" id="L444" title="All 2 branches missed.">        if (messageEventSubscriptions != null) {</span>
+<span class="nc" id="L445">            messageEventSubscriptions.add(eventSubscription);</span>
+        }
+<span class="nc" id="L447">        messageExecution.getEventSubscriptions().add(eventSubscription);</span>
+<span class="nc" id="L448">    }</span>
+    
+    protected void handleSignalEventSubscription(EventDefinition eventDefinition, StartEvent startEvent, ExecutionEntity parentExecution, 
+            List&lt;EventSubscriptionEntity&gt; signalEventSubscriptions, ProcessEngineConfigurationImpl processEngineConfiguration, CommandContext commandContext) {
+        
+<span class="nc" id="L453">        SignalEventDefinition signalEventDefinition = (SignalEventDefinition) eventDefinition;</span>
+<span class="nc" id="L454">        BpmnModel bpmnModel = ProcessDefinitionUtil.getBpmnModel(parentExecution.getProcessDefinitionId());</span>
+<span class="nc" id="L455">        Signal signal = null;</span>
+<span class="nc bnc" id="L456" title="All 2 branches missed.">        if (bpmnModel.containsSignalId(signalEventDefinition.getSignalRef())) {</span>
+<span class="nc" id="L457">            signal = bpmnModel.getSignal(signalEventDefinition.getSignalRef());</span>
+<span class="nc" id="L458">            signalEventDefinition.setSignalRef(signal.getName());</span>
+        }
+
+<span class="nc" id="L461">        ExecutionEntity signalExecution = processEngineConfiguration.getExecutionEntityManager().createChildExecution(parentExecution);</span>
+<span class="nc" id="L462">        signalExecution.setCurrentFlowElement(startEvent);</span>
+<span class="nc" id="L463">        signalExecution.setEventScope(true);</span>
+<span class="nc" id="L464">        signalExecution.setActive(false);</span>
+
+<span class="nc" id="L466">        String eventName = EventDefinitionExpressionUtil.determineSignalName(commandContext, signalEventDefinition, bpmnModel, null);</span>
+
+<span class="nc" id="L468">        EventSubscriptionEntity eventSubscription = (EventSubscriptionEntity) processEngineConfiguration.getEventSubscriptionServiceConfiguration()</span>
+<span class="nc" id="L469">                .getEventSubscriptionService().createEventSubscriptionBuilder()</span>
+<span class="nc" id="L470">                        .eventType(SignalEventSubscriptionEntity.EVENT_TYPE)</span>
+<span class="nc" id="L471">                        .eventName(eventName)</span>
+<span class="nc" id="L472">                        .signal(signal)</span>
+<span class="nc" id="L473">                        .executionId(signalExecution.getId())</span>
+<span class="nc" id="L474">                        .processInstanceId(signalExecution.getProcessInstanceId())</span>
+<span class="nc" id="L475">                        .activityId(signalExecution.getCurrentActivityId())</span>
+<span class="nc" id="L476">                        .processDefinitionId(signalExecution.getProcessDefinitionId())</span>
+<span class="nc" id="L477">                        .tenantId(signalExecution.getTenantId())</span>
+<span class="nc" id="L478">                        .create();</span>
+        
+<span class="nc" id="L480">        CountingEntityUtil.handleInsertEventSubscriptionEntityCount(eventSubscription);</span>
+<span class="nc bnc" id="L481" title="All 2 branches missed.">        if (signalEventSubscriptions != null) {</span>
+<span class="nc" id="L482">            signalEventSubscriptions.add(eventSubscription);</span>
+        }
+<span class="nc" id="L484">        signalExecution.getEventSubscriptions().add(eventSubscription);</span>
+<span class="nc" id="L485">    }</span>
+    
+    protected void handleTimerEvent(EventDefinition eventDefinition, StartEvent startEvent, ExecutionEntity parentExecution, 
+            ProcessEngineConfigurationImpl processEngineConfiguration) {
+        
+<span class="nc" id="L490">        TimerEventDefinition timerEventDefinition = (TimerEventDefinition) eventDefinition;</span>
+
+<span class="nc" id="L492">        ExecutionEntity timerExecution = processEngineConfiguration.getExecutionEntityManager().createChildExecution(parentExecution);</span>
+<span class="nc" id="L493">        timerExecution.setCurrentFlowElement(startEvent);</span>
+<span class="nc" id="L494">        timerExecution.setEventScope(true);</span>
+<span class="nc" id="L495">        timerExecution.setActive(false);</span>
+
+<span class="nc" id="L497">        TimerJobEntity timerJob = TimerUtil.createTimerEntityForTimerEventDefinition(timerEventDefinition, startEvent,</span>
+<span class="nc" id="L498">                false, timerExecution, TriggerTimerEventJobHandler.TYPE, TimerEventHandler.createConfiguration(startEvent.getId(), </span>
+<span class="nc" id="L499">                        timerEventDefinition.getEndDate(), timerEventDefinition.getCalendarName()));</span>
+
+<span class="nc bnc" id="L501" title="All 2 branches missed.">        if (timerJob != null) {</span>
+<span class="nc" id="L502">            processEngineConfiguration.getJobServiceConfiguration().getTimerJobService().scheduleTimerJob(timerJob);</span>
+        }
+<span class="nc" id="L504">    }</span>
+    
+    protected void handleVariableListenerEventSubscription(EventDefinition eventDefinition, StartEvent startEvent, ExecutionEntity parentExecution, 
+            ProcessEngineConfigurationImpl processEngineConfiguration, CommandContext commandContext) {
+        
+<span class="nc" id="L509">        VariableListenerEventDefinition variableListenerEventDefinition = (VariableListenerEventDefinition) eventDefinition;</span>
+
+<span class="nc" id="L511">        ExecutionEntity variableListenerExecution = processEngineConfiguration.getExecutionEntityManager().createChildExecution(parentExecution);</span>
+<span class="nc" id="L512">        variableListenerExecution.setCurrentFlowElement(startEvent);</span>
+<span class="nc" id="L513">        variableListenerExecution.setEventScope(true);</span>
+<span class="nc" id="L514">        variableListenerExecution.setActive(false);</span>
+        
+<span class="nc" id="L516">        String configuration = null;</span>
+<span class="nc bnc" id="L517" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(variableListenerEventDefinition.getVariableChangeType())) {</span>
+<span class="nc" id="L518">            ObjectNode configurationNode = processEngineConfiguration.getObjectMapper().createObjectNode();</span>
+<span class="nc" id="L519">            configurationNode.put(VariableListenerEventDefinition.CHANGE_TYPE_PROPERTY, variableListenerEventDefinition.getVariableChangeType());</span>
+<span class="nc" id="L520">            configuration = configurationNode.toString();</span>
+        }
+
+<span class="nc" id="L523">        EventSubscriptionEntity eventSubscription = (EventSubscriptionEntity) processEngineConfiguration.getEventSubscriptionServiceConfiguration()</span>
+<span class="nc" id="L524">                .getEventSubscriptionService().createEventSubscriptionBuilder()</span>
+<span class="nc" id="L525">                        .eventType(&quot;variable&quot;)</span>
+<span class="nc" id="L526">                        .eventName(variableListenerEventDefinition.getVariableName())</span>
+<span class="nc" id="L527">                        .configuration(configuration)</span>
+<span class="nc" id="L528">                        .executionId(variableListenerExecution.getId())</span>
+<span class="nc" id="L529">                        .processInstanceId(variableListenerExecution.getProcessInstanceId())</span>
+<span class="nc" id="L530">                        .activityId(variableListenerExecution.getCurrentActivityId())</span>
+<span class="nc" id="L531">                        .processDefinitionId(variableListenerExecution.getProcessDefinitionId())</span>
+<span class="nc" id="L532">                        .tenantId(variableListenerExecution.getTenantId())</span>
+<span class="nc" id="L533">                        .create();</span>
+        
+<span class="nc" id="L535">        CountingEntityUtil.handleInsertEventSubscriptionEntityCount(eventSubscription);</span>
+<span class="nc" id="L536">        variableListenerExecution.getEventSubscriptions().add(eventSubscription);</span>
+<span class="nc" id="L537">    }</span>
+
+    protected Map&lt;String, Object&gt; processDataObjects(Collection&lt;ValuedDataObject&gt; dataObjects) {
+<span class="nc" id="L540">        Map&lt;String, Object&gt; variablesMap = new HashMap&lt;&gt;();</span>
+        // convert data objects to process variables
+<span class="nc bnc" id="L542" title="All 2 branches missed.">        if (dataObjects != null) {</span>
+<span class="nc bnc" id="L543" title="All 2 branches missed.">            for (ValuedDataObject dataObject : dataObjects) {</span>
+<span class="nc" id="L544">                variablesMap.put(dataObject.getName(), dataObject.getValue());</span>
+<span class="nc" id="L545">            }</span>
+        }
+<span class="nc" id="L547">        return variablesMap;</span>
+    }
+    
+    public void callCaseInstanceStateChangeCallbacks(CommandContext commandContext, ProcessInstance processInstance, String oldState, String newState) {
+<span class="nc bnc" id="L551" title="All 4 branches missed.">        if (processInstance.getCallbackId() != null &amp;&amp; processInstance.getCallbackType() != null) {</span>
+<span class="nc" id="L552">            Map&lt;String, List&lt;RuntimeInstanceStateChangeCallback&gt;&gt; caseInstanceCallbacks = CommandContextUtil</span>
+<span class="nc" id="L553">                    .getProcessEngineConfiguration(commandContext).getProcessInstanceStateChangedCallbacks();</span>
+
+<span class="nc bnc" id="L555" title="All 4 branches missed.">            if (caseInstanceCallbacks != null &amp;&amp; caseInstanceCallbacks.containsKey(processInstance.getCallbackType())) {</span>
+<span class="nc bnc" id="L556" title="All 2 branches missed.">                for (RuntimeInstanceStateChangeCallback caseInstanceCallback : caseInstanceCallbacks.get(processInstance.getCallbackType())) {</span>
+
+<span class="nc" id="L558">                    caseInstanceCallback.stateChanged(new CallbackData(processInstance.getCallbackId(), </span>
+<span class="nc" id="L559">                        processInstance.getCallbackType(), processInstance.getId(), oldState, newState));</span>
+
+<span class="nc" id="L561">                }</span>
+            }
+        }
+<span class="nc" id="L564">    }</span>
+    
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

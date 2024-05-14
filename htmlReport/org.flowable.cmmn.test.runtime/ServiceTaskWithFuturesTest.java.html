@@ -1,0 +1,727 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ServiceTaskWithFuturesTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.cmmn.test.runtime</a> &gt; <span class="el_source">ServiceTaskWithFuturesTest.java</span></div><h1>ServiceTaskWithFuturesTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.cmmn.test.runtime;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.entry;
+import static org.assertj.core.api.InstanceOfAssertFactories.STRING;
+
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
+
+import org.flowable.cmmn.api.delegate.DelegatePlanItemInstance;
+import org.flowable.cmmn.api.delegate.FlowablePlanItemFutureJavaDelegate;
+import org.flowable.cmmn.api.delegate.MapBasedFlowablePlanItemFutureJavaDelegate;
+import org.flowable.cmmn.api.delegate.PlanItemJavaDelegate;
+import org.flowable.cmmn.api.delegate.ReadOnlyDelegatePlanItemInstance;
+import org.flowable.cmmn.api.history.HistoricCaseInstance;
+import org.flowable.cmmn.api.runtime.CaseInstance;
+import org.flowable.cmmn.engine.test.CmmnDeployment;
+import org.flowable.cmmn.engine.test.FlowableCmmnTestCase;
+import org.flowable.cmmn.engine.test.impl.CmmnHistoryTestHelper;
+import org.flowable.cmmn.model.ServiceTask;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.async.AsyncTaskExecutor;
+import org.flowable.common.engine.impl.agenda.AgendaFutureMaxWaitTimeoutProvider;
+import org.flowable.common.engine.impl.history.HistoryLevel;
+import org.flowable.common.engine.impl.javax.el.ELException;
+import org.flowable.variable.api.history.HistoricVariableInstance;
+import org.junit.Test;
+
+/**
+ * @author Filip Hrisafov
+ */
+<span class="nc" id="L56">public class ServiceTaskWithFuturesTest extends FlowableCmmnTestCase {</span>
+
+    @Test
+    @CmmnDeployment
+    public void testExpressionReturnsFuture() {
+
+<span class="nc" id="L62">        CountDownLatch latch = new CountDownLatch(2);</span>
+<span class="nc" id="L63">        TestBeanReturnsFuture testBean = new TestBeanReturnsFuture(latch, cmmnEngineConfiguration.getAsyncTaskExecutor());</span>
+<span class="nc" id="L64">        CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L65">                .caseDefinitionKey(&quot;myCase&quot;)</span>
+<span class="nc" id="L66">                .transientVariable(&quot;bean&quot;, testBean)</span>
+<span class="nc" id="L67">                .start();</span>
+
+<span class="nc" id="L69">        assertCaseInstanceEnded(caseInstance);</span>
+
+<span class="nc bnc" id="L71" title="All 2 branches missed.">        if (CmmnHistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, cmmnEngineConfiguration)) {</span>
+<span class="nc" id="L72">            HistoricCaseInstance historicCaseInstance = cmmnHistoryService.createHistoricCaseInstanceQuery().caseInstanceId(caseInstance.getId())</span>
+<span class="nc" id="L73">                .singleResult();</span>
+
+            // Every service task sleeps for 1s, but when we use futures it should take less then 2s.
+<span class="nc" id="L76">            long durationInMillis = historicCaseInstance.getEndTime().getTime() - historicCaseInstance.getEndTime().getTime();</span>
+<span class="nc" id="L77">            assertThat(durationInMillis).isLessThan(1500);</span>
+        }
+<span class="nc" id="L79">    }</span>
+
+    @Test
+    @CmmnDeployment(resources = &quot;org/flowable/cmmn/test/runtime/ServiceTaskWithFuturesTest.testParallelAndSequentialExpression.cmmn&quot;)
+    public void testParallelAndSequentialExpressionDoesNotReturnFuture() {
+        // when the expression doesn't return a future then the execution order should be the following (same as the planned order):
+        // serviceTask1 -&gt; serviceTask2 -&gt; serviceTask1_2 -&gt; serviceTask2_2
+<span class="nc" id="L86">        Object bean = new Object() {</span>
+
+            public Integer invoke(AtomicInteger counter) {
+<span class="nc" id="L89">                return counter.incrementAndGet();</span>
+            }
+        };
+<span class="nc" id="L92">        CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L93">                .caseDefinitionKey(&quot;myCase&quot;)</span>
+<span class="nc" id="L94">                .transientVariable(&quot;counter&quot;, new AtomicInteger(0))</span>
+<span class="nc" id="L95">                .transientVariable(&quot;bean1&quot;, bean)</span>
+<span class="nc" id="L96">                .transientVariable(&quot;bean2&quot;, bean)</span>
+<span class="nc" id="L97">                .start();</span>
+
+<span class="nc" id="L99">        assertCaseInstanceEnded(caseInstance);</span>
+
+<span class="nc" id="L101">        assertThat(caseInstance.getCaseVariables())</span>
+<span class="nc" id="L102">                .contains(</span>
+<span class="nc" id="L103">                        entry(&quot;service1_1Var&quot;, 1),</span>
+<span class="nc" id="L104">                        entry(&quot;service1_2Var&quot;, 3),</span>
+<span class="nc" id="L105">                        entry(&quot;service2_1Var&quot;, 2),</span>
+<span class="nc" id="L106">                        entry(&quot;service2_2Var&quot;, 4)</span>
+                );
+<span class="nc" id="L108">    }</span>
+
+    @Test
+    @CmmnDeployment(resources = &quot;org/flowable/cmmn/test/runtime/ServiceTaskWithFuturesTest.testParallelAndSequentialExpression.cmmn&quot;)
+    public void testParallelAndSequentialExpressionReturnsCompletedFuture() {
+        // when the expression returns a completed future then the execution order should be the same as when it doesn't return a future.
+        // The order should be the following (same as the planned order):
+        // serviceTask1 -&gt; serviceTask2 -&gt; serviceTask1_2 -&gt; serviceTask2_2
+<span class="nc" id="L116">        Object bean = new Object() {</span>
+
+            public CompletableFuture&lt;Integer&gt; invoke(AtomicInteger counter) {
+<span class="nc" id="L119">                return CompletableFuture.completedFuture(counter.incrementAndGet());</span>
+            }
+        };
+<span class="nc" id="L122">        CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L123">                .caseDefinitionKey(&quot;myCase&quot;)</span>
+<span class="nc" id="L124">                .transientVariable(&quot;counter&quot;, new AtomicInteger(0))</span>
+<span class="nc" id="L125">                .transientVariable(&quot;bean1&quot;, bean)</span>
+<span class="nc" id="L126">                .transientVariable(&quot;bean2&quot;, bean)</span>
+<span class="nc" id="L127">                .start();</span>
+
+<span class="nc" id="L129">        assertCaseInstanceEnded(caseInstance);</span>
+
+<span class="nc" id="L131">        assertThat(caseInstance.getCaseVariables())</span>
+<span class="nc" id="L132">                .contains(</span>
+<span class="nc" id="L133">                        entry(&quot;service1_1Var&quot;, 1),</span>
+<span class="nc" id="L134">                        entry(&quot;service1_2Var&quot;, 3),</span>
+<span class="nc" id="L135">                        entry(&quot;service2_1Var&quot;, 2),</span>
+<span class="nc" id="L136">                        entry(&quot;service2_2Var&quot;, 4)</span>
+                );
+<span class="nc" id="L138">    }</span>
+
+    @Test
+    @CmmnDeployment(resources = &quot;org/flowable/cmmn/test/runtime/ServiceTaskWithFuturesTest.testParallelAndSequentialExpression.cmmn&quot;)
+    public void testParallelAndSequentialExpressionReturnsNotCompletedFuture() {
+        // This test has the most complex setup.
+        // The idea is to show that when a future is completed its action will immediately be executed.
+        // With this setup bean1 cannot continue until bean2 has started executing.
+<span class="nc" id="L146">        CountDownLatch bean1Enter = new CountDownLatch(1);</span>
+<span class="nc" id="L147">        CountDownLatch bean2Enter = new CountDownLatch(1);</span>
+<span class="nc" id="L148">        CountDownLatch commonLatch = new CountDownLatch(2);</span>
+
+<span class="nc" id="L150">        Object bean1 = new Object() {</span>
+
+            public CompletableFuture&lt;Integer&gt; invoke(AtomicInteger counter) {
+<span class="nc" id="L153">                return cmmnEngineConfiguration.getAsyncTaskExecutor().submit(() -&gt; {</span>
+<span class="nc" id="L154">                    commonLatch.countDown();</span>
+<span class="nc" id="L155">                    bean1Enter.countDown();</span>
+                    // Now wait for bean2 to be entered
+                    try {
+<span class="nc bnc" id="L158" title="All 2 branches missed.">                        if (!bean2Enter.await(2, TimeUnit.SECONDS)) {</span>
+<span class="nc" id="L159">                            throw new FlowableException(&quot;Bean2 did not hit its latch&quot;);</span>
+                        }
+
+<span class="nc bnc" id="L162" title="All 2 branches missed.">                        if (commonLatch.await(2, TimeUnit.SECONDS)) {</span>
+<span class="nc" id="L163">                            Thread.sleep(100); // Thread sleep to slower the execution a bit</span>
+<span class="nc" id="L164">                            return counter.incrementAndGet();</span>
+                        } else {
+<span class="nc" id="L166">                            throw new FlowableException(&quot;Countdown latch did not reach 0&quot;);</span>
+                        }
+<span class="nc" id="L168">                    } catch (InterruptedException e) {</span>
+<span class="nc" id="L169">                        Thread.currentThread().interrupt();</span>
+                    }
+<span class="nc" id="L171">                    return counter.incrementAndGet();</span>
+                });
+
+            }
+        };
+
+<span class="nc" id="L177">        Object bean2 = new Object() {</span>
+
+            public CompletableFuture&lt;Integer&gt; invoke(AtomicInteger counter) {
+<span class="nc" id="L180">                return cmmnEngineConfiguration.getAsyncTaskExecutor().submit(() -&gt; {</span>
+                    try {
+<span class="nc bnc" id="L182" title="All 2 branches missed.">                        if (!bean1Enter.await(2, TimeUnit.SECONDS)) {</span>
+<span class="nc" id="L183">                            throw new FlowableException(&quot;Bean1 did not hit its latch&quot;);</span>
+                        }
+<span class="nc" id="L185">                        bean2Enter.countDown();</span>
+<span class="nc" id="L186">                        return counter.incrementAndGet();</span>
+<span class="nc" id="L187">                    } catch (InterruptedException e) {</span>
+<span class="nc" id="L188">                        Thread.currentThread().interrupt();</span>
+                    } finally {
+<span class="nc" id="L190">                        commonLatch.countDown();</span>
+                    }
+<span class="nc" id="L192">                    return counter.incrementAndGet();</span>
+                });
+
+            }
+        };
+
+<span class="nc" id="L198">        CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L199">                .caseDefinitionKey(&quot;myCase&quot;)</span>
+<span class="nc" id="L200">                .transientVariable(&quot;counter&quot;, new AtomicInteger(0))</span>
+<span class="nc" id="L201">                .transientVariable(&quot;bean1&quot;, bean1)</span>
+<span class="nc" id="L202">                .transientVariable(&quot;bean2&quot;, bean2)</span>
+<span class="nc" id="L203">                .start();</span>
+
+<span class="nc" id="L205">        assertCaseInstanceEnded(caseInstance);</span>
+
+<span class="nc" id="L207">        assertThat(caseInstance.getCaseVariables())</span>
+<span class="nc" id="L208">                .contains(</span>
+<span class="nc" id="L209">                        entry(&quot;service1_1Var&quot;, 3),</span>
+<span class="nc" id="L210">                        entry(&quot;service1_2Var&quot;, 4),</span>
+<span class="nc" id="L211">                        entry(&quot;service2_1Var&quot;, 1),</span>
+<span class="nc" id="L212">                        entry(&quot;service2_2Var&quot;, 2)</span>
+                );
+<span class="nc" id="L214">    }</span>
+
+    @Test
+    @CmmnDeployment(resources = &quot;org/flowable/cmmn/test/runtime/ServiceTaskWithFuturesTest.testExpressionReturnsFuture.cmmn&quot;)
+    public void testExpressionDoesNotReturnFuture() {
+
+<span class="nc" id="L220">        assertThatThrownBy(() -&gt; {</span>
+<span class="nc" id="L221">            CountDownLatch latch = new CountDownLatch(2);</span>
+<span class="nc" id="L222">            TestBean testBean = new TestBean(latch);</span>
+<span class="nc" id="L223">            CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L224">                    .caseDefinitionKey(&quot;myCase&quot;)</span>
+<span class="nc" id="L225">                    .transientVariable(&quot;bean&quot;, testBean)</span>
+<span class="nc" id="L226">                    .start();</span>
+<span class="nc" id="L227">        })</span>
+<span class="nc" id="L228">                .isExactlyInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L229">                .cause()</span>
+<span class="nc" id="L230">                .isInstanceOf(ELException.class)</span>
+<span class="nc" id="L231">                .cause()</span>
+<span class="nc" id="L232">                .isExactlyInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L233">                .hasMessage(&quot;Countdown latch did not reach 0&quot;);</span>
+<span class="nc" id="L234">    }</span>
+
+    @Test
+    @CmmnDeployment(resources = &quot;org/flowable/cmmn/test/runtime/ServiceTaskWithFuturesTest.testExpressionReturnsFuture.cmmn&quot;)
+    public void testAgendaFutureMaxWaitTimeoutOperationProvider() {
+
+<span class="nc" id="L240">        AgendaFutureMaxWaitTimeoutProvider originalTimeoutProvider = cmmnEngineConfiguration.getAgendaFutureMaxWaitTimeoutProvider();</span>
+        try {
+<span class="nc" id="L242">            cmmnEngineConfiguration.setAgendaFutureMaxWaitTimeoutProvider(commandContext -&gt; Duration.ofMillis(500));</span>
+<span class="nc" id="L243">            CountDownLatch latch = new CountDownLatch(3);</span>
+<span class="nc" id="L244">            TestBeanReturnsFuture testBean = new TestBeanReturnsFuture(latch, cmmnEngineConfiguration.getAsyncTaskExecutor());</span>
+<span class="nc" id="L245">            assertThatThrownBy(() -&gt; {</span>
+<span class="nc" id="L246">                cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L247">                        .caseDefinitionKey(&quot;myCase&quot;)</span>
+<span class="nc" id="L248">                        .transientVariable(&quot;bean&quot;, testBean)</span>
+<span class="nc" id="L249">                        .start();</span>
+<span class="nc" id="L250">            })</span>
+<span class="nc" id="L251">                    .isExactlyInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L252">                    .hasMessage(&quot;None of the available futures completed within the max timeout of PT0.5S&quot;)</span>
+<span class="nc" id="L253">                    .cause()</span>
+<span class="nc" id="L254">                    .isInstanceOf(TimeoutException.class);</span>
+        } finally {
+<span class="nc" id="L256">            cmmnEngineConfiguration.setAgendaFutureMaxWaitTimeoutProvider(originalTimeoutProvider);</span>
+        }
+<span class="nc" id="L258">    }</span>
+
+    @Test
+    @CmmnDeployment
+    public void testDelegateExpressionWithFutureJavaDelegate() {
+
+<span class="nc" id="L264">        String currentThreadName = Thread.currentThread().getName();</span>
+
+        // When using a normal JavaDelegate this process cannot complete
+        // because the latch needs to be decreased twice before every task returns a result
+        // Try changing TestFutureJavaDelegate to implement JavaDelegate instead
+<span class="nc" id="L269">        CountDownLatch latch = new CountDownLatch(2);</span>
+<span class="nc" id="L270">        TestFutureJavaDelegate testBean = new TestFutureJavaDelegate(latch);</span>
+<span class="nc" id="L271">        CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L272">                .caseDefinitionKey(&quot;myCase&quot;)</span>
+<span class="nc" id="L273">                .transientVariable(&quot;bean&quot;, testBean)</span>
+<span class="nc" id="L274">                .transientVariable(&quot;counter&quot;, new AtomicInteger(0))</span>
+<span class="nc" id="L275">                .start();</span>
+
+<span class="nc" id="L277">        assertCaseInstanceEnded(caseInstance);</span>
+
+<span class="nc bnc" id="L279" title="All 2 branches missed.">        if (CmmnHistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, cmmnEngineConfiguration)) {</span>
+<span class="nc" id="L280">            List&lt;HistoricVariableInstance&gt; historicVariableInstances = cmmnHistoryService.createHistoricVariableInstanceQuery().list();</span>
+<span class="nc" id="L281">            Map&lt;String, Object&gt; historicVariables = historicVariableInstances.stream()</span>
+<span class="nc bnc" id="L282" title="All 2 branches missed.">                .filter(variable -&gt; !&quot;initiator&quot;.equals(variable.getVariableName()))</span>
+<span class="nc" id="L283">                .collect(Collectors.toMap(HistoricVariableInstance::getVariableName, HistoricVariableInstance::getValue));</span>
+
+<span class="nc" id="L285">            assertThat(historicVariables)</span>
+<span class="nc" id="L286">                .containsOnlyKeys(</span>
+                    &quot;counter1&quot;, &quot;beforeExecutionThreadName1&quot;, &quot;executionThreadName1&quot;, &quot;afterExecutionThreadName1&quot;,
+                    &quot;counter2&quot;, &quot;beforeExecutionThreadName2&quot;, &quot;executionThreadName2&quot;, &quot;afterExecutionThreadName2&quot;
+                )
+<span class="nc" id="L290">                .contains(</span>
+<span class="nc" id="L291">                    entry(&quot;counter1&quot;, 1),</span>
+<span class="nc" id="L292">                    entry(&quot;beforeExecutionThreadName1&quot;, currentThreadName),</span>
+<span class="nc" id="L293">                    entry(&quot;afterExecutionThreadName1&quot;, currentThreadName),</span>
+<span class="nc" id="L294">                    entry(&quot;counter2&quot;, 2),</span>
+<span class="nc" id="L295">                    entry(&quot;beforeExecutionThreadName2&quot;, currentThreadName),</span>
+<span class="nc" id="L296">                    entry(&quot;afterExecutionThreadName2&quot;, currentThreadName)</span>
+                );
+
+<span class="nc" id="L299">            assertThat(historicVariables.get(&quot;executionThreadName1&quot;))</span>
+<span class="nc" id="L300">                .asInstanceOf(STRING)</span>
+<span class="nc" id="L301">                .isNotEqualTo(currentThreadName)</span>
+<span class="nc" id="L302">                .startsWith(&quot;flowable-async-task-invoker-thread-&quot;);</span>
+
+<span class="nc" id="L304">            assertThat(historicVariables.get(&quot;executionThreadName2&quot;))</span>
+<span class="nc" id="L305">                .asInstanceOf(STRING)</span>
+<span class="nc" id="L306">                .isNotEqualTo(currentThreadName)</span>
+                // The executions should be done on different threads
+<span class="nc" id="L308">                .isNotEqualTo(historicVariables.get(&quot;executionThreadName1&quot;))</span>
+<span class="nc" id="L309">                .startsWith(&quot;flowable-async-task-invoker-thread-&quot;);</span>
+        }
+<span class="nc" id="L311">    }</span>
+
+    @Test
+    @CmmnDeployment(resources = &quot;org/flowable/cmmn/test/runtime/ServiceTaskWithFuturesTest.testDelegateExpressionWithFutureJavaDelegate.cmmn&quot;, tenantId = &quot;flowable&quot;)
+    public void testDelegateExpressionWithMapBasedFutureJavaDelegate() {
+<span class="nc" id="L316">        List&lt;ReadOnlyDelegatePlanItemInstance&gt; delegatePlanItems = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L317">        MapBasedFlowablePlanItemFutureJavaDelegate bean = inputData -&gt; {</span>
+<span class="nc" id="L318">            delegatePlanItems.add(inputData);</span>
+<span class="nc" id="L319">            return Collections.singletonMap(inputData.getPlanItemDefinitionId(), &quot;done&quot;);</span>
+        };
+<span class="nc" id="L321">        CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L322">                .caseDefinitionKey(&quot;myCase&quot;)</span>
+<span class="nc" id="L323">                .tenantId(&quot;flowable&quot;)</span>
+<span class="nc" id="L324">                .businessKey(&quot;test-key&quot;)</span>
+<span class="nc" id="L325">                .name(&quot;Case name&quot;)</span>
+<span class="nc" id="L326">                .variable(&quot;testVar&quot;, &quot;test&quot;)</span>
+<span class="nc" id="L327">                .transientVariable(&quot;bean&quot;, bean)</span>
+<span class="nc" id="L328">                .transientVariable(&quot;counter&quot;, new AtomicInteger(0))</span>
+<span class="nc" id="L329">                .start();</span>
+
+<span class="nc" id="L331">        assertThat(caseInstance.getCaseVariables())</span>
+<span class="nc" id="L332">                .contains(</span>
+<span class="nc" id="L333">                        entry(&quot;serviceTask1&quot;, &quot;done&quot;),</span>
+<span class="nc" id="L334">                        entry(&quot;serviceTask2&quot;, &quot;done&quot;)</span>
+                );
+
+<span class="nc" id="L337">        assertCaseInstanceEnded(caseInstance);</span>
+<span class="nc" id="L338">        assertThat(delegatePlanItems)</span>
+<span class="nc" id="L339">                .extracting(ReadOnlyDelegatePlanItemInstance::getPlanItemDefinitionId)</span>
+<span class="nc" id="L340">                .containsExactly(&quot;serviceTask1&quot;, &quot;serviceTask2&quot;);</span>
+
+<span class="nc" id="L342">        ReadOnlyDelegatePlanItemInstance task1Delegate = delegatePlanItems.get(0);</span>
+<span class="nc" id="L343">        assertThat(task1Delegate.getId()).isNotNull();</span>
+<span class="nc" id="L344">        assertThat(task1Delegate.getCaseInstanceId()).isEqualTo(caseInstance.getId());</span>
+<span class="nc" id="L345">        assertThat(task1Delegate.getCaseDefinitionId()).isNotNull();</span>
+<span class="nc" id="L346">        assertThat(task1Delegate.getCreateTime()).isNotNull();</span>
+<span class="nc" id="L347">        assertThat(task1Delegate.getLastAvailableTime()).isNotNull();</span>
+<span class="nc" id="L348">        assertThat(task1Delegate.getLastStartedTime()).isNotNull();</span>
+<span class="nc" id="L349">        assertThat(task1Delegate.getTenantId()).isEqualTo(&quot;flowable&quot;);</span>
+<span class="nc" id="L350">        assertThat(task1Delegate.isStage()).isFalse();</span>
+<span class="nc" id="L351">        assertThat(task1Delegate.hasVariable(&quot;serviceTask1&quot;)).isFalse();</span>
+<span class="nc" id="L352">        assertThat(task1Delegate.hasVariable(&quot;serviceTask2&quot;)).isFalse();</span>
+<span class="nc" id="L353">        assertThat(task1Delegate.getVariable(&quot;testVar&quot;)).isEqualTo(&quot;test&quot;);</span>
+<span class="nc" id="L354">        assertThat(task1Delegate.getPlanItemDefinition()).isInstanceOf(ServiceTask.class);</span>
+<span class="nc" id="L355">        ServiceTask serviceTask1 = (ServiceTask) task1Delegate.getPlanItemDefinition();</span>
+<span class="nc" id="L356">        assertThat(serviceTask1.getId()).isEqualTo(&quot;serviceTask1&quot;);</span>
+
+<span class="nc" id="L358">        ReadOnlyDelegatePlanItemInstance task2Delegate = delegatePlanItems.get(1);</span>
+<span class="nc" id="L359">        assertThat(task2Delegate.getId()).isNotNull().isNotEqualTo(task1Delegate.getId());</span>
+<span class="nc" id="L360">        assertThat(task2Delegate.getCaseInstanceId()).isEqualTo(caseInstance.getId());</span>
+<span class="nc" id="L361">        assertThat(task2Delegate.getCaseDefinitionId()).isNotNull();</span>
+<span class="nc" id="L362">        assertThat(task2Delegate.getCreateTime()).isNotNull();</span>
+<span class="nc" id="L363">        assertThat(task2Delegate.getLastAvailableTime()).isNotNull();</span>
+<span class="nc" id="L364">        assertThat(task2Delegate.getLastStartedTime()).isNotNull();</span>
+<span class="nc" id="L365">        assertThat(task2Delegate.getTenantId()).isEqualTo(&quot;flowable&quot;);</span>
+<span class="nc" id="L366">        assertThat(task2Delegate.isStage()).isFalse();</span>
+<span class="nc" id="L367">        assertThat(task2Delegate.hasVariable(&quot;serviceTask1&quot;)).isFalse();</span>
+<span class="nc" id="L368">        assertThat(task2Delegate.hasVariable(&quot;serviceTask2&quot;)).isFalse();</span>
+<span class="nc" id="L369">        assertThat(task2Delegate.getVariable(&quot;testVar&quot;)).isEqualTo(&quot;test&quot;);</span>
+<span class="nc" id="L370">        assertThat(task2Delegate.getPlanItemDefinition()).isInstanceOf(ServiceTask.class);</span>
+<span class="nc" id="L371">        ServiceTask serviceTask2 = (ServiceTask) task2Delegate.getPlanItemDefinition();</span>
+<span class="nc" id="L372">        assertThat(serviceTask2.getId()).isEqualTo(&quot;serviceTask2&quot;);</span>
+<span class="nc" id="L373">    }</span>
+
+    @Test
+    @CmmnDeployment(resources = &quot;org/flowable/cmmn/test/runtime/ServiceTaskWithFuturesTest.testDelegateExpressionWithFutureJavaDelegate.cmmn&quot;)
+    public void testDelegateExpressionWithJavaDelegate() {
+
+        // This is using a normal JavaDelegate and thus the process cannot complete
+        // because the latch needs to be decreased twice before every task returns a result
+<span class="nc" id="L381">        CountDownLatch latch = new CountDownLatch(2);</span>
+<span class="nc" id="L382">        TestJavaDelegate testBean = new TestJavaDelegate(latch);</span>
+<span class="nc" id="L383">        assertThatThrownBy(() -&gt; {</span>
+<span class="nc" id="L384">            cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L385">                    .caseDefinitionKey(&quot;myCase&quot;)</span>
+<span class="nc" id="L386">                    .transientVariable(&quot;bean&quot;, testBean)</span>
+<span class="nc" id="L387">                    .start();</span>
+<span class="nc" id="L388">        })</span>
+<span class="nc" id="L389">                .isExactlyInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L390">                .hasNoCause()</span>
+<span class="nc" id="L391">                .hasMessage(&quot;Countdown latch did not reach 0&quot;);</span>
+
+<span class="nc" id="L393">    }</span>
+
+    @Test
+    @CmmnDeployment
+    public void testDelegateExpressionParallelAndSequentialFutureJavaDelegates() {
+        // the setup of the test is the following:
+        // there are 3 delegate executions:
+        // delegate1_1 -&gt; delegate1_2
+        // delegate2_1
+        // for delegate 1_1 to complete delegate2_1 should start executing
+        // for delegate 1_2 to complete delegate2_1 should start executing and 1_1 should be done
+        // for delegate2_1 to complete delegate1_2 should complete
+
+<span class="nc" id="L406">        CountDownLatch delegate1_1Done = new CountDownLatch(1);</span>
+<span class="nc" id="L407">        CountDownLatch delegate1_2Done = new CountDownLatch(1);</span>
+<span class="nc" id="L408">        CountDownLatch delegate2_1Done = new CountDownLatch(1);</span>
+<span class="nc" id="L409">        CountDownLatch delegate2_1Start = new CountDownLatch(1);</span>
+
+<span class="nc" id="L411">        MapBasedFlowablePlanItemFutureJavaDelegate futureDelegate1_1 = new MapBasedFlowablePlanItemFutureJavaDelegate() {</span>
+
+            @Override
+            public Map&lt;String, Object&gt; execute(ReadOnlyDelegatePlanItemInstance inputData) {
+
+                try {
+
+<span class="nc bnc" id="L418" title="All 2 branches missed.">                    if (delegate2_1Start.await(2, TimeUnit.SECONDS)) {</span>
+<span class="nc" id="L419">                        AtomicInteger counter = (AtomicInteger) inputData.getVariable(&quot;counter&quot;);</span>
+<span class="nc" id="L420">                        return Collections.singletonMap(&quot;counterDelegate1_1&quot;, counter.incrementAndGet());</span>
+                    }
+
+<span class="nc" id="L423">                    throw new FlowableException(&quot;Delegate 2_1 did not start&quot;);</span>
+<span class="nc" id="L424">                } catch (InterruptedException e) {</span>
+<span class="nc" id="L425">                    Thread.currentThread().interrupt();</span>
+<span class="nc" id="L426">                    throw new FlowableException(&quot;Thread was interrupted&quot;);</span>
+                }
+            }
+
+            @Override
+            public void afterExecution(DelegatePlanItemInstance planItemInstance, Map&lt;String, Object&gt; executionData) {
+<span class="nc" id="L432">                MapBasedFlowablePlanItemFutureJavaDelegate.super.afterExecution(planItemInstance, executionData);</span>
+<span class="nc" id="L433">                delegate1_1Done.countDown();</span>
+<span class="nc" id="L434">            }</span>
+        };
+
+<span class="nc" id="L437">        MapBasedFlowablePlanItemFutureJavaDelegate futureDelegate1_2 = new MapBasedFlowablePlanItemFutureJavaDelegate() {</span>
+
+            @Override
+            public Map&lt;String, Object&gt; execute(ReadOnlyDelegatePlanItemInstance inputData) {
+<span class="nc" id="L441">                assertThat(inputData.getVariable(&quot;counterDelegate1_1&quot;)).isEqualTo(1);</span>
+<span class="nc" id="L442">                assertThat(inputData.hasVariable(&quot;counterDelegate1_2&quot;)).isFalse();</span>
+<span class="nc" id="L443">                assertThat(inputData.hasVariable(&quot;counterDelegate2_1&quot;)).isFalse();</span>
+<span class="nc" id="L444">                AtomicInteger counter = (AtomicInteger) inputData.getVariable(&quot;counter&quot;);</span>
+<span class="nc" id="L445">                return Collections.singletonMap(&quot;counterDelegate1_2&quot;, counter.incrementAndGet());</span>
+            }
+
+            @Override
+            public void afterExecution(DelegatePlanItemInstance planItemInstance, Map&lt;String, Object&gt; executionData) {
+<span class="nc" id="L450">                MapBasedFlowablePlanItemFutureJavaDelegate.super.afterExecution(planItemInstance, executionData);</span>
+<span class="nc" id="L451">                delegate1_2Done.countDown();</span>
+<span class="nc" id="L452">            }</span>
+        };
+
+<span class="nc" id="L455">        MapBasedFlowablePlanItemFutureJavaDelegate futureDelegate2_1 = new MapBasedFlowablePlanItemFutureJavaDelegate() {</span>
+
+            @Override
+            public Map&lt;String, Object&gt; execute(ReadOnlyDelegatePlanItemInstance inputData) {
+<span class="nc" id="L459">                delegate2_1Start.countDown();</span>
+
+                try {
+<span class="nc bnc" id="L462" title="All 2 branches missed.">                    if (delegate1_2Done.await(2, TimeUnit.SECONDS)) {</span>
+<span class="nc" id="L463">                        AtomicInteger counter = (AtomicInteger) inputData.getVariable(&quot;counter&quot;);</span>
+<span class="nc" id="L464">                        return Collections.singletonMap(&quot;counterDelegate2_1&quot;, counter.incrementAndGet());</span>
+                    }
+
+<span class="nc" id="L467">                    throw new FlowableException(&quot;Delegate 1_2 did not complete&quot;);</span>
+<span class="nc" id="L468">                } catch (InterruptedException e) {</span>
+<span class="nc" id="L469">                    Thread.currentThread().interrupt();</span>
+<span class="nc" id="L470">                    throw new FlowableException(&quot;Thread was interrupted&quot;);</span>
+                }
+            }
+
+            @Override
+            public void afterExecution(DelegatePlanItemInstance planItemInstance, Map&lt;String, Object&gt; executionData) {
+<span class="nc" id="L476">                assertThat(planItemInstance.getVariables())</span>
+<span class="nc" id="L477">                        .contains(</span>
+<span class="nc" id="L478">                                entry(&quot;counterDelegate1_1&quot;, 1),</span>
+<span class="nc" id="L479">                                entry(&quot;counterDelegate1_2&quot;, 2)</span>
+                        )
+<span class="nc" id="L481">                        .doesNotContainKeys(&quot;counterDelegate2_1&quot;);</span>
+<span class="nc" id="L482">                MapBasedFlowablePlanItemFutureJavaDelegate.super.afterExecution(planItemInstance, executionData);</span>
+<span class="nc" id="L483">                delegate2_1Done.countDown();</span>
+<span class="nc" id="L484">            }</span>
+        };
+
+<span class="nc" id="L487">        CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L488">                .caseDefinitionKey(&quot;myCase&quot;)</span>
+<span class="nc" id="L489">                .transientVariable(&quot;futureDelegate1_1&quot;, futureDelegate1_1)</span>
+<span class="nc" id="L490">                .transientVariable(&quot;futureDelegate1_2&quot;, futureDelegate1_2)</span>
+<span class="nc" id="L491">                .transientVariable(&quot;futureDelegate2_1&quot;, futureDelegate2_1)</span>
+<span class="nc" id="L492">                .transientVariable(&quot;counter&quot;, new AtomicInteger(0))</span>
+<span class="nc" id="L493">                .start();</span>
+
+<span class="nc" id="L495">        assertCaseInstanceEnded(caseInstance);</span>
+
+<span class="nc bnc" id="L497" title="All 2 branches missed.">        if (CmmnHistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, cmmnEngineConfiguration)) {</span>
+<span class="nc" id="L498">            List&lt;HistoricVariableInstance&gt; historicVariableInstances = cmmnHistoryService.createHistoricVariableInstanceQuery().list();</span>
+<span class="nc" id="L499">            Map&lt;String, Object&gt; historicVariables = historicVariableInstances.stream()</span>
+<span class="nc bnc" id="L500" title="All 2 branches missed.">                .filter(variable -&gt; !&quot;initiator&quot;.equals(variable.getVariableName()))</span>
+<span class="nc" id="L501">                .collect(Collectors.toMap(HistoricVariableInstance::getVariableName, HistoricVariableInstance::getValue));</span>
+
+<span class="nc" id="L503">            assertThat(historicVariables)</span>
+<span class="nc" id="L504">                .containsOnly(</span>
+<span class="nc" id="L505">                    entry(&quot;counterDelegate1_1&quot;, 1),</span>
+<span class="nc" id="L506">                    entry(&quot;counterDelegate1_2&quot;, 2),</span>
+<span class="nc" id="L507">                    entry(&quot;counterDelegate2_1&quot;, 3)</span>
+                );
+        }
+<span class="nc" id="L510">    }</span>
+
+    @Test
+    @CmmnDeployment
+    public void testClassWithFutureJavaDelegate() {
+
+<span class="nc" id="L516">        String currentThreadName = Thread.currentThread().getName();</span>
+
+        // When using a normal JavaDelegate this process cannot complete
+        // because the latch needs to be decreased twice before every task returns a result
+        // Try changing TestFutureJavaDelegate to implement JavaDelegate instead
+<span class="nc" id="L521">        CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L522">                .caseDefinitionKey(&quot;myCase&quot;)</span>
+<span class="nc" id="L523">                .transientVariable(&quot;counter&quot;, new AtomicInteger(0))</span>
+<span class="nc" id="L524">                .transientVariable(&quot;countDownLatch&quot;, new CountDownLatch(2))</span>
+<span class="nc" id="L525">                .start();</span>
+
+<span class="nc" id="L527">        assertCaseInstanceEnded(caseInstance);</span>
+
+<span class="nc bnc" id="L529" title="All 2 branches missed.">        if (CmmnHistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, cmmnEngineConfiguration)) {</span>
+<span class="nc" id="L530">            List&lt;HistoricVariableInstance&gt; historicVariableInstances = cmmnHistoryService.createHistoricVariableInstanceQuery().list();</span>
+<span class="nc" id="L531">            Map&lt;String, Object&gt; historicVariables = historicVariableInstances.stream()</span>
+<span class="nc bnc" id="L532" title="All 2 branches missed.">                .filter(variable -&gt; !&quot;initiator&quot;.equals(variable.getVariableName()))</span>
+<span class="nc" id="L533">                .collect(Collectors.toMap(HistoricVariableInstance::getVariableName, HistoricVariableInstance::getValue));</span>
+
+<span class="nc" id="L535">            assertThat(historicVariables)</span>
+<span class="nc" id="L536">                .containsOnlyKeys(</span>
+                    &quot;counter1&quot;, &quot;beforeExecutionThreadName1&quot;, &quot;executionThreadName1&quot;, &quot;afterExecutionThreadName1&quot;,
+                    &quot;counter2&quot;, &quot;beforeExecutionThreadName2&quot;, &quot;executionThreadName2&quot;, &quot;afterExecutionThreadName2&quot;
+                )
+<span class="nc" id="L540">                .contains(</span>
+<span class="nc" id="L541">                    entry(&quot;counter1&quot;, 1),</span>
+<span class="nc" id="L542">                    entry(&quot;beforeExecutionThreadName1&quot;, currentThreadName),</span>
+<span class="nc" id="L543">                    entry(&quot;afterExecutionThreadName1&quot;, currentThreadName),</span>
+<span class="nc" id="L544">                    entry(&quot;counter2&quot;, 2),</span>
+<span class="nc" id="L545">                    entry(&quot;beforeExecutionThreadName2&quot;, currentThreadName),</span>
+<span class="nc" id="L546">                    entry(&quot;afterExecutionThreadName2&quot;, currentThreadName)</span>
+                );
+
+<span class="nc" id="L549">            assertThat(historicVariables.get(&quot;executionThreadName1&quot;))</span>
+<span class="nc" id="L550">                .asInstanceOf(STRING)</span>
+<span class="nc" id="L551">                .isNotEqualTo(currentThreadName)</span>
+<span class="nc" id="L552">                .startsWith(&quot;flowable-async-task-invoker-thread-&quot;);</span>
+
+<span class="nc" id="L554">            assertThat(historicVariables.get(&quot;executionThreadName2&quot;))</span>
+<span class="nc" id="L555">                .asInstanceOf(STRING)</span>
+<span class="nc" id="L556">                .isNotEqualTo(currentThreadName)</span>
+                // The executions should be done on different threads
+<span class="nc" id="L558">                .isNotEqualTo(historicVariables.get(&quot;executionThreadName1&quot;))</span>
+<span class="nc" id="L559">                .startsWith(&quot;flowable-async-task-invoker-thread-&quot;);</span>
+        }
+<span class="nc" id="L561">    }</span>
+
+    @Test
+    @CmmnDeployment
+    public void testClassWithJavaDelegate() {
+
+        // This is using a normal JavaDelegate and thus the process cannot complete
+        // because the latch needs to be decreased twice before every task returns a result
+<span class="nc" id="L569">        assertThatThrownBy(() -&gt; {</span>
+<span class="nc" id="L570">            cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L571">                    .caseDefinitionKey(&quot;myCase&quot;)</span>
+<span class="nc" id="L572">                    .transientVariable(&quot;countDownLatch&quot;, new CountDownLatch(2))</span>
+<span class="nc" id="L573">                    .start();</span>
+<span class="nc" id="L574">        })</span>
+<span class="nc" id="L575">                .isExactlyInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L576">                .hasNoCause()</span>
+<span class="nc" id="L577">                .hasMessage(&quot;Countdown latch did not reach 0&quot;);</span>
+
+<span class="nc" id="L579">    }</span>
+
+    protected static class TestFutureJavaDelegate implements FlowablePlanItemFutureJavaDelegate&lt;Map&lt;String, Object&gt;, Map&lt;String, Object&gt;&gt; {
+
+        protected final CountDownLatch countDownLatch;
+
+        @SuppressWarnings(&quot;unused&quot;) // used by the class delegate
+        public TestFutureJavaDelegate() {
+<span class="nc" id="L587">            this(null);</span>
+<span class="nc" id="L588">        }</span>
+
+<span class="nc" id="L590">        public TestFutureJavaDelegate(CountDownLatch countDownLatch) {</span>
+<span class="nc" id="L591">            this.countDownLatch = countDownLatch;</span>
+<span class="nc" id="L592">        }</span>
+
+        @Override
+        public Map&lt;String, Object&gt; prepareExecutionData(DelegatePlanItemInstance planItemInstance) {
+<span class="nc" id="L596">            Map&lt;String, Object&gt; inputData = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L597">            inputData.put(&quot;beforeExecutionThreadName&quot;, Thread.currentThread().getName());</span>
+<span class="nc" id="L598">            AtomicInteger counter = (AtomicInteger) planItemInstance.getTransientVariable(&quot;counter&quot;);</span>
+<span class="nc" id="L599">            inputData.put(&quot;counter&quot;, counter.incrementAndGet());</span>
+<span class="nc" id="L600">            inputData.put(&quot;countDownLatch&quot;, planItemInstance.getTransientVariable(&quot;countDownLatch&quot;));</span>
+<span class="nc" id="L601">            return inputData;</span>
+        }
+
+        @Override
+        public Map&lt;String, Object&gt; execute(Map&lt;String, Object&gt; inputData) {
+<span class="nc" id="L606">            CountDownLatch countDownLatch = this.countDownLatch;</span>
+<span class="nc bnc" id="L607" title="All 2 branches missed.">            if (countDownLatch == null) {</span>
+<span class="nc" id="L608">                countDownLatch = (CountDownLatch) inputData.get(&quot;countDownLatch&quot;);</span>
+            }
+<span class="nc" id="L610">            countDownLatch.countDown();</span>
+            try {
+<span class="nc bnc" id="L612" title="All 2 branches missed.">                if (countDownLatch.await(2, TimeUnit.SECONDS)) {</span>
+<span class="nc" id="L613">                    int counter = (int) inputData.get(&quot;counter&quot;);</span>
+<span class="nc" id="L614">                    Map&lt;String, Object&gt; outputData = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L615">                    outputData.put(&quot;executionThreadName&quot; + counter, Thread.currentThread().getName());</span>
+<span class="nc" id="L616">                    outputData.put(&quot;counter&quot; + counter, counter);</span>
+<span class="nc" id="L617">                    outputData.put(&quot;beforeExecutionThreadName&quot; + counter, inputData.get(&quot;beforeExecutionThreadName&quot;));</span>
+<span class="nc" id="L618">                    return outputData;</span>
+                } else {
+<span class="nc" id="L620">                    throw new FlowableException(&quot;Countdown latch did not reach 0&quot;);</span>
+                }
+<span class="nc" id="L622">            } catch (InterruptedException e) {</span>
+<span class="nc" id="L623">                Thread.currentThread().interrupt();</span>
+            }
+
+<span class="nc" id="L626">            return null;</span>
+        }
+
+        @Override
+        public void afterExecution(DelegatePlanItemInstance planItemInstance, Map&lt;String, Object&gt; executionData) {
+<span class="nc bnc" id="L631" title="All 2 branches missed.">            if (executionData != null) {</span>
+<span class="nc bnc" id="L632" title="All 2 branches missed.">                for (Map.Entry&lt;String, Object&gt; entry : executionData.entrySet()) {</span>
+<span class="nc" id="L633">                    String key = entry.getKey();</span>
+<span class="nc" id="L634">                    planItemInstance.setVariable(key, entry.getValue());</span>
+
+<span class="nc bnc" id="L636" title="All 2 branches missed.">                    if (key.startsWith(&quot;counter&quot;)) {</span>
+<span class="nc" id="L637">                        planItemInstance.setVariable(&quot;afterExecutionThreadName&quot; + key.substring(7), Thread.currentThread().getName());</span>
+                    }
+<span class="nc" id="L639">                }</span>
+            }
+<span class="nc" id="L641">        }</span>
+    }
+
+    protected static class TestJavaDelegate implements PlanItemJavaDelegate {
+
+        protected final CountDownLatch countDownLatch;
+
+        @SuppressWarnings(&quot;unused&quot;) // used from the class delegate
+        public TestJavaDelegate() {
+<span class="nc" id="L650">            this(null);</span>
+<span class="nc" id="L651">        }</span>
+
+<span class="nc" id="L653">        public TestJavaDelegate(CountDownLatch countDownLatch) {</span>
+<span class="nc" id="L654">            this.countDownLatch = countDownLatch;</span>
+<span class="nc" id="L655">        }</span>
+
+        @Override
+        public void execute(DelegatePlanItemInstance planItemInstance) {
+<span class="nc" id="L659">            CountDownLatch countDownLatch = this.countDownLatch;</span>
+<span class="nc bnc" id="L660" title="All 2 branches missed.">            if (countDownLatch == null) {</span>
+<span class="nc" id="L661">                countDownLatch = (CountDownLatch) planItemInstance.getTransientVariable(&quot;countDownLatch&quot;);</span>
+            }
+<span class="nc" id="L663">            countDownLatch.countDown();</span>
+            try {
+<span class="nc bnc" id="L665" title="All 2 branches missed.">                if (countDownLatch.await(2, TimeUnit.SECONDS)) {</span>
+                    // Nothing to do
+                } else {
+<span class="nc" id="L668">                    throw new FlowableException(&quot;Countdown latch did not reach 0&quot;);</span>
+                }
+<span class="nc" id="L670">            } catch (InterruptedException e) {</span>
+<span class="nc" id="L671">                Thread.currentThread().interrupt();</span>
+<span class="nc" id="L672">            }</span>
+<span class="nc" id="L673">        }</span>
+    }
+
+    protected static class TestBeanReturnsFuture {
+
+<span class="nc" id="L678">        protected final AtomicInteger counter = new AtomicInteger(0);</span>
+        protected final CountDownLatch countDownLatch;
+        protected final AsyncTaskExecutor asyncTaskExecutor;
+
+<span class="nc" id="L682">        public TestBeanReturnsFuture(CountDownLatch countDownLatch, AsyncTaskExecutor asyncTaskExecutor) {</span>
+<span class="nc" id="L683">            this.countDownLatch = countDownLatch;</span>
+<span class="nc" id="L684">            this.asyncTaskExecutor = asyncTaskExecutor;</span>
+<span class="nc" id="L685">        }</span>
+
+        public Future&lt;Integer&gt; invoke() {
+<span class="nc" id="L688">            return asyncTaskExecutor.submit(() -&gt; {</span>
+<span class="nc" id="L689">                countDownLatch.countDown();</span>
+                try {
+<span class="nc bnc" id="L691" title="All 2 branches missed.">                    if (countDownLatch.await(2, TimeUnit.SECONDS)) {</span>
+<span class="nc" id="L692">                        return counter.incrementAndGet();</span>
+                    } else {
+<span class="nc" id="L694">                        throw new FlowableException(&quot;Countdown latch did not reach 0&quot;);</span>
+                    }
+<span class="nc" id="L696">                } catch (InterruptedException e) {</span>
+<span class="nc" id="L697">                    Thread.currentThread().interrupt();</span>
+                }
+<span class="nc" id="L699">                return counter.incrementAndGet();</span>
+            });
+        }
+    }
+
+    protected static class TestBean {
+
+        protected final CountDownLatch countDownLatch;
+
+<span class="nc" id="L708">        public TestBean(CountDownLatch countDownLatch) {</span>
+<span class="nc" id="L709">            this.countDownLatch = countDownLatch;</span>
+<span class="nc" id="L710">        }</span>
+
+        public String invoke() {
+<span class="nc" id="L713">            countDownLatch.countDown();</span>
+            try {
+<span class="nc bnc" id="L715" title="All 2 branches missed.">                if (countDownLatch.await(3, TimeUnit.SECONDS)) {</span>
+<span class="nc" id="L716">                    return null;</span>
+                } else {
+<span class="nc" id="L718">                    throw new FlowableException(&quot;Countdown latch did not reach 0&quot;);</span>
+                }
+<span class="nc" id="L720">            } catch (InterruptedException e) {</span>
+<span class="nc" id="L721">                Thread.currentThread().interrupt();</span>
+            }
+<span class="nc" id="L723">            return null;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

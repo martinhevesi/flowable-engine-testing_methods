@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BulkUpdateJobLockTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.jobexecutor</a> &gt; <span class="el_source">BulkUpdateJobLockTest.java</span></div><h1>BulkUpdateJobLockTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.test.jobexecutor;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+
+import org.flowable.common.engine.impl.db.AbstractDataManager;
+import org.flowable.common.engine.impl.interceptor.Command;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.common.engine.impl.interceptor.CommandExecutor;
+import org.flowable.engine.ManagementService;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.job.api.HistoryJob;
+import org.flowable.job.api.Job;
+import org.flowable.job.service.HistoryJobService;
+import org.flowable.job.service.JobService;
+import org.flowable.job.service.impl.persistence.entity.HistoryJobEntity;
+import org.flowable.job.service.impl.persistence.entity.JobEntity;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+
+/**
+ * Tests the bulk update of async jobs, as this uses a where with in() clause that is limited
+ * in number of elements (due to limitations of certain databases).
+ *
+ * If this test passes on all db's we know that the in() clause limitation works on all supported db's.
+ *
+ * @author Joram Barrez
+ */
+<span class="nc" id="L45">public class BulkUpdateJobLockTest extends JobExecutorTestCase  {</span>
+
+    private static final int NR_JOBS = AbstractDataManager.MAX_ENTRIES_IN_CLAUSE + (AbstractDataManager.MAX_ENTRIES_IN_CLAUSE/2);
+
+    @Override
+    protected void configureConfiguration(ProcessEngineConfigurationImpl processEngineConfiguration) {
+<span class="nc" id="L51">        super.configureConfiguration(processEngineConfiguration);</span>
+
+        // Make sure more timer jobs are fetched in one go than possible in the in() clause, so the logic to split is used.
+<span class="nc" id="L54">        processEngineConfiguration.getAsyncExecutorConfiguration().setMaxAsyncJobsDuePerAcquisition(NR_JOBS);</span>
+<span class="nc bnc" id="L55" title="All 2 branches missed.">        if (processEngineConfiguration.getAsyncExecutor() != null) {</span>
+<span class="nc" id="L56">            processEngineConfiguration.getAsyncExecutor().setMaxAsyncJobsDuePerAcquisition(NR_JOBS);</span>
+        }
+<span class="nc" id="L58">    }</span>
+
+    @AfterEach
+    public void cleanup() {
+        // Need to use low level entity manager, as jobs can't be deleted if they're locked (i.e. not through mgmtService)
+<span class="nc" id="L63">        processEngineConfiguration.getCommandExecutor().execute(new Command&lt;&gt;() {</span>
+
+            @Override
+            public Object execute(CommandContext commandContext) {
+<span class="nc bnc" id="L67" title="All 2 branches missed.">                for (Job job : processEngineConfiguration.getManagementService().createJobQuery().list()) {</span>
+<span class="nc" id="L68">                    processEngineConfiguration.getJobServiceConfiguration().getJobEntityManager().delete(job.getId());</span>
+<span class="nc" id="L69">                }</span>
+<span class="nc bnc" id="L70" title="All 2 branches missed.">                for (HistoryJob historyJob : processEngineConfiguration.getManagementService().createHistoryJobQuery().list()) {</span>
+<span class="nc" id="L71">                    processEngineConfiguration.getJobServiceConfiguration().getHistoryJobEntityManager().delete(historyJob.getId());</span>
+<span class="nc" id="L72">                }</span>
+<span class="nc" id="L73">                return null;</span>
+            }
+        });
+<span class="nc" id="L76">    }</span>
+
+    @Test
+    public void testAsyncJobBulkUpdate() {
+
+<span class="nc" id="L81">        CommandExecutor commandExecutor = processEngineConfiguration.getCommandExecutor();</span>
+<span class="nc" id="L82">        commandExecutor.execute(commandContext -&gt; {</span>
+
+<span class="nc" id="L84">            JobService jobService = CommandContextUtil.getProcessEngineConfiguration(commandContext)</span>
+<span class="nc" id="L85">                .getJobServiceConfiguration()</span>
+<span class="nc" id="L86">                .getJobService();</span>
+
+<span class="nc" id="L88">            Date now = new Date();</span>
+<span class="nc bnc" id="L89" title="All 2 branches missed.">            for (int i = 0; i &lt; NR_JOBS; i++) {</span>
+<span class="nc" id="L90">                JobEntity job = createTweetMessage(&quot;Job &quot; + i);</span>
+<span class="nc" id="L91">                jobService.scheduleAsyncJob(job);</span>
+            }
+
+<span class="nc" id="L94">            return null;</span>
+        });
+
+<span class="nc" id="L97">        ManagementService managementService = processEngineConfiguration.getManagementService();</span>
+<span class="nc" id="L98">        List&lt;Job&gt; jobs = managementService.createJobQuery().list();</span>
+<span class="nc" id="L99">        assertThat(jobs.size()).isEqualTo(NR_JOBS);</span>
+
+        // As there are more than AbstractDataManager.MAX_ENTRIES_IN_CLAUSE timer jobs, the logic should split it up into multiple updates
+<span class="nc" id="L102">        List&lt;JobEntity&gt; jobEntities = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L103" title="All 2 branches missed.">        for (Job job : jobs) {</span>
+<span class="nc" id="L104">            jobEntities.add((JobEntity) job);</span>
+<span class="nc" id="L105">            assertThat(((JobEntity) job).getLockOwner()).isNull();</span>
+<span class="nc" id="L106">            assertThat(((JobEntity) job).getLockExpirationTime()).isNull();</span>
+<span class="nc" id="L107">        }</span>
+
+        // Test bulk update
+<span class="nc" id="L110">        String lockOwner = &quot;test&quot;;</span>
+<span class="nc" id="L111">        commandExecutor.execute(commandContext -&gt; {</span>
+<span class="nc" id="L112">            processEngineConfiguration.getJobServiceConfiguration().getJobEntityManager().bulkUpdateJobLockWithoutRevisionCheck(jobEntities, lockOwner, new Date());</span>
+<span class="nc" id="L113">            return null;</span>
+        });
+
+<span class="nc bnc" id="L116" title="All 2 branches missed.">        for (Job job : managementService.createJobQuery().list()) {</span>
+<span class="nc" id="L117">            assertThat(((JobEntity) job).getLockOwner()).isEqualTo(&quot;test&quot;);</span>
+<span class="nc" id="L118">            assertThat(((JobEntity) job).getLockExpirationTime()).isNotNull();</span>
+<span class="nc" id="L119">        }</span>
+<span class="nc" id="L120">    }</span>
+
+    @Test
+    public void testHistoryJobBulkUpdate() {
+
+<span class="nc" id="L125">        CommandExecutor commandExecutor = processEngineConfiguration.getCommandExecutor();</span>
+<span class="nc" id="L126">        commandExecutor.execute(commandContext -&gt; {</span>
+
+<span class="nc" id="L128">            HistoryJobService historyJobService = CommandContextUtil.getProcessEngineConfiguration(commandContext)</span>
+<span class="nc" id="L129">                .getJobServiceConfiguration()</span>
+<span class="nc" id="L130">                .getHistoryJobService();</span>
+
+<span class="nc" id="L132">            Date now = new Date();</span>
+<span class="nc bnc" id="L133" title="All 2 branches missed.">            for (int i = 0; i &lt; NR_JOBS; i++) {</span>
+<span class="nc" id="L134">                HistoryJobEntity historyJob = historyJobService.createHistoryJob();</span>
+<span class="nc" id="L135">                historyJobService.scheduleHistoryJob(historyJob);</span>
+            }
+
+<span class="nc" id="L138">            return null;</span>
+        });
+
+<span class="nc" id="L141">        ManagementService managementService = processEngineConfiguration.getManagementService();</span>
+<span class="nc" id="L142">        List&lt;HistoryJob&gt; jobs = managementService.createHistoryJobQuery().list();</span>
+<span class="nc" id="L143">        assertThat(jobs.size()).isEqualTo(NR_JOBS);</span>
+
+        // As there are more than AbstractDataManager.MAX_ENTRIES_IN_CLAUSE timer jobs, the logic should split it up into multiple updates
+<span class="nc" id="L146">        List&lt;HistoryJobEntity&gt; historyJobEntities = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L147" title="All 2 branches missed.">        for (HistoryJob job : jobs) {</span>
+<span class="nc" id="L148">            historyJobEntities.add((HistoryJobEntity) job);</span>
+<span class="nc" id="L149">            assertThat(((HistoryJobEntity) job).getLockOwner()).isNull();</span>
+<span class="nc" id="L150">            assertThat(((HistoryJobEntity) job).getLockExpirationTime()).isNull();</span>
+<span class="nc" id="L151">        }</span>
+
+        // Test bulk update
+<span class="nc" id="L154">        String lockOwner = &quot;test&quot;;</span>
+<span class="nc" id="L155">        commandExecutor.execute(commandContext -&gt; {</span>
+<span class="nc" id="L156">            processEngineConfiguration.getJobServiceConfiguration().getHistoryJobEntityManager().bulkUpdateJobLockWithoutRevisionCheck(historyJobEntities, lockOwner, new Date());</span>
+<span class="nc" id="L157">            return null;</span>
+        });
+
+<span class="nc bnc" id="L160" title="All 2 branches missed.">        for (HistoryJob job : managementService.createHistoryJobQuery().list()) {</span>
+<span class="nc" id="L161">            assertThat(((HistoryJobEntity) job).getLockOwner()).isEqualTo(&quot;test&quot;);</span>
+<span class="nc" id="L162">            assertThat(((HistoryJobEntity) job).getLockExpirationTime()).isNotNull();</span>
+<span class="nc" id="L163">        }</span>
+<span class="nc" id="L164">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ScopeUtil.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.bpmn.helper</a> &gt; <span class="el_source">ScopeUtil.java</span></div><h1>ScopeUtil.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.flowable.engine.impl.bpmn.helper;
+
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+
+import org.flowable.common.engine.impl.util.CollectionUtil;
+import org.flowable.engine.delegate.DelegateExecution;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntity;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntityManager;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.engine.impl.util.CountingEntityUtil;
+import org.flowable.engine.impl.util.EventSubscriptionUtil;
+import org.flowable.eventsubscription.service.EventSubscriptionService;
+import org.flowable.eventsubscription.service.impl.persistence.entity.CompensateEventSubscriptionEntity;
+import org.flowable.eventsubscription.service.impl.persistence.entity.EventSubscriptionEntity;
+
+/**
+ * @author Tijs Rademakers
+ * @author Joram Barrez
+ */
+<span class="nc" id="L38">public class ScopeUtil {</span>
+
+    /**
+     * we create a separate execution for each compensation handler invocation.
+     */
+    public static void throwCompensationEvent(List&lt;CompensateEventSubscriptionEntity&gt; eventSubscriptions, DelegateExecution execution, boolean async) {
+
+<span class="nc" id="L45">        ExecutionEntityManager executionEntityManager = CommandContextUtil.getExecutionEntityManager();</span>
+
+        // first spawn the compensating executions
+<span class="nc bnc" id="L48" title="All 2 branches missed.">        for (EventSubscriptionEntity eventSubscription : eventSubscriptions) {</span>
+<span class="nc" id="L49">            ExecutionEntity compensatingExecution = null;</span>
+
+            // check whether compensating execution is already created (which is the case when compensating an embedded subprocess,
+            // where the compensating execution is created when leaving the subprocess and holds snapshot data).
+<span class="nc bnc" id="L53" title="All 2 branches missed.">            if (eventSubscription.getConfiguration() != null) {</span>
+<span class="nc" id="L54">                compensatingExecution = executionEntityManager.findById(eventSubscription.getConfiguration());</span>
+<span class="nc" id="L55">                compensatingExecution.setParent(compensatingExecution.getProcessInstance());</span>
+<span class="nc" id="L56">                compensatingExecution.setEventScope(false);</span>
+            } else {
+<span class="nc" id="L58">                compensatingExecution = executionEntityManager.createChildExecution((ExecutionEntity) execution);</span>
+<span class="nc" id="L59">                eventSubscription.setConfiguration(compensatingExecution.getId());</span>
+            }
+
+<span class="nc" id="L62">        }</span>
+
+        // signal compensation events in reverse order of their 'created' timestamp
+<span class="nc" id="L65">        eventSubscriptions.sort(new Comparator&lt;EventSubscriptionEntity&gt;() {</span>
+
+            @Override
+            public int compare(EventSubscriptionEntity o1, EventSubscriptionEntity o2) {
+<span class="nc" id="L69">                return o2.getCreated().compareTo(o1.getCreated());</span>
+            }
+        });
+
+<span class="nc bnc" id="L73" title="All 2 branches missed.">        for (CompensateEventSubscriptionEntity compensateEventSubscriptionEntity : eventSubscriptions) {</span>
+<span class="nc" id="L74">            EventSubscriptionUtil.eventReceived(compensateEventSubscriptionEntity, null, async);</span>
+<span class="nc" id="L75">        }</span>
+<span class="nc" id="L76">    }</span>
+
+    /**
+     * Creates a new event scope execution and moves existing event subscriptions to this new execution
+     */
+    public static void createCopyOfSubProcessExecutionForCompensation(ExecutionEntity subProcessExecution) {
+<span class="nc" id="L82">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration();</span>
+<span class="nc" id="L83">        EventSubscriptionService eventSubscriptionService = processEngineConfiguration.getEventSubscriptionServiceConfiguration().getEventSubscriptionService();</span>
+<span class="nc" id="L84">        List&lt;EventSubscriptionEntity&gt; eventSubscriptions = eventSubscriptionService.findEventSubscriptionsByExecutionAndType(subProcessExecution.getId(), &quot;compensate&quot;);</span>
+
+<span class="nc" id="L86">        List&lt;CompensateEventSubscriptionEntity&gt; compensateEventSubscriptions = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L87" title="All 2 branches missed.">        for (EventSubscriptionEntity event : eventSubscriptions) {</span>
+<span class="nc bnc" id="L88" title="All 2 branches missed.">            if (event instanceof CompensateEventSubscriptionEntity) {</span>
+<span class="nc" id="L89">                compensateEventSubscriptions.add((CompensateEventSubscriptionEntity) event);</span>
+            }
+<span class="nc" id="L91">        }</span>
+
+<span class="nc bnc" id="L93" title="All 2 branches missed.">        if (CollectionUtil.isNotEmpty(compensateEventSubscriptions)) {</span>
+
+<span class="nc" id="L95">            ExecutionEntity processInstanceExecutionEntity = subProcessExecution.getProcessInstance();</span>
+
+<span class="nc" id="L97">            ExecutionEntity eventScopeExecution = processEngineConfiguration.getExecutionEntityManager().createChildExecution(processInstanceExecutionEntity);</span>
+<span class="nc" id="L98">            eventScopeExecution.setActive(false);</span>
+<span class="nc" id="L99">            eventScopeExecution.setEventScope(true);</span>
+<span class="nc" id="L100">            eventScopeExecution.setCurrentFlowElement(subProcessExecution.getCurrentFlowElement());</span>
+
+            // copy local variables to eventScopeExecution by value. This way,
+            // the eventScopeExecution references a 'snapshot' of the local variables
+<span class="nc" id="L104">            Map&lt;String, Object&gt; variables = subProcessExecution.getVariablesLocal();</span>
+<span class="nc bnc" id="L105" title="All 2 branches missed.">            for (Entry&lt;String, Object&gt; variable : variables.entrySet()) {</span>
+<span class="nc" id="L106">                eventScopeExecution.setVariableLocal(variable.getKey(), variable.getValue(), subProcessExecution, true);</span>
+<span class="nc" id="L107">            }</span>
+
+            // set event subscriptions to the event scope execution:
+<span class="nc bnc" id="L110" title="All 2 branches missed.">            for (CompensateEventSubscriptionEntity eventSubscriptionEntity : compensateEventSubscriptions) {</span>
+<span class="nc" id="L111">                eventSubscriptionService.deleteEventSubscription(eventSubscriptionEntity);</span>
+<span class="nc" id="L112">                CountingEntityUtil.handleDeleteEventSubscriptionEntityCount(eventSubscriptionEntity);</span>
+
+<span class="nc" id="L114">                EventSubscriptionEntity newSubscription = (EventSubscriptionEntity) eventSubscriptionService.createEventSubscriptionBuilder()</span>
+<span class="nc" id="L115">                                .eventType(CompensateEventSubscriptionEntity.EVENT_TYPE)</span>
+<span class="nc" id="L116">                                .executionId(eventScopeExecution.getId())</span>
+<span class="nc" id="L117">                                .processInstanceId(eventScopeExecution.getProcessInstanceId())</span>
+<span class="nc" id="L118">                                .activityId(eventSubscriptionEntity.getActivityId())</span>
+<span class="nc" id="L119">                                .tenantId(eventScopeExecution.getTenantId())</span>
+<span class="nc" id="L120">                                .create();</span>
+                
+<span class="nc" id="L122">                CountingEntityUtil.handleInsertEventSubscriptionEntityCount(newSubscription);</span>
+                
+<span class="nc" id="L124">                newSubscription.setConfiguration(eventSubscriptionEntity.getConfiguration());</span>
+<span class="nc" id="L125">                newSubscription.setCreated(eventSubscriptionEntity.getCreated());</span>
+<span class="nc" id="L126">            }</span>
+
+<span class="nc" id="L128">            EventSubscriptionEntity eventSubscription = (EventSubscriptionEntity) eventSubscriptionService.createEventSubscriptionBuilder()</span>
+<span class="nc" id="L129">                            .eventType(CompensateEventSubscriptionEntity.EVENT_TYPE)</span>
+<span class="nc" id="L130">                            .executionId(processInstanceExecutionEntity.getId())</span>
+<span class="nc" id="L131">                            .processInstanceId(processInstanceExecutionEntity.getProcessInstanceId())</span>
+<span class="nc" id="L132">                            .activityId(eventScopeExecution.getCurrentFlowElement().getId())</span>
+<span class="nc" id="L133">                            .tenantId(processInstanceExecutionEntity.getTenantId())</span>
+<span class="nc" id="L134">                            .create();</span>
+            
+<span class="nc" id="L136">            CountingEntityUtil.handleInsertEventSubscriptionEntityCount(eventSubscription);</span>
+            
+<span class="nc" id="L138">            eventSubscription.setConfiguration(eventScopeExecution.getId());</span>
+        }
+<span class="nc" id="L140">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

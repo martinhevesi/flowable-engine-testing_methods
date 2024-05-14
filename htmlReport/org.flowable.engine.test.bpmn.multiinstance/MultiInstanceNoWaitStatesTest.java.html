@@ -1,0 +1,209 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MultiInstanceNoWaitStatesTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.bpmn.multiinstance</a> &gt; <span class="el_source">MultiInstanceNoWaitStatesTest.java</span></div><h1>MultiInstanceNoWaitStatesTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.flowable.engine.test.bpmn.multiinstance;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
+
+import org.flowable.engine.delegate.BpmnError;
+import org.flowable.engine.delegate.DelegateExecution;
+import org.flowable.engine.delegate.JavaDelegate;
+import org.flowable.engine.impl.jobexecutor.ParallelMultiInstanceWithNoWaitStatesAsyncLeaveJobHandler;
+import org.flowable.engine.impl.test.PluggableFlowableTestCase;
+import org.flowable.engine.runtime.Execution;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.test.Deployment;
+import org.flowable.job.api.Job;
+import org.flowable.variable.api.persistence.entity.VariableInstance;
+import org.junit.jupiter.api.Test;
+
+/**
+ * @author Filip Hrisafov
+ * @author Joram Barrez
+ */
+<span class="nc" id="L40">public class MultiInstanceNoWaitStatesTest extends PluggableFlowableTestCase {</span>
+
+    @Test
+    @Deployment
+    public void testParallelAsyncAndExclusiveServiceTasks() {
+<span class="nc" id="L45">        int count = 25; // This can be increased to e.g. 2500 to test this with lots of service tasks. The QA system however, doesn't like this.</span>
+<span class="nc" id="L46">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L47">                .processDefinitionKey(&quot;miParallelAsyncScriptTask&quot;)</span>
+<span class="nc" id="L48">                .variable(&quot;nrOfLoops&quot;, count)</span>
+<span class="nc" id="L49">                .start();</span>
+<span class="nc" id="L50">        List&lt;Job&gt; jobs = managementService.createJobQuery().list();</span>
+<span class="nc" id="L51">        assertThat(jobs).hasSize(count + 1); // 1 for each async service task + 1 for the job that does the leave</span>
+
+<span class="nc" id="L53">        waitForJobExecutorToProcessAllJobsAndAllTimerJobs(Duration.ofMinutes(5).toMillis(), 200);</span>
+<span class="nc" id="L54">        jobs = managementService.createJobQuery().list();</span>
+<span class="nc" id="L55">        assertThat(jobs).isEmpty();</span>
+<span class="nc" id="L56">        List&lt;Job&gt; timerJobs = managementService.createTimerJobQuery().list();</span>
+<span class="nc" id="L57">        assertThat(timerJobs).isEmpty();</span>
+
+<span class="nc" id="L59">        List&lt;Job&gt; deadLetterJobs = managementService.createDeadLetterJobQuery().list();</span>
+<span class="nc" id="L60">        assertThat(deadLetterJobs).isEmpty();</span>
+
+<span class="nc" id="L62">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().list();</span>
+<span class="nc" id="L63">        assertThat(executions).hasSize(2);</span>
+<span class="nc" id="L64">        Execution processInstanceExecution = null;</span>
+<span class="nc" id="L65">        Execution waitStateExecution = null;</span>
+<span class="nc bnc" id="L66" title="All 2 branches missed.">        for (Execution execution : executions) {</span>
+<span class="nc bnc" id="L67" title="All 2 branches missed.">            if (execution.getId().equals(execution.getProcessInstanceId())) {</span>
+<span class="nc" id="L68">                processInstanceExecution = execution;</span>
+            } else {
+<span class="nc" id="L70">                waitStateExecution = execution;</span>
+            }
+<span class="nc" id="L72">        }</span>
+<span class="nc" id="L73">        assertThat(processInstanceExecution).isNotNull();</span>
+<span class="nc" id="L74">        assertThat(waitStateExecution).isNotNull();</span>
+
+<span class="nc" id="L76">        Map&lt;String, VariableInstance&gt; variableInstances = runtimeService.getVariableInstances(processInstanceExecution.getProcessInstanceId());</span>
+<span class="nc" id="L77">        assertThat(variableInstances).containsOnlyKeys(&quot;nrOfLoops&quot;);</span>
+<span class="nc" id="L78">        VariableInstance nrOfLoops = variableInstances.get(&quot;nrOfLoops&quot;);</span>
+<span class="nc" id="L79">        assertThat(nrOfLoops.getValue()).isEqualTo(count);</span>
+
+<span class="nc" id="L81">    }</span>
+
+    @Test
+    @Deployment
+    public void testParallelAsyncAndExclusiveServiceTasksWithBoundaryEvent() {
+
+        // Boundary events add another execution as a child of the multi-instance.
+        // This tests whether the logic takes that into account
+
+<span class="nc" id="L90">        int count = 9;</span>
+<span class="nc" id="L91">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L92">            .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L93">            .variable(&quot;nrOfLoops&quot;, count)</span>
+<span class="nc" id="L94">            .start();</span>
+<span class="nc" id="L95">        List&lt;Job&gt; jobs = managementService.createJobQuery().list();</span>
+<span class="nc" id="L96">        assertThat(jobs).hasSize(count + 1); // 1 for each async service task + 1 for the job that does the leave</span>
+
+<span class="nc" id="L98">        waitForJobExecutorToProcessAllJobs(Duration.ofMinutes(5).toMillis(), 200);</span>
+<span class="nc" id="L99">        assertNoJobsAndNoProcessInstances();</span>
+<span class="nc" id="L100">    }</span>
+
+//    @Test
+//    @Deployment
+//    public void testParallelAsyncAndExclusiveServiceTasksWithBoundaryEventFiring() {
+//        ThrowErrorBoundaryDelegate.INSTANCES_BEFORE_THROW = 2;
+//
+//        int count = 5;
+//        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()
+//            .processDefinitionKey(&quot;myProcess&quot;)
+//            .variable(&quot;nrOfLoops&quot;, count)
+//            .start();
+//        List&lt;Job&gt; jobs = managementService.createJobQuery().list();
+//        assertThat(jobs).hasSize(count + 1); // 1 for each async service task + 1 for the job that does the leave
+//
+//        waitForJobExecutorToProcessAllJobs(Duration.ofMinutes(5).toMillis(), 200);
+//
+//        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();
+//        assertThat(task.getId()).isEqualTo(&quot;escalate&quot;);
+//        taskService.complete(task.getId());
+//
+//        assertNoJobsAndNoProcessInstances();
+//    }
+
+    @Test
+    @Deployment
+    public void testParallelAsyncAndExclusiveSubProcess() {
+<span class="nc" id="L127">        int count = 10;</span>
+<span class="nc" id="L128">        runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L129">            .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L130">            .variable(&quot;nrOfLoops&quot;, count)</span>
+<span class="nc" id="L131">            .start();</span>
+<span class="nc" id="L132">        List&lt;Job&gt; jobs = managementService.createJobQuery().list();</span>
+<span class="nc" id="L133">        assertThat(jobs).hasSize(count + 1);</span>
+
+<span class="nc" id="L135">        assertThat(jobs.stream()</span>
+<span class="nc" id="L136">            .filter(job -&gt; job.getJobHandlerType().equals(ParallelMultiInstanceWithNoWaitStatesAsyncLeaveJobHandler.TYPE)).collect(Collectors.toList()))</span>
+<span class="nc" id="L137">        .hasSize(1);</span>
+
+<span class="nc" id="L139">        assertThat(jobs.stream()</span>
+<span class="nc bnc" id="L140" title="All 2 branches missed.">            .filter(job -&gt; !job.getJobHandlerType().equals(ParallelMultiInstanceWithNoWaitStatesAsyncLeaveJobHandler.TYPE)).collect(Collectors.toList()))</span>
+<span class="nc" id="L141">            .hasSize(count);</span>
+
+<span class="nc" id="L143">        waitForJobExecutorToProcessAllJobs(Duration.ofMinutes(5).toMillis(), 200);</span>
+<span class="nc" id="L144">        assertNoJobsAndNoProcessInstances();</span>
+<span class="nc" id="L145">    }</span>
+
+
+
+    @Test
+    @Deployment
+    public void testNestedParallelAsyncAndExclusiveSubProcess() {
+
+        // Nested subprocesses, both with no wait states flag set.
+        // Technically, this use doesn't make a lot of sense: it would be better if only making the root subprocess have the 'noWaitState' flag.
+        // This test however validates that things don't break.
+
+<span class="nc" id="L157">        int count = 3;</span>
+<span class="nc" id="L158">        runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L159">            .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L160">            .variable(&quot;nrOfLoops&quot;, count)</span>
+<span class="nc" id="L161">            .start();</span>
+<span class="nc" id="L162">        List&lt;Job&gt; jobs = managementService.createJobQuery().list();</span>
+<span class="nc" id="L163">        assertThat(jobs).hasSize(count + 1);</span>
+
+<span class="nc" id="L165">        waitForJobExecutorToProcessAllJobs(Duration.ofMinutes(5).toMillis(), 200);</span>
+<span class="nc" id="L166">        assertNoJobsAndNoProcessInstances();</span>
+<span class="nc" id="L167">    }</span>
+
+    @Test
+    @Deployment(extraResources = &quot;org/flowable/engine/test/bpmn/multiinstance/MultiInstanceNoWaitStatesTest.allServiceTasksProcess.bpmn20.xml&quot;)
+    public void testNestedParallelAsyncAndExclusiveCallActivity() {
+<span class="nc" id="L172">        int count = 4;</span>
+<span class="nc" id="L173">        runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L174">            .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L175">            .variable(&quot;nrOfLoops&quot;, count)</span>
+<span class="nc" id="L176">            .start();</span>
+
+<span class="nc" id="L178">        List&lt;Job&gt; jobs = managementService.createJobQuery().list();</span>
+<span class="nc" id="L179">        assertThat(jobs).hasSize(count + 1);</span>
+
+<span class="nc" id="L181">        waitForJobExecutorToProcessAllJobs(Duration.ofMinutes(5).toMillis(), 200);</span>
+<span class="nc" id="L182">        assertNoJobsAndNoProcessInstances();</span>
+<span class="nc" id="L183">    }</span>
+
+    protected void assertNoJobsAndNoProcessInstances() {
+<span class="nc" id="L186">        assertThat(managementService.createJobQuery().count()).isEqualTo(0);</span>
+<span class="nc" id="L187">        assertThat(managementService.createTimerJobQuery().count()).isEqualTo(0);</span>
+<span class="nc" id="L188">        assertThat(managementService.createDeadLetterJobQuery().count()).isEqualTo(0);</span>
+
+<span class="nc" id="L190">        assertThat(runtimeService.createProcessInstanceQuery().processDefinitionKey(&quot;myProcess&quot;).count()).isZero();</span>
+<span class="nc" id="L191">    }</span>
+
+<span class="nc" id="L193">    public static class ThrowErrorBoundaryDelegate implements JavaDelegate {</span>
+
+<span class="nc" id="L195">        public static int INSTANCES_BEFORE_THROW = 0;</span>
+
+<span class="nc" id="L197">        public static AtomicInteger COUNTER = new AtomicInteger(0);</span>
+
+        @Override
+        public void execute(DelegateExecution execution) {
+<span class="nc" id="L201">            int count = COUNTER.incrementAndGet();</span>
+<span class="nc bnc" id="L202" title="All 2 branches missed.">            if (count == INSTANCES_BEFORE_THROW) {</span>
+<span class="nc" id="L203">                throw new BpmnError(&quot;123&quot;);</span>
+            }
+<span class="nc" id="L205">        }</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

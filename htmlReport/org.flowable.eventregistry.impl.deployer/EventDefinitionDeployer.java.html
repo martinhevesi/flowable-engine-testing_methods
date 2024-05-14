@@ -1,0 +1,259 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>EventDefinitionDeployer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.eventregistry.impl.deployer</a> &gt; <span class="el_source">EventDefinitionDeployer.java</span></div><h1>EventDefinitionDeployer.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.eventregistry.impl.deployer;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+import org.flowable.common.engine.impl.cfg.IdGenerator;
+import org.flowable.eventregistry.impl.EventRegistryEngineConfiguration;
+import org.flowable.eventregistry.impl.persistence.deploy.Deployer;
+import org.flowable.eventregistry.impl.persistence.entity.ChannelDefinitionEntity;
+import org.flowable.eventregistry.impl.persistence.entity.ChannelDefinitionEntityManager;
+import org.flowable.eventregistry.impl.persistence.entity.EventDefinitionEntity;
+import org.flowable.eventregistry.impl.persistence.entity.EventDefinitionEntityManager;
+import org.flowable.eventregistry.impl.persistence.entity.EventDeploymentEntity;
+import org.flowable.eventregistry.impl.util.CommandContextUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * @author Joram Barrez
+ * @author Tijs Rademakers
+ */
+<span class="nc" id="L34">public class EventDefinitionDeployer implements Deployer {</span>
+
+<span class="nc" id="L36">    private static final Logger LOGGER = LoggerFactory.getLogger(EventDefinitionDeployer.class);</span>
+
+    protected IdGenerator idGenerator;
+    protected ParsedDeploymentBuilderFactory parsedDeploymentBuilderFactory;
+    protected EventDefinitionDeploymentHelper eventDeploymentHelper;
+    protected ChannelDefinitionDeploymentHelper channelDeploymentHelper;
+    protected CachingAndArtifactsManager cachingAndArtifactsManager;
+    protected boolean usePrefixId;
+
+    @Override
+    public void deploy(EventDeploymentEntity deployment) {
+<span class="nc" id="L47">        LOGGER.debug(&quot;Processing deployment {}&quot;, deployment.getName());</span>
+
+        // The ParsedDeployment represents the deployment, the forms, and the form
+        // resource, parse, and model associated with each form.
+<span class="nc" id="L51">        ParsedDeployment parsedDeployment = parsedDeploymentBuilderFactory.getBuilderForDeployment(deployment).build();</span>
+
+<span class="nc" id="L53">        eventDeploymentHelper.verifyEventDefinitionsDoNotShareKeys(parsedDeployment.getAllEventDefinitions());</span>
+<span class="nc" id="L54">        channelDeploymentHelper.verifyChannelDefinitionsDoNotShareKeys(parsedDeployment.getAllChannelDefinitions());</span>
+
+<span class="nc" id="L56">        eventDeploymentHelper.copyDeploymentValuesToEventDefinitions(parsedDeployment.getDeployment(), parsedDeployment.getAllEventDefinitions());</span>
+<span class="nc" id="L57">        eventDeploymentHelper.setResourceNamesOnEventDefinitions(parsedDeployment);</span>
+        
+<span class="nc" id="L59">        channelDeploymentHelper.copyDeploymentValuesToEventDefinitions(parsedDeployment.getDeployment(), parsedDeployment.getAllChannelDefinitions());</span>
+<span class="nc" id="L60">        channelDeploymentHelper.setResourceNamesOnEventDefinitions(parsedDeployment);</span>
+
+<span class="nc bnc" id="L62" title="All 2 branches missed.">        if (deployment.isNew()) {</span>
+<span class="nc" id="L63">            Map&lt;EventDefinitionEntity, EventDefinitionEntity&gt; mapOfNewEventDefinitionToPreviousVersion = getPreviousVersionsOfEventDefinitions(parsedDeployment);</span>
+<span class="nc" id="L64">            setEventDefinitionVersionsAndIds(parsedDeployment, mapOfNewEventDefinitionToPreviousVersion);</span>
+<span class="nc" id="L65">            persistEventDefinitions(parsedDeployment);</span>
+            
+<span class="nc" id="L67">            Map&lt;ChannelDefinitionEntity, ChannelDefinitionEntity&gt; mapOfNewChannelDefinitionToPreviousVersion = getPreviousVersionsOfChannelDefinitions(parsedDeployment);</span>
+<span class="nc" id="L68">            setChannelDefinitionVersionsAndIds(parsedDeployment, mapOfNewChannelDefinitionToPreviousVersion);</span>
+<span class="nc" id="L69">            persistChannelDefinitions(parsedDeployment);</span>
+
+<span class="nc" id="L71">        } else {</span>
+<span class="nc" id="L72">            makeEventDefinitionsConsistentWithPersistedVersions(parsedDeployment);</span>
+<span class="nc" id="L73">            makeChannelDefinitionsConsistentWithPersistedVersions(parsedDeployment);</span>
+        }
+
+<span class="nc" id="L76">        cachingAndArtifactsManager.updateCachingAndArtifacts(parsedDeployment);</span>
+<span class="nc" id="L77">    }</span>
+
+    /**
+     * Constructs a map from new event definitions to the previous version by key and tenant. If no previous version exists, no map entry is created.
+     */
+    protected Map&lt;EventDefinitionEntity, EventDefinitionEntity&gt; getPreviousVersionsOfEventDefinitions(ParsedDeployment parsedDeployment) {
+
+<span class="nc" id="L84">        Map&lt;EventDefinitionEntity, EventDefinitionEntity&gt; result = new LinkedHashMap&lt;&gt;();</span>
+
+<span class="nc bnc" id="L86" title="All 2 branches missed.">        for (EventDefinitionEntity newDefinition : parsedDeployment.getAllEventDefinitions()) {</span>
+<span class="nc" id="L87">            EventDefinitionEntity existingEventDefinition = eventDeploymentHelper.getMostRecentVersionOfEventDefinition(newDefinition);</span>
+
+<span class="nc bnc" id="L89" title="All 2 branches missed.">            if (existingEventDefinition != null) {</span>
+<span class="nc" id="L90">                result.put(newDefinition, existingEventDefinition);</span>
+            }
+<span class="nc" id="L92">        }</span>
+
+<span class="nc" id="L94">        return result;</span>
+    }
+    
+    /**
+     * Constructs a map from new channel definitions to the previous version by key and tenant. If no previous version exists, no map entry is created.
+     */
+    protected Map&lt;ChannelDefinitionEntity, ChannelDefinitionEntity&gt; getPreviousVersionsOfChannelDefinitions(ParsedDeployment parsedDeployment) {
+
+<span class="nc" id="L102">        Map&lt;ChannelDefinitionEntity, ChannelDefinitionEntity&gt; result = new LinkedHashMap&lt;&gt;();</span>
+
+<span class="nc bnc" id="L104" title="All 2 branches missed.">        for (ChannelDefinitionEntity newDefinition : parsedDeployment.getAllChannelDefinitions()) {</span>
+<span class="nc" id="L105">            ChannelDefinitionEntity existingChannelDefinition = channelDeploymentHelper.getMostRecentVersionOfChannelDefinition(newDefinition);</span>
+
+<span class="nc bnc" id="L107" title="All 2 branches missed.">            if (existingChannelDefinition != null) {</span>
+<span class="nc" id="L108">                result.put(newDefinition, existingChannelDefinition);</span>
+            }
+<span class="nc" id="L110">        }</span>
+
+<span class="nc" id="L112">        return result;</span>
+    }
+
+    /**
+     * If the map contains an existing version for an event definition, then the event definition is updated, otherwise a new event definition is created.
+     */
+    protected void setEventDefinitionVersionsAndIds(ParsedDeployment parsedDeployment, Map&lt;EventDefinitionEntity, EventDefinitionEntity&gt; mapOfNewEventDefinitionToPreviousVersion) {
+<span class="nc bnc" id="L119" title="All 2 branches missed.">        for (EventDefinitionEntity eventDefinition : parsedDeployment.getAllEventDefinitions()) {</span>
+<span class="nc" id="L120">            int version = 1;</span>
+            
+<span class="nc" id="L122">            EventDefinitionEntity latest = mapOfNewEventDefinitionToPreviousVersion.get(eventDefinition);</span>
+<span class="nc bnc" id="L123" title="All 2 branches missed.">            if (latest != null) {</span>
+<span class="nc" id="L124">                version = latest.getVersion() + 1;</span>
+            }
+
+<span class="nc" id="L127">            eventDefinition.setVersion(version);</span>
+
+<span class="nc bnc" id="L129" title="All 2 branches missed.">            if (usePrefixId) {</span>
+<span class="nc" id="L130">                eventDefinition.setId(eventDefinition.getIdPrefix() + idGenerator.getNextId());</span>
+            } else {
+<span class="nc" id="L132">                eventDefinition.setId(idGenerator.getNextId());</span>
+            }
+<span class="nc" id="L134">        }</span>
+<span class="nc" id="L135">    }</span>
+    
+    /**
+     * If the map contains an existing version for a channel definition, then the channel definition is updated, otherwise a new channel definition is created.
+     */
+    protected void setChannelDefinitionVersionsAndIds(ParsedDeployment parsedDeployment, Map&lt;ChannelDefinitionEntity, ChannelDefinitionEntity&gt; mapOfNewChannelDefinitionToPreviousVersion) {
+<span class="nc bnc" id="L141" title="All 2 branches missed.">        for (ChannelDefinitionEntity channelDefinition : parsedDeployment.getAllChannelDefinitions()) {</span>
+<span class="nc" id="L142">            int version = 1;</span>
+            
+<span class="nc" id="L144">            ChannelDefinitionEntity latest = mapOfNewChannelDefinitionToPreviousVersion.get(channelDefinition);</span>
+<span class="nc bnc" id="L145" title="All 2 branches missed.">            if (latest != null) {</span>
+<span class="nc" id="L146">                version = latest.getVersion() + 1;</span>
+            }
+
+<span class="nc" id="L149">            channelDefinition.setVersion(version);</span>
+
+<span class="nc bnc" id="L151" title="All 2 branches missed.">            if (usePrefixId) {</span>
+<span class="nc" id="L152">                channelDefinition.setId(channelDefinition.getIdPrefix() + idGenerator.getNextId());</span>
+            } else {
+<span class="nc" id="L154">                channelDefinition.setId(idGenerator.getNextId());</span>
+            }
+<span class="nc" id="L156">        }</span>
+<span class="nc" id="L157">    }</span>
+
+    /**
+     * Saves each event definition. It is assumed that the deployment is new, the definitions have never been saved before, and that they have all their values properly set up.
+     */
+    protected void persistEventDefinitions(ParsedDeployment parsedDeployment) {
+<span class="nc" id="L163">        EventRegistryEngineConfiguration eventRegistryEngineConfiguration = CommandContextUtil.getEventRegistryConfiguration();</span>
+<span class="nc" id="L164">        EventDefinitionEntityManager eventDefinitionEntityManager = eventRegistryEngineConfiguration.getEventDefinitionEntityManager();</span>
+
+<span class="nc bnc" id="L166" title="All 2 branches missed.">        for (EventDefinitionEntity eventDefinition : parsedDeployment.getAllEventDefinitions()) {</span>
+<span class="nc" id="L167">            eventDefinitionEntityManager.insert(eventDefinition);</span>
+<span class="nc" id="L168">        }</span>
+<span class="nc" id="L169">    }</span>
+    
+    /**
+     * Saves each channel definition. It is assumed that the deployment is new, the definitions have never been saved before, and that they have all their values properly set up.
+     */
+    protected void persistChannelDefinitions(ParsedDeployment parsedDeployment) {
+<span class="nc" id="L175">        EventRegistryEngineConfiguration eventRegistryEngineConfiguration = CommandContextUtil.getEventRegistryConfiguration();</span>
+<span class="nc" id="L176">        ChannelDefinitionEntityManager channelDefinitionEntityManager = eventRegistryEngineConfiguration.getChannelDefinitionEntityManager();</span>
+
+<span class="nc bnc" id="L178" title="All 2 branches missed.">        for (ChannelDefinitionEntity channelDefinition : parsedDeployment.getAllChannelDefinitions()) {</span>
+<span class="nc" id="L179">            channelDefinitionEntityManager.insert(channelDefinition);</span>
+<span class="nc" id="L180">        }</span>
+<span class="nc" id="L181">    }</span>
+
+    /**
+     * Loads the persisted version of each event definition and set values on the in-memory version to be consistent.
+     */
+    protected void makeEventDefinitionsConsistentWithPersistedVersions(ParsedDeployment parsedDeployment) {
+<span class="nc bnc" id="L187" title="All 2 branches missed.">        for (EventDefinitionEntity eventDefinition : parsedDeployment.getAllEventDefinitions()) {</span>
+<span class="nc" id="L188">            EventDefinitionEntity persistedEventDefinition = eventDeploymentHelper.getPersistedInstanceOfEventDefinition(eventDefinition);</span>
+
+<span class="nc bnc" id="L190" title="All 2 branches missed.">            if (persistedEventDefinition != null) {</span>
+<span class="nc" id="L191">                eventDefinition.setId(persistedEventDefinition.getId());</span>
+<span class="nc" id="L192">                eventDefinition.setVersion(persistedEventDefinition.getVersion());</span>
+            }
+<span class="nc" id="L194">        }</span>
+<span class="nc" id="L195">    }</span>
+    
+    /**
+     * Loads the persisted version of each channel definition and set values on the in-memory version to be consistent.
+     */
+    protected void makeChannelDefinitionsConsistentWithPersistedVersions(ParsedDeployment parsedDeployment) {
+<span class="nc bnc" id="L201" title="All 2 branches missed.">        for (ChannelDefinitionEntity channelDefinition : parsedDeployment.getAllChannelDefinitions()) {</span>
+<span class="nc" id="L202">            ChannelDefinitionEntity persistedChannelDefinition = channelDeploymentHelper.getPersistedInstanceOfChannelDefinition(channelDefinition);</span>
+
+<span class="nc bnc" id="L204" title="All 2 branches missed.">            if (persistedChannelDefinition != null) {</span>
+<span class="nc" id="L205">                channelDefinition.setId(persistedChannelDefinition.getId());</span>
+<span class="nc" id="L206">                channelDefinition.setVersion(persistedChannelDefinition.getVersion());</span>
+            }
+<span class="nc" id="L208">        }</span>
+<span class="nc" id="L209">    }</span>
+
+    public IdGenerator getIdGenerator() {
+<span class="nc" id="L212">        return idGenerator;</span>
+    }
+
+    public void setIdGenerator(IdGenerator idGenerator) {
+<span class="nc" id="L216">        this.idGenerator = idGenerator;</span>
+<span class="nc" id="L217">    }</span>
+
+    public ParsedDeploymentBuilderFactory getExParsedDeploymentBuilderFactory() {
+<span class="nc" id="L220">        return parsedDeploymentBuilderFactory;</span>
+    }
+
+    public void setParsedDeploymentBuilderFactory(ParsedDeploymentBuilderFactory parsedDeploymentBuilderFactory) {
+<span class="nc" id="L224">        this.parsedDeploymentBuilderFactory = parsedDeploymentBuilderFactory;</span>
+<span class="nc" id="L225">    }</span>
+
+    public EventDefinitionDeploymentHelper getEventDeploymentHelper() {
+<span class="nc" id="L228">        return eventDeploymentHelper;</span>
+    }
+
+    public void setEventDeploymentHelper(EventDefinitionDeploymentHelper eventDeploymentHelper) {
+<span class="nc" id="L232">        this.eventDeploymentHelper = eventDeploymentHelper;</span>
+<span class="nc" id="L233">    }    </span>
+
+    public ChannelDefinitionDeploymentHelper getChannelDeploymentHelper() {
+<span class="nc" id="L236">        return channelDeploymentHelper;</span>
+    }
+
+    public void setChannelDeploymentHelper(ChannelDefinitionDeploymentHelper channelDeploymentHelper) {
+<span class="nc" id="L240">        this.channelDeploymentHelper = channelDeploymentHelper;</span>
+<span class="nc" id="L241">    }</span>
+
+    public CachingAndArtifactsManager getCachingAndArtifcatsManager() {
+<span class="nc" id="L244">        return cachingAndArtifactsManager;</span>
+    }
+
+    public void setCachingAndArtifactsManager(CachingAndArtifactsManager manager) {
+<span class="nc" id="L248">        this.cachingAndArtifactsManager = manager;</span>
+<span class="nc" id="L249">    }</span>
+
+    public boolean isUsePrefixId() {
+<span class="nc" id="L252">        return usePrefixId;</span>
+    }
+
+    public void setUsePrefixId(boolean usePrefixId) {
+<span class="nc" id="L256">        this.usePrefixId = usePrefixId;</span>
+<span class="nc" id="L257">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

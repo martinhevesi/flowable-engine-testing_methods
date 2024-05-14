@@ -1,0 +1,713 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BoundaryErrorEventTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.bpmn.event.error</a> &gt; <span class="el_source">BoundaryErrorEventTest.java</span></div><h1>BoundaryErrorEventTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.test.bpmn.event.error;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.entry;
+
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.function.Supplier;
+import java.util.stream.Stream;
+
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.impl.el.VariableContainerWrapper;
+import org.flowable.common.engine.impl.history.HistoryLevel;
+import org.flowable.common.engine.impl.util.CollectionUtil;
+import org.flowable.engine.delegate.BpmnError;
+import org.flowable.engine.history.HistoricProcessInstance;
+import org.flowable.engine.impl.test.HistoryTestHelper;
+import org.flowable.engine.impl.test.PluggableFlowableTestCase;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.test.Deployment;
+import org.flowable.task.api.Task;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+
+/**
+ * @author Joram Barrez
+ * @author Tijs Rademakers
+ */
+<span class="nc" id="L46">public class BoundaryErrorEventTest extends PluggableFlowableTestCase {</span>
+
+    @Test
+    @Deployment
+    public void testCatchErrorOnEmbeddedSubprocess() {
+<span class="nc" id="L51">        runtimeService.startProcessInstanceByKey(&quot;boundaryErrorOnEmbeddedSubprocess&quot;);</span>
+
+        // After process start, usertask in subprocess should exist
+<span class="nc" id="L54">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L55">        assertThat(task.getName()).isEqualTo(&quot;subprocessTask&quot;);</span>
+
+        // After task completion, error end event is reached and caught
+<span class="nc" id="L58">        taskService.complete(task.getId());</span>
+<span class="nc" id="L59">        task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L60">        assertThat(task.getName()).isEqualTo(&quot;task after catching the error&quot;);</span>
+<span class="nc" id="L61">    }</span>
+
+    @Test
+    public void testThrowErrorWithEmptyErrorCode() {
+<span class="nc" id="L65">        assertThatThrownBy(() -&gt; repositoryService.createDeployment().addClasspathResource(&quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.testThrowErrorWithEmptyErrorCode.bpmn20.xml&quot;).deploy())</span>
+<span class="nc" id="L66">                .as(&quot;exception expected, as there is no matching exception map&quot;)</span>
+<span class="nc" id="L67">                .isInstanceOf(FlowableException.class);</span>
+<span class="nc" id="L68">    }</span>
+
+    @Test
+    @Deployment
+    public void testCatchErrorOnEmbeddedSubprocessWithEmptyErrorCode() {
+<span class="nc" id="L73">        testCatchErrorOnEmbeddedSubprocess();</span>
+<span class="nc" id="L74">    }</span>
+
+    @Test
+    @Deployment
+    public void testCatchErrorOnEmbeddedSubprocessWithoutErrorCode() {
+<span class="nc" id="L79">        testCatchErrorOnEmbeddedSubprocess();</span>
+<span class="nc" id="L80">    }</span>
+
+    @Test
+    @Deployment
+    public void testCatchErrorOfInnerSubprocessOnOuterSubprocess() {
+<span class="nc" id="L85">        runtimeService.startProcessInstanceByKey(&quot;boundaryErrorTest&quot;);</span>
+
+<span class="nc" id="L87">        List&lt;org.flowable.task.api.Task&gt; tasks = taskService.createTaskQuery().orderByTaskName().asc().list();</span>
+<span class="nc" id="L88">        assertThat(tasks)</span>
+<span class="nc" id="L89">                .extracting(Task::getName)</span>
+<span class="nc" id="L90">                .containsExactly(&quot;Inner subprocess task 1&quot;, &quot;Inner subprocess task 2&quot;);</span>
+
+        // Completing task 2, will cause the end error event to throw error with code 123
+<span class="nc" id="L93">        taskService.complete(tasks.get(1).getId());</span>
+<span class="nc" id="L94">        taskService.createTaskQuery().list();</span>
+<span class="nc" id="L95">        org.flowable.task.api.Task taskAfterError = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L96">        assertThat(taskAfterError.getName()).isEqualTo(&quot;task outside subprocess&quot;);</span>
+<span class="nc" id="L97">    }</span>
+
+    @Test
+    @Deployment
+    public void testCatchErrorInConcurrentEmbeddedSubprocesses() {
+<span class="nc" id="L102">        assertErrorCaughtInConcurrentEmbeddedSubprocesses(&quot;boundaryEventTestConcurrentSubprocesses&quot;);</span>
+<span class="nc" id="L103">    }</span>
+
+    @Test
+    @Deployment
+    public void testCatchErrorInConcurrentEmbeddedSubprocessesThrownByScriptTask() {
+<span class="nc" id="L108">        assertErrorCaughtInConcurrentEmbeddedSubprocesses(&quot;catchErrorInConcurrentEmbeddedSubprocessesThrownByScriptTask&quot;);</span>
+<span class="nc" id="L109">    }</span>
+
+    private void assertErrorCaughtInConcurrentEmbeddedSubprocesses(String processDefinitionKey) {
+        // Completing task A will lead to task D
+<span class="nc" id="L113">        String procId = runtimeService.startProcessInstanceByKey(processDefinitionKey).getId();</span>
+<span class="nc" id="L114">        List&lt;org.flowable.task.api.Task&gt; tasks = taskService.createTaskQuery().orderByTaskName().asc().list();</span>
+<span class="nc" id="L115">        assertThat(tasks)</span>
+<span class="nc" id="L116">                .extracting(Task::getName)</span>
+<span class="nc" id="L117">                .containsExactly(&quot;task A&quot;, &quot;task B&quot;);</span>
+<span class="nc" id="L118">        taskService.complete(tasks.get(0).getId());</span>
+<span class="nc" id="L119">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L120">        assertThat(task.getName()).isEqualTo(&quot;task D&quot;);</span>
+<span class="nc" id="L121">        taskService.complete(task.getId());</span>
+<span class="nc" id="L122">        assertProcessEnded(procId);</span>
+
+        // Completing task B will lead to task C
+<span class="nc" id="L125">        runtimeService.startProcessInstanceByKey(processDefinitionKey).getId();</span>
+<span class="nc" id="L126">        tasks = taskService.createTaskQuery().orderByTaskName().asc().list();</span>
+<span class="nc" id="L127">        assertThat(tasks)</span>
+<span class="nc" id="L128">                .extracting(Task::getName)</span>
+<span class="nc" id="L129">                .containsExactly(&quot;task A&quot;, &quot;task B&quot;);</span>
+<span class="nc" id="L130">        taskService.complete(tasks.get(1).getId());</span>
+
+<span class="nc" id="L132">        tasks = taskService.createTaskQuery().orderByTaskName().asc().list();</span>
+<span class="nc" id="L133">        assertThat(tasks)</span>
+<span class="nc" id="L134">                .extracting(Task::getName)</span>
+<span class="nc" id="L135">                .containsExactly(&quot;task A&quot;, &quot;task C&quot;);</span>
+<span class="nc" id="L136">        taskService.complete(tasks.get(1).getId());</span>
+<span class="nc" id="L137">        task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L138">        assertThat(task.getName()).isEqualTo(&quot;task A&quot;);</span>
+
+<span class="nc" id="L140">        taskService.complete(task.getId());</span>
+<span class="nc" id="L141">        task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L142">        assertThat(task.getName()).isEqualTo(&quot;task D&quot;);</span>
+<span class="nc" id="L143">    }</span>
+
+    @Test
+    @Deployment
+    public void testDeeplyNestedErrorThrown() {
+
+        // Input = 1 -&gt; error1 will be thrown, which will destroy ALL BUT ONE
+        // subprocess, which leads to an end event, which ultimately leads to
+        // ending the process instance
+<span class="nc" id="L152">        String procId = runtimeService.startProcessInstanceByKey(&quot;deeplyNestedErrorThrown&quot;).getId();</span>
+<span class="nc" id="L153">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L154">        assertThat(task.getName()).isEqualTo(&quot;Nested task&quot;);</span>
+<span class="nc" id="L155">        taskService.complete(task.getId(), CollectionUtil.singletonMap(&quot;input&quot;, 1));</span>
+<span class="nc" id="L156">        assertProcessEnded(procId);</span>
+
+        // Input == 2 -&gt; error2 will be thrown, leading to a userTask outside
+        // all subprocesses
+<span class="nc" id="L160">        procId = runtimeService.startProcessInstanceByKey(&quot;deeplyNestedErrorThrown&quot;).getId();</span>
+<span class="nc" id="L161">        task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L162">        assertThat(task.getName()).isEqualTo(&quot;Nested task&quot;);</span>
+<span class="nc" id="L163">        taskService.complete(task.getId(), CollectionUtil.singletonMap(&quot;input&quot;, 2));</span>
+<span class="nc" id="L164">        task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L165">        assertThat(task.getName()).isEqualTo(&quot;task after catch&quot;);</span>
+<span class="nc" id="L166">        taskService.complete(task.getId());</span>
+<span class="nc" id="L167">        assertProcessEnded(procId);</span>
+<span class="nc" id="L168">    }</span>
+
+    @Test
+    @Deployment
+    public void testDeeplyNestedErrorThrownOnlyAutomaticSteps() {
+        // input == 1 -&gt; error2 is thrown -&gt; caught on subprocess2 -&gt; end event
+        // in subprocess -&gt; proc inst end 1
+<span class="nc" id="L175">        String procId = runtimeService.startProcessInstanceByKey(&quot;deeplyNestedErrorThrown&quot;, CollectionUtil.singletonMap(&quot;input&quot;, 1)).getId();</span>
+<span class="nc" id="L176">        assertProcessEnded(procId);</span>
+
+        HistoricProcessInstance hip;
+<span class="nc bnc" id="L179" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L180">            hip = historyService.createHistoricProcessInstanceQuery().processInstanceId(procId).singleResult();</span>
+<span class="nc" id="L181">            assertThat(hip.getEndActivityId()).isEqualTo(&quot;processEnd1&quot;);</span>
+        }
+        // input == 2 -&gt; error2 is thrown -&gt; caught on subprocess1 -&gt; proc inst
+        // end 2
+<span class="nc" id="L185">        procId = runtimeService.startProcessInstanceByKey(&quot;deeplyNestedErrorThrown&quot;, CollectionUtil.singletonMap(&quot;input&quot;, 1)).getId();</span>
+<span class="nc" id="L186">        assertProcessEnded(procId);</span>
+
+<span class="nc bnc" id="L188" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L189">            hip = historyService.createHistoricProcessInstanceQuery().processInstanceId(procId).singleResult();</span>
+<span class="nc" id="L190">            assertThat(hip.getEndActivityId()).isEqualTo(&quot;processEnd1&quot;);</span>
+        }
+<span class="nc" id="L192">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.testCatchErrorOnCallActivity-parent.bpmn20.xml&quot;,
+            &quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.subprocess.bpmn20.xml&quot; })
+    public void testCatchErrorOnCallActivity() {
+<span class="nc" id="L198">        String procId = runtimeService.startProcessInstanceByKey(&quot;catchErrorOnCallActivity&quot;).getId();</span>
+<span class="nc" id="L199">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L200">        assertThat(task.getName()).isEqualTo(&quot;Task in subprocess&quot;);</span>
+
+        // Completing the task will reach the end error event,
+        // which is caught on the call activity boundary
+<span class="nc" id="L204">        taskService.complete(task.getId());</span>
+<span class="nc" id="L205">        task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L206">        assertThat(task.getName()).isEqualTo(&quot;Escalated Task&quot;);</span>
+
+        // Completing the task will end the process instance
+<span class="nc" id="L209">        taskService.complete(task.getId());</span>
+<span class="nc" id="L210">        assertProcessEnded(procId);</span>
+<span class="nc" id="L211">    }</span>
+    
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.multipleErrorsCatch.bpmn20.xml&quot;,
+        &quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.multipleErrorsThrow.bpmn20.xml&quot; })
+    public void testCatchMultipleErrorsOnCallActivity() {
+<span class="nc" id="L217">        String procId = runtimeService.startProcessInstanceByKey(&quot;catchError&quot;).getId();</span>
+<span class="nc" id="L218">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L219">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;specificErrorTask&quot;);</span>
+        
+<span class="nc" id="L221">        taskService.complete(task.getId());</span>
+        
+<span class="nc" id="L223">        assertProcessEnded(procId);</span>
+<span class="nc" id="L224">    }</span>
+    
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.multipleErrorsCatch.bpmn20.xml&quot;,
+        &quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.multipleErrorsThrow2.bpmn20.xml&quot; })
+    public void testCatchMultipleErrorsOnCallActivityNoSpecificError() {
+<span class="nc" id="L230">        String procId = runtimeService.startProcessInstanceByKey(&quot;catchError&quot;).getId();</span>
+<span class="nc" id="L231">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L232">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;emptyErrorTask&quot;);</span>
+        
+<span class="nc" id="L234">        taskService.complete(task.getId());</span>
+        
+<span class="nc" id="L236">        assertProcessEnded(procId);</span>
+<span class="nc" id="L237">    }</span>
+    
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.callActivityWithErrorEndEventCatch.bpmn20.xml&quot;,
+        &quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.callActivityWithErrorEndEventThrow.bpmn20.xml&quot; })
+    public void testCatchErrorEndEventOnCallActivity() {
+<span class="nc" id="L243">        String procId = runtimeService.startProcessInstanceByKey(&quot;catchError&quot;).getId();</span>
+<span class="nc" id="L244">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L245">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;specificErrorTask&quot;);</span>
+        
+<span class="nc" id="L247">        taskService.complete(task.getId());</span>
+        
+<span class="nc" id="L249">        assertProcessEnded(procId);</span>
+<span class="nc" id="L250">    }</span>
+    
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.callActivityWithErrorEndEventCatch.bpmn20.xml&quot;,
+        &quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.callActivityWithErrorEndEventThrow2.bpmn20.xml&quot; })
+    public void testCatchErrorEndEventOnCallActivityNoSpecificError() {
+<span class="nc" id="L256">        String procId = runtimeService.startProcessInstanceByKey(&quot;catchError&quot;).getId();</span>
+<span class="nc" id="L257">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L258">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;emptyErrorTask&quot;);</span>
+        
+<span class="nc" id="L260">        taskService.complete(task.getId());</span>
+        
+<span class="nc" id="L262">        assertProcessEnded(procId);</span>
+<span class="nc" id="L263">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.callActivityWithErrorEndEventCatchWithParameters.bpmn20.xml&quot;,
+            &quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.callActivityWithErrorEndEventThrowWithOutputParameters.bpmn20.xml&quot; })
+    public void testCatchErrorEndEventWithOutputParametersOnCallActivity() {
+<span class="nc" id="L269">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L270">                .processDefinitionKey(&quot;catchError&quot;)</span>
+<span class="nc" id="L271">                .transientVariable(&quot;testVar&quot;, &quot;For test&quot;)</span>
+<span class="nc" id="L272">                .transientVariable(&quot;errorMessageToUseVar&quot;, &quot;Test error message&quot;)</span>
+<span class="nc" id="L273">                .start();</span>
+
+<span class="nc" id="L275">        assertThat(runtimeService.getVariables(processInstance.getId()))</span>
+<span class="nc" id="L276">                .contains(</span>
+<span class="nc" id="L277">                        entry(&quot;outVar&quot;, &quot;For test&quot;),</span>
+<span class="nc" id="L278">                        entry(&quot;outExpressionVar&quot;, &quot;For test-testing&quot;),</span>
+<span class="nc" id="L279">                        entry(&quot;errorMessageVar&quot;, &quot;Test error message&quot;)</span>
+                );
+<span class="nc" id="L281">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.callActivityWithErrorEndEventCatchWithParameters.bpmn20.xml&quot;,
+            &quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.callActivityWithErrorEndEventThrowWithOutputParametersAndErrorMessageFromExpression.bpmn20.xml&quot; })
+    public void testCatchErrorEndEventWithOutputParametersAndErrorMessageFromExpressionOnCallActivity() {
+<span class="nc" id="L287">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L288">                .processDefinitionKey(&quot;catchError&quot;)</span>
+<span class="nc" id="L289">                .start();</span>
+
+<span class="nc" id="L291">        assertThat(runtimeService.getVariables(processInstance.getId()))</span>
+<span class="nc" id="L292">                .contains(</span>
+<span class="nc" id="L293">                        entry(&quot;outVar&quot;, null),</span>
+<span class="nc" id="L294">                        entry(&quot;outExpressionVar&quot;, null),</span>
+<span class="nc" id="L295">                        entry(&quot;errorMessageVar&quot;, &quot;Custom error message&quot;)</span>
+                );
+<span class="nc" id="L297">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.subprocess.bpmn20.xml&quot; })
+    public void testUncaughtError() {
+<span class="nc" id="L302">        runtimeService.startProcessInstanceByKey(&quot;simpleSubProcess&quot;);</span>
+<span class="nc" id="L303">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L304">        assertThat(task.getName()).isEqualTo(&quot;Task in subprocess&quot;);</span>
+
+        // Completing the task will reach the end error event, which is never caught in the process
+<span class="nc" id="L307">        assertThatThrownBy(() -&gt; taskService.complete(task.getId()))</span>
+<span class="nc" id="L308">                .isExactlyInstanceOf(BpmnError.class)</span>
+<span class="nc" id="L309">                .hasMessage(&quot;No catching boundary event found for error with errorCode 'myError', neither in same process nor in parent process&quot;);</span>
+<span class="nc" id="L310">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.testUncaughtErrorOnCallActivity-parent.bpmn20.xml&quot;,
+            &quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.subprocess.bpmn20.xml&quot; })
+    public void testUncaughtErrorOnCallActivity() {
+<span class="nc" id="L316">        runtimeService.startProcessInstanceByKey(&quot;uncaughtErrorOnCallActivity&quot;);</span>
+<span class="nc" id="L317">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L318">        assertThat(task.getName()).isEqualTo(&quot;Task in subprocess&quot;);</span>
+
+        // Completing the task will reach the end error event, which is never caught in the process
+<span class="nc" id="L321">        assertThatThrownBy(() -&gt; taskService.complete(task.getId()))</span>
+<span class="nc" id="L322">                .isExactlyInstanceOf(BpmnError.class)</span>
+<span class="nc" id="L323">                .hasMessage(&quot;No catching boundary event found for error with errorCode 'myError', neither in same process nor in parent process&quot;);</span>
+<span class="nc" id="L324">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.testCatchErrorThrownByCallActivityOnSubprocess.bpmn20.xml&quot;,
+            &quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.subprocess.bpmn20.xml&quot; })
+    public void testCatchErrorThrownByCallActivityOnSubprocess() {
+<span class="nc" id="L330">        String procId = runtimeService.startProcessInstanceByKey(&quot;catchErrorOnSubprocess&quot;).getId();</span>
+<span class="nc" id="L331">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L332">        assertThat(task.getName()).isEqualTo(&quot;Task in subprocess&quot;);</span>
+
+        // Completing the task will reach the end error event,
+        // which is caught on the call activity boundary
+<span class="nc" id="L336">        taskService.complete(task.getId());</span>
+<span class="nc" id="L337">        task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L338">        assertThat(task.getName()).isEqualTo(&quot;Escalated Task&quot;);</span>
+
+        // Completing the task will end the process instance
+<span class="nc" id="L341">        taskService.complete(task.getId());</span>
+<span class="nc" id="L342">        assertProcessEnded(procId);</span>
+<span class="nc" id="L343">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.testCatchErrorThrownByCallActivityOnCallActivity.bpmn20.xml&quot;,
+            &quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.subprocess2ndLevel.bpmn20.xml&quot;, &quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.subprocess.bpmn20.xml&quot; })
+    public void testCatchErrorThrownByCallActivityOnCallActivity() {
+<span class="nc" id="L349">        String procId = runtimeService.startProcessInstanceByKey(&quot;catchErrorOnCallActivity2ndLevel&quot;).getId();</span>
+
+<span class="nc" id="L351">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L352">        assertThat(task.getName()).isEqualTo(&quot;Task in subprocess&quot;);</span>
+
+<span class="nc" id="L354">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L356">        task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L357">        assertThat(task.getName()).isEqualTo(&quot;Escalated Task&quot;);</span>
+
+        // Completing the task will end the process instance
+<span class="nc" id="L360">        taskService.complete(task.getId());</span>
+<span class="nc" id="L361">        assertProcessEnded(procId);</span>
+<span class="nc" id="L362">    }</span>
+
+    @Test
+    @Deployment
+    public void testCatchErrorOnParallelMultiInstance() {
+<span class="nc" id="L367">        String procId = runtimeService.startProcessInstanceByKey(&quot;catchErrorOnParallelMi&quot;).getId();</span>
+<span class="nc" id="L368">        List&lt;org.flowable.task.api.Task&gt; tasks = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L369">        assertThat(tasks).hasSize(5);</span>
+
+        // Complete two subprocesses, just to make it a bit more complex
+<span class="nc" id="L372">        Map&lt;String, Object&gt; vars = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L373">        vars.put(&quot;throwError&quot;, false);</span>
+<span class="nc" id="L374">        taskService.complete(tasks.get(2).getId(), vars);</span>
+<span class="nc" id="L375">        taskService.complete(tasks.get(3).getId(), vars);</span>
+
+        // Reach the error event
+<span class="nc" id="L378">        vars.put(&quot;throwError&quot;, true);</span>
+<span class="nc" id="L379">        taskService.complete(tasks.get(1).getId(), vars);</span>
+
+<span class="nc" id="L381">        assertThat(taskService.createTaskQuery().count()).isZero();</span>
+<span class="nc" id="L382">        assertProcessEnded(procId);</span>
+<span class="nc" id="L383">    }</span>
+
+    @Test
+    @Deployment
+    public void testCatchErrorOnSequentialMultiInstance() {
+<span class="nc" id="L388">        String procId = runtimeService.startProcessInstanceByKey(&quot;catchErrorOnSequentialMi&quot;).getId();</span>
+
+        // complete one task
+<span class="nc" id="L391">        Map&lt;String, Object&gt; vars = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L392">        vars.put(&quot;throwError&quot;, false);</span>
+<span class="nc" id="L393">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L394">        taskService.complete(task.getId(), vars);</span>
+
+        // complete second task and throw error
+<span class="nc" id="L397">        vars.put(&quot;throwError&quot;, true);</span>
+<span class="nc" id="L398">        task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L399">        taskService.complete(task.getId(), vars);</span>
+
+<span class="nc" id="L401">        assertProcessEnded(procId);</span>
+<span class="nc" id="L402">    }</span>
+
+    @Test
+    @Deployment
+    public void testCatchErrorThrownByJavaDelegateOnServiceTask() {
+<span class="nc" id="L407">        String procId = runtimeService.startProcessInstanceByKey(&quot;catchErrorThrownByJavaDelegateOnServiceTask&quot;).getId();</span>
+<span class="nc" id="L408">        assertThatErrorHasBeenCaught(procId);</span>
+<span class="nc" id="L409">    }</span>
+
+    @Test
+    @Deployment
+    public void testCatchErrorThrownByJavaDelegateOnServiceTaskNotCancelActivity() {
+<span class="nc" id="L414">        String procId = runtimeService.startProcessInstanceByKey(&quot;catchErrorThrownByJavaDelegateOnServiceTaskNotCancelActiviti&quot;).getId();</span>
+<span class="nc" id="L415">        assertThatErrorHasBeenCaught(procId);</span>
+<span class="nc" id="L416">    }</span>
+
+    @Test
+    @Deployment
+    public void testCatchErrorThrownByJavaDelegateOnServiceTaskWithErrorCode() {
+<span class="nc" id="L421">        String procId = runtimeService.startProcessInstanceByKey(&quot;catchErrorThrownByJavaDelegateOnServiceTaskWithErrorCode&quot;).getId();</span>
+<span class="nc" id="L422">        assertThatErrorHasBeenCaught(procId);</span>
+<span class="nc" id="L423">    }</span>
+
+    @Test
+    @Deployment
+    public void testCatchErrorThrownByJavaDelegateOnEmbeddedSubProcess() {
+<span class="nc" id="L428">        String procId = runtimeService.startProcessInstanceByKey(&quot;catchErrorThrownByJavaDelegateOnEmbeddedSubProcess&quot;).getId();</span>
+<span class="nc" id="L429">        assertThatErrorHasBeenCaught(procId);</span>
+<span class="nc" id="L430">    }</span>
+
+    @Test
+    @Deployment
+    public void testCatchErrorThrownByJavaDelegateOnEmbeddedSubProcessInduction() {
+<span class="nc" id="L435">        String procId = runtimeService.startProcessInstanceByKey(&quot;catchErrorThrownByJavaDelegateOnEmbeddedSubProcessInduction&quot;).getId();</span>
+<span class="nc" id="L436">        assertThatErrorHasBeenCaught(procId);</span>
+<span class="nc" id="L437">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.testCatchErrorThrownByJavaDelegateOnCallActivity-parent.bpmn20.xml&quot;,
+            &quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.testCatchErrorThrownByJavaDelegateOnCallActivity-child.bpmn20.xml&quot; })
+    public void testCatchErrorThrownByJavaDelegateOnCallActivity() {
+<span class="nc" id="L443">        String procId = runtimeService.startProcessInstanceByKey(&quot;catchErrorThrownByJavaDelegateOnCallActivity-parent&quot;).getId();</span>
+<span class="nc" id="L444">        assertThatErrorHasBeenCaught(procId);</span>
+<span class="nc" id="L445">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.testCatchErrorThrownByJavaDelegateOnCallActivity-child.bpmn20.xml&quot; })
+    public void testUncaughtErrorThrownByJavaDelegateOnServiceTask() {
+<span class="nc" id="L450">        assertThatThrownBy(() -&gt; runtimeService.startProcessInstanceByKey(&quot;catchErrorThrownByJavaDelegateOnCallActivity-child&quot;))</span>
+<span class="nc" id="L451">                .isExactlyInstanceOf(BpmnError.class)</span>
+<span class="nc" id="L452">                .hasMessage(&quot;No catching boundary event found for error with errorCode '23', neither in same process nor in parent process&quot;);</span>
+<span class="nc" id="L453">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.testUncaughtErrorThrownByJavaDelegateOnCallActivity-parent.bpmn20.xml&quot;,
+            &quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.testCatchErrorThrownByJavaDelegateOnCallActivity-child.bpmn20.xml&quot; })
+    public void testUncaughtErrorThrownByJavaDelegateOnCallActivity() {
+<span class="nc" id="L459">        assertThatThrownBy(() -&gt; runtimeService.startProcessInstanceByKey(&quot;uncaughtErrorThrownByJavaDelegateOnCallActivity-parent&quot;))</span>
+<span class="nc" id="L460">                .isExactlyInstanceOf(BpmnError.class)</span>
+<span class="nc" id="L461">                .hasMessage(&quot;No catching boundary event found for error with errorCode '23', neither in same process nor in parent process&quot;);</span>
+<span class="nc" id="L462">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.testCatchErrorOnGroovyScriptTask.bpmn20.xml&quot; })
+    public void testCatchErrorOnGroovyScriptTask() {
+<span class="nc" id="L467">        String procId = runtimeService.startProcessInstanceByKey(&quot;catchErrorOnScriptTask&quot;).getId();</span>
+<span class="nc" id="L468">        assertProcessEnded(procId);</span>
+<span class="nc" id="L469">    }</span>
+
+    @Test
+    @Deployment
+    public void testCatchErrorOnGroovyScriptTaskWithInputParameters() {
+<span class="nc" id="L474">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L475">                .processDefinitionKey(&quot;catchErrorOnScriptTask&quot;)</span>
+<span class="nc" id="L476">                .start();</span>
+
+<span class="nc" id="L478">        assertThat(processInstance.getProcessVariables())</span>
+<span class="nc" id="L479">                .containsOnly(</span>
+<span class="nc" id="L480">                        entry(&quot;handledErrorCodeVar&quot;, &quot;errorOne&quot;),</span>
+<span class="nc" id="L481">                        entry(&quot;handledErrorCodeVarWithExpression&quot;, &quot;errorOne-testing&quot;),</span>
+<span class="nc" id="L482">                        entry(&quot;handledErrorMessage&quot;, &quot;Error One&quot;),</span>
+<span class="nc" id="L483">                        entry(&quot;handledCustomParameter&quot;, &quot;Custom value&quot;)</span>
+                );
+<span class="nc" id="L485">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.testCatchErrorOnJavaScriptScriptTask.bpmn20.xml&quot; })
+    public void testCatchErrorOnJavaScriptScriptTask() {
+<span class="nc" id="L490">        String procId = runtimeService.startProcessInstanceByKey(&quot;catchErrorOnScriptTask&quot;).getId();</span>
+<span class="nc" id="L491">        assertProcessEnded(procId);</span>
+<span class="nc" id="L492">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.testUncaughtErrorOnScriptTaskWithEmptyErrorEventDefinition.bpmn20.xml&quot; })
+    public void testUncaughtErrorOnScriptTaskWithEmptyErrorEventDefinition() {
+<span class="nc" id="L497">        String procId = runtimeService.startProcessInstanceByKey(&quot;uncaughtErrorOnScriptTaskWithEmptyErrorEventDefinition&quot;).getId();</span>
+<span class="nc" id="L498">        assertProcessEnded(procId);</span>
+<span class="nc" id="L499">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/event/error/BoundaryErrorEventTest.testUncaughtErrorOnScriptTask.bpmn20.xml&quot; })
+    public void testUncaughtErrorOnScriptTask() {
+<span class="nc" id="L504">        assertThatThrownBy(() -&gt; runtimeService.startProcessInstanceByKey(&quot;uncaughtErrorOnScriptTask&quot;).getId())</span>
+<span class="nc" id="L505">                .isExactlyInstanceOf(BpmnError.class)</span>
+<span class="nc" id="L506">                .hasMessage(&quot;No catching boundary event found for error with errorCode 'errorUncaught', neither in same process nor in parent process&quot;);</span>
+<span class="nc" id="L507">    }</span>
+
+    @Test
+    @Deployment
+    public void testCatchErrorThrownByJavaDelegateOnMultiInstanceServiceTaskSequential() {
+<span class="nc" id="L512">        Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L513">        variables.put(&quot;executionsBeforeError&quot;, 2);</span>
+<span class="nc" id="L514">        String procId = runtimeService.startProcessInstanceByKey(&quot;catchErrorThrownByJavaDelegateOnMultiInstanceServiceTaskSequential&quot;, variables).getId();</span>
+<span class="nc" id="L515">        assertThatErrorHasBeenCaught(procId);</span>
+<span class="nc" id="L516">    }</span>
+
+    @Test
+    @Deployment
+    public void testCatchErrorThrownByJavaDelegateOnMultiInstanceServiceTaskParallel() {
+<span class="nc" id="L521">        Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L522">        variables.put(&quot;executionsBeforeError&quot;, 2);</span>
+<span class="nc" id="L523">        String procId = runtimeService.startProcessInstanceByKey(&quot;catchErrorThrownByJavaDelegateOnMultiInstanceServiceTaskParallel&quot;, variables).getId();</span>
+<span class="nc" id="L524">        assertThatErrorHasBeenCaught(procId);</span>
+<span class="nc" id="L525">    }</span>
+
+    @Test
+    @Deployment
+    public void testErrorThrownByJavaDelegateNotCaughtByOtherEventType() {
+<span class="nc" id="L530">        String procId = runtimeService.startProcessInstanceByKey(&quot;testErrorThrownByJavaDelegateNotCaughtByOtherEventType&quot;).getId();</span>
+<span class="nc" id="L531">        assertThatErrorHasBeenCaught(procId);</span>
+<span class="nc" id="L532">    }</span>
+
+    private void assertThatErrorHasBeenCaught(String procId) {
+        // The service task will throw an error event,
+        // which is caught on the service task boundary
+<span class="nc" id="L537">        assertThat(taskService.createTaskQuery().count()).as(&quot;No tasks found in task list.&quot;).isEqualTo(1);</span>
+<span class="nc" id="L538">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L539">        assertThat(task.getName()).isEqualTo(&quot;Escalated Task&quot;);</span>
+
+        // Completing the task will end the process instance
+<span class="nc" id="L542">        taskService.complete(task.getId());</span>
+<span class="nc" id="L543">        assertProcessEnded(procId);</span>
+<span class="nc" id="L544">    }</span>
+
+    @Test
+    @Deployment
+    public void testConcurrentExecutionsInterruptedOnDestroyScope() {
+
+        // this test makes sure that if the first concurrent execution destroys
+        // the scope (due to the interrupting boundary catch), the second concurrent
+        // execution does not move forward.
+
+        // if the test fails, it produces a constraint violation in db.
+
+<span class="nc" id="L556">        runtimeService.startProcessInstanceByKey(&quot;process&quot;);</span>
+<span class="nc" id="L557">    }</span>
+
+    @Test
+    @Deployment
+    public void testCatchErrorThrownByExpressionOnServiceTask() {
+<span class="nc" id="L562">        HashMap&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L563">        variables.put(&quot;bpmnErrorBean&quot;, new BpmnErrorBean());</span>
+<span class="nc" id="L564">        String procId = runtimeService.startProcessInstanceByKey(&quot;testCatchErrorThrownByExpressionOnServiceTask&quot;, variables).getId();</span>
+<span class="nc" id="L565">        assertThatErrorHasBeenCaught(procId);</span>
+<span class="nc" id="L566">    }</span>
+
+    @Test
+    @Deployment
+    public void testCatchErrorThrownByExpressionWithFutureOnServiceTask() {
+<span class="nc" id="L571">        HashMap&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L572">        variables.put(&quot;bpmnErrorBean&quot;, new BpmnErrorBean());</span>
+<span class="nc" id="L573">        String procId = runtimeService.startProcessInstanceByKey(&quot;testCatchErrorThrownByExpressionWithFutureOnServiceTask&quot;, variables).getId();</span>
+<span class="nc" id="L574">        assertThatErrorHasBeenCaught(procId);</span>
+<span class="nc" id="L575">    }</span>
+
+    @Test
+    @Deployment
+    public void testCatchErrorThrownByDelegateExpressionOnServiceTask() {
+<span class="nc" id="L580">        HashMap&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L581">        variables.put(&quot;bpmnErrorBean&quot;, new BpmnErrorBean());</span>
+<span class="nc" id="L582">        String procId = runtimeService.startProcessInstanceByKey(&quot;testCatchErrorThrownByDelegateExpressionOnServiceTask&quot;, variables).getId();</span>
+<span class="nc" id="L583">        assertThatErrorHasBeenCaught(procId);</span>
+<span class="nc" id="L584">    }</span>
+
+    @Test
+    @Deployment
+    public void testCatchErrorThrownByJavaDelegateProvidedByDelegateExpressionOnServiceTask() {
+<span class="nc" id="L589">        HashMap&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L590">        variables.put(&quot;bpmnErrorBean&quot;, new BpmnErrorBean());</span>
+<span class="nc" id="L591">        String procId = runtimeService.startProcessInstanceByKey(&quot;testCatchErrorThrownByJavaDelegateProvidedByDelegateExpressionOnServiceTask&quot;, variables).getId();</span>
+<span class="nc" id="L592">        assertThatErrorHasBeenCaught(procId);</span>
+<span class="nc" id="L593">    }</span>
+
+    @Deployment
+    @ParameterizedTest(name = &quot;JavaFutureDelegate via class throws error in {0} should escalate with {1}&quot;)
+    @MethodSource(&quot;argumentsForCatchErrorThrownByFutureJavaDelegateOnServiceTaskWithErrorCode&quot;)
+    public void testCatchErrorThrownByFutureJavaDelegateOnServiceTaskWithErrorCode(String throwErrorIn, String expectedEscalatedTaskName) {
+<span class="nc" id="L599">        runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L600">                .processDefinitionKey(&quot;catchErrorThrownByFutureJavaDelegateOnServiceTaskWithErrorCode&quot;)</span>
+<span class="nc" id="L601">                .variable(&quot;throwErrorIn&quot;, throwErrorIn)</span>
+<span class="nc" id="L602">                .start()</span>
+<span class="nc" id="L603">                .getId();</span>
+
+        // The service task will throw an error event,
+        // which is caught on the service task boundary
+<span class="nc" id="L607">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L608">        assertThat(task).isNotNull();</span>
+<span class="nc" id="L609">        assertThat(task.getName()).isEqualTo(expectedEscalatedTaskName);</span>
+<span class="nc" id="L610">    }</span>
+
+    @Deployment
+    @ParameterizedTest(name = &quot;JavaFutureDelegate via expression throws error in {0} should escalate with {1}&quot;)
+    @MethodSource(&quot;argumentsForCatchErrorThrownByFutureJavaDelegateOnServiceTaskWithErrorCode&quot;)
+    public void testCatchErrorThrownByFutureJavaDelegateProvidedByDelegateExpressionOnServiceTask(String throwErrorIn, String expectedEscalatedTaskName) {
+<span class="nc" id="L616">        runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L617">                .processDefinitionKey(&quot;testCatchErrorThrownByFutureJavaDelegateProvidedByDelegateExpressionOnServiceTask&quot;)</span>
+<span class="nc" id="L618">                .transientVariable(&quot;bpmnErrorBean&quot;, new ThrowBpmnErrorFutureDelegate())</span>
+<span class="nc" id="L619">                .variable(&quot;throwErrorIn&quot;, throwErrorIn)</span>
+<span class="nc" id="L620">                .start()</span>
+<span class="nc" id="L621">                .getId();</span>
+
+        // The service task will throw an error event,
+        // which is caught on the service task boundary
+<span class="nc" id="L625">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L626">        assertThat(task).isNotNull();</span>
+<span class="nc" id="L627">        assertThat(task.getName()).isEqualTo(expectedEscalatedTaskName);</span>
+<span class="nc" id="L628">    }</span>
+
+    @Test
+    @Deployment
+    public void catchErrorThrownByTriggerableFutureJavaDelegateProvidedByDelegateExpressionOnServiceTask() {
+<span class="nc" id="L633">        String processInstanceId = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L634">                .processDefinitionKey(&quot;testCatchErrorThrownByFutureJavaDelegateProvidedByDelegateExpressionOnServiceTask&quot;)</span>
+<span class="nc" id="L635">                .transientVariable(&quot;bpmnErrorBean&quot;, new TriggerBpmnErrorFutureDelegate())</span>
+<span class="nc" id="L636">                .start()</span>
+<span class="nc" id="L637">                .getId();</span>
+
+        // The service task will throw an error event,
+<span class="nc" id="L640">        runtimeService.trigger(getWaitingExecutionId(processInstanceId), Collections.emptyMap(), Collections.singletonMap(&quot;bpmnErrorBean&quot;, new TriggerBpmnErrorFutureDelegate()));</span>
+
+        // which is caught on the service task boundary
+<span class="nc" id="L643">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L644">        assertThat(task).isNotNull();</span>
+<span class="nc" id="L645">        assertThat(task.getName()).isEqualTo(&quot;Triggered Escalated Task&quot;);</span>
+<span class="nc" id="L646">    }</span>
+
+    @Test
+    @Deployment
+    public void testCatchErrorWithInputParametersThrownByExpressionOnServiceTask() {
+<span class="nc" id="L651">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L652">                .processDefinitionKey(&quot;errorProcess&quot;)</span>
+<span class="nc" id="L653">                .transientVariable(&quot;errorCodeVar&quot;, &quot;test123&quot;)</span>
+<span class="nc" id="L654">                .transientVariable(&quot;errorMessageVar&quot;, &quot;Test message&quot;)</span>
+<span class="nc" id="L655">                .transientVariable(&quot;customErrorValueVar&quot;, &quot;Custom property value&quot;)</span>
+<span class="nc" id="L656">                .transientVariable(&quot;bpmnErrorBean&quot;, new BpmnErrorBean())</span>
+<span class="nc" id="L657">                .start();</span>
+
+<span class="nc" id="L659">        Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L660">        assertThat(task).isNotNull();</span>
+<span class="nc" id="L661">        assertThat(task.getName()).isEqualTo(&quot;Escalated Task&quot;);</span>
+
+<span class="nc" id="L663">        assertThat(runtimeService.getVariables(processInstance.getId()))</span>
+<span class="nc" id="L664">                .containsOnly(</span>
+<span class="nc" id="L665">                        entry(&quot;handledErrorCodeVar&quot;, &quot;test123&quot;),</span>
+<span class="nc" id="L666">                        entry(&quot;handledErrorCodeVarWithExpression&quot;, &quot;test123-testing&quot;),</span>
+<span class="nc" id="L667">                        entry(&quot;handledErrorMessage&quot;, &quot;Test message&quot;),</span>
+<span class="nc" id="L668">                        entry(&quot;handledCustomParameter&quot;, &quot;Custom property value&quot;),</span>
+<span class="nc" id="L669">                        entry(&quot;fromTransientHandledVar&quot;, &quot;Custom property value&quot;)</span>
+                );
+<span class="nc" id="L671">    }</span>
+
+    @Test
+    @Deployment
+    public void testCatchErrorWithInputParametersThrownByExpressionOnServiceTaskWithCustomVariableContainer() {
+<span class="nc" id="L676">        Supplier&lt;Object&gt; errorBean = () -&gt; {</span>
+<span class="nc" id="L677">            BpmnError error = new BpmnError(&quot;test123&quot;, &quot;Test message&quot;);</span>
+<span class="nc" id="L678">            error.setAdditionalDataContainer(new VariableContainerWrapper(Collections.singletonMap(&quot;customErrorProperty&quot;, &quot;Custom property value&quot;)));</span>
+<span class="nc" id="L679">            throw error;</span>
+        };
+<span class="nc" id="L681">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L682">                .processDefinitionKey(&quot;errorProcess&quot;)</span>
+<span class="nc" id="L683">                .transientVariable(&quot;bpmnErrorBean&quot;, errorBean)</span>
+<span class="nc" id="L684">                .start();</span>
+
+<span class="nc" id="L686">        Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L687">        assertThat(task).isNotNull();</span>
+<span class="nc" id="L688">        assertThat(task.getName()).isEqualTo(&quot;Escalated Task&quot;);</span>
+
+<span class="nc" id="L690">        assertThat(runtimeService.getVariables(processInstance.getId()))</span>
+<span class="nc" id="L691">                .containsOnly(</span>
+<span class="nc" id="L692">                        entry(&quot;handledErrorCodeVar&quot;, &quot;test123&quot;),</span>
+<span class="nc" id="L693">                        entry(&quot;handledErrorCodeVarWithExpression&quot;, &quot;test123-testing&quot;),</span>
+<span class="nc" id="L694">                        entry(&quot;handledErrorMessage&quot;, &quot;Test message&quot;),</span>
+<span class="nc" id="L695">                        entry(&quot;handledCustomParameter&quot;, &quot;Custom property value&quot;),</span>
+<span class="nc" id="L696">                        entry(&quot;fromTransientHandledVar&quot;, &quot;Custom property value&quot;)</span>
+                );
+<span class="nc" id="L698">    }</span>
+
+    protected String getWaitingExecutionId(String processInstanceId) {
+<span class="nc" id="L701">        return runtimeService.createExecutionQuery().processInstanceId(processInstanceId).onlyChildExecutions().activityId(&quot;serviceTask&quot;).singleResult().getId();</span>
+    }
+
+    static Stream&lt;Arguments&gt; argumentsForCatchErrorThrownByFutureJavaDelegateOnServiceTaskWithErrorCode() {
+<span class="nc" id="L705">        return Stream.of(</span>
+<span class="nc" id="L706">                Arguments.of(&quot;beforeExecution&quot;, &quot;Escalated Task for before execution&quot;),</span>
+<span class="nc" id="L707">                Arguments.of(&quot;execute&quot;, &quot;Escalated Task for execute&quot;),</span>
+<span class="nc" id="L708">                Arguments.of(&quot;afterExecution&quot;, &quot;Escalated Task for after execution&quot;)</span>
+        );
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,315 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AcquireTimerJobsRunnable.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.job.service.impl.asyncexecutor</a> &gt; <span class="el_source">AcquireTimerJobsRunnable.java</span></div><h1>AcquireTimerJobsRunnable.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.job.service.impl.asyncexecutor;
+
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import org.apache.commons.lang3.concurrent.BasicThreadFactory;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.FlowableOptimisticLockingException;
+import org.flowable.common.engine.impl.interceptor.CommandExecutor;
+import org.flowable.common.engine.impl.lock.LockManager;
+import org.flowable.common.engine.impl.lock.LockManagerImpl;
+import org.flowable.job.service.impl.cmd.AcquireTimerJobsCmd;
+import org.flowable.job.service.impl.cmd.AcquireTimerJobsWithGlobalAcquireLockCmd;
+import org.flowable.job.service.impl.cmd.BulkMoveTimerJobsToExecutableJobsCmd;
+import org.flowable.job.service.impl.cmd.MoveTimerJobsToExecutableJobsCmd;
+import org.flowable.job.service.impl.cmd.UnlockTimerJobsCmd;
+import org.flowable.job.service.impl.persistence.entity.TimerJobEntity;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * 
+ * @author Tijs Rademakers
+ * @author Joram Barrez
+ * @author Filip Hrisafov
+ */
+public class AcquireTimerJobsRunnable implements Runnable {
+
+<span class="nc" id="L47">    private static final Logger LOGGER = LoggerFactory.getLogger(AcquireTimerJobsRunnable.class);</span>
+
+    private static final String ACQUIRE_TIMER_JOBS_GLOBAL_LOCK = &quot;acquireTimerJobsLock&quot;;
+
+<span class="nc" id="L51">    private static final AcquireTimerLifecycleListener NOOP_LIFECYCLE_LISTENER = new AcquireTimerLifecycleListener() {</span>
+
+        @Override
+        public void startAcquiring(String engineName, int maxTimerJobsPerAcquisition) {
+
+<span class="nc" id="L56">        }</span>
+
+        @Override
+        public void stopAcquiring(String engineName) {
+
+<span class="nc" id="L61">        }</span>
+
+        @Override
+        public void acquiredJobs(String engineName, int jobsAcquired, int maxTimerJobsPerAcquisition) {
+
+<span class="nc" id="L66">        }</span>
+
+        @Override
+        public void startWaiting(String engineName, long millisToWait) {
+
+<span class="nc" id="L71">        }</span>
+    };
+
+    protected final AsyncExecutor asyncExecutor;
+    protected final JobManager jobManager;
+    protected final AcquireTimerLifecycleListener lifecycleListener;
+
+    protected AcquireJobsRunnableConfiguration configuration;
+    protected LockManager lockManager;
+
+    protected volatile boolean isInterrupted;
+<span class="nc" id="L82">    protected final Object MONITOR = new Object();</span>
+<span class="nc" id="L83">    protected final AtomicBoolean isWaiting = new AtomicBoolean(false);</span>
+    protected final int moveExecutorPoolSize;
+
+    protected ExecutorService moveTimerJobsExecutorService;
+
+    protected CommandExecutor commandExecutor;
+
+    public AcquireTimerJobsRunnable(AsyncExecutor asyncExecutor, JobManager jobManager, int moveExecutorPoolSize) {
+<span class="nc" id="L91">        this(asyncExecutor, jobManager, null, AcquireJobsRunnableConfiguration.DEFAULT, moveExecutorPoolSize);</span>
+<span class="nc" id="L92">    }</span>
+
+    public AcquireTimerJobsRunnable(AsyncExecutor asyncExecutor, JobManager jobManager,
+<span class="nc" id="L95">            AcquireTimerLifecycleListener lifecycleListener, AcquireJobsRunnableConfiguration configuration, int moveExecutorPoolSize) {</span>
+<span class="nc" id="L96">        this.asyncExecutor = asyncExecutor;</span>
+<span class="nc" id="L97">        this.jobManager = jobManager;</span>
+<span class="nc bnc" id="L98" title="All 2 branches missed.">        this.lifecycleListener = lifecycleListener != null ? lifecycleListener : NOOP_LIFECYCLE_LISTENER;</span>
+<span class="nc" id="L99">        this.configuration = configuration;</span>
+<span class="nc" id="L100">        this.moveExecutorPoolSize = moveExecutorPoolSize;</span>
+<span class="nc" id="L101">    }</span>
+
+    @Override
+    public synchronized void run() {
+
+        // Always initialize the lock manager, allowing to switch execution modes if needed
+<span class="nc" id="L107">        this.lockManager = createLockManager(asyncExecutor.getJobServiceConfiguration().getCommandExecutor());</span>
+
+<span class="nc" id="L109">        LOGGER.info(&quot;starting to acquire async jobs due for engine {}&quot;, getEngineName());</span>
+<span class="nc" id="L110">        String threadName = &quot;flowable-&quot; + getEngineName() + &quot;-acquire-timer-jobs&quot;;</span>
+<span class="nc" id="L111">        Thread.currentThread().setName(threadName);</span>
+
+<span class="nc" id="L113">        createTimerMoveExecutorService(threadName);</span>
+
+<span class="nc" id="L115">        this.commandExecutor = asyncExecutor.getJobServiceConfiguration().getCommandExecutor();</span>
+
+<span class="nc" id="L117">        long millisToWait = 0L;</span>
+<span class="nc bnc" id="L118" title="All 2 branches missed.">        while (!isInterrupted) {</span>
+<span class="nc" id="L119">            millisToWait = executeAcquireAndMoveCycle();</span>
+
+<span class="nc bnc" id="L121" title="All 2 branches missed.">            if (millisToWait &gt; 0) {</span>
+<span class="nc" id="L122">                sleep(millisToWait);</span>
+            }
+
+        }
+
+<span class="nc bnc" id="L127" title="All 2 branches missed.">        if (moveTimerJobsExecutorService != null) {</span>
+<span class="nc" id="L128">            moveTimerJobsExecutorService.shutdown();</span>
+        }
+
+<span class="nc" id="L131">        LOGGER.info(&quot;stopped async job due acquisition for engine {}&quot;, getEngineName());</span>
+<span class="nc" id="L132">    }</span>
+
+    protected LockManager createLockManager(CommandExecutor commandExecutor) {
+<span class="nc" id="L135">        return new LockManagerImpl(commandExecutor, configuration.getGlobalAcquireLockPrefix() + ACQUIRE_TIMER_JOBS_GLOBAL_LOCK, configuration.getLockPollRate(), configuration.getLockForceAcquireAfter(), getEngineName());</span>
+    }
+
+    protected void createTimerMoveExecutorService(String threadName) {
+<span class="nc" id="L139">        BasicThreadFactory threadFactory = new BasicThreadFactory.Builder()</span>
+<span class="nc" id="L140">            .namingPattern(threadName + &quot;-move&quot;)</span>
+<span class="nc" id="L141">            .build();</span>
+        // We are using really low queue size since if we have a lot of move operations
+        // we need to complete some of them before acquiring again.
+        // This should leave some time to other nodes to pick up and lock the timer jobs
+<span class="nc" id="L145">        ThreadPoolExecutor executor = new ThreadPoolExecutor(moveExecutorPoolSize, moveExecutorPoolSize, 5, TimeUnit.SECONDS, new ArrayBlockingQueue&lt;&gt;(1), threadFactory, new ThreadPoolExecutor.CallerRunsPolicy());</span>
+<span class="nc" id="L146">        executor.allowCoreThreadTimeOut(true);</span>
+
+<span class="nc" id="L148">        this.moveTimerJobsExecutorService = executor;</span>
+<span class="nc" id="L149">    }</span>
+
+    protected long executeAcquireAndMoveCycle() {
+<span class="nc" id="L152">        lifecycleListener.startAcquiring(getEngineName(), asyncExecutor.getMaxTimerJobsPerAcquisition());</span>
+
+<span class="nc" id="L154">        List&lt;TimerJobEntity&gt; timerJobs = Collections.emptyList();</span>
+<span class="nc" id="L155">        long millisToWait = 0L;</span>
+
+        try {
+
+<span class="nc" id="L159">            boolean globalAcquireLockEnabled = configuration.isGlobalAcquireLockEnabled();</span>
+<span class="nc bnc" id="L160" title="All 2 branches missed.">            if (globalAcquireLockEnabled) {</span>
+
+                // When running with global acquire lock, we only need to have the lock during the acquire.
+                // In the move phase, other nodes can already acquire timer jobs themselves (as the lock is free).
+                try {
+<span class="nc" id="L165">                    timerJobs = lockManager.waitForLockRunAndRelease(configuration.getLockWaitTime(), () -&gt; {</span>
+<span class="nc" id="L166">                        return commandExecutor.execute(new AcquireTimerJobsWithGlobalAcquireLockCmd(asyncExecutor));</span>
+                    });
+
+<span class="nc" id="L169">                } catch (Exception e) {</span>
+                    // Don't do anything, lock will be tried again next time
+
+<span class="nc bnc" id="L172" title="All 2 branches missed.">                    if (!(e instanceof FlowableException)) { // FlowableException doesn't need to be logged, could be regular lock logic</span>
+<span class="nc" id="L173">                        LOGGER.warn(&quot;Error while waiting for global acquire lock for engine {}&quot;, getEngineName(), e);</span>
+                    }
+<span class="nc" id="L175">                }</span>
+
+            } else {
+<span class="nc" id="L178">                timerJobs = commandExecutor.execute(new AcquireTimerJobsCmd(asyncExecutor));</span>
+
+            }
+
+<span class="nc bnc" id="L182" title="All 2 branches missed.">            if (!timerJobs.isEmpty()) {</span>
+<span class="nc" id="L183">                List&lt;TimerJobEntity&gt; finalTimerJobs = timerJobs;</span>
+<span class="nc" id="L184">                moveTimerJobsExecutorService.execute(() -&gt; {</span>
+<span class="nc" id="L185">                    executeMoveTimerJobsToExecutableJobs(finalTimerJobs);</span>
+<span class="nc" id="L186">                });</span>
+            }
+
+            // if all jobs were executed
+<span class="nc" id="L190">            millisToWait = asyncExecutor.getDefaultTimerJobAcquireWaitTimeInMillis();</span>
+<span class="nc" id="L191">            int nrOfJobsAcquired = timerJobs.size();</span>
+<span class="nc" id="L192">            lifecycleListener.acquiredJobs(getEngineName(), nrOfJobsAcquired, asyncExecutor.getMaxTimerJobsPerAcquisition());</span>
+
+<span class="nc bnc" id="L194" title="All 2 branches missed.">            if (nrOfJobsAcquired &gt;= asyncExecutor.getMaxTimerJobsPerAcquisition()) {</span>
+
+<span class="nc bnc" id="L196" title="All 2 branches missed.">                if (globalAcquireLockEnabled) {</span>
+                    // Always wait when running with global acquire lock, to let other nodes have the ability to fill the queue
+                    // If 0 was returned, it means there is still work to do, but we want to give other nodes a chance.
+<span class="nc" id="L199">                    millisToWait = configuration.getLockPollRate().toMillis();</span>
+
+                } else {
+                    // Otherwise (no global acquire lock),the node can retry immediately
+<span class="nc" id="L203">                    millisToWait = 0;</span>
+
+                }
+
+            }
+
+<span class="nc" id="L209">        } catch (FlowableOptimisticLockingException optimisticLockingException) {</span>
+<span class="nc" id="L210">            logOptimisticLockingException(optimisticLockingException);</span>
+
+<span class="nc" id="L212">        } catch (Throwable e) {</span>
+<span class="nc" id="L213">            LOGGER.warn(&quot;exception during timer job acquisition for engine {}. Exception message: {}&quot;, getEngineName(), e.getMessage(), e);</span>
+<span class="nc" id="L214">            millisToWait = asyncExecutor.getDefaultTimerJobAcquireWaitTimeInMillis();</span>
+
+<span class="nc" id="L216">        }</span>
+
+<span class="nc" id="L218">        lifecycleListener.stopAcquiring(getEngineName());</span>
+
+<span class="nc" id="L220">        return millisToWait;</span>
+    }
+
+    protected void executeMoveTimerJobsToExecutableJobs(List&lt;TimerJobEntity&gt; timerJobs) {
+        try {
+<span class="nc bnc" id="L225" title="All 2 branches missed.">            if (configuration.isGlobalAcquireLockEnabled()) {</span>
+<span class="nc" id="L226">                commandExecutor.execute(new BulkMoveTimerJobsToExecutableJobsCmd(jobManager, timerJobs));</span>
+            } else {
+<span class="nc" id="L228">                commandExecutor.execute(new MoveTimerJobsToExecutableJobsCmd(jobManager, timerJobs));</span>
+            }
+
+<span class="nc" id="L231">        } catch (FlowableOptimisticLockingException optimisticLockingException) {</span>
+<span class="nc" id="L232">            logOptimisticLockingException(optimisticLockingException);</span>
+<span class="nc" id="L233">            unlockTimerJobs(timerJobs); // jobs have been acquired before, so need to unlock when exception happens here</span>
+
+<span class="nc" id="L235">        } catch (Throwable t) {</span>
+<span class="nc" id="L236">            LOGGER.warn(&quot;exception during timer job move for engine {}. Exception message: {}&quot;, getEngineName(), t.getMessage(), t);</span>
+<span class="nc" id="L237">            unlockTimerJobs(timerJobs); // jobs have been acquired before, so need to unlock when exception happens here</span>
+
+<span class="nc" id="L239">        }</span>
+<span class="nc" id="L240">    }</span>
+
+    protected void logOptimisticLockingException(FlowableOptimisticLockingException optimisticLockingException) {
+<span class="nc bnc" id="L243" title="All 2 branches missed.">        if (configuration.isGlobalAcquireLockEnabled()) {</span>
+<span class="nc" id="L244">            LOGGER.warn(&quot;Optimistic locking exception (using global acquire lock) for engine {}&quot;, getEngineName(), optimisticLockingException);</span>
+
+        } else {
+<span class="nc" id="L247">            LOGGER.debug(</span>
+                &quot;Optimistic locking exception during async job acquisition. If you have multiple async executors running against the same database, &quot; +
+                    &quot;this exception means that this thread tried to acquire a due async job, which already was acquired by another &quot; +
+                    &quot;async executor acquisition thread.This is expected behavior in a clustered environment. &quot; +
+                    &quot;You can ignore this message if you indeed have multiple async executor acquisition threads running against the same database. &quot; +
+                    &quot;For engine {}. Exception message: {}&quot;,
+<span class="nc" id="L253">                getEngineName(), optimisticLockingException.getMessage());</span>
+
+        }
+<span class="nc" id="L256">    }</span>
+
+    protected void sleep(long millisToWait) {
+<span class="nc bnc" id="L259" title="All 2 branches missed.">        if (millisToWait &gt; 0) {</span>
+            try {
+<span class="nc bnc" id="L261" title="All 2 branches missed.">                if (LOGGER.isDebugEnabled()) {</span>
+<span class="nc" id="L262">                    LOGGER.debug(&quot;timer job acquisition thread for engine {} sleeping for {} millis&quot;, getEngineName(), millisToWait);</span>
+                }
+<span class="nc" id="L264">                synchronized (MONITOR) {</span>
+<span class="nc bnc" id="L265" title="All 2 branches missed.">                    if (!isInterrupted) {</span>
+<span class="nc" id="L266">                        isWaiting.set(true);</span>
+<span class="nc" id="L267">                        lifecycleListener.startWaiting(getEngineName(), millisToWait);</span>
+<span class="nc" id="L268">                        MONITOR.wait(millisToWait);</span>
+                    }
+<span class="nc" id="L270">                }</span>
+
+<span class="nc bnc" id="L272" title="All 2 branches missed.">                if (LOGGER.isDebugEnabled()) {</span>
+<span class="nc" id="L273">                    LOGGER.debug(&quot;timer job acquisition thread for engine {} woke up&quot;, getEngineName());</span>
+                }
+<span class="nc" id="L275">            } catch (InterruptedException e) {</span>
+<span class="nc bnc" id="L276" title="All 2 branches missed.">                if (LOGGER.isDebugEnabled()) {</span>
+<span class="nc" id="L277">                    LOGGER.debug(&quot;timer job acquisition wait for engine {} interrupted&quot;, getEngineName());</span>
+                }
+            } finally {
+<span class="nc" id="L280">                isWaiting.set(false);</span>
+            }
+        }
+<span class="nc" id="L283">    }</span>
+
+    protected String getEngineName() {
+<span class="nc" id="L286">        return asyncExecutor.getJobServiceConfiguration().getEngineName();</span>
+    }
+
+    protected void unlockTimerJobs(Collection&lt;TimerJobEntity&gt; timerJobs) {
+        try {
+<span class="nc bnc" id="L291" title="All 2 branches missed.">            if (!timerJobs.isEmpty()) {</span>
+<span class="nc" id="L292">                commandExecutor.execute(new UnlockTimerJobsCmd(timerJobs, asyncExecutor.getJobServiceConfiguration()));</span>
+            }
+<span class="nc" id="L294">        } catch (Throwable e) {</span>
+<span class="nc bnc" id="L295" title="All 2 branches missed.">            if (LOGGER.isDebugEnabled()) {</span>
+<span class="nc" id="L296">                LOGGER.debug(&quot;Failed to unlock timer jobs during acquiring for engine {}. This is OK since they will be unlocked when the reset expired jobs thread runs&quot;, getEngineName(), e);</span>
+            }
+<span class="nc" id="L298">        }</span>
+<span class="nc" id="L299">    }</span>
+
+    public void stop() {
+<span class="nc" id="L302">        synchronized (MONITOR) {</span>
+<span class="nc" id="L303">            isInterrupted = true;</span>
+<span class="nc bnc" id="L304" title="All 2 branches missed.">            if (isWaiting.compareAndSet(true, false)) {</span>
+<span class="nc" id="L305">                MONITOR.notifyAll();</span>
+            }
+<span class="nc" id="L307">        }</span>
+<span class="nc" id="L308">    }</span>
+
+    public void setConfiguration(AcquireJobsRunnableConfiguration configuration) {
+<span class="nc" id="L311">        this.configuration = configuration;</span>
+<span class="nc" id="L312">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

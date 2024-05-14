@@ -1,0 +1,451 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>JakartaMailFlowableMailClient.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.mail.common.impl.jakarta.mail</a> &gt; <span class="el_source">JakartaMailFlowableMailClient.java</span></div><h1>JakartaMailFlowableMailClient.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.mail.common.impl.jakarta.mail;
+
+import java.io.UnsupportedEncodingException;
+import java.net.IDN;
+import java.nio.charset.Charset;
+import java.time.Duration;
+import java.util.Collection;
+import java.util.Date;
+import java.util.Map;
+import java.util.Properties;
+
+import javax.naming.Context;
+import javax.naming.InitialContext;
+import javax.naming.NamingException;
+
+import jakarta.activation.DataHandler;
+import jakarta.activation.DataSource;
+import jakarta.mail.Authenticator;
+import jakarta.mail.BodyPart;
+import jakarta.mail.Message;
+import jakarta.mail.MessagingException;
+import jakarta.mail.Part;
+import jakarta.mail.PasswordAuthentication;
+import jakarta.mail.Session;
+import jakarta.mail.Transport;
+import jakarta.mail.internet.AddressException;
+import jakarta.mail.internet.InternetAddress;
+import jakarta.mail.internet.MimeBodyPart;
+import jakarta.mail.internet.MimeMessage;
+import jakarta.mail.internet.MimeMultipart;
+import jakarta.mail.internet.MimeUtility;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.FlowableIllegalArgumentException;
+import org.flowable.mail.common.api.MailMessage;
+import org.flowable.mail.common.api.MailResponse;
+import org.flowable.mail.common.api.SendMailRequest;
+import org.flowable.mail.common.api.client.ExecutableSendMailRequest;
+import org.flowable.mail.common.api.client.FlowableMailClient;
+import org.flowable.mail.common.impl.FlowableMailException;
+import org.flowable.mail.common.impl.MailDefaultsConfiguration;
+import org.flowable.mail.common.impl.MailHostServerConfiguration;
+import org.flowable.mail.common.impl.MailJndiServerConfiguration;
+import org.flowable.mail.common.impl.MailServerConfiguration;
+import org.flowable.mail.common.impl.SimpleMailResponse;
+
+/**
+ * @author Filip Hrisafov
+ */
+public class JakartaMailFlowableMailClient implements FlowableMailClient {
+    // The creation of the Jakarta MimeMessage is inspired by Apache Commons Email
+
+    private static final String MAIL_TRANSPORT_PROTOCOL = &quot;mail.transport.protocol&quot;;
+    private static final String MAIL_TRANSPORT_STARTTLS_ENABLE = &quot;mail.smtp.starttls.enable&quot;;
+    private static final String MAIL_TRANSPORT_STARTTLS_REQUIRED = &quot;mail.smtp.starttls.false&quot;;
+    private static final String MAIL_HOST = &quot;mail.smtp.host&quot;;
+    private static final String MAIL_PORT = &quot;mail.smtp.port&quot;;
+
+    private static final String MAIL_SMTP_AUTH = &quot;mail.smtp.auth&quot;;
+    private static final String MAIL_SMTP_TIMEOUT = &quot;mail.smtp.timeout&quot;;
+    private static final String MAIL_SMTP_CONNECTIONTIMEOUT = &quot;mail.smtp.connectiontimeout&quot;;
+    private static final String MAIL_SMTP_SEND_PARTIAL = &quot;mail.smtp.sendpartial&quot;;
+    private static final String MAIL_SMTPS_SEND_PARTIAL = &quot;mail.smtps.sendpartial&quot;;
+
+    private static final String MAIL_SMTP_SOCKET_FACTORY_PORT = &quot;mail.smtp.socketFactory.port&quot;;
+    private static final String MAIL_SMTP_SOCKET_FACTORY_CLASS = &quot;mail.smtp.socketFactory.class&quot;;
+    private static final String MAIL_SMTP_SOCKET_FACTORY_FALLBACK = &quot;mail.smtp.socketFactory.fallback&quot;;
+
+    private static final String CONTENT_TYPE_TEXT_HTML = &quot;text/html&quot;;
+
+<span class="nc" id="L84">    private static final Duration SOCKET_TIMEOUT = Duration.ofSeconds(60);</span>
+<span class="nc" id="L85">    private static final Duration SOCKET_CONNECTION_TIMEOUT = Duration.ofSeconds(60);</span>
+
+    protected final MailServerConfiguration serverConfiguration;
+    protected final MailDefaultsConfiguration defaultsConfiguration;
+
+<span class="nc" id="L90">    public JakartaMailFlowableMailClient(MailServerConfiguration serverConfiguration, MailDefaultsConfiguration defaultsConfiguration) {</span>
+<span class="nc" id="L91">        this.serverConfiguration = serverConfiguration;</span>
+<span class="nc" id="L92">        this.defaultsConfiguration = defaultsConfiguration;</span>
+<span class="nc" id="L93">    }</span>
+
+    @Override
+    public ExecutableSendMailRequest prepareRequest(SendMailRequest request) {
+<span class="nc" id="L97">        Session session = createSession();</span>
+        try {
+<span class="nc" id="L99">            MimeMessage mimeMessage = createMimeMessage(request, session);</span>
+<span class="nc" id="L100">            return new JakartaMailSendMailRequest(mimeMessage);</span>
+<span class="nc" id="L101">        } catch (MessagingException e) {</span>
+<span class="nc" id="L102">            throw new FlowableMailException(&quot;Failed to create mime message&quot;, e);</span>
+        }
+    }
+
+    protected MimeMessage createMimeMessage(SendMailRequest request, Session session) throws MessagingException {
+<span class="nc" id="L107">        MimeMessage mimeMessage = new MimeMessage(session);</span>
+
+<span class="nc" id="L109">        MailMessage message = request.message();</span>
+<span class="nc" id="L110">        Charset charset = getCharset(message);</span>
+<span class="nc bnc" id="L111" title="All 2 branches missed.">        setContent(mimeMessage, message, charset != null ? charset.name() : null);</span>
+<span class="nc" id="L112">        setSubject(mimeMessage, message.getSubject(), charset);</span>
+<span class="nc" id="L113">        addHeaders(mimeMessage, message.getHeaders(), charset);</span>
+<span class="nc" id="L114">        addTo(mimeMessage, message.getTo());</span>
+<span class="nc" id="L115">        addCc(mimeMessage, message.getCc());</span>
+<span class="nc" id="L116">        addBcc(mimeMessage, message.getBcc());</span>
+
+<span class="nc" id="L118">        setFrom(mimeMessage, message.getFrom());</span>
+<span class="nc" id="L119">        setSentDate(mimeMessage);</span>
+
+<span class="nc" id="L121">        return mimeMessage;</span>
+    }
+
+    protected Charset getCharset(MailMessage message) {
+<span class="nc" id="L125">        Charset charset = message.getCharset();</span>
+<span class="nc bnc" id="L126" title="All 2 branches missed.">        if (charset == null) {</span>
+<span class="nc" id="L127">            charset = defaultsConfiguration.defaultCharset();</span>
+        }
+
+<span class="nc" id="L130">        return charset;</span>
+    }
+
+    protected void setSubject(MimeMessage message, String subject, Charset charset) throws MessagingException {
+<span class="nc bnc" id="L134" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(subject)) {</span>
+<span class="nc bnc" id="L135" title="All 2 branches missed.">            if (charset != null) {</span>
+<span class="nc" id="L136">                message.setSubject(subject, charset.name());</span>
+            } else {
+<span class="nc" id="L138">                message.setSubject(subject);</span>
+            }
+        }
+<span class="nc" id="L141">    }</span>
+
+    protected void addHeaders(MimeMessage message, Map&lt;String, String&gt; headers, Charset charset) throws MessagingException {
+<span class="nc bnc" id="L144" title="All 4 branches missed.">        if (headers != null &amp;&amp; !headers.isEmpty()) {</span>
+<span class="nc bnc" id="L145" title="All 2 branches missed.">            for (Map.Entry&lt;String, String&gt; entry : headers.entrySet()) {</span>
+
+<span class="nc" id="L147">                String name = entry.getKey();</span>
+<span class="nc" id="L148">                String value = entry.getValue();</span>
+
+<span class="nc bnc" id="L150" title="All 2 branches missed.">                if (StringUtils.isEmpty(name)) {</span>
+<span class="nc" id="L151">                    throw new FlowableMailException(&quot;header name cannot be null or empty&quot;);</span>
+                }
+
+<span class="nc bnc" id="L154" title="All 2 branches missed.">                if (StringUtils.isEmpty(value)) {</span>
+<span class="nc" id="L155">                    throw new FlowableMailException(&quot;header value cannot be null or empty&quot;);</span>
+                }
+
+<span class="nc" id="L158">                String foldedHeaderValue = createFoldedHeaderValue(name, value, charset);</span>
+<span class="nc" id="L159">                message.addHeader(name, foldedHeaderValue);</span>
+<span class="nc" id="L160">            }</span>
+        }
+
+<span class="nc" id="L163">    }</span>
+
+    protected String createFoldedHeaderValue(String name, String value, Charset charset) {
+        try {
+<span class="nc bnc" id="L167" title="All 2 branches missed.">            return MimeUtility.fold(name.length() + 2, MimeUtility.encodeText(value, charset != null ? charset.name() : null, null));</span>
+<span class="nc" id="L168">        } catch (UnsupportedEncodingException e) {</span>
+<span class="nc" id="L169">            return value;</span>
+        }
+    }
+
+    protected void addTo(MimeMessage message, Collection&lt;String&gt; to) {
+<span class="nc" id="L174">        addRecipient(message, to, Message.RecipientType.TO);</span>
+<span class="nc" id="L175">    }</span>
+
+    protected void addCc(MimeMessage message, Collection&lt;String&gt; cc) {
+<span class="nc" id="L178">        addRecipient(message, cc, Message.RecipientType.CC);</span>
+<span class="nc" id="L179">    }</span>
+
+    protected void addBcc(MimeMessage message, Collection&lt;String&gt; bcc) {
+<span class="nc" id="L182">        addRecipient(message, bcc, Message.RecipientType.BCC);</span>
+<span class="nc" id="L183">    }</span>
+
+    protected void addRecipient(MimeMessage message, Collection&lt;String&gt; recipients, Message.RecipientType recipientType) {
+<span class="nc bnc" id="L186" title="All 4 branches missed.">        if (recipients == null || recipients.isEmpty()) {</span>
+<span class="nc" id="L187">            return;</span>
+        }
+<span class="nc" id="L189">        Collection&lt;String&gt; newRecipients = recipients;</span>
+<span class="nc" id="L190">        Collection&lt;String&gt; forceRecipients = defaultsConfiguration.forceTo();</span>
+<span class="nc bnc" id="L191" title="All 4 branches missed.">        if (forceRecipients != null &amp;&amp; !forceRecipients.isEmpty()) {</span>
+<span class="nc" id="L192">            newRecipients = forceRecipients;</span>
+        }
+<span class="nc bnc" id="L194" title="All 2 branches missed.">        if (!newRecipients.isEmpty()) {</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">            for (String t : newRecipients) {</span>
+                try {
+<span class="nc" id="L197">                    message.addRecipient(recipientType, createInternetAddress(t));</span>
+<span class="nc" id="L198">                } catch (MessagingException e) {</span>
+<span class="nc" id="L199">                    throw new FlowableMailException(&quot;Could not add &quot; + t + &quot; as &quot; + recipientType + &quot; recipient&quot;, e);</span>
+<span class="nc" id="L200">                }</span>
+<span class="nc" id="L201">            }</span>
+        }
+<span class="nc" id="L203">    }</span>
+
+    protected InternetAddress createInternetAddress(String email) {
+        try {
+<span class="nc" id="L207">            InternetAddress address = new InternetAddress(toASCIIEmail(email));</span>
+<span class="nc" id="L208">            address.validate();</span>
+<span class="nc" id="L209">            return address;</span>
+<span class="nc" id="L210">        } catch (AddressException e) {</span>
+<span class="nc" id="L211">            throw new FlowableMailException(&quot;Invalid email&quot;, e);</span>
+        }
+    }
+
+    protected String toASCIIEmail(String email) {
+<span class="nc" id="L216">        int atIndex = email.indexOf('@');</span>
+<span class="nc bnc" id="L217" title="All 2 branches missed.">        if (atIndex &lt; 0) {</span>
+<span class="nc" id="L218">            return email;</span>
+        }
+
+        // localPart@domainPart
+<span class="nc" id="L222">        return email.substring(0, atIndex) + '@' + IDN.toASCII(email.substring(atIndex + 1));</span>
+
+    }
+
+    protected void setFrom(MimeMessage message, String from) {
+        String fromAddress;
+
+<span class="nc bnc" id="L229" title="All 2 branches missed.">        if (from != null) {</span>
+<span class="nc" id="L230">            fromAddress = from;</span>
+        } else { // use default configured from address in defaults configuration
+<span class="nc" id="L232">            fromAddress = defaultsConfiguration.defaultFrom();</span>
+        }
+
+        try {
+<span class="nc" id="L236">            message.setFrom(createInternetAddress(fromAddress));</span>
+<span class="nc" id="L237">        } catch (MessagingException e) {</span>
+<span class="nc" id="L238">            throw new FlowableMailException(&quot;Could not set &quot; + fromAddress + &quot; as from address in email&quot;, e);</span>
+<span class="nc" id="L239">        }</span>
+<span class="nc" id="L240">    }</span>
+
+    protected void setSentDate(MimeMessage message) {
+        try {
+<span class="nc bnc" id="L244" title="All 2 branches missed.">            if (message.getSentDate() == null) {</span>
+<span class="nc" id="L245">                message.setSentDate(new Date());</span>
+            }
+<span class="nc" id="L247">        } catch (MessagingException e) {</span>
+<span class="nc" id="L248">            throw new FlowableMailException(&quot;Failed to set send date&quot;, e);</span>
+<span class="nc" id="L249">        }</span>
+<span class="nc" id="L250">    }</span>
+
+    protected void setContent(MimeMessage mimeMessage, MailMessage message, String charset) {
+<span class="nc" id="L253">        String text = message.getPlainContent();</span>
+<span class="nc" id="L254">        String html = message.getHtmlContent();</span>
+<span class="nc" id="L255">        Collection&lt;DataSource&gt; attachments = message.getAttachments();</span>
+<span class="nc bnc" id="L256" title="All 4 branches missed.">        boolean attachmentsExists = attachments != null &amp;&amp; !attachments.isEmpty();</span>
+<span class="nc bnc" id="L257" title="All 4 branches missed.">        if (html == null &amp;&amp; text == null) {</span>
+<span class="nc" id="L258">            throw new FlowableIllegalArgumentException(&quot;'html' or 'text' is required to be defined when sending an email&quot;);</span>
+        }
+<span class="nc bnc" id="L260" title="All 4 branches missed.">        if (html == null &amp;&amp; !attachmentsExists) {</span>
+            try {
+<span class="nc" id="L262">                mimeMessage.setText(text, charset);</span>
+<span class="nc" id="L263">            } catch (MessagingException e) {</span>
+<span class="nc" id="L264">                throw new FlowableMailException(&quot;Could not create text-only email&quot;, e);</span>
+<span class="nc" id="L265">            }</span>
+        } else {
+            try {
+<span class="nc" id="L268">                mimeMessage.setContent(createMultiPartContent(text, html, charset, attachments));</span>
+<span class="nc" id="L269">            } catch (MessagingException e) {</span>
+<span class="nc" id="L270">                throw new FlowableMailException(&quot;Failed to create multi part email&quot;, e);</span>
+<span class="nc" id="L271">            }</span>
+        }
+<span class="nc" id="L273">    }</span>
+
+    protected MimeMultipart createMultiPartContent(String text, String html, String charset, Collection&lt;DataSource&gt; attachments) throws MessagingException {
+<span class="nc bnc" id="L276" title="All 4 branches missed.">        boolean attachmentsExists = attachments != null &amp;&amp; !attachments.isEmpty();</span>
+
+<span class="nc" id="L278">        MimeMultipart rootContainer = new MimeMultipart();</span>
+<span class="nc" id="L279">        MimeMultipart bodyContainer = rootContainer;</span>
+
+<span class="nc" id="L281">        rootContainer.setSubType(&quot;mixed&quot;);</span>
+
+<span class="nc bnc" id="L283" title="All 4 branches missed.">        if (StringUtils.isNotEmpty(text) &amp;&amp; StringUtils.isNotEmpty(html)) {</span>
+<span class="nc bnc" id="L284" title="All 2 branches missed.">            if (attachmentsExists) {</span>
+                // If both HTML and TEXT bodies are provided, create an alternative
+                // container and add it to the root container
+<span class="nc" id="L287">                bodyContainer = new MimeMultipart(&quot;alternative&quot;);</span>
+<span class="nc" id="L288">                MimeBodyPart bodyPart = new MimeBodyPart();</span>
+                try {
+<span class="nc" id="L290">                    bodyPart.setContent(bodyContainer);</span>
+<span class="nc" id="L291">                    rootContainer.addBodyPart(bodyPart);</span>
+<span class="nc" id="L292">                } catch (MessagingException ex) {</span>
+<span class="nc" id="L293">                    throw new FlowableMailException(&quot;Failed to add body part&quot;, ex);</span>
+<span class="nc" id="L294">                }</span>
+<span class="nc" id="L295">            } else {</span>
+                // no attachments present, change the mimetype
+                // of the root container (= body container)
+<span class="nc" id="L298">                rootContainer.setSubType(&quot;alternative&quot;);</span>
+            }
+        }
+
+<span class="nc bnc" id="L302" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(html)) {</span>
+<span class="nc" id="L303">            MimeBodyPart msgHtml = new MimeBodyPart();</span>
+<span class="nc" id="L304">            bodyContainer.addBodyPart(msgHtml, 0);</span>
+<span class="nc" id="L305">            msgHtml.setText(html, charset, &quot;html&quot;);</span>
+
+<span class="nc" id="L307">            String contentType = msgHtml.getContentType();</span>
+<span class="nc bnc" id="L308" title="All 4 branches missed.">            if (contentType == null || !contentType.equals(CONTENT_TYPE_TEXT_HTML)) {</span>
+<span class="nc bnc" id="L309" title="All 2 branches missed.">                if (StringUtils.isNotEmpty(charset)) {</span>
+<span class="nc" id="L310">                    msgHtml.setContent(html, CONTENT_TYPE_TEXT_HTML + &quot;; charset=&quot; + charset);</span>
+                } else {
+<span class="nc" id="L312">                    msgHtml.setContent(html, CONTENT_TYPE_TEXT_HTML);</span>
+                }
+            }
+        }
+
+<span class="nc bnc" id="L317" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(text)) {</span>
+<span class="nc" id="L318">            MimeBodyPart msgText = new MimeBodyPart();</span>
+<span class="nc" id="L319">            bodyContainer.addBodyPart(msgText, 0);</span>
+<span class="nc" id="L320">            msgText.setText(text, charset);</span>
+        }
+
+<span class="nc bnc" id="L323" title="All 2 branches missed.">        if (attachmentsExists) {</span>
+<span class="nc bnc" id="L324" title="All 2 branches missed.">            for (DataSource attachment : attachments) {</span>
+<span class="nc" id="L325">                BodyPart bodyPart = new MimeBodyPart();</span>
+<span class="nc" id="L326">                bodyPart.setDisposition(Part.ATTACHMENT);</span>
+                try {
+<span class="nc" id="L328">                    bodyPart.setFileName(MimeUtility.encodeText(attachment.getName(), charset, null));</span>
+<span class="nc" id="L329">                } catch (UnsupportedEncodingException e) {</span>
+<span class="nc" id="L330">                    throw new FlowableMailException(&quot;Could not encode attachment file name&quot;, e);</span>
+<span class="nc" id="L331">                }</span>
+<span class="nc" id="L332">                bodyPart.setDataHandler(new DataHandler(attachment));</span>
+<span class="nc" id="L333">                rootContainer.addBodyPart(bodyPart);</span>
+<span class="nc" id="L334">            }</span>
+        }
+
+<span class="nc" id="L337">        return rootContainer;</span>
+    }
+
+    protected Session createSession() {
+<span class="nc bnc" id="L341" title="All 2 branches missed.">        if (serverConfiguration instanceof MailJndiServerConfiguration jndiServerConfiguration) {</span>
+<span class="nc" id="L342">            return createSession(jndiServerConfiguration);</span>
+<span class="nc bnc" id="L343" title="All 2 branches missed.">        } else if (serverConfiguration instanceof MailHostServerConfiguration hostServerConfiguration) {</span>
+<span class="nc" id="L344">            return createSession(hostServerConfiguration);</span>
+        } else {
+<span class="nc" id="L346">            throw new FlowableException(&quot;Unsupported server configuration &quot; + serverConfiguration);</span>
+        }
+    }
+
+    protected Session createSession(MailJndiServerConfiguration serverConfiguration) {
+<span class="nc" id="L351">        String sessionJndi = serverConfiguration.getSessionJndi();</span>
+<span class="nc bnc" id="L352" title="All 2 branches missed.">        if (sessionJndi == null) {</span>
+<span class="nc" id="L353">            throw new FlowableIllegalArgumentException(&quot;sessionJndi has to be set for &quot; + serverConfiguration);</span>
+        }
+        try {
+            Context ctx;
+<span class="nc bnc" id="L357" title="All 2 branches missed.">            if (sessionJndi.startsWith(&quot;java:&quot;)) {</span>
+<span class="nc" id="L358">                ctx = new InitialContext();</span>
+            } else {
+<span class="nc" id="L360">                ctx = (Context) new InitialContext().lookup(&quot;java:comp/env&quot;);</span>
+
+            }
+
+<span class="nc" id="L364">            return (Session) ctx.lookup(sessionJndi);</span>
+<span class="nc" id="L365">        } catch (NamingException e) {</span>
+<span class="nc" id="L366">            throw new FlowableException(&quot;Could not send email: Incorrect JNDI configuration&quot;, e);</span>
+        }
+    }
+
+    protected Session createSession(MailHostServerConfiguration serverConfiguration) {
+<span class="nc" id="L371">        String host = serverConfiguration.host();</span>
+<span class="nc bnc" id="L372" title="All 2 branches missed.">        if (host == null) {</span>
+<span class="nc" id="L373">            throw new FlowableException(&quot;Could not send email: no SMTP host is configured&quot;);</span>
+        }
+
+<span class="nc" id="L376">        Properties properties = new Properties(System.getProperties());</span>
+<span class="nc" id="L377">        properties.setProperty(MAIL_TRANSPORT_PROTOCOL, &quot;smtp&quot;);</span>
+<span class="nc" id="L378">        properties.setProperty(MAIL_PORT, String.valueOf(serverConfiguration.port()));</span>
+<span class="nc" id="L379">        properties.setProperty(MAIL_HOST, host);</span>
+
+<span class="nc" id="L381">        MailHostServerConfiguration.Transport transport = serverConfiguration.transport();</span>
+<span class="nc" id="L382">        properties.setProperty(MAIL_TRANSPORT_STARTTLS_ENABLE, Boolean.toString(serverConfiguration.isStartTlsEnabled()));</span>
+<span class="nc" id="L383">        properties.setProperty(MAIL_TRANSPORT_STARTTLS_REQUIRED, &quot;false&quot;);</span>
+
+<span class="nc" id="L385">        properties.setProperty(MAIL_SMTP_SEND_PARTIAL, &quot;false&quot;);</span>
+<span class="nc" id="L386">        properties.setProperty(MAIL_SMTPS_SEND_PARTIAL, &quot;false&quot;);</span>
+
+<span class="nc" id="L388">        Authenticator authenticator = getAuthenticator(serverConfiguration);</span>
+<span class="nc bnc" id="L389" title="All 2 branches missed.">        if (authenticator != null) {</span>
+<span class="nc" id="L390">            properties.setProperty(MAIL_SMTP_AUTH, &quot;true&quot;);</span>
+        }
+
+<span class="nc bnc" id="L393" title="All 2 branches missed.">        if (transport == MailHostServerConfiguration.Transport.SMTPS) {</span>
+<span class="nc" id="L394">            properties.setProperty(MAIL_SMTP_SOCKET_FACTORY_PORT, String.valueOf(serverConfiguration.port()));</span>
+<span class="nc" id="L395">            properties.setProperty(MAIL_SMTP_SOCKET_FACTORY_CLASS, &quot;javax.net.ssl.SSLSocketFactory&quot;);</span>
+<span class="nc" id="L396">            properties.setProperty(MAIL_SMTP_SOCKET_FACTORY_FALLBACK, &quot;false&quot;);</span>
+        }
+
+<span class="nc" id="L399">        properties.setProperty(MAIL_SMTP_TIMEOUT, Long.toString(SOCKET_TIMEOUT.toMillis()));</span>
+<span class="nc" id="L400">        properties.setProperty(MAIL_SMTP_CONNECTIONTIMEOUT, Long.toString(SOCKET_CONNECTION_TIMEOUT.toMillis()));</span>
+
+<span class="nc" id="L402">        customizeProperties(properties, authenticator);</span>
+
+<span class="nc" id="L404">        return Session.getInstance(properties, authenticator);</span>
+
+    }
+
+    protected void customizeProperties(Properties properties, Authenticator authenticator) {
+        // Nothing to do
+<span class="nc" id="L410">    }</span>
+
+    protected Authenticator getAuthenticator(MailHostServerConfiguration serverConfiguration) {
+<span class="nc" id="L413">        String user = serverConfiguration.user();</span>
+<span class="nc" id="L414">        String password = serverConfiguration.password();</span>
+<span class="nc bnc" id="L415" title="All 4 branches missed.">        if (user != null &amp;&amp; password != null) {</span>
+<span class="nc" id="L416">            PasswordAuthentication passwordAuthentication = new PasswordAuthentication(user, password);</span>
+<span class="nc" id="L417">            return new Authenticator() {</span>
+
+                @Override
+                protected PasswordAuthentication getPasswordAuthentication() {
+<span class="nc" id="L421">                    return passwordAuthentication;</span>
+                }
+            };
+        }
+
+<span class="nc" id="L426">        return null;</span>
+    }
+
+    protected static class JakartaMailSendMailRequest implements ExecutableSendMailRequest {
+
+        protected final MimeMessage message;
+
+<span class="nc" id="L433">        protected JakartaMailSendMailRequest(MimeMessage message) {</span>
+<span class="nc" id="L434">            this.message = message;</span>
+<span class="nc" id="L435">        }</span>
+
+        @Override
+        public MailResponse send() {
+            try {
+<span class="nc" id="L440">                Transport.send(message);</span>
+<span class="nc" id="L441">                return new SimpleMailResponse(message.getMessageID());</span>
+<span class="nc" id="L442">            } catch (MessagingException e) {</span>
+<span class="nc" id="L443">                Session session = message.getSession();</span>
+<span class="nc" id="L444">                String host = session.getProperty(&quot;mail.smtp.host&quot;);</span>
+<span class="nc" id="L445">                String port = session.getProperty(&quot;mail.smtp.port&quot;);</span>
+<span class="nc" id="L446">                throw new FlowableMailException(&quot;Sending the email to the following server failed : &quot; + host + &quot;:&quot; + port, e);</span>
+            }
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

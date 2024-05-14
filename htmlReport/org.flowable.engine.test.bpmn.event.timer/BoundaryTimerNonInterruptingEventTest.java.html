@@ -1,0 +1,354 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BoundaryTimerNonInterruptingEventTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.bpmn.event.timer</a> &gt; <span class="el_source">BoundaryTimerNonInterruptingEventTest.java</span></div><h1>BoundaryTimerNonInterruptingEventTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.flowable.engine.test.bpmn.event.timer;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+
+import java.util.Collections;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+
+import org.flowable.engine.impl.test.PluggableFlowableTestCase;
+import org.flowable.engine.runtime.Execution;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.test.Deployment;
+import org.flowable.job.api.Job;
+import org.flowable.job.api.TimerJobQuery;
+import org.flowable.task.api.Task;
+import org.flowable.task.api.TaskQuery;
+import org.junit.jupiter.api.Test;
+
+/**
+ * @author Joram Barrez
+ */
+<span class="nc" id="L37">public class BoundaryTimerNonInterruptingEventTest extends PluggableFlowableTestCase {</span>
+
+    @Test
+    @Deployment
+    public void testMultipleTimersOnUserTask() {
+        // Set the clock fixed
+<span class="nc" id="L43">        Date startTime = new Date();</span>
+
+        // After process start, there should be 3 timers created
+<span class="nc" id="L46">        ProcessInstance pi = runtimeService.startProcessInstanceByKey(&quot;nonInterruptingTimersOnUserTask&quot;);</span>
+<span class="nc" id="L47">        org.flowable.task.api.Task task1 = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L48">        assertThat(task1.getName()).isEqualTo(&quot;First Task&quot;);</span>
+
+<span class="nc" id="L50">        TimerJobQuery jobQuery = managementService.createTimerJobQuery().processInstanceId(pi.getId());</span>
+<span class="nc" id="L51">        List&lt;Job&gt; jobs = jobQuery.list();</span>
+<span class="nc" id="L52">        assertThat(jobs).hasSize(2);</span>
+
+        // After setting the clock to time '1 hour and 5 seconds', the first timer should fire
+<span class="nc" id="L55">        processEngineConfiguration.getClock().setCurrentTime(new Date(startTime.getTime() + ((60 * 60 * 1000) + 5000)));</span>
+<span class="nc" id="L56">        Job job = managementService.createTimerJobQuery().executable().singleResult();</span>
+<span class="nc" id="L57">        assertThat(job).isNotNull();</span>
+<span class="nc" id="L58">        managementService.moveTimerToExecutableJob(job.getId());</span>
+<span class="nc" id="L59">        managementService.executeJob(job.getId());</span>
+
+        // we still have one timer more to fire
+<span class="nc" id="L62">        assertThat(jobQuery.count()).isEqualTo(1);</span>
+
+        // and we are still in the first state, but in the second state as well!
+<span class="nc" id="L65">        assertThat(taskService.createTaskQuery().count()).isEqualTo(2);</span>
+<span class="nc" id="L66">        List&lt;org.flowable.task.api.Task&gt; taskList = taskService.createTaskQuery().orderByTaskName().desc().list();</span>
+<span class="nc" id="L67">        assertThat(taskList)</span>
+<span class="nc" id="L68">                .extracting(Task::getName)</span>
+<span class="nc" id="L69">                .containsExactly(&quot;First Task&quot;, &quot;Escalation Task 1&quot;);</span>
+
+        // complete the task and end the forked execution
+<span class="nc" id="L72">        taskService.complete(taskList.get(1).getId());</span>
+
+        // but we still have the original executions
+<span class="nc" id="L75">        assertThat(taskService.createTaskQuery().count()).isEqualTo(1);</span>
+<span class="nc" id="L76">        assertThat(taskService.createTaskQuery().singleResult().getName()).isEqualTo(&quot;First Task&quot;);</span>
+
+        // After setting the clock to time '2 hour and 5 seconds', the second timer should fire
+<span class="nc" id="L79">        processEngineConfiguration.getClock().setCurrentTime(new Date(startTime.getTime() + ((2 * 60 * 60 * 1000) + 5000)));</span>
+<span class="nc" id="L80">        waitForJobExecutorToProcessAllJobsAndExecutableTimerJobs(7000L, 25L);</span>
+
+        // no more timers to fire
+<span class="nc" id="L83">        assertThat(jobQuery.count()).isZero();</span>
+
+        // and we are still in the first state, but in the next escalation state as well
+<span class="nc" id="L86">        assertThat(taskService.createTaskQuery().count()).isEqualTo(2);</span>
+<span class="nc" id="L87">        taskList = taskService.createTaskQuery().orderByTaskName().desc().list();</span>
+<span class="nc" id="L88">        assertThat(taskList)</span>
+<span class="nc" id="L89">                .extracting(Task::getName)</span>
+<span class="nc" id="L90">                .containsExactly(&quot;First Task&quot;, &quot;Escalation Task 2&quot;);</span>
+
+        // This time we end the main task
+<span class="nc" id="L93">        taskService.complete(taskList.get(0).getId());</span>
+
+        // but we still have the escalation task
+<span class="nc" id="L96">        assertThat(taskService.createTaskQuery().count()).isEqualTo(1);</span>
+<span class="nc" id="L97">        org.flowable.task.api.Task escalationTask = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L98">        assertThat(escalationTask.getName()).isEqualTo(&quot;Escalation Task 2&quot;);</span>
+
+<span class="nc" id="L100">        taskService.complete(escalationTask.getId());</span>
+
+        // now we are really done :-)
+<span class="nc" id="L103">        assertProcessEnded(pi.getId());</span>
+<span class="nc" id="L104">    }</span>
+
+    @Test
+    @Deployment
+    public void testJoin() {
+        // Set the clock fixed
+<span class="nc" id="L110">        Date startTime = new Date();</span>
+
+        // After process start, there should be 3 timers created
+<span class="nc" id="L113">        ProcessInstance pi = runtimeService.startProcessInstanceByKey(&quot;testJoin&quot;);</span>
+<span class="nc" id="L114">        org.flowable.task.api.Task task1 = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L115">        assertThat(task1.getName()).isEqualTo(&quot;Main Task&quot;);</span>
+
+<span class="nc" id="L117">        TimerJobQuery jobQuery = managementService.createTimerJobQuery().processInstanceId(pi.getId());</span>
+<span class="nc" id="L118">        List&lt;Job&gt; jobs = jobQuery.list();</span>
+<span class="nc" id="L119">        assertThat(jobs).hasSize(1);</span>
+
+        // After setting the clock to time '1 hour and 5 seconds', the first timer should fire
+<span class="nc" id="L122">        processEngineConfiguration.getClock().setCurrentTime(new Date(startTime.getTime() + ((60 * 60 * 1000) + 5000)));</span>
+<span class="nc" id="L123">        waitForJobExecutorToProcessAllJobsAndExecutableTimerJobs(7000L, 25L);</span>
+
+        // timer has fired
+<span class="nc" id="L126">        assertThat(jobQuery.count()).isZero();</span>
+
+        // we now have both tasks
+<span class="nc" id="L129">        assertThat(taskService.createTaskQuery().count()).isEqualTo(2);</span>
+
+        // end the first
+<span class="nc" id="L132">        taskService.complete(task1.getId());</span>
+
+        // we now have one task left
+<span class="nc" id="L135">        assertThat(taskService.createTaskQuery().count()).isEqualTo(1);</span>
+<span class="nc" id="L136">        org.flowable.task.api.Task task2 = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L137">        assertThat(task2.getName()).isEqualTo(&quot;Escalation Task&quot;);</span>
+
+        // complete the task, the parallel gateway should fire
+<span class="nc" id="L140">        taskService.complete(task2.getId());</span>
+
+        // and the process has ended
+<span class="nc" id="L143">        assertProcessEnded(pi.getId());</span>
+<span class="nc" id="L144">    }</span>
+
+    @Test
+    @Deployment
+    public void testTimerOnConcurrentTasks() {
+<span class="nc" id="L149">        String procId = runtimeService.startProcessInstanceByKey(&quot;nonInterruptingOnConcurrentTasks&quot;).getId();</span>
+<span class="nc" id="L150">        assertThat(taskService.createTaskQuery().count()).isEqualTo(2);</span>
+
+<span class="nc" id="L152">        Job timer = managementService.createTimerJobQuery().singleResult();</span>
+<span class="nc" id="L153">        managementService.moveTimerToExecutableJob(timer.getId());</span>
+<span class="nc" id="L154">        managementService.executeJob(timer.getId());</span>
+<span class="nc" id="L155">        assertThat(taskService.createTaskQuery().count()).isEqualTo(3);</span>
+
+        // Complete task that was reached by non interrupting timer
+<span class="nc" id="L158">        org.flowable.task.api.Task task = taskService.createTaskQuery().taskDefinitionKey(&quot;timerFiredTask&quot;).singleResult();</span>
+<span class="nc" id="L159">        taskService.complete(task.getId());</span>
+<span class="nc" id="L160">        assertThat(taskService.createTaskQuery().count()).isEqualTo(2);</span>
+
+        // Complete other tasks
+<span class="nc bnc" id="L163" title="All 2 branches missed.">        for (org.flowable.task.api.Task t : taskService.createTaskQuery().list()) {</span>
+<span class="nc" id="L164">            taskService.complete(t.getId());</span>
+<span class="nc" id="L165">        }</span>
+<span class="nc" id="L166">        assertProcessEnded(procId);</span>
+<span class="nc" id="L167">    }</span>
+
+    // Difference with previous test: now the join will be reached first
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/event/timer/BoundaryTimerNonInterruptingEventTest.testTimerOnConcurrentTasks.bpmn20.xml&quot; })
+    public void testTimerOnConcurrentTasks2() {
+<span class="nc" id="L173">        String procId = runtimeService.startProcessInstanceByKey(&quot;nonInterruptingOnConcurrentTasks&quot;).getId();</span>
+<span class="nc" id="L174">        assertThat(taskService.createTaskQuery().count()).isEqualTo(2);</span>
+
+<span class="nc" id="L176">        Job timer = managementService.createTimerJobQuery().singleResult();</span>
+<span class="nc" id="L177">        managementService.moveTimerToExecutableJob(timer.getId());</span>
+<span class="nc" id="L178">        managementService.executeJob(timer.getId());</span>
+<span class="nc" id="L179">        assertThat(taskService.createTaskQuery().count()).isEqualTo(3);</span>
+
+        // Complete 2 tasks that will trigger the join
+<span class="nc" id="L182">        org.flowable.task.api.Task task = taskService.createTaskQuery().taskDefinitionKey(&quot;firstTask&quot;).singleResult();</span>
+<span class="nc" id="L183">        taskService.complete(task.getId());</span>
+<span class="nc" id="L184">        task = taskService.createTaskQuery().taskDefinitionKey(&quot;secondTask&quot;).singleResult();</span>
+<span class="nc" id="L185">        taskService.complete(task.getId());</span>
+<span class="nc" id="L186">        assertThat(taskService.createTaskQuery().count()).isEqualTo(1);</span>
+
+        // Finally, complete the task that was created due to the timer
+<span class="nc" id="L189">        task = taskService.createTaskQuery().taskDefinitionKey(&quot;timerFiredTask&quot;).singleResult();</span>
+<span class="nc" id="L190">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L192">        assertProcessEnded(procId);</span>
+<span class="nc" id="L193">    }</span>
+
+    @Test
+    @Deployment
+    public void testTimerWithCycle() throws Exception {
+<span class="nc" id="L198">        String processInstanceId = runtimeService.startProcessInstanceByKey(&quot;nonInterruptingCycle&quot;).getId();</span>
+
+<span class="nc" id="L200">        List&lt;Job&gt; jobs = managementService.createTimerJobQuery().processInstanceId(processInstanceId).list();</span>
+<span class="nc" id="L201">        assertThat(jobs).hasSize(1);</span>
+
+        // boundary events
+<span class="nc" id="L204">        waitForJobExecutorToProcessAllJobs(2000, 100);</span>
+
+        // a new job must be prepared because there are indefinite number of repeats 1 hour interval&quot;);
+<span class="nc" id="L207">        assertThat(managementService.createTimerJobQuery().processInstanceId(processInstanceId).count()).isEqualTo(1);</span>
+
+<span class="nc" id="L209">        moveByMinutes(60);</span>
+<span class="nc" id="L210">        waitForJobExecutorToProcessAllJobs(2000, 100);</span>
+
+        // a new job must be prepared because there are indefinite number of repeats 1 hour interval&quot;);
+<span class="nc" id="L213">        assertThat(managementService.createTimerJobQuery().processInstanceId(processInstanceId).count()).isEqualTo(1);</span>
+
+<span class="nc" id="L215">        org.flowable.task.api.Task task = taskService.createTaskQuery().taskDefinitionKey(&quot;task&quot;).singleResult();</span>
+<span class="nc" id="L216">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L218">        moveByMinutes(60);</span>
+<span class="nc" id="L219">        assertThatCode(() -&gt; { waitForJobExecutorToProcessAllJobs(2000, 100); })</span>
+<span class="nc" id="L220">                .as(&quot;No more jobs since the user completed the task&quot;)</span>
+<span class="nc" id="L221">                .doesNotThrowAnyException();</span>
+<span class="nc" id="L222">    }</span>
+
+    /*
+     * see https://activiti.atlassian.net/browse/ACT-1173
+     */
+    @Test
+    @Deployment
+    public void testTimerOnEmbeddedSubprocess() {
+<span class="nc" id="L230">        String id = runtimeService.startProcessInstanceByKey(&quot;nonInterruptingTimerOnEmbeddedSubprocess&quot;).getId();</span>
+
+<span class="nc" id="L232">        TaskQuery tq = taskService.createTaskQuery().taskAssignee(&quot;kermit&quot;);</span>
+
+<span class="nc" id="L234">        assertThat(tq.count()).isEqualTo(1);</span>
+
+        // Simulate timer
+<span class="nc" id="L237">        Job timer = managementService.createTimerJobQuery().singleResult();</span>
+<span class="nc" id="L238">        managementService.moveTimerToExecutableJob(timer.getId());</span>
+<span class="nc" id="L239">        managementService.executeJob(timer.getId());</span>
+
+<span class="nc" id="L241">        tq = taskService.createTaskQuery().taskAssignee(&quot;kermit&quot;);</span>
+
+<span class="nc" id="L243">        assertThat(tq.count()).isEqualTo(2);</span>
+
+<span class="nc" id="L245">        List&lt;org.flowable.task.api.Task&gt; tasks = tq.list();</span>
+
+<span class="nc" id="L247">        taskService.complete(tasks.get(0).getId());</span>
+<span class="nc" id="L248">        taskService.complete(tasks.get(1).getId());</span>
+
+<span class="nc" id="L250">        assertProcessEnded(id);</span>
+<span class="nc" id="L251">    }</span>
+
+    /*
+     * see https://activiti.atlassian.net/browse/ACT-1106
+     */
+    @Test
+    @Deployment
+    public void testReceiveTaskWithBoundaryTimer() {
+        // Set the clock fixed
+<span class="nc" id="L260">        HashMap&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L261">        variables.put(&quot;timeCycle&quot;, &quot;R/PT1H&quot;);</span>
+
+        // After process start, there should be a timer created
+<span class="nc" id="L264">        ProcessInstance pi = runtimeService.startProcessInstanceByKey(&quot;nonInterruptingCycle&quot;, variables);</span>
+
+<span class="nc" id="L266">        TimerJobQuery jobQuery = managementService.createTimerJobQuery().processInstanceId(pi.getId());</span>
+<span class="nc" id="L267">        List&lt;Job&gt; jobs = jobQuery.list();</span>
+<span class="nc" id="L268">        assertThat(jobs).hasSize(1);</span>
+
+        // The Execution Query should work normally and find executions in state &quot;task&quot;
+<span class="nc" id="L271">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().activityId(&quot;task&quot;).list();</span>
+<span class="nc" id="L272">        assertThat(executions).hasSize(1);</span>
+<span class="nc" id="L273">        List&lt;String&gt; activeActivityIds = runtimeService.getActiveActivityIds(executions.get(0).getId());</span>
+<span class="nc" id="L274">        Collections.sort(activeActivityIds);</span>
+<span class="nc" id="L275">        assertThat(activeActivityIds)</span>
+<span class="nc" id="L276">                .containsExactly(&quot;task&quot;, &quot;timer&quot;);</span>
+
+<span class="nc" id="L278">        runtimeService.trigger(executions.get(0).getId());</span>
+
+        // After setting the clock to time '1 hour and 5 seconds', the second
+        // timer should fire
+        // processEngineConfiguration.getClock().setCurrentTime(new
+        // Date(startTime.getTime() + ((60 * 60 * 1000) + 5000)));
+        // waitForJobExecutorToProcessAllJobs(7000L, 25L);
+        // assertThat(jobQuery.count())..isZero();
+
+        // which means the process has ended
+<span class="nc" id="L288">        assertProcessEnded(pi.getId());</span>
+<span class="nc" id="L289">    }</span>
+
+    @Test
+    @Deployment
+    public void testTimerOnConcurrentSubprocess() {
+<span class="nc" id="L294">        String procId = runtimeService.startProcessInstanceByKey(&quot;testTimerOnConcurrentSubprocess&quot;).getId();</span>
+<span class="nc" id="L295">        assertThat(taskService.createTaskQuery().count()).isEqualTo(4);</span>
+
+<span class="nc" id="L297">        Job timer = managementService.createTimerJobQuery().singleResult();</span>
+<span class="nc" id="L298">        managementService.moveTimerToExecutableJob(timer.getId());</span>
+<span class="nc" id="L299">        managementService.executeJob(timer.getId());</span>
+<span class="nc" id="L300">        assertThat(taskService.createTaskQuery().count()).isEqualTo(5);</span>
+
+        // Complete 4 tasks that will trigger the join
+<span class="nc" id="L303">        org.flowable.task.api.Task task = taskService.createTaskQuery().taskDefinitionKey(&quot;sub1task1&quot;).singleResult();</span>
+<span class="nc" id="L304">        taskService.complete(task.getId());</span>
+<span class="nc" id="L305">        task = taskService.createTaskQuery().taskDefinitionKey(&quot;sub1task2&quot;).singleResult();</span>
+<span class="nc" id="L306">        taskService.complete(task.getId());</span>
+<span class="nc" id="L307">        task = taskService.createTaskQuery().taskDefinitionKey(&quot;sub2task1&quot;).singleResult();</span>
+<span class="nc" id="L308">        taskService.complete(task.getId());</span>
+<span class="nc" id="L309">        task = taskService.createTaskQuery().taskDefinitionKey(&quot;sub2task2&quot;).singleResult();</span>
+<span class="nc" id="L310">        taskService.complete(task.getId());</span>
+<span class="nc" id="L311">        assertThat(taskService.createTaskQuery().count()).isEqualTo(1);</span>
+
+        // Finally, complete the task that was created due to the timer
+<span class="nc" id="L314">        task = taskService.createTaskQuery().taskDefinitionKey(&quot;timerFiredTask&quot;).singleResult();</span>
+<span class="nc" id="L315">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L317">        assertProcessEnded(procId);</span>
+<span class="nc" id="L318">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/bpmn/event/timer/BoundaryTimerNonInterruptingEventTest.testTimerOnConcurrentSubprocess.bpmn20.xml&quot;)
+    public void testTimerOnConcurrentSubprocess2() {
+<span class="nc" id="L323">        String procId = runtimeService.startProcessInstanceByKey(&quot;testTimerOnConcurrentSubprocess&quot;).getId();</span>
+<span class="nc" id="L324">        assertThat(taskService.createTaskQuery().count()).isEqualTo(4);</span>
+
+<span class="nc" id="L326">        Job timer = managementService.createTimerJobQuery().singleResult();</span>
+<span class="nc" id="L327">        managementService.moveTimerToExecutableJob(timer.getId());</span>
+<span class="nc" id="L328">        managementService.executeJob(timer.getId());</span>
+<span class="nc" id="L329">        assertThat(taskService.createTaskQuery().count()).isEqualTo(5);</span>
+
+<span class="nc" id="L331">        org.flowable.task.api.Task task = taskService.createTaskQuery().taskDefinitionKey(&quot;sub1task1&quot;).singleResult();</span>
+<span class="nc" id="L332">        taskService.complete(task.getId());</span>
+<span class="nc" id="L333">        task = taskService.createTaskQuery().taskDefinitionKey(&quot;sub1task2&quot;).singleResult();</span>
+<span class="nc" id="L334">        taskService.complete(task.getId());</span>
+
+        // complete the task that was created due to the timer
+<span class="nc" id="L337">        task = taskService.createTaskQuery().taskDefinitionKey(&quot;timerFiredTask&quot;).singleResult();</span>
+<span class="nc" id="L338">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L340">        task = taskService.createTaskQuery().taskDefinitionKey(&quot;sub2task1&quot;).singleResult();</span>
+<span class="nc" id="L341">        taskService.complete(task.getId());</span>
+<span class="nc" id="L342">        task = taskService.createTaskQuery().taskDefinitionKey(&quot;sub2task2&quot;).singleResult();</span>
+<span class="nc" id="L343">        taskService.complete(task.getId());</span>
+<span class="nc" id="L344">        assertThat(taskService.createTaskQuery().count()).isZero();</span>
+
+<span class="nc" id="L346">        assertProcessEnded(procId);</span>
+<span class="nc" id="L347">    }</span>
+
+    private void moveByMinutes(int minutes) throws Exception {
+<span class="nc" id="L350">        processEngineConfiguration.getClock().setCurrentTime(new Date(processEngineConfiguration.getClock().getCurrentTime().getTime() + ((minutes * 60 * 1000))));</span>
+<span class="nc" id="L351">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

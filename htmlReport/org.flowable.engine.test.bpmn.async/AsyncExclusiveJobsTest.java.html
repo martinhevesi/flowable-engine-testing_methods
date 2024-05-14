@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AsyncExclusiveJobsTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.bpmn.async</a> &gt; <span class="el_source">AsyncExclusiveJobsTest.java</span></div><h1>AsyncExclusiveJobsTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.test.bpmn.async;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import org.flowable.common.engine.impl.history.HistoryLevel;
+import org.flowable.engine.history.HistoricActivityInstance;
+import org.flowable.engine.impl.test.HistoryTestHelper;
+import org.flowable.engine.impl.test.PluggableFlowableTestCase;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.test.Deployment;
+import org.flowable.job.service.impl.asyncexecutor.AsyncJobExecutorConfiguration;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledIfSystemProperty;
+
+<span class="nc" id="L27">public class AsyncExclusiveJobsTest extends PluggableFlowableTestCase {</span>
+
+    /**
+     * Test for https://activiti.atlassian.net/browse/ACT-4035.
+     */
+    @Test
+    @Deployment
+    @DisabledIfSystemProperty(named = &quot;disableWhen&quot;, matches = &quot;cockroachdb&quot;)
+    public void testExclusiveJobs() {
+
+<span class="nc bnc" id="L37" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.AUDIT, processEngineConfiguration)) {</span>
+
+            // The process has two script tasks in parallel, both exclusive.
+            // They should be executed with at least 6 seconds in between (as they both sleep for 6 seconds)
+<span class="nc" id="L41">            runtimeService.startProcessInstanceByKey(&quot;testExclusiveJobs&quot;);</span>
+<span class="nc" id="L42">            waitForJobExecutorToProcessAllJobs(20000L, 500L);</span>
+            
+<span class="nc" id="L44">            waitForHistoryJobExecutorToProcessAllJobs(7000, 100);</span>
+
+<span class="nc" id="L46">            HistoricActivityInstance scriptTaskAInstance = historyService.createHistoricActivityInstanceQuery().activityId(&quot;scriptTaskA&quot;).singleResult();</span>
+<span class="nc" id="L47">            HistoricActivityInstance scriptTaskBInstance = historyService.createHistoricActivityInstanceQuery().activityId(&quot;scriptTaskB&quot;).singleResult();</span>
+
+<span class="nc" id="L49">            long endTimeA = scriptTaskAInstance.getEndTime().getTime();</span>
+<span class="nc" id="L50">            long endTimeB = scriptTaskBInstance.getEndTime().getTime();</span>
+<span class="nc" id="L51">            long endTimeDifference = 0;</span>
+<span class="nc bnc" id="L52" title="All 2 branches missed.">            if (endTimeB &gt; endTimeA) {</span>
+<span class="nc" id="L53">                endTimeDifference = endTimeB - endTimeA;</span>
+            } else {
+<span class="nc" id="L55">                endTimeDifference = endTimeA - endTimeB;</span>
+            }
+<span class="nc" id="L57">            assertThat(endTimeDifference).isGreaterThan(6000); // &gt; 6000 -&gt; jobs were executed in parallel</span>
+        }
+
+<span class="nc" id="L60">    }</span>
+
+    @Test
+    @Deployment
+    public void testParallelGatewayExclusiveJobs() {
+<span class="nc" id="L65">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L66">                .processDefinitionKey(&quot;parallelExclusiveServiceTasks&quot;)</span>
+<span class="nc" id="L67">                .variable(&quot;counter&quot;, 0L)</span>
+<span class="nc" id="L68">                .start();</span>
+
+<span class="nc" id="L70">        assertThat(runtimeService.getVariable(processInstance.getId(), &quot;counter&quot;))</span>
+<span class="nc" id="L71">                .isEqualTo(0L);</span>
+
+<span class="nc" id="L73">        AsyncJobExecutorConfiguration asyncExecutorConfiguration = processEngineConfiguration.getAsyncExecutorConfiguration();</span>
+<span class="nc" id="L74">        boolean originalGlobalAcquireLockEnabled = asyncExecutorConfiguration.isGlobalAcquireLockEnabled();</span>
+<span class="nc" id="L75">        CollectingAsyncRunnableExecutionExceptionHandler executionExceptionHandler = new CollectingAsyncRunnableExecutionExceptionHandler();</span>
+        try {
+<span class="nc" id="L77">            asyncExecutorConfiguration.setGlobalAcquireLockEnabled(true);</span>
+<span class="nc" id="L78">            processEngineConfiguration.getJobServiceConfiguration()</span>
+<span class="nc" id="L79">                    .getAsyncRunnableExecutionExceptionHandlers()</span>
+<span class="nc" id="L80">                    .add(0, executionExceptionHandler);</span>
+<span class="nc" id="L81">            waitForJobExecutorToProcessAllJobs(15000, 200);</span>
+        } finally {
+<span class="nc" id="L83">            asyncExecutorConfiguration.setGlobalAcquireLockEnabled(originalGlobalAcquireLockEnabled);</span>
+<span class="nc" id="L84">            processEngineConfiguration.getJobServiceConfiguration()</span>
+<span class="nc" id="L85">                    .getAsyncRunnableExecutionExceptionHandlers()</span>
+<span class="nc" id="L86">                    .remove(executionExceptionHandler);</span>
+        }
+
+<span class="nc" id="L89">        assertThat(executionExceptionHandler.getExceptions()).isEmpty();</span>
+<span class="nc" id="L90">        assertThat(runtimeService.getVariable(processInstance.getId(), &quot;counter&quot;))</span>
+<span class="nc" id="L91">                .isEqualTo(3L);</span>
+<span class="nc" id="L92">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

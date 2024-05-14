@@ -1,0 +1,1232 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>JobQueryTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.api.mgmt</a> &gt; <span class="el_source">JobQueryTest.java</span></div><h1>JobQueryTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.flowable.engine.test.api.mgmt;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.List;
+import java.util.UUID;
+
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.FlowableIllegalArgumentException;
+import org.flowable.common.engine.impl.interceptor.Command;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.common.engine.impl.interceptor.CommandExecutor;
+import org.flowable.engine.impl.test.PluggableFlowableTestCase;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.engine.repository.ProcessDefinition;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.test.Deployment;
+import org.flowable.job.api.BaseJobQuery;
+import org.flowable.job.api.DeadLetterJobQuery;
+import org.flowable.job.api.ExternalWorkerJob;
+import org.flowable.job.api.ExternalWorkerJobQuery;
+import org.flowable.job.api.HistoryJob;
+import org.flowable.job.api.HistoryJobQuery;
+import org.flowable.job.api.Job;
+import org.flowable.job.api.JobInfo;
+import org.flowable.job.api.JobQuery;
+import org.flowable.job.api.SuspendedJobQuery;
+import org.flowable.job.api.TimerJobQuery;
+import org.flowable.job.service.HistoryJobService;
+import org.flowable.job.service.JobService;
+import org.flowable.job.service.JobServiceConfiguration;
+import org.flowable.job.service.impl.DeadLetterJobQueryImpl;
+import org.flowable.job.service.impl.ExternalWorkerJobQueryImpl;
+import org.flowable.job.service.impl.HistoryJobQueryImpl;
+import org.flowable.job.service.impl.SuspendedJobQueryImpl;
+import org.flowable.job.service.impl.cmd.CancelJobsCmd;
+import org.flowable.job.service.impl.persistence.entity.DeadLetterJobEntity;
+import org.flowable.job.service.impl.persistence.entity.DeadLetterJobEntityManager;
+import org.flowable.job.service.impl.persistence.entity.ExternalWorkerJobEntity;
+import org.flowable.job.service.impl.persistence.entity.ExternalWorkerJobEntityManager;
+import org.flowable.job.service.impl.persistence.entity.HistoryJobEntity;
+import org.flowable.job.service.impl.persistence.entity.JobEntity;
+import org.flowable.job.service.impl.persistence.entity.SuspendedJobEntity;
+import org.flowable.job.service.impl.persistence.entity.SuspendedJobEntityManager;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+/**
+ * @author Joram Barrez
+ * @author Falko Menge
+ */
+<span class="nc" id="L72">public class JobQueryTest extends PluggableFlowableTestCase {</span>
+
+    private static final long ONE_HOUR = 60L * 60L * 1000L;
+    private static final long ONE_SECOND = 1000L;
+    private static final String EXCEPTION_MESSAGE = &quot;This is an exception thrown from scriptTask&quot;;
+    private String deploymentId;
+    private String messageId;
+    private CommandExecutor commandExecutor;
+    private JobEntity jobEntity;
+    private Date testStartTime;
+    private Date timerOneFireTime;
+    private Date timerTwoFireTime;
+    private Date timerThreeFireTime;
+    private String processInstanceIdOne;
+    private String processInstanceIdTwo;
+    private String processInstanceIdThree;
+
+    /**
+     * Setup will create - 3 process instances, each with one timer, each firing at t1/t2/t3 + 1 hour (see process) - 1 message
+     */
+    @BeforeEach
+    protected void setUp() throws Exception {
+
+<span class="nc" id="L95">        this.commandExecutor = processEngineConfiguration.getCommandExecutor();</span>
+
+<span class="nc" id="L97">        deploymentId = repositoryService.createDeployment().addClasspathResource(&quot;org/flowable/engine/test/api/mgmt/timerOnTask.bpmn20.xml&quot;).deploy().getId();</span>
+
+        // Create proc inst that has timer that will fire on t1 + 1 hour
+<span class="nc" id="L100">        Calendar startTime = Calendar.getInstance();</span>
+<span class="nc" id="L101">        startTime.set(Calendar.MILLISECOND, 0);</span>
+
+<span class="nc" id="L103">        Date t1 = startTime.getTime();</span>
+<span class="nc" id="L104">        processEngineConfiguration.getClock().setCurrentTime(t1);</span>
+
+<span class="nc" id="L106">        processInstanceIdOne = runtimeService.startProcessInstanceByKey(&quot;timerOnTask&quot;).getId();</span>
+<span class="nc" id="L107">        testStartTime = t1;</span>
+<span class="nc" id="L108">        timerOneFireTime = new Date(t1.getTime() + ONE_HOUR);</span>
+
+        // Create process instance that has timer that will fire on t2 + 1 hour
+<span class="nc" id="L111">        startTime.add(Calendar.HOUR_OF_DAY, 1);</span>
+<span class="nc" id="L112">        Date t2 = startTime.getTime(); // t2 = t1 + 1 hour</span>
+<span class="nc" id="L113">        processEngineConfiguration.getClock().setCurrentTime(t2);</span>
+<span class="nc" id="L114">        processInstanceIdTwo = runtimeService.startProcessInstanceByKey(&quot;timerOnTask&quot;).getId();</span>
+<span class="nc" id="L115">        timerTwoFireTime = new Date(t2.getTime() + ONE_HOUR);</span>
+
+        // Create process instance that has timer that will fire on t3 + 1 hour
+<span class="nc" id="L118">        startTime.add(Calendar.HOUR_OF_DAY, 1);</span>
+<span class="nc" id="L119">        Date t3 = startTime.getTime(); // t3 = t2 + 1 hour</span>
+<span class="nc" id="L120">        processEngineConfiguration.getClock().setCurrentTime(t3);</span>
+<span class="nc" id="L121">        processInstanceIdThree = runtimeService.startProcessInstanceByKey(&quot;timerOnTask&quot;).getId();</span>
+<span class="nc" id="L122">        timerThreeFireTime = new Date(t3.getTime() + ONE_HOUR);</span>
+
+        // Create one message
+<span class="nc" id="L125">        messageId = commandExecutor.execute(new Command&lt;&gt;() {</span>
+
+            @Override
+            public String execute(CommandContext commandContext) {
+<span class="nc" id="L129">                JobService jobService = CommandContextUtil.getJobService(commandContext);</span>
+<span class="nc" id="L130">                JobEntity message = jobService.createJob();</span>
+<span class="nc" id="L131">                message.setJobType(Job.JOB_TYPE_MESSAGE);</span>
+<span class="nc" id="L132">                message.setRetries(3);</span>
+<span class="nc" id="L133">                jobService.scheduleAsyncJob(message);</span>
+<span class="nc" id="L134">                return message.getId();</span>
+            }
+        });
+<span class="nc" id="L137">    }</span>
+
+    @AfterEach
+    protected void tearDown() throws Exception {
+<span class="nc" id="L141">        repositoryService.deleteDeployment(deploymentId, true);</span>
+<span class="nc" id="L142">        commandExecutor.execute(new CancelJobsCmd(messageId, processEngineConfiguration.getJobServiceConfiguration()));</span>
+<span class="nc" id="L143">    }</span>
+
+    @Test
+    public void testQueryByNoCriteria() {
+<span class="nc" id="L147">        JobQuery query = managementService.createJobQuery();</span>
+<span class="nc" id="L148">        verifyQueryResults(query, 1);</span>
+
+<span class="nc" id="L150">        TimerJobQuery timerQuery = managementService.createTimerJobQuery();</span>
+<span class="nc" id="L151">        verifyQueryResults(timerQuery, 3);</span>
+<span class="nc" id="L152">    }</span>
+
+    @Test
+    public void testQueryByIds() {
+<span class="nc" id="L156">        List&lt;String&gt; jobIds = new ArrayList&lt;&gt;();</span>
+
+<span class="nc" id="L158">        managementService.createJobQuery().list().forEach(job -&gt; jobIds.add(job.getId()));</span>
+<span class="nc" id="L159">        JobQuery query = managementService.createJobQuery().jobIds(jobIds);</span>
+<span class="nc" id="L160">        verifyQueryResults(query, jobIds.size());</span>
+
+<span class="nc" id="L162">        jobIds.clear();</span>
+<span class="nc" id="L163">        managementService.createTimerJobQuery().list().forEach(job -&gt; jobIds.add(job.getId()));</span>
+<span class="nc" id="L164">        TimerJobQuery timerQuery = managementService.createTimerJobQuery().jobIds(jobIds);</span>
+<span class="nc" id="L165">        verifyQueryResults(timerQuery, jobIds.size());</span>
+
+<span class="nc" id="L167">        query = managementService.createJobQuery().jobIds(new ArrayList&lt;&gt;());</span>
+<span class="nc" id="L168">        verifyQueryResults(query, 1);</span>
+<span class="nc" id="L169">        timerQuery = managementService.createTimerJobQuery().jobIds(new ArrayList&lt;&gt;());</span>
+<span class="nc" id="L170">        verifyQueryResults(timerQuery, 3);</span>
+
+<span class="nc" id="L172">        query = managementService.createJobQuery().jobIds(new ArrayList&lt;&gt;());</span>
+<span class="nc" id="L173">        verifyQueryResults(query, (int) managementService.createJobQuery().count());</span>
+
+<span class="nc" id="L175">        timerQuery = managementService.createTimerJobQuery().jobIds(new ArrayList&lt;&gt;());</span>
+<span class="nc" id="L176">        verifyQueryResults(timerQuery, (int) managementService.createTimerJobQuery().count());</span>
+
+<span class="nc" id="L178">        ExternalWorkerJobQuery externalWorkerQuery = managementService.createExternalWorkerJobQuery().jobIds(new ArrayList&lt;&gt;());</span>
+<span class="nc" id="L179">        verifyQueryResults(externalWorkerQuery, (int) managementService.createExternalWorkerJobQuery().count());</span>
+
+<span class="nc" id="L181">        SuspendedJobQuery suspendedJobQuery = managementService.createSuspendedJobQuery().jobIds(new ArrayList&lt;&gt;());</span>
+<span class="nc" id="L182">        verifyQueryResults(suspendedJobQuery, (int) managementService.createSuspendedJobQuery().count());</span>
+<span class="nc" id="L183">    }</span>
+
+    @Test
+    public void testQueryByNoCriteriaWithPaging() {
+<span class="nc" id="L187">        List&lt;Job&gt; jobs = managementService.createJobQuery().listPage(1, 2);</span>
+<span class="nc" id="L188">        assertThat(jobs).isEmpty();</span>
+
+<span class="nc" id="L190">        List&lt;Job&gt; timerJobs = managementService.createTimerJobQuery().listPage(1, 2);</span>
+<span class="nc" id="L191">        assertThat(timerJobs).hasSize(2);</span>
+<span class="nc" id="L192">    }</span>
+
+    @Test
+    public void testQueryByProcessInstanceId() {
+<span class="nc" id="L196">        TimerJobQuery query = managementService.createTimerJobQuery().processInstanceId(processInstanceIdOne);</span>
+<span class="nc" id="L197">        verifyQueryResults(query, 1);</span>
+<span class="nc" id="L198">    }</span>
+
+    @Test
+    public void testQueryByInvalidProcessInstanceId() {
+<span class="nc" id="L202">        TimerJobQuery query = managementService.createTimerJobQuery().processInstanceId(&quot;invalid&quot;);</span>
+<span class="nc" id="L203">        verifyQueryResults(query, 0);</span>
+
+<span class="nc" id="L205">        assertThatThrownBy(() -&gt; managementService.createJobQuery().processInstanceId(null))</span>
+<span class="nc" id="L206">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class);</span>
+<span class="nc" id="L207">    }</span>
+
+    @Test
+    public void testTimerQueryWithoutProcessInstanceId() {
+<span class="nc" id="L211">        TimerJobQuery query = managementService.createTimerJobQuery().withoutProcessInstanceId();</span>
+<span class="nc" id="L212">        verifyQueryResults(query, 0);</span>
+<span class="nc" id="L213">    }</span>
+
+    @Test
+    public void testJobQueryWithoutProcessInstanceId() {
+<span class="nc" id="L217">        JobQuery query = managementService.createJobQuery().withoutProcessInstanceId();</span>
+<span class="nc" id="L218">        verifyQueryResults(query, 1);</span>
+
+<span class="nc" id="L220">        assertThat(query.singleResult().getId()).isEqualTo(messageId);</span>
+<span class="nc" id="L221">    }</span>
+
+    @Test
+    public void testQueryByExecutionId() {
+<span class="nc" id="L225">        Job job = managementService.createTimerJobQuery().processInstanceId(processInstanceIdOne).singleResult();</span>
+<span class="nc" id="L226">        TimerJobQuery query = managementService.createTimerJobQuery().executionId(job.getExecutionId());</span>
+<span class="nc" id="L227">        assertThat(job.getId()).isEqualTo(query.singleResult().getId());</span>
+<span class="nc" id="L228">        verifyQueryResults(query, 1);</span>
+<span class="nc" id="L229">    }</span>
+
+    @Test
+    public void testQueryByInvalidExecutionId() {
+<span class="nc" id="L233">        JobQuery query = managementService.createJobQuery().executionId(&quot;invalid&quot;);</span>
+<span class="nc" id="L234">        verifyQueryResults(query, 0);</span>
+
+<span class="nc" id="L236">        TimerJobQuery timerQuery = managementService.createTimerJobQuery().executionId(&quot;invalid&quot;);</span>
+<span class="nc" id="L237">        verifyQueryResults(timerQuery, 0);</span>
+
+<span class="nc" id="L239">        assertThatThrownBy(() -&gt; managementService.createJobQuery().executionId(null).list())</span>
+<span class="nc" id="L240">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class);</span>
+
+<span class="nc" id="L242">        assertThatThrownBy(() -&gt; managementService.createTimerJobQuery().executionId(null).list())</span>
+<span class="nc" id="L243">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class);</span>
+<span class="nc" id="L244">    }</span>
+
+    @Test
+    public void testQueryByElementId() {
+<span class="nc" id="L248">        TimerJobQuery query = managementService.createTimerJobQuery().elementId(&quot;escalationTimer&quot;);</span>
+<span class="nc" id="L249">        verifyQueryResults(query, 3);</span>
+<span class="nc" id="L250">    }</span>
+
+    @Test
+    public void testQueryByInvalidElementId() {
+<span class="nc" id="L254">        TimerJobQuery query = managementService.createTimerJobQuery().elementId(&quot;unknown&quot;);</span>
+<span class="nc" id="L255">        verifyQueryResults(query, 0);</span>
+<span class="nc" id="L256">    }</span>
+
+    @Test
+    public void testQueryByElementName() {
+<span class="nc" id="L260">        TimerJobQuery query = managementService.createTimerJobQuery().elementName(&quot;Escalation&quot;);</span>
+<span class="nc" id="L261">        verifyQueryResults(query, 3);</span>
+<span class="nc" id="L262">    }</span>
+
+    @Test
+    public void testQueryByInvalidElementName() {
+<span class="nc" id="L266">        TimerJobQuery query = managementService.createTimerJobQuery().elementName(&quot;unknown&quot;);</span>
+<span class="nc" id="L267">        verifyQueryResults(query, 0);</span>
+<span class="nc" id="L268">    }</span>
+
+    @Test
+    public void testQueryByHandlerType() {
+<span class="nc" id="L272">        final JobEntity job = (JobEntity) managementService.createJobQuery().singleResult();</span>
+<span class="nc" id="L273">        job.setJobHandlerType(&quot;test&quot;);</span>
+<span class="nc" id="L274">        managementService.executeCommand(new Command&lt;Void&gt;() {</span>
+
+            @Override
+            public Void execute(CommandContext commandContext) {
+<span class="nc" id="L278">                JobService jobService = CommandContextUtil.getJobService(commandContext);</span>
+<span class="nc" id="L279">                jobService.updateJob(job);</span>
+<span class="nc" id="L280">                return null;</span>
+            }
+
+        });
+
+<span class="nc" id="L285">        Job handlerTypeJob = managementService.createJobQuery().handlerType(&quot;test&quot;).singleResult();</span>
+<span class="nc" id="L286">        assertThat(handlerTypeJob).isNotNull();</span>
+<span class="nc" id="L287">    }</span>
+
+    @Test
+    public void testDeadLetterJobQueryByType() {
+<span class="nc" id="L291">        assertThat(managementService.createDeadLetterJobQuery().count()).isEqualTo(0);</span>
+
+<span class="nc" id="L293">        createDeadLetterJobWithType(Job.JOB_TYPE_MESSAGE);</span>
+<span class="nc" id="L294">        assertThat(managementService.createDeadLetterJobQuery().count()).isEqualTo(1);</span>
+<span class="nc" id="L295">        assertThat(managementService.createDeadLetterJobQuery().messages().count()).isEqualTo(1);</span>
+<span class="nc" id="L296">        assertThat(managementService.createDeadLetterJobQuery().timers().count()).isEqualTo(0);</span>
+<span class="nc" id="L297">        assertThat(managementService.createDeadLetterJobQuery().externalWorkers().count()).isEqualTo(0);</span>
+
+<span class="nc" id="L299">        createDeadLetterJobWithType(Job.JOB_TYPE_TIMER);</span>
+<span class="nc" id="L300">        assertThat(managementService.createDeadLetterJobQuery().count()).isEqualTo(2);</span>
+<span class="nc" id="L301">        assertThat(managementService.createDeadLetterJobQuery().messages().count()).isEqualTo(1);</span>
+<span class="nc" id="L302">        assertThat(managementService.createDeadLetterJobQuery().timers().count()).isEqualTo(1);</span>
+<span class="nc" id="L303">        assertThat(managementService.createDeadLetterJobQuery().externalWorkers().count()).isEqualTo(0);</span>
+
+<span class="nc" id="L305">        createDeadLetterJobWithType(Job.JOB_TYPE_EXTERNAL_WORKER);</span>
+<span class="nc" id="L306">        assertThat(managementService.createDeadLetterJobQuery().count()).isEqualTo(3);</span>
+<span class="nc" id="L307">        assertThat(managementService.createDeadLetterJobQuery().messages().count()).isEqualTo(1);</span>
+<span class="nc" id="L308">        assertThat(managementService.createDeadLetterJobQuery().timers().count()).isEqualTo(1);</span>
+<span class="nc" id="L309">        assertThat(managementService.createDeadLetterJobQuery().externalWorkers().count()).isEqualTo(1);</span>
+
+<span class="nc" id="L311">        managementService.deleteDeadLetterJob(managementService.createDeadLetterJobQuery().messages().singleResult().getId());</span>
+<span class="nc" id="L312">        managementService.deleteDeadLetterJob(managementService.createDeadLetterJobQuery().timers().singleResult().getId());</span>
+<span class="nc" id="L313">        managementService.deleteDeadLetterJob(managementService.createDeadLetterJobQuery().externalWorkers().singleResult().getId());</span>
+<span class="nc" id="L314">        assertThat(managementService.createDeadLetterJobQuery().count()).isEqualTo(0);</span>
+<span class="nc" id="L315">    }</span>
+
+    @Test
+    public void testQueryByHandlerTypes() {
+
+<span class="nc" id="L320">        List&lt;String&gt; testTypes = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L321">        createJobWithHandlerType(&quot;Type1&quot;);</span>
+<span class="nc" id="L322">        createJobWithHandlerType(&quot;Type2&quot;);</span>
+
+<span class="nc" id="L324">        assertThat(managementService.createJobQuery().handlerType(&quot;Type1&quot;).singleResult()).isNotNull();</span>
+<span class="nc" id="L325">        assertThat(managementService.createJobQuery().handlerType(&quot;Type2&quot;).singleResult()).isNotNull();</span>
+
+<span class="nc" id="L327">        testTypes.add(&quot;TestType&quot;);</span>
+<span class="nc" id="L328">        assertThat(managementService.createJobQuery().handlerTypes(testTypes).singleResult()).isNull();</span>
+
+<span class="nc" id="L330">        testTypes.add(&quot;Type1&quot;);</span>
+<span class="nc" id="L331">        assertThat(managementService.createJobQuery().handlerTypes(testTypes).count()).isEqualTo(1);</span>
+<span class="nc" id="L332">        assertThat(managementService.createJobQuery().handlerTypes(testTypes).singleResult().getJobHandlerType()).isEqualTo(&quot;Type1&quot;);</span>
+
+<span class="nc" id="L334">        testTypes.add(&quot;Type2&quot;);</span>
+<span class="nc" id="L335">        assertThat(managementService.createJobQuery().handlerTypes(testTypes).count()).isEqualTo(2);</span>
+
+<span class="nc" id="L337">        assertThat(managementService.createJobQuery().handlerTypes(testTypes).list())</span>
+<span class="nc" id="L338">                .extracting(JobInfo::getJobHandlerType)</span>
+<span class="nc" id="L339">                .containsExactlyInAnyOrder(&quot;Type1&quot;, &quot;Type2&quot;);</span>
+
+<span class="nc" id="L341">        managementService.deleteJob(managementService.createJobQuery().handlerType(&quot;Type1&quot;).singleResult().getId());</span>
+<span class="nc" id="L342">        managementService.deleteJob(managementService.createJobQuery().handlerType(&quot;Type2&quot;).singleResult().getId());</span>
+<span class="nc" id="L343">    }</span>
+
+    @Test
+    public void testSuspendedJobQueryByHandlerTypes() {
+
+<span class="nc" id="L348">        List&lt;String&gt; testTypes = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L349">        createSuspendedJobWithHandlerType(&quot;Type1&quot;);</span>
+<span class="nc" id="L350">        createSuspendedJobWithHandlerType(&quot;Type2&quot;);</span>
+
+<span class="nc" id="L352">        assertThat(managementService.createSuspendedJobQuery().handlerType(&quot;Type1&quot;).singleResult()).isNotNull();</span>
+<span class="nc" id="L353">        assertThat(managementService.createSuspendedJobQuery().handlerType(&quot;Type2&quot;).singleResult()).isNotNull();</span>
+
+<span class="nc" id="L355">        testTypes.add(&quot;TestType&quot;);</span>
+<span class="nc" id="L356">        assertThat(managementService.createSuspendedJobQuery().handlerTypes(testTypes).singleResult()).isNull();</span>
+
+<span class="nc" id="L358">        testTypes.add(&quot;Type1&quot;);</span>
+<span class="nc" id="L359">        assertThat(managementService.createSuspendedJobQuery().handlerTypes(testTypes).count()).isEqualTo(1);</span>
+<span class="nc" id="L360">        assertThat(managementService.createSuspendedJobQuery().handlerTypes(testTypes).singleResult().getJobHandlerType()).isEqualTo(&quot;Type1&quot;);</span>
+
+<span class="nc" id="L362">        testTypes.add(&quot;Type2&quot;);</span>
+<span class="nc" id="L363">        assertThat(managementService.createSuspendedJobQuery().handlerTypes(testTypes).count()).isEqualTo(2);</span>
+<span class="nc" id="L364">        assertThat(managementService.createSuspendedJobQuery().handlerTypes(testTypes).list())</span>
+<span class="nc" id="L365">                .extracting(JobInfo::getJobHandlerType)</span>
+<span class="nc" id="L366">                .containsExactlyInAnyOrder(&quot;Type1&quot;, &quot;Type2&quot;);</span>
+
+<span class="nc" id="L368">        managementService.deleteSuspendedJob(managementService.createSuspendedJobQuery().handlerType(&quot;Type1&quot;).singleResult().getId());</span>
+<span class="nc" id="L369">        managementService.deleteSuspendedJob(managementService.createSuspendedJobQuery().handlerType(&quot;Type2&quot;).singleResult().getId());</span>
+<span class="nc" id="L370">    }</span>
+
+    @Test
+    public void testDeadletterQueryByHandlerTypes() {
+
+<span class="nc" id="L375">        List&lt;String&gt; testTypes = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L376">        createDeadLetterJobWithHandlerType(&quot;Type1&quot;);</span>
+<span class="nc" id="L377">        createDeadLetterJobWithHandlerType(&quot;Type2&quot;);</span>
+
+<span class="nc" id="L379">        assertThat(managementService.createDeadLetterJobQuery().handlerType(&quot;Type1&quot;).singleResult()).isNotNull();</span>
+<span class="nc" id="L380">        assertThat(managementService.createDeadLetterJobQuery().handlerType(&quot;Type2&quot;).singleResult()).isNotNull();</span>
+
+<span class="nc" id="L382">        testTypes.add(&quot;TestType&quot;);</span>
+<span class="nc" id="L383">        assertThat(managementService.createDeadLetterJobQuery().handlerTypes(testTypes).singleResult()).isNull();</span>
+
+<span class="nc" id="L385">        testTypes.add(&quot;Type1&quot;);</span>
+<span class="nc" id="L386">        assertThat(managementService.createDeadLetterJobQuery().handlerTypes(testTypes).count()).isEqualTo(1);</span>
+<span class="nc" id="L387">        assertThat(managementService.createDeadLetterJobQuery().handlerTypes(testTypes).singleResult().getJobHandlerType()).isEqualTo(&quot;Type1&quot;);</span>
+
+<span class="nc" id="L389">        testTypes.add(&quot;Type2&quot;);</span>
+<span class="nc" id="L390">        assertThat(managementService.createDeadLetterJobQuery().handlerTypes(testTypes).count()).isEqualTo(2);</span>
+
+<span class="nc" id="L392">        assertThat(managementService.createDeadLetterJobQuery().handlerTypes(testTypes).list())</span>
+<span class="nc" id="L393">                .extracting(JobInfo::getJobHandlerType)</span>
+<span class="nc" id="L394">                .containsExactlyInAnyOrder(&quot;Type1&quot;, &quot;Type2&quot;);</span>
+
+<span class="nc" id="L396">        managementService.deleteDeadLetterJob(managementService.createDeadLetterJobQuery().handlerType(&quot;Type1&quot;).singleResult().getId());</span>
+<span class="nc" id="L397">        managementService.deleteDeadLetterJob(managementService.createDeadLetterJobQuery().handlerType(&quot;Type2&quot;).singleResult().getId());</span>
+<span class="nc" id="L398">    }</span>
+
+    @Test
+    public void testHistoryJobQueryByHandlerTypes() {
+
+<span class="nc" id="L403">        List&lt;String&gt; testTypes = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L404">        createHistoryobWithHandlerType(&quot;Type1&quot;);</span>
+<span class="nc" id="L405">        createHistoryobWithHandlerType(&quot;Type2&quot;);</span>
+
+<span class="nc" id="L407">        assertThat(managementService.createHistoryJobQuery().handlerType(&quot;Type1&quot;).singleResult()).isNotNull();</span>
+<span class="nc" id="L408">        assertThat(managementService.createHistoryJobQuery().handlerType(&quot;Type2&quot;).singleResult()).isNotNull();</span>
+
+<span class="nc" id="L410">        testTypes.add(&quot;TestType&quot;);</span>
+<span class="nc" id="L411">        assertThat(managementService.createHistoryJobQuery().handlerTypes(testTypes).singleResult()).isNull();</span>
+
+<span class="nc" id="L413">        testTypes.add(&quot;Type1&quot;);</span>
+<span class="nc" id="L414">        assertThat(managementService.createHistoryJobQuery().handlerTypes(testTypes).count()).isEqualTo(1);</span>
+<span class="nc" id="L415">        assertThat(managementService.createHistoryJobQuery().handlerTypes(testTypes).singleResult().getJobHandlerType()).isEqualTo(&quot;Type1&quot;);</span>
+
+<span class="nc" id="L417">        testTypes.add(&quot;Type2&quot;);</span>
+<span class="nc" id="L418">        assertThat(managementService.createHistoryJobQuery().handlerTypes(testTypes).count()).isEqualTo(2);</span>
+<span class="nc" id="L419">        assertThat(managementService.createHistoryJobQuery().handlerTypes(testTypes).list())</span>
+<span class="nc" id="L420">                .extracting(JobInfo::getJobHandlerType)</span>
+<span class="nc" id="L421">                .containsExactlyInAnyOrder(&quot;Type1&quot;, &quot;Type2&quot;);</span>
+
+<span class="nc" id="L423">        managementService.deleteHistoryJob(managementService.createHistoryJobQuery().handlerType(&quot;Type1&quot;).singleResult().getId());</span>
+<span class="nc" id="L424">        managementService.deleteHistoryJob(managementService.createHistoryJobQuery().handlerType(&quot;Type2&quot;).singleResult().getId());</span>
+<span class="nc" id="L425">    }</span>
+
+    @Test
+    public void testQueryByCorrelationId() {
+<span class="nc" id="L429">        Job messageJob = managementService.createJobQuery().jobId(messageId).singleResult();</span>
+<span class="nc" id="L430">        assertThat(messageJob).isNotNull();</span>
+
+<span class="nc" id="L432">        Job job = managementService.createJobQuery().correlationId(messageJob.getCorrelationId()).singleResult();</span>
+<span class="nc" id="L433">        assertThat(job).isNotNull();</span>
+<span class="nc" id="L434">        assertThat(job.getId()).isEqualTo(messageId);</span>
+<span class="nc" id="L435">        assertThat(job.getCorrelationId()).isEqualTo(messageJob.getCorrelationId());</span>
+<span class="nc" id="L436">        assertThat(managementService.createJobQuery().correlationId(job.getCorrelationId()).list()).hasSize(1);</span>
+<span class="nc" id="L437">        assertThat(managementService.createJobQuery().correlationId(job.getCorrelationId()).count()).isEqualTo(1);</span>
+<span class="nc" id="L438">    }</span>
+
+    @Test
+    public void testByInvalidCorrelationId() {
+<span class="nc" id="L442">        assertThat(managementService.createJobQuery().correlationId(&quot;invalid&quot;).singleResult()).isNull();</span>
+<span class="nc" id="L443">        assertThat(managementService.createJobQuery().correlationId(&quot;invalid&quot;).list()).isEmpty();</span>
+<span class="nc" id="L444">        assertThat(managementService.createJobQuery().correlationId(&quot;invalid&quot;).count()).isZero();</span>
+<span class="nc" id="L445">    }</span>
+
+    @Test
+    public void testQueryByInvalidJobType() {
+<span class="nc" id="L449">        JobQuery query = managementService.createJobQuery().handlerType(&quot;invalid&quot;);</span>
+<span class="nc" id="L450">        verifyQueryResults(query, 0);</span>
+
+<span class="nc" id="L452">        TimerJobQuery timerQuery = managementService.createTimerJobQuery().executionId(&quot;invalid&quot;);</span>
+<span class="nc" id="L453">        verifyQueryResults(timerQuery, 0);</span>
+
+<span class="nc" id="L455">        assertThatThrownBy(() -&gt; managementService.createJobQuery().executionId(null).list())</span>
+<span class="nc" id="L456">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class);</span>
+
+<span class="nc" id="L458">        assertThatThrownBy(() -&gt; managementService.createTimerJobQuery().executionId(null).list())</span>
+<span class="nc" id="L459">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class);</span>
+<span class="nc" id="L460">    }</span>
+
+    @Test
+    public void testQueryByRetriesLeft() {
+<span class="nc" id="L464">        JobQuery query = managementService.createJobQuery();</span>
+<span class="nc" id="L465">        verifyQueryResults(query, 1);</span>
+
+<span class="nc" id="L467">        TimerJobQuery timerQuery = managementService.createTimerJobQuery();</span>
+<span class="nc" id="L468">        verifyQueryResults(timerQuery, 3);</span>
+
+<span class="nc" id="L470">        final Job job = managementService.createTimerJobQuery().processInstanceId(processInstanceIdOne).singleResult();</span>
+<span class="nc" id="L471">        managementService.setTimerJobRetries(job.getId(), 0);</span>
+<span class="nc" id="L472">        managementService.moveJobToDeadLetterJob(job.getId());</span>
+
+        // Re-running the query should give only 3 jobs now, since one job has retries=0
+<span class="nc" id="L475">        verifyQueryResults(query, 1);</span>
+<span class="nc" id="L476">        verifyQueryResults(timerQuery, 2);</span>
+<span class="nc" id="L477">    }</span>
+
+    @Test
+    public void testQueryByExecutable() {
+<span class="nc" id="L481">        processEngineConfiguration.getClock()</span>
+<span class="nc" id="L482">                .setCurrentTime(new Date(timerThreeFireTime.getTime() + ONE_SECOND)); // all obs should be executable at t3 + 1hour.1second</span>
+<span class="nc" id="L483">        JobQuery query = managementService.createJobQuery();</span>
+<span class="nc" id="L484">        verifyQueryResults(query, 1);</span>
+
+<span class="nc" id="L486">        TimerJobQuery timerQuery = managementService.createTimerJobQuery().executable();</span>
+<span class="nc" id="L487">        verifyQueryResults(timerQuery, 3);</span>
+
+        // Setting retries of one job to 0, makes it non-executable
+<span class="nc" id="L490">        final Job job = managementService.createTimerJobQuery().processInstanceId(processInstanceIdOne).singleResult();</span>
+<span class="nc" id="L491">        managementService.setTimerJobRetries(job.getId(), 0);</span>
+<span class="nc" id="L492">        managementService.moveJobToDeadLetterJob(job.getId());</span>
+
+<span class="nc" id="L494">        verifyQueryResults(query, 1);</span>
+<span class="nc" id="L495">        verifyQueryResults(timerQuery, 2);</span>
+
+        // Setting the clock before the start of the process instance, makes
+        // none of the timer jobs executable
+<span class="nc" id="L499">        processEngineConfiguration.getClock().setCurrentTime(testStartTime);</span>
+<span class="nc" id="L500">        verifyQueryResults(query, 1);</span>
+<span class="nc" id="L501">        verifyQueryResults(timerQuery, 0);</span>
+
+        // Moving the job back to be executable
+<span class="nc" id="L504">        managementService.moveDeadLetterJobToExecutableJob(job.getId(), 5);</span>
+<span class="nc" id="L505">        verifyQueryResults(query, 2);</span>
+<span class="nc" id="L506">        verifyQueryResults(timerQuery, 0);</span>
+<span class="nc" id="L507">    }</span>
+
+    @Test
+    public void testQueryByOnlyTimers() {
+<span class="nc" id="L511">        JobQuery query = managementService.createJobQuery().timers();</span>
+<span class="nc" id="L512">        verifyQueryResults(query, 0);</span>
+
+<span class="nc" id="L514">        TimerJobQuery timerQuery = managementService.createTimerJobQuery().timers();</span>
+<span class="nc" id="L515">        verifyQueryResults(timerQuery, 3);</span>
+<span class="nc" id="L516">    }</span>
+
+    @Test
+    public void testQueryByOnlyMessages() {
+<span class="nc" id="L520">        JobQuery query = managementService.createJobQuery().messages();</span>
+<span class="nc" id="L521">        verifyQueryResults(query, 1);</span>
+<span class="nc" id="L522">    }</span>
+
+    @Test
+    public void testInvalidOnlyTimersUsage() {
+<span class="nc" id="L526">        assertThatThrownBy(() -&gt; managementService.createJobQuery().timers().messages().list())</span>
+<span class="nc" id="L527">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L528">                .hasMessage(&quot;Cannot combine onlyTimers() with onlyMessages() in the same query&quot;);</span>
+<span class="nc" id="L529">    }</span>
+
+    @Test
+    public void testQueryByDuedateLowerThan() {
+<span class="nc" id="L533">        JobQuery query = managementService.createJobQuery().duedateLowerThan(testStartTime);</span>
+<span class="nc" id="L534">        verifyQueryResults(query, 0);</span>
+
+<span class="nc" id="L536">        TimerJobQuery timerQuery = managementService.createTimerJobQuery().duedateLowerThan(testStartTime);</span>
+<span class="nc" id="L537">        verifyQueryResults(timerQuery, 0);</span>
+
+<span class="nc" id="L539">        timerQuery = managementService.createTimerJobQuery().duedateLowerThan(new Date(timerOneFireTime.getTime() + ONE_SECOND));</span>
+<span class="nc" id="L540">        verifyQueryResults(timerQuery, 1);</span>
+
+<span class="nc" id="L542">        timerQuery = managementService.createTimerJobQuery().duedateLowerThan(new Date(timerTwoFireTime.getTime() + ONE_SECOND));</span>
+<span class="nc" id="L543">        verifyQueryResults(timerQuery, 2);</span>
+
+<span class="nc" id="L545">        timerQuery = managementService.createTimerJobQuery().duedateLowerThan(new Date(timerThreeFireTime.getTime() + ONE_SECOND));</span>
+<span class="nc" id="L546">        verifyQueryResults(timerQuery, 3);</span>
+<span class="nc" id="L547">    }</span>
+
+    @Test
+    public void testQueryByDuedateHigherThan() {
+<span class="nc" id="L551">        JobQuery query = managementService.createJobQuery().duedateHigherThan(testStartTime);</span>
+<span class="nc" id="L552">        verifyQueryResults(query, 0);</span>
+
+<span class="nc" id="L554">        query = managementService.createJobQuery();</span>
+<span class="nc" id="L555">        verifyQueryResults(query, 1);</span>
+
+<span class="nc" id="L557">        TimerJobQuery timerQuery = managementService.createTimerJobQuery().duedateHigherThan(testStartTime);</span>
+<span class="nc" id="L558">        verifyQueryResults(timerQuery, 3);</span>
+
+<span class="nc" id="L560">        query = managementService.createJobQuery().duedateHigherThan(timerOneFireTime);</span>
+<span class="nc" id="L561">        verifyQueryResults(query, 0);</span>
+
+<span class="nc" id="L563">        timerQuery = managementService.createTimerJobQuery().duedateHigherThan(timerOneFireTime);</span>
+<span class="nc" id="L564">        verifyQueryResults(timerQuery, 2);</span>
+
+<span class="nc" id="L566">        timerQuery = managementService.createTimerJobQuery().duedateHigherThan(timerTwoFireTime);</span>
+<span class="nc" id="L567">        verifyQueryResults(timerQuery, 1);</span>
+
+<span class="nc" id="L569">        timerQuery = managementService.createTimerJobQuery().duedateHigherThan(timerThreeFireTime);</span>
+<span class="nc" id="L570">        verifyQueryResults(timerQuery, 0);</span>
+<span class="nc" id="L571">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/mgmt/ManagementServiceTest.testGetJobExceptionStacktrace.bpmn20.xml&quot; })
+    public void testQueryByException() {
+<span class="nc" id="L576">        TimerJobQuery query = managementService.createTimerJobQuery().withException();</span>
+<span class="nc" id="L577">        verifyQueryResults(query, 0);</span>
+
+<span class="nc" id="L579">        ProcessInstance processInstance = startProcessInstanceWithFailingJob();</span>
+
+<span class="nc" id="L581">        query = managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).withException();</span>
+<span class="nc" id="L582">        verifyFailedJob(query, processInstance);</span>
+<span class="nc" id="L583">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/mgmt/ManagementServiceTest.testGetJobExceptionStacktrace.bpmn20.xml&quot; })
+    public void testQueryByExceptionMessage() {
+<span class="nc" id="L588">        ProcessDefinition processDefinition = repositoryService.createProcessDefinitionQuery().processDefinitionKey(&quot;exceptionInJobExecution&quot;).singleResult();</span>
+<span class="nc" id="L589">        TimerJobQuery query = managementService.createTimerJobQuery().exceptionMessage(&quot;This is an exception thrown from scriptTask&quot;);</span>
+<span class="nc" id="L590">        verifyQueryResults(query, 0);</span>
+
+<span class="nc" id="L592">        String exceptionMessage = &quot;groovy script evaluation failed: 'javax.script.ScriptException: java.lang.RuntimeException: &quot;</span>
+                + &quot;This is an exception thrown from scriptTask' &quot;
+<span class="nc" id="L594">                + &quot;Trace: scopeType=bpmn, scopeDefinitionKey=exceptionInJobExecution, scopeDefinitionId=&quot;+processDefinition.getId()+&quot;,&quot;</span>
+                + &quot; subScopeDefinitionKey=theScriptTask, tenantId=&lt;empty&gt;, type=scriptTask&quot;;
+<span class="nc" id="L596">        ProcessInstance processInstance = startProcessInstanceWithFailingJob();</span>
+<span class="nc" id="L597">        query = managementService.createTimerJobQuery().exceptionMessage(exceptionMessage);</span>
+<span class="nc" id="L598">        verifyFailedJob(query, processInstance);</span>
+<span class="nc" id="L599">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/mgmt/ManagementServiceTest.testGetJobExceptionStacktrace.bpmn20.xml&quot; })
+    public void testQueryByExceptionMessageEmpty() {
+<span class="nc" id="L604">        JobQuery query = managementService.createJobQuery().exceptionMessage(&quot;&quot;);</span>
+<span class="nc" id="L605">        verifyQueryResults(query, 0);</span>
+
+<span class="nc" id="L607">        startProcessInstanceWithFailingJob();</span>
+
+<span class="nc" id="L609">        query = managementService.createJobQuery().exceptionMessage(&quot;&quot;);</span>
+<span class="nc" id="L610">        verifyQueryResults(query, 0);</span>
+<span class="nc" id="L611">    }</span>
+
+    @Test
+    public void testQueryByExceptionMessageNull() {
+<span class="nc" id="L615">        assertThatThrownBy(() -&gt; managementService.createJobQuery().exceptionMessage(null))</span>
+<span class="nc" id="L616">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L617">                .hasMessage(&quot;Provided exception message is null&quot;);</span>
+<span class="nc" id="L618">    }</span>
+
+    @Test
+    public void testJobQueryWithExceptions() throws Throwable {
+
+<span class="nc" id="L623">        createJobWithoutExceptionMsg();</span>
+
+<span class="nc" id="L625">        Job job = managementService.createJobQuery().jobId(jobEntity.getId()).singleResult();</span>
+
+<span class="nc" id="L627">        assertThat(job).isNotNull();</span>
+
+<span class="nc" id="L629">        List&lt;Job&gt; list = managementService.createJobQuery().withException().list();</span>
+<span class="nc" id="L630">        assertThat(list).hasSize(1);</span>
+
+<span class="nc" id="L632">        deleteJobInDatabase();</span>
+
+<span class="nc" id="L634">        createJobWithoutExceptionStacktrace();</span>
+
+<span class="nc" id="L636">        job = managementService.createJobQuery().jobId(jobEntity.getId()).singleResult();</span>
+
+<span class="nc" id="L638">        assertThat(job).isNotNull();</span>
+
+<span class="nc" id="L640">        list = managementService.createJobQuery().withException().list();</span>
+<span class="nc" id="L641">        assertThat(list).hasSize(1);</span>
+
+<span class="nc" id="L643">        deleteJobInDatabase();</span>
+
+<span class="nc" id="L645">    }</span>
+
+    @Test
+    public void testJobQueryByTenantId() {
+<span class="nc" id="L649">        createJobWithTenantId(&quot;muppets&quot;);</span>
+<span class="nc" id="L650">        JobQuery query = managementService.createJobQuery().jobTenantId(&quot;muppets&quot;);</span>
+<span class="nc" id="L651">        verifyQueryResults(query, 1);</span>
+<span class="nc" id="L652">        deleteJobInDatabase();</span>
+<span class="nc" id="L653">    }</span>
+
+    @Test
+    public void testTimerJobQueryByTenantId() {
+<span class="nc" id="L657">        TimerJobQuery query = managementService.createTimerJobQuery().jobTenantId(&quot;muppets&quot;);</span>
+<span class="nc" id="L658">        verifyQueryResults(query, 0);</span>
+<span class="nc" id="L659">    }</span>
+
+    // sorting //////////////////////////////////////////
+
+    @Test
+    public void testQuerySorting() {
+        // asc
+<span class="nc" id="L666">        assertThat(managementService.createJobQuery().orderByJobId().asc().count()).isEqualTo(1);</span>
+<span class="nc" id="L667">        assertThat(managementService.createJobQuery().orderByJobDuedate().asc().count()).isEqualTo(1);</span>
+<span class="nc" id="L668">        assertThat(managementService.createJobQuery().orderByJobCreateTime().asc().count()).isEqualTo(1);</span>
+<span class="nc" id="L669">        assertThat(managementService.createJobQuery().orderByExecutionId().asc().count()).isEqualTo(1);</span>
+<span class="nc" id="L670">        assertThat(managementService.createJobQuery().orderByProcessInstanceId().asc().count()).isEqualTo(1);</span>
+<span class="nc" id="L671">        assertThat(managementService.createJobQuery().orderByJobRetries().asc().count()).isEqualTo(1);</span>
+
+<span class="nc" id="L673">        assertThat(managementService.createTimerJobQuery().orderByJobId().asc().count()).isEqualTo(3);</span>
+<span class="nc" id="L674">        assertThat(managementService.createTimerJobQuery().orderByJobDuedate().asc().count()).isEqualTo(3);</span>
+<span class="nc" id="L675">        assertThat(managementService.createTimerJobQuery().orderByJobCreateTime().asc().count()).isEqualTo(3);</span>
+<span class="nc" id="L676">        assertThat(managementService.createTimerJobQuery().orderByExecutionId().asc().count()).isEqualTo(3);</span>
+<span class="nc" id="L677">        assertThat(managementService.createTimerJobQuery().orderByProcessInstanceId().asc().count()).isEqualTo(3);</span>
+<span class="nc" id="L678">        assertThat(managementService.createTimerJobQuery().orderByJobRetries().asc().count()).isEqualTo(3);</span>
+
+        // desc
+<span class="nc" id="L681">        assertThat(managementService.createJobQuery().orderByJobId().desc().count()).isEqualTo(1);</span>
+<span class="nc" id="L682">        assertThat(managementService.createJobQuery().orderByJobDuedate().desc().count()).isEqualTo(1);</span>
+<span class="nc" id="L683">        assertThat(managementService.createJobQuery().orderByJobCreateTime().desc().count()).isEqualTo(1);</span>
+<span class="nc" id="L684">        assertThat(managementService.createJobQuery().orderByExecutionId().desc().count()).isEqualTo(1);</span>
+<span class="nc" id="L685">        assertThat(managementService.createJobQuery().orderByProcessInstanceId().desc().count()).isEqualTo(1);</span>
+<span class="nc" id="L686">        assertThat(managementService.createJobQuery().orderByJobRetries().desc().count()).isEqualTo(1);</span>
+
+<span class="nc" id="L688">        assertThat(managementService.createTimerJobQuery().orderByJobId().desc().count()).isEqualTo(3);</span>
+<span class="nc" id="L689">        assertThat(managementService.createTimerJobQuery().orderByJobDuedate().desc().count()).isEqualTo(3);</span>
+<span class="nc" id="L690">        assertThat(managementService.createTimerJobQuery().orderByJobCreateTime().desc().count()).isEqualTo(3);</span>
+<span class="nc" id="L691">        assertThat(managementService.createTimerJobQuery().orderByExecutionId().desc().count()).isEqualTo(3);</span>
+<span class="nc" id="L692">        assertThat(managementService.createTimerJobQuery().orderByProcessInstanceId().desc().count()).isEqualTo(3);</span>
+<span class="nc" id="L693">        assertThat(managementService.createTimerJobQuery().orderByJobRetries().desc().count()).isEqualTo(3);</span>
+
+        // sorting on multiple fields
+<span class="nc" id="L696">        setRetries(processInstanceIdTwo, 2);</span>
+<span class="nc" id="L697">        processEngineConfiguration.getClock().setCurrentTime(new Date(timerThreeFireTime.getTime() + ONE_SECOND)); // make sure all timers can fire</span>
+
+<span class="nc" id="L699">        TimerJobQuery query = managementService.createTimerJobQuery().timers().executable().orderByJobRetries().asc().orderByJobDuedate().desc();</span>
+
+<span class="nc" id="L701">        List&lt;Job&gt; jobs = query.list();</span>
+<span class="nc" id="L702">        assertThat(jobs)</span>
+<span class="nc" id="L703">                .extracting(Job::getRetries)</span>
+<span class="nc" id="L704">                .containsExactly(2, 3, 3);</span>
+<span class="nc" id="L705">        assertThat(jobs)</span>
+<span class="nc" id="L706">                .extracting(Job::getProcessInstanceId)</span>
+<span class="nc" id="L707">                .containsExactly(</span>
+                        processInstanceIdTwo,
+                        processInstanceIdThree,
+                        processInstanceIdOne
+                );
+<span class="nc" id="L712">    }</span>
+
+    @Test
+    public void testQueryInvalidSortingUsage() {
+<span class="nc" id="L716">        assertThatThrownBy(() -&gt; managementService.createJobQuery().orderByJobId().list())</span>
+<span class="nc" id="L717">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L718">                .hasMessage(&quot;Invalid query: call asc() or desc() after using orderByXX()&quot;);</span>
+
+<span class="nc" id="L720">        assertThatThrownBy(() -&gt; managementService.createJobQuery().asc())</span>
+<span class="nc" id="L721">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L722">                .hasMessage(&quot;You should call any of the orderBy methods first before specifying a direction&quot;);</span>
+<span class="nc" id="L723">    }</span>
+
+    @Test
+    public void testQueryWithoutScopeType() {
+<span class="nc" id="L727">        JobQuery query = managementService.createJobQuery().withoutScopeType();</span>
+<span class="nc" id="L728">        verifyQueryResults(query, 1);</span>
+<span class="nc" id="L729">    }</span>
+
+    @Test
+    public void testTimerQueryWithoutScopeId() {
+<span class="nc" id="L733">        TimerJobQuery query = managementService.createTimerJobQuery().withoutScopeId();</span>
+<span class="nc" id="L734">        verifyQueryResults(query, 3);</span>
+<span class="nc" id="L735">    }</span>
+
+    @Test
+    public void testJobQueryWithoutScopeId() {
+<span class="nc" id="L739">        JobQuery query = managementService.createJobQuery().withoutScopeId();</span>
+<span class="nc" id="L740">        verifyQueryResults(query, 1);</span>
+
+<span class="nc" id="L742">        assertThat(query.singleResult().getId()).isEqualTo(messageId);</span>
+<span class="nc" id="L743">    }</span>
+
+    @Test
+    public void testHistoryQueryWithoutScopeType() {
+<span class="nc" id="L747">        HistoryJobEntity historyJobEntity = managementService.executeCommand((Command&lt;HistoryJobEntity&gt;) commandContext -&gt; {</span>
+<span class="nc" id="L748">            JobServiceConfiguration jobServiceConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext).getJobServiceConfiguration();</span>
+<span class="nc" id="L749">            HistoryJobService historyJobService = jobServiceConfiguration.getHistoryJobService();</span>
+<span class="nc" id="L750">            HistoryJobEntity historyJob = historyJobService.createHistoryJob();</span>
+<span class="nc" id="L751">            historyJobService.scheduleHistoryJob(historyJob);</span>
+<span class="nc" id="L752">            return historyJob;</span>
+        });
+
+<span class="nc" id="L755">        HistoryJobQuery query = managementService.createHistoryJobQuery().jobId(historyJobEntity.getId()).withoutScopeType();</span>
+<span class="nc" id="L756">        assertThat(query.singleResult()).isNotNull();</span>
+
+<span class="nc" id="L758">        managementService.executeCommand((Command&lt;Void&gt;) commandContext -&gt; {</span>
+<span class="nc" id="L759">            JobServiceConfiguration jobServiceConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext).getJobServiceConfiguration();</span>
+<span class="nc" id="L760">            HistoryJobService historyJobService = jobServiceConfiguration.getHistoryJobService();</span>
+<span class="nc" id="L761">            List&lt;HistoryJob&gt; jobs = historyJobService.findHistoryJobsByQueryCriteria(new HistoryJobQueryImpl(commandContext, jobServiceConfiguration));</span>
+<span class="nc bnc" id="L762" title="All 2 branches missed.">            for (HistoryJob historyJob : jobs) {</span>
+<span class="nc" id="L763">                historyJobService.deleteHistoryJob((HistoryJobEntity) historyJob);</span>
+<span class="nc" id="L764">            }</span>
+
+<span class="nc" id="L766">            return null;</span>
+        });
+<span class="nc" id="L768">    }</span>
+
+    @Test
+    public void testTimerJobQueryWithoutScopeType() {
+<span class="nc" id="L772">        TimerJobQuery query = managementService.createTimerJobQuery().withoutScopeType();</span>
+<span class="nc" id="L773">        assertThat(query.list().size()).isEqualTo(3);</span>
+<span class="nc" id="L774">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/bpmn/oneTask.bpmn20.xml&quot;)
+    public void testDeadLetterJobQueryByProcessDefinitionKey() {
+<span class="nc" id="L779">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;startToEnd&quot;);</span>
+
+<span class="nc" id="L781">        DeadLetterJobEntity deadLetterJob = managementService.executeCommand(commandContext -&gt; {</span>
+<span class="nc" id="L782">            JobServiceConfiguration jobServiceConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext).getJobServiceConfiguration();</span>
+<span class="nc" id="L783">            DeadLetterJobEntityManager deadLetterJobEntityManager = jobServiceConfiguration.getDeadLetterJobEntityManager();</span>
+<span class="nc" id="L784">            DeadLetterJobEntity job = deadLetterJobEntityManager.create();</span>
+<span class="nc" id="L785">            job.setJobType(Job.JOB_TYPE_MESSAGE);</span>
+<span class="nc" id="L786">            job.setProcessInstanceId(processInstance.getId());</span>
+<span class="nc" id="L787">            job.setProcessDefinitionId(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L788">            jobServiceConfiguration.getDeadLetterJobDataManager().insert(job);</span>
+<span class="nc" id="L789">            return job;</span>
+        });
+
+<span class="nc" id="L792">        DeadLetterJobEntity deadLetterJob2 = managementService.executeCommand(commandContext -&gt; {</span>
+<span class="nc" id="L793">            JobServiceConfiguration jobServiceConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext).getJobServiceConfiguration();</span>
+<span class="nc" id="L794">            DeadLetterJobEntityManager deadLetterJobEntityManager = jobServiceConfiguration.getDeadLetterJobEntityManager();</span>
+<span class="nc" id="L795">            DeadLetterJobEntity job = deadLetterJobEntityManager.create();</span>
+<span class="nc" id="L796">            job.setJobType(Job.JOB_TYPE_MESSAGE);</span>
+<span class="nc" id="L797">            job.setScopeId(&quot;scope1&quot;);</span>
+<span class="nc" id="L798">            jobServiceConfiguration.getDeadLetterJobDataManager().insert(job);</span>
+<span class="nc" id="L799">            return job;</span>
+        });
+
+<span class="nc" id="L802">        DeadLetterJobQuery query = managementService.createDeadLetterJobQuery().processDefinitionKey(&quot;startToEnd&quot;);</span>
+<span class="nc" id="L803">        assertThat(query.count()).isEqualTo(1);</span>
+<span class="nc" id="L804">        assertThat(query.list()).extracting(Job::getId).containsExactly(deadLetterJob.getId());</span>
+<span class="nc" id="L805">        assertThat(query.singleResult().getId()).isEqualTo(deadLetterJob.getId());</span>
+
+<span class="nc" id="L807">        query = managementService.createDeadLetterJobQuery().processDefinitionKey(&quot;invalid&quot;);</span>
+<span class="nc" id="L808">        assertThat(query.count()).isZero();</span>
+<span class="nc" id="L809">        assertThat(query.list()).isEmpty();</span>
+<span class="nc" id="L810">        assertThat(query.singleResult()).isNull();</span>
+
+<span class="nc" id="L812">        managementService.executeCommand((Command&lt;Void&gt;) commandContext -&gt; {</span>
+<span class="nc" id="L813">            JobServiceConfiguration jobServiceConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext).getJobServiceConfiguration();</span>
+<span class="nc" id="L814">            DeadLetterJobEntityManager deadLetterJobService = jobServiceConfiguration.getDeadLetterJobEntityManager();</span>
+<span class="nc" id="L815">            List&lt;Job&gt; jobs = deadLetterJobService.findJobsByQueryCriteria(new DeadLetterJobQueryImpl(commandContext, jobServiceConfiguration));</span>
+<span class="nc bnc" id="L816" title="All 2 branches missed.">            for (Job job : jobs) {</span>
+<span class="nc" id="L817">                deadLetterJobService.delete(job.getId());</span>
+<span class="nc" id="L818">            }</span>
+
+<span class="nc" id="L820">            return null;</span>
+        });
+
+
+<span class="nc" id="L824">    }</span>
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/bpmn/oneTask.bpmn20.xml&quot;)
+    public void testDeadLetterJobQueryWithoutScopeType() {
+<span class="nc" id="L828">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;startToEnd&quot;);</span>
+<span class="nc" id="L829">        DeadLetterJobEntity deadLetterJob = managementService.executeCommand((Command&lt;DeadLetterJobEntity&gt;) commandContext -&gt; {</span>
+<span class="nc" id="L830">            JobServiceConfiguration jobServiceConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext).getJobServiceConfiguration();</span>
+<span class="nc" id="L831">            DeadLetterJobEntityManager deadLetterJobEntityManager = jobServiceConfiguration.getDeadLetterJobEntityManager();</span>
+<span class="nc" id="L832">            DeadLetterJobEntity job = deadLetterJobEntityManager.create();</span>
+<span class="nc" id="L833">            job.setJobType(Job.JOB_TYPE_MESSAGE);</span>
+<span class="nc" id="L834">            job.setProcessInstanceId(processInstance.getId());</span>
+<span class="nc" id="L835">            jobServiceConfiguration.getDeadLetterJobDataManager().insert(job);</span>
+<span class="nc" id="L836">            return job;</span>
+        });
+
+<span class="nc" id="L839">        DeadLetterJobEntity deadLetterJob2 = managementService.executeCommand((Command&lt;DeadLetterJobEntity&gt;) commandContext -&gt; {</span>
+<span class="nc" id="L840">            JobServiceConfiguration jobServiceConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext).getJobServiceConfiguration();</span>
+<span class="nc" id="L841">            DeadLetterJobEntityManager deadLetterJobEntityManager = jobServiceConfiguration.getDeadLetterJobEntityManager();</span>
+<span class="nc" id="L842">            DeadLetterJobEntity job = deadLetterJobEntityManager.create();</span>
+<span class="nc" id="L843">            job.setJobType(Job.JOB_TYPE_MESSAGE);</span>
+<span class="nc" id="L844">            job.setScopeId(&quot;scope1&quot;);</span>
+<span class="nc" id="L845">            jobServiceConfiguration.getDeadLetterJobDataManager().insert(job);</span>
+<span class="nc" id="L846">            return job;</span>
+        });
+
+<span class="nc" id="L849">        DeadLetterJobQuery query = managementService.createDeadLetterJobQuery().withoutScopeType();</span>
+<span class="nc" id="L850">        assertThat(query.list().size()).isEqualTo(2);</span>
+
+<span class="nc" id="L852">        query = managementService.createDeadLetterJobQuery().withoutProcessInstanceId();</span>
+<span class="nc" id="L853">        assertThat(query.count()).isEqualTo(1);</span>
+<span class="nc" id="L854">        assertThat(query.singleResult().getId()).isEqualTo(deadLetterJob2.getId());</span>
+
+<span class="nc" id="L856">        query = managementService.createDeadLetterJobQuery().withoutScopeId();</span>
+<span class="nc" id="L857">        assertThat(query.count()).isEqualTo(1);</span>
+<span class="nc" id="L858">        assertThat(query.singleResult().getId()).isEqualTo(deadLetterJob.getId());</span>
+
+<span class="nc" id="L860">        managementService.executeCommand((Command&lt;Void&gt;) commandContext -&gt; {</span>
+<span class="nc" id="L861">            JobServiceConfiguration jobServiceConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext).getJobServiceConfiguration();</span>
+<span class="nc" id="L862">            DeadLetterJobEntityManager deadLetterJobService = jobServiceConfiguration.getDeadLetterJobEntityManager();</span>
+<span class="nc" id="L863">            List&lt;Job&gt; jobs = deadLetterJobService.findJobsByQueryCriteria(new DeadLetterJobQueryImpl(commandContext, jobServiceConfiguration));</span>
+<span class="nc bnc" id="L864" title="All 2 branches missed.">            for (Job job : jobs) {</span>
+<span class="nc" id="L865">                deadLetterJobService.delete(job.getId());</span>
+<span class="nc" id="L866">            }</span>
+
+<span class="nc" id="L868">            return null;</span>
+        });
+<span class="nc" id="L870">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/bpmn/oneTask.bpmn20.xml&quot;)
+    public void testSuspendedJobQueryByProcessDefinitionKey() {
+<span class="nc" id="L875">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;startToEnd&quot;);</span>
+<span class="nc" id="L876">        SuspendedJobEntity suspendedJob = managementService.executeCommand(commandContext -&gt; {</span>
+<span class="nc" id="L877">            JobServiceConfiguration jobServiceConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext).getJobServiceConfiguration();</span>
+<span class="nc" id="L878">            SuspendedJobEntityManager suspendedJobEntityManager = jobServiceConfiguration.getSuspendedJobEntityManager();</span>
+<span class="nc" id="L879">            SuspendedJobEntity job = suspendedJobEntityManager.create();</span>
+<span class="nc" id="L880">            job.setJobType(Job.JOB_TYPE_MESSAGE);</span>
+<span class="nc" id="L881">            job.setProcessInstanceId(processInstance.getId());</span>
+<span class="nc" id="L882">            job.setProcessDefinitionId(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L883">            jobServiceConfiguration.getSuspendedJobEntityManager().insert(job);</span>
+
+<span class="nc" id="L885">            return job;</span>
+        });
+
+<span class="nc" id="L888">        SuspendedJobEntity suspendedJob2 = managementService.executeCommand(commandContext -&gt; {</span>
+<span class="nc" id="L889">            JobServiceConfiguration jobServiceConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext).getJobServiceConfiguration();</span>
+<span class="nc" id="L890">            SuspendedJobEntityManager suspendedJobEntityManager = jobServiceConfiguration.getSuspendedJobEntityManager();</span>
+<span class="nc" id="L891">            SuspendedJobEntity job = suspendedJobEntityManager.create();</span>
+<span class="nc" id="L892">            job.setJobType(Job.JOB_TYPE_MESSAGE);</span>
+<span class="nc" id="L893">            job.setScopeId(&quot;scope1&quot;);</span>
+<span class="nc" id="L894">            jobServiceConfiguration.getSuspendedJobEntityManager().insert(job);</span>
+
+<span class="nc" id="L896">            return job;</span>
+        });
+
+<span class="nc" id="L899">        SuspendedJobQuery query = managementService.createSuspendedJobQuery().processDefinitionKey(&quot;startToEnd&quot;);</span>
+<span class="nc" id="L900">        assertThat(query.count()).isEqualTo(1);</span>
+<span class="nc" id="L901">        assertThat(query.list()).extracting(Job::getId).containsExactly(suspendedJob.getId());</span>
+<span class="nc" id="L902">        assertThat(query.singleResult().getId()).isEqualTo(suspendedJob.getId());</span>
+
+<span class="nc" id="L904">        query = managementService.createSuspendedJobQuery().processDefinitionKey(&quot;invalid&quot;);</span>
+<span class="nc" id="L905">        assertThat(query.count()).isZero();</span>
+<span class="nc" id="L906">        assertThat(query.list()).isEmpty();</span>
+<span class="nc" id="L907">        assertThat(query.singleResult()).isNull();</span>
+
+<span class="nc" id="L909">        managementService.executeCommand((Command&lt;Void&gt;) commandContext -&gt; {</span>
+<span class="nc" id="L910">            JobServiceConfiguration jobServiceConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext).getJobServiceConfiguration();</span>
+<span class="nc" id="L911">            SuspendedJobEntityManager suspendedJobEntityManager = jobServiceConfiguration.getSuspendedJobEntityManager();</span>
+<span class="nc" id="L912">            List&lt;Job&gt; jobs = suspendedJobEntityManager.findJobsByQueryCriteria(new SuspendedJobQueryImpl(commandContext, jobServiceConfiguration));</span>
+<span class="nc bnc" id="L913" title="All 2 branches missed.">            for (Job job : jobs) {</span>
+<span class="nc" id="L914">                suspendedJobEntityManager.delete(job.getId());</span>
+<span class="nc" id="L915">            }</span>
+
+<span class="nc" id="L917">            return null;</span>
+        });
+<span class="nc" id="L919">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/bpmn/oneTask.bpmn20.xml&quot;)
+    public void testSuspendedJobQueryWithoutScopeType() {
+<span class="nc" id="L924">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;startToEnd&quot;);</span>
+<span class="nc" id="L925">        SuspendedJobEntity suspendedJob = managementService.executeCommand((Command&lt;SuspendedJobEntity&gt;) commandContext -&gt; {</span>
+<span class="nc" id="L926">            JobServiceConfiguration jobServiceConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext).getJobServiceConfiguration();</span>
+<span class="nc" id="L927">            SuspendedJobEntityManager suspendedJobEntityManager = jobServiceConfiguration.getSuspendedJobEntityManager();</span>
+<span class="nc" id="L928">            SuspendedJobEntity job = suspendedJobEntityManager.create();</span>
+<span class="nc" id="L929">            job.setJobType(Job.JOB_TYPE_MESSAGE);</span>
+<span class="nc" id="L930">            job.setProcessInstanceId(processInstance.getId());</span>
+<span class="nc" id="L931">            jobServiceConfiguration.getSuspendedJobEntityManager().insert(job);</span>
+
+<span class="nc" id="L933">            return job;</span>
+        });
+
+<span class="nc" id="L936">        SuspendedJobEntity suspendedJob2 = managementService.executeCommand((Command&lt;SuspendedJobEntity&gt;) commandContext -&gt; {</span>
+<span class="nc" id="L937">            JobServiceConfiguration jobServiceConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext).getJobServiceConfiguration();</span>
+<span class="nc" id="L938">            SuspendedJobEntityManager suspendedJobEntityManager = jobServiceConfiguration.getSuspendedJobEntityManager();</span>
+<span class="nc" id="L939">            SuspendedJobEntity job = suspendedJobEntityManager.create();</span>
+<span class="nc" id="L940">            job.setJobType(Job.JOB_TYPE_MESSAGE);</span>
+<span class="nc" id="L941">            job.setScopeId(&quot;scope1&quot;);</span>
+<span class="nc" id="L942">            jobServiceConfiguration.getSuspendedJobEntityManager().insert(job);</span>
+
+<span class="nc" id="L944">            return job;</span>
+        });
+
+<span class="nc" id="L947">        SuspendedJobQuery query = managementService.createSuspendedJobQuery().withoutScopeType();</span>
+<span class="nc" id="L948">        assertThat(query.list().size()).isEqualTo(2);</span>
+
+<span class="nc" id="L950">        query = managementService.createSuspendedJobQuery().withoutProcessInstanceId();</span>
+<span class="nc" id="L951">        assertThat(query.count()).isEqualTo(1);</span>
+<span class="nc" id="L952">        assertThat(query.singleResult().getId()).isEqualTo(suspendedJob2.getId());</span>
+
+<span class="nc" id="L954">        query = managementService.createSuspendedJobQuery().withoutScopeId();</span>
+<span class="nc" id="L955">        assertThat(query.count()).isEqualTo(1);</span>
+<span class="nc" id="L956">        assertThat(query.singleResult().getId()).isEqualTo(suspendedJob.getId());</span>
+
+<span class="nc" id="L958">        managementService.executeCommand((Command&lt;Void&gt;) commandContext -&gt; {</span>
+<span class="nc" id="L959">            JobServiceConfiguration jobServiceConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext).getJobServiceConfiguration();</span>
+<span class="nc" id="L960">            SuspendedJobEntityManager suspendedJobEntityManager = jobServiceConfiguration.getSuspendedJobEntityManager();</span>
+<span class="nc" id="L961">            List&lt;Job&gt; jobs = suspendedJobEntityManager.findJobsByQueryCriteria(new SuspendedJobQueryImpl(commandContext, jobServiceConfiguration));</span>
+<span class="nc bnc" id="L962" title="All 2 branches missed.">            for (Job job : jobs) {</span>
+<span class="nc" id="L963">                suspendedJobEntityManager.delete(job.getId());</span>
+<span class="nc" id="L964">            }</span>
+
+<span class="nc" id="L966">            return null;</span>
+        });
+<span class="nc" id="L968">    }</span>
+
+    @Test
+    public void testExternalWorkerJobQueryWithoutScopeType() {
+<span class="nc" id="L972">        managementService.executeCommand((Command&lt;Void&gt;) commandContext -&gt; {</span>
+<span class="nc" id="L973">            JobServiceConfiguration jobServiceConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext).getJobServiceConfiguration();</span>
+<span class="nc" id="L974">            ExternalWorkerJobEntityManager externalWorkerJobEntityManager = jobServiceConfiguration.getExternalWorkerJobEntityManager();</span>
+<span class="nc" id="L975">            ExternalWorkerJobEntity externalWorkerJob = externalWorkerJobEntityManager.create();</span>
+<span class="nc" id="L976">            externalWorkerJob.setJobType(JobEntity.JOB_TYPE_EXTERNAL_WORKER);</span>
+<span class="nc" id="L977">            jobServiceConfiguration.getExternalWorkerJobEntityManager().insert(externalWorkerJob);</span>
+<span class="nc" id="L978">            return null;</span>
+        });
+
+<span class="nc" id="L981">        ExternalWorkerJobQuery query = managementService.createExternalWorkerJobQuery().withoutScopeType();</span>
+<span class="nc" id="L982">        assertThat(query.list().size()).isEqualTo(1);</span>
+
+<span class="nc" id="L984">        managementService.executeCommand((Command&lt;Void&gt;) commandContext -&gt; {</span>
+<span class="nc" id="L985">            JobServiceConfiguration jobServiceConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext).getJobServiceConfiguration();</span>
+<span class="nc" id="L986">            ExternalWorkerJobEntityManager externalWorkerJobEntityManager = jobServiceConfiguration.getExternalWorkerJobEntityManager();</span>
+<span class="nc" id="L987">            List&lt;ExternalWorkerJob&gt; jobs = externalWorkerJobEntityManager.findJobsByQueryCriteria(</span>
+                    new ExternalWorkerJobQueryImpl(commandContext, jobServiceConfiguration));
+<span class="nc bnc" id="L989" title="All 2 branches missed.">            for (Job externalWorkerJob : jobs) {</span>
+<span class="nc" id="L990">                externalWorkerJobEntityManager.delete(externalWorkerJob.getId());</span>
+<span class="nc" id="L991">            }</span>
+
+<span class="nc" id="L993">            return null;</span>
+        });
+<span class="nc" id="L995">    }</span>
+
+    // helper ////////////////////////////////////////////////////////////
+
+    private void setRetries(final String processInstanceId, final int retries) {
+<span class="nc" id="L1000">        final Job job = managementService.createTimerJobQuery().processInstanceId(processInstanceId).singleResult();</span>
+<span class="nc" id="L1001">        managementService.setTimerJobRetries(job.getId(), retries);</span>
+<span class="nc" id="L1002">    }</span>
+
+    private ProcessInstance startProcessInstanceWithFailingJob() {
+        // start a process with a failing job
+<span class="nc" id="L1006">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;exceptionInJobExecution&quot;);</span>
+
+        // The execution is waiting in the first usertask. This contains a boundary
+        // timer event which we will execute manual for testing purposes.
+<span class="nc" id="L1010">        Job timerJob = managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+
+<span class="nc" id="L1012">        assertThat(timerJob).as(&quot;No job found for process instance&quot;).isNotNull();</span>
+
+<span class="nc" id="L1014">        assertThatThrownBy(() -&gt; {</span>
+<span class="nc" id="L1015">            managementService.moveTimerToExecutableJob(timerJob.getId());</span>
+<span class="nc" id="L1016">            managementService.executeJob(timerJob.getId());</span>
+<span class="nc" id="L1017">        })</span>
+<span class="nc" id="L1018">                .isInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L1019">                .hasMessageContaining(EXCEPTION_MESSAGE);</span>
+
+<span class="nc" id="L1021">        return processInstance;</span>
+    }
+
+    private void verifyFailedJob(TimerJobQuery query, ProcessInstance processInstance) {
+<span class="nc" id="L1025">        verifyQueryResults(query, 1);</span>
+
+<span class="nc" id="L1027">        Job failedJob = query.singleResult();</span>
+<span class="nc" id="L1028">        assertThat(failedJob).isNotNull();</span>
+<span class="nc" id="L1029">        assertThat(failedJob.getProcessInstanceId()).isEqualTo(processInstance.getId());</span>
+<span class="nc" id="L1030">        assertThat(failedJob.getExceptionMessage()).containsSequence(EXCEPTION_MESSAGE);</span>
+<span class="nc" id="L1031">    }</span>
+
+    private void verifyQueryResults(BaseJobQuery query, int countExpected) {
+<span class="nc" id="L1034">        assertThat(query.list()).hasSize(countExpected);</span>
+<span class="nc" id="L1035">        assertThat(query.count()).isEqualTo(countExpected);</span>
+
+<span class="nc bnc" id="L1037" title="All 2 branches missed.">        if (countExpected == 1) {</span>
+<span class="nc" id="L1038">            assertThat(query.singleResult()).isNotNull();</span>
+<span class="nc bnc" id="L1039" title="All 2 branches missed.">        } else if (countExpected &gt; 1) {</span>
+<span class="nc" id="L1040">            verifySingleResultFails(query);</span>
+<span class="nc bnc" id="L1041" title="All 2 branches missed.">        } else if (countExpected == 0) {</span>
+<span class="nc" id="L1042">            assertThat(query.singleResult()).isNull();</span>
+        }
+<span class="nc" id="L1044">    }</span>
+
+    private void verifySingleResultFails(BaseJobQuery query) {
+<span class="nc" id="L1047">        assertThatThrownBy(() -&gt; query.singleResult())</span>
+<span class="nc" id="L1048">                .isExactlyInstanceOf(FlowableException.class);</span>
+<span class="nc" id="L1049">    }</span>
+
+    private void createJobWithoutExceptionMsg() {
+<span class="nc" id="L1052">        CommandExecutor commandExecutor = processEngineConfiguration.getCommandExecutor();</span>
+<span class="nc" id="L1053">        commandExecutor.execute(new Command&lt;Void&gt;() {</span>
+
+            @Override
+            public Void execute(CommandContext commandContext) {
+<span class="nc" id="L1057">                JobService jobService = CommandContextUtil.getJobService(commandContext);</span>
+<span class="nc" id="L1058">                jobEntity = jobService.createJob();</span>
+<span class="nc" id="L1059">                jobEntity.setJobType(Job.JOB_TYPE_MESSAGE);</span>
+<span class="nc" id="L1060">                jobEntity.setLockOwner(UUID.randomUUID().toString());</span>
+<span class="nc" id="L1061">                jobEntity.setRetries(0);</span>
+
+<span class="nc" id="L1063">                StringWriter stringWriter = new StringWriter();</span>
+<span class="nc" id="L1064">                NullPointerException exception = new NullPointerException();</span>
+<span class="nc" id="L1065">                exception.printStackTrace(new PrintWriter(stringWriter));</span>
+<span class="nc" id="L1066">                jobEntity.setExceptionStacktrace(stringWriter.toString());</span>
+
+<span class="nc" id="L1068">                jobService.insertJob(jobEntity);</span>
+
+<span class="nc" id="L1070">                assertThat(jobEntity.getId()).isNotNull();</span>
+
+<span class="nc" id="L1072">                return null;</span>
+
+            }
+        });
+
+<span class="nc" id="L1077">    }</span>
+
+    private void createJobWithoutExceptionStacktrace() {
+<span class="nc" id="L1080">        CommandExecutor commandExecutor = processEngineConfiguration.getCommandExecutor();</span>
+<span class="nc" id="L1081">        commandExecutor.execute(new Command&lt;Void&gt;() {</span>
+
+            @Override
+            public Void execute(CommandContext commandContext) {
+<span class="nc" id="L1085">                JobService jobService = CommandContextUtil.getJobService(commandContext);</span>
+<span class="nc" id="L1086">                jobEntity = jobService.createJob();</span>
+<span class="nc" id="L1087">                jobEntity.setJobType(Job.JOB_TYPE_MESSAGE);</span>
+<span class="nc" id="L1088">                jobEntity.setLockOwner(UUID.randomUUID().toString());</span>
+<span class="nc" id="L1089">                jobEntity.setRetries(0);</span>
+
+<span class="nc" id="L1091">                jobEntity.setExceptionMessage(&quot;I'm supposed to fail&quot;);</span>
+
+<span class="nc" id="L1093">                jobService.insertJob(jobEntity);</span>
+
+<span class="nc" id="L1095">                assertThat(jobEntity.getId()).isNotNull();</span>
+
+<span class="nc" id="L1097">                return null;</span>
+
+            }
+        });
+
+<span class="nc" id="L1102">    }</span>
+
+    private JobEntity createJobWithType(String type) {
+<span class="nc" id="L1105">        CommandExecutor commandExecutor = processEngineConfiguration.getCommandExecutor();</span>
+<span class="nc" id="L1106">        return commandExecutor.execute(new Command&lt;&gt;() {</span>
+
+            @Override
+            public JobEntity execute(CommandContext commandContext) {
+<span class="nc" id="L1110">                JobService jobService = CommandContextUtil.getJobService(commandContext);</span>
+<span class="nc" id="L1111">                JobEntity result = jobService.createJob();</span>
+<span class="nc" id="L1112">                result.setJobType(type);</span>
+<span class="nc" id="L1113">                result.setRetries(0);</span>
+<span class="nc" id="L1114">                jobService.insertJob(result);</span>
+<span class="nc" id="L1115">                assertThat(result.getId()).isNotNull();</span>
+<span class="nc" id="L1116">                return result;</span>
+            }
+        });
+    }
+
+    private void createDeadLetterJobWithType(String type) {
+<span class="nc" id="L1122">        CommandExecutor commandExecutor = processEngineConfiguration.getCommandExecutor();</span>
+<span class="nc" id="L1123">        commandExecutor.execute(new Command&lt;Void&gt;() {</span>
+
+            @Override
+            public Void execute(CommandContext commandContext) {
+<span class="nc" id="L1127">                JobService jobService = CommandContextUtil.getJobService(commandContext);</span>
+<span class="nc" id="L1128">                jobService.moveJobToDeadLetterJob(createJobWithType(type));</span>
+<span class="nc" id="L1129">                return null;</span>
+            }
+        });
+<span class="nc" id="L1132">    }</span>
+
+    private JobEntity createJobWithHandlerType(String handlerType) {
+<span class="nc" id="L1135">        CommandExecutor commandExecutor = processEngineConfiguration.getCommandExecutor();</span>
+<span class="nc" id="L1136">        return commandExecutor.execute(new Command&lt;&gt;() {</span>
+
+            @Override
+            public JobEntity execute(CommandContext commandContext) {
+<span class="nc" id="L1140">                JobService jobService = CommandContextUtil.getJobService(commandContext);</span>
+<span class="nc" id="L1141">                JobEntity result = jobService.createJob();</span>
+<span class="nc" id="L1142">                result.setJobType(Job.JOB_TYPE_MESSAGE);</span>
+<span class="nc" id="L1143">                result.setRetries(0);</span>
+<span class="nc" id="L1144">                result.setJobHandlerType(handlerType);</span>
+<span class="nc" id="L1145">                jobService.insertJob(result);</span>
+<span class="nc" id="L1146">                assertThat(result.getId()).isNotNull();</span>
+<span class="nc" id="L1147">                return result;</span>
+            }
+        });
+    }
+
+    private void createDeadLetterJobWithHandlerType(String handlerType) {
+<span class="nc" id="L1153">        CommandExecutor commandExecutor = processEngineConfiguration.getCommandExecutor();</span>
+<span class="nc" id="L1154">        commandExecutor.execute(new Command&lt;Void&gt;() {</span>
+
+            @Override
+            public Void execute(CommandContext commandContext) {
+<span class="nc" id="L1158">                JobService jobService = CommandContextUtil.getJobService(commandContext);</span>
+<span class="nc" id="L1159">                jobService.moveJobToDeadLetterJob(createJobWithHandlerType(handlerType));</span>
+<span class="nc" id="L1160">                return null;</span>
+            }
+        });
+<span class="nc" id="L1163">    }</span>
+
+    private void createSuspendedJobWithHandlerType(String handlerType) {
+<span class="nc" id="L1166">        CommandExecutor commandExecutor = processEngineConfiguration.getCommandExecutor();</span>
+<span class="nc" id="L1167">        commandExecutor.execute(new Command&lt;Void&gt;() {</span>
+
+            @Override
+            public Void execute(CommandContext commandContext) {
+<span class="nc" id="L1171">                JobService jobService = CommandContextUtil.getJobService(commandContext);</span>
+<span class="nc" id="L1172">                jobService.moveJobToSuspendedJob(createJobWithHandlerType(handlerType));</span>
+<span class="nc" id="L1173">                return null;</span>
+            }
+        });
+<span class="nc" id="L1176">    }</span>
+
+    private void createHistoryobWithHandlerType(String handlerType) {
+<span class="nc" id="L1179">        HistoryJobEntity historyJobEntity = managementService.executeCommand((Command&lt;HistoryJobEntity&gt;) commandContext -&gt; {</span>
+<span class="nc" id="L1180">            JobServiceConfiguration jobServiceConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext).getJobServiceConfiguration();</span>
+<span class="nc" id="L1181">            HistoryJobService historyJobService = jobServiceConfiguration.getHistoryJobService();</span>
+<span class="nc" id="L1182">            HistoryJobEntity historyJob = historyJobService.createHistoryJob();</span>
+<span class="nc" id="L1183">            historyJob.setJobHandlerType(handlerType);</span>
+<span class="nc" id="L1184">            historyJobService.scheduleHistoryJob(historyJob);</span>
+<span class="nc" id="L1185">            return historyJob;</span>
+        });
+<span class="nc" id="L1187">    }</span>
+
+    private void createJobWithTenantId(String tenantId) {
+<span class="nc" id="L1190">        CommandExecutor commandExecutor = processEngineConfiguration.getCommandExecutor();</span>
+<span class="nc" id="L1191">        commandExecutor.execute(new Command&lt;Void&gt;() {</span>
+
+            @Override
+            public Void execute(CommandContext commandContext) {
+<span class="nc" id="L1195">                JobService jobService = CommandContextUtil.getJobService(commandContext);</span>
+<span class="nc" id="L1196">                jobEntity = jobService.createJob();</span>
+<span class="nc" id="L1197">                jobEntity.setJobType(Job.JOB_TYPE_MESSAGE);</span>
+<span class="nc" id="L1198">                jobEntity.setLockOwner(UUID.randomUUID().toString());</span>
+<span class="nc" id="L1199">                jobEntity.setRetries(0);</span>
+<span class="nc" id="L1200">                jobEntity.setTenantId(tenantId);</span>
+
+<span class="nc" id="L1202">                StringWriter stringWriter = new StringWriter();</span>
+<span class="nc" id="L1203">                NullPointerException exception = new NullPointerException();</span>
+<span class="nc" id="L1204">                exception.printStackTrace(new PrintWriter(stringWriter));</span>
+<span class="nc" id="L1205">                jobEntity.setExceptionStacktrace(stringWriter.toString());</span>
+
+<span class="nc" id="L1207">                jobService.insertJob(jobEntity);</span>
+
+<span class="nc" id="L1209">                assertThat(jobEntity.getId()).isNotNull();</span>
+
+<span class="nc" id="L1211">                return null;</span>
+
+            }
+        });
+
+<span class="nc" id="L1216">    }</span>
+
+    private void deleteJobInDatabase() {
+<span class="nc" id="L1219">        CommandExecutor commandExecutor = processEngineConfiguration.getCommandExecutor();</span>
+<span class="nc" id="L1220">        commandExecutor.execute(new Command&lt;Void&gt;() {</span>
+
+            @Override
+            public Void execute(CommandContext commandContext) {
+<span class="nc" id="L1224">                JobService jobService = CommandContextUtil.getJobService(commandContext);</span>
+<span class="nc" id="L1225">                jobService.deleteJob(jobEntity.getId());</span>
+<span class="nc" id="L1226">                return null;</span>
+            }
+        });
+<span class="nc" id="L1229">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

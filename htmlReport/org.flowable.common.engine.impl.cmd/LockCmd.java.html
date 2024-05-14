@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LockCmd.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.common.engine.impl.cmd</a> &gt; <span class="el_source">LockCmd.java</span></div><h1>LockCmd.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.common.engine.impl.cmd;
+
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.time.Duration;
+import java.time.Instant;
+
+import org.flowable.common.engine.impl.AbstractEngineConfiguration;
+import org.flowable.common.engine.impl.interceptor.Command;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.common.engine.impl.persistence.entity.PropertyEntity;
+import org.flowable.common.engine.impl.persistence.entity.PropertyEntityManager;
+
+/**
+ * @author Filip Hrisafov
+ */
+public class LockCmd implements Command&lt;Boolean&gt; {
+
+    protected static final String hostLockDescription;
+
+    static {
+        InetAddress localhost;
+        try {
+<span class="nc" id="L36">            localhost = InetAddress.getLocalHost();</span>
+<span class="nc" id="L37">        } catch (UnknownHostException e) {</span>
+<span class="nc" id="L38">            localhost = null;</span>
+<span class="nc" id="L39">        }</span>
+
+<span class="nc" id="L41">        StringBuilder sb = new StringBuilder();</span>
+
+<span class="nc bnc" id="L43" title="All 2 branches missed.">        if (localhost != null) {</span>
+<span class="nc" id="L44">            sb.append(&quot; - &quot;).append(localhost.getHostName()).append('(').append(localhost.getHostAddress()).append(')');</span>
+        } else {
+<span class="nc" id="L46">            sb.append(&quot; - &quot;).append(&quot;unknown&quot;);</span>
+        }
+        // The max length of the host lock description can bee 255 characters (the max length of the property value)
+        // minus the ISO8601 length (27 characters on Java 11 with nanosecond precision)
+<span class="nc" id="L50">        hostLockDescription = sb.substring(0, Math.min(sb.length(), (255 - 27)));</span>
+<span class="nc" id="L51">    }</span>
+
+    protected String lockName;
+    protected String engineType;
+    protected Duration forceAcquireAfter;
+
+    public LockCmd(String lockName, String engineType) {
+<span class="nc" id="L58">        this(lockName, null, engineType);</span>
+<span class="nc" id="L59">    }</span>
+
+<span class="nc" id="L61">    public LockCmd(String lockName, Duration forceAcquireAfter, String engineType) {</span>
+<span class="nc" id="L62">        this.lockName = lockName;</span>
+<span class="nc" id="L63">        this.engineType = engineType;</span>
+<span class="nc" id="L64">        this.forceAcquireAfter = forceAcquireAfter;</span>
+<span class="nc" id="L65">    }</span>
+
+    @Override
+    public Boolean execute(CommandContext commandContext) {
+<span class="nc" id="L69">        AbstractEngineConfiguration engineConfiguration = commandContext.getEngineConfigurations().get(engineType);</span>
+<span class="nc" id="L70">        PropertyEntityManager propertyEntityManager = engineConfiguration.getPropertyEntityManager();</span>
+<span class="nc" id="L71">        PropertyEntity property = propertyEntityManager.findById(lockName);</span>
+<span class="nc bnc" id="L72" title="All 2 branches missed.">        if (property == null) {</span>
+<span class="nc" id="L73">            property = propertyEntityManager.create();</span>
+<span class="nc" id="L74">            property.setName(lockName);</span>
+            // The format of the value is the current time in ISO8601 - hostName(hostAddress)
+<span class="nc" id="L76">            property.setValue(Instant.now().toString() + hostLockDescription);</span>
+<span class="nc" id="L77">            propertyEntityManager.insert(property);</span>
+<span class="nc" id="L78">            return true;</span>
+<span class="nc bnc" id="L79" title="All 2 branches missed.">        } else if (property.getValue() == null) {</span>
+<span class="nc" id="L80">            property.setValue(Instant.now().toString() + hostLockDescription);</span>
+<span class="nc" id="L81">            return true;</span>
+<span class="nc bnc" id="L82" title="All 2 branches missed.">        } else if (forceAcquireAfter != null) {</span>
+            // If the lock is held longer than the force acquire duration we have to force the lock acquire
+            // e.g. if the lock was acquired at 17:00
+            // When the forceAcquireAfter is 10 minutes it means that the lock should be force acquired
+            // when the time is after 17:10, i.e. acquireLock + forceAcquire &lt; now (17:10)
+<span class="nc" id="L87">            String value = property.getValue();</span>
+<span class="nc" id="L88">            Instant lockAcquireTime = Instant.parse(value.substring(0, value.indexOf('Z') + 1));</span>
+<span class="nc bnc" id="L89" title="All 2 branches missed.">            if (lockAcquireTime.plus(forceAcquireAfter).isBefore(Instant.now())) {</span>
+<span class="nc" id="L90">                property.setValue(Instant.now().toString() + hostLockDescription);</span>
+<span class="nc" id="L91">                return true;</span>
+            }
+
+<span class="nc" id="L94">            return false;</span>
+        } else {
+<span class="nc" id="L96">            return false;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

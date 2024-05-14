@@ -1,0 +1,191 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FlowableDmnExtension.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.dmn.engine.test</a> &gt; <span class="el_source">FlowableDmnExtension.java</span></div><h1>FlowableDmnExtension.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.dmn.engine.test;
+
+import java.lang.reflect.InvocationTargetException;
+import java.time.Instant;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
+
+import org.flowable.dmn.api.DmnDecisionService;
+import org.flowable.dmn.api.DmnHistoryService;
+import org.flowable.dmn.api.DmnManagementService;
+import org.flowable.dmn.api.DmnRepositoryService;
+import org.flowable.dmn.engine.DmnEngine;
+import org.flowable.dmn.engine.DmnEngineConfiguration;
+import org.junit.jupiter.api.extension.AfterEachCallback;
+import org.junit.jupiter.api.extension.BeforeEachCallback;
+import org.junit.jupiter.api.extension.ExtensionContext;
+import org.junit.jupiter.api.extension.ParameterContext;
+import org.junit.jupiter.api.extension.ParameterResolutionException;
+import org.junit.jupiter.api.extension.ParameterResolver;
+import org.junit.platform.commons.support.AnnotationSupport;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * JUnit Jupiter extension for the Flowable DmnEngine and services initialization.
+ *
+ * &lt;p&gt;
+ * Usage:
+ * &lt;/p&gt;
+ *
+ * &lt;pre&gt;
+ * &amp;#64;ExtendWith(FlowableDmnExtension.class)
+ * class YourTest {
+ *
+ *   &amp;#64;BeforeEach
+ *   void setUp(DmnEngine dmnEngine) {
+ *       ...
+ *   }
+ *
+ *   &amp;#64;Test
+ *   void myTest(DmnRuleService ruleService) {
+ *       ...
+ *   }
+ *
+ *   ...
+ * }
+ * &lt;/pre&gt;
+ *
+ * &lt;p&gt;
+ * The DmnEngine and the services will be made available to the test class through the parameter resolution (BeforeEach, AfterEach, test methods).
+ * The DmnEngine will be initialized by default with the flowable.dmn.cfg.xml resource on the classpath.
+ * To specify a different configuration file, annotate your class with {@link DmnConfigurationResource}.
+ * Dmn engines will be cached as part of the JUnit Jupiter Extension context.
+ * Right before the first time the setUp is called for a given configuration resource, the dmn engine will be constructed.
+ * &lt;/p&gt;
+ *
+ * &lt;p&gt;
+ * You can declare a deployment with the {@link DmnDeployment} or {@link DmnDeploymentAnnotation} annotation.
+ * If both annotations are used then {@link DmnDeployment} takes precedence and {@link DmnDeploymentAnnotation} will be ignored.
+ * This extensions will make sure that this deployment gets deployed before the setUp
+ * and {@link org.flowable.dmn.api.DmnRepositoryService#deleteDeployment(String)} cascade deleted} after the tearDown.
+ * The id of the deployment can be accessed by using {@link DmnDeploymentId} in a test or lifecycle method.
+ * &lt;/p&gt;
+ *
+ * &lt;p&gt;
+ * {@link FlowableDmnTestHelper#setCurrentTime(Instant)} can be used to set the current time used by the dmn engine}
+ * This can be handy to control the exact time that is used by the engine in order to verify e.g. due dates.
+ * Or start, end and duration times in the history service. In the tearDown, the internal clock will automatically be reset to use the current system
+ * time rather then the time that was set during a test method.
+ * &lt;/p&gt;
+ *
+ * @author Filip Hrisafov
+ */
+<span class="nc" id="L87">public class FlowableDmnExtension implements ParameterResolver, BeforeEachCallback, AfterEachCallback {</span>
+
+    public static final String DEFAULT_CONFIGURATION_RESOURCE = &quot;flowable.dmn.cfg.xml&quot;;
+
+<span class="nc" id="L91">    private static final ExtensionContext.Namespace NAMESPACE = ExtensionContext.Namespace.create(FlowableDmnExtension.class);</span>
+
+<span class="nc" id="L93">    private static final Set&lt;Class&lt;?&gt;&gt; SUPPORTED_PARAMETERS = new HashSet&lt;&gt;(Arrays.asList(</span>
+        DmnEngineConfiguration.class,
+        DmnEngine.class,
+        DmnRepositoryService.class,
+        DmnDecisionService.class,
+        DmnHistoryService.class,
+        DmnManagementService.class
+    ));
+
+<span class="nc" id="L102">    protected final Logger logger = LoggerFactory.getLogger(getClass());</span>
+
+    @Override
+    public void beforeEach(ExtensionContext context) {
+<span class="nc" id="L106">        FlowableDmnTestHelper flowableTestHelper = getTestHelper(context);</span>
+
+<span class="nc" id="L108">        AnnotationSupport.findAnnotation(context.getTestMethod(), DmnDeployment.class)</span>
+<span class="nc" id="L109">            .ifPresent(deployment -&gt; {</span>
+<span class="nc" id="L110">                String deploymentIdFromDeploymentAnnotation = DmnTestHelper</span>
+<span class="nc" id="L111">                    .annotationDeploymentSetUp(flowableTestHelper.getDmnEngine(), context.getRequiredTestClass(), context.getRequiredTestMethod(),</span>
+                        deployment);
+<span class="nc" id="L113">                flowableTestHelper.setDeploymentIdFromDeploymentAnnotation(deploymentIdFromDeploymentAnnotation);</span>
+<span class="nc" id="L114">            });</span>
+
+<span class="nc bnc" id="L116" title="All 2 branches missed.">        if (flowableTestHelper.getDeploymentIdFromDeploymentAnnotation() == null) {</span>
+            // If @DmnDeployment was used already then don't look for @DmnDeploymentAnnotation
+<span class="nc" id="L118">            AnnotationSupport.findAnnotation(context.getTestMethod(), DmnDeploymentAnnotation.class)</span>
+<span class="nc" id="L119">                .ifPresent(deployment -&gt; {</span>
+<span class="nc" id="L120">                    String deploymentIdFromDeploymentAnnotation = DmnTestHelper</span>
+<span class="nc" id="L121">                        .annotationDeploymentSetUp(flowableTestHelper.getDmnEngine(), context.getRequiredTestClass(), context.getRequiredTestMethod(),</span>
+                            deployment);
+<span class="nc" id="L123">                    flowableTestHelper.setDeploymentIdFromDeploymentAnnotation(deploymentIdFromDeploymentAnnotation);</span>
+<span class="nc" id="L124">                });</span>
+        }
+<span class="nc" id="L126">    }</span>
+
+    @Override
+    public void afterEach(ExtensionContext context) {
+<span class="nc" id="L130">        FlowableDmnTestHelper flowableTestHelper = getTestHelper(context);</span>
+<span class="nc" id="L131">        DmnEngine dmnEngine = flowableTestHelper.getDmnEngine();</span>
+<span class="nc" id="L132">        String deploymentIdFromDeploymentAnnotation = flowableTestHelper.getDeploymentIdFromDeploymentAnnotation();</span>
+<span class="nc bnc" id="L133" title="All 2 branches missed.">        if (deploymentIdFromDeploymentAnnotation != null) {</span>
+<span class="nc" id="L134">            DmnTestHelper.annotationDeploymentTearDown(dmnEngine, deploymentIdFromDeploymentAnnotation, context.getRequiredTestClass(),</span>
+<span class="nc" id="L135">                context.getRequiredTestMethod().getName());</span>
+<span class="nc" id="L136">            flowableTestHelper.setDeploymentIdFromDeploymentAnnotation(null);</span>
+        }
+
+<span class="nc" id="L139">        dmnEngine.getDmnEngineConfiguration().getClock().reset();</span>
+<span class="nc" id="L140">    }</span>
+
+    @Override
+    public boolean supportsParameter(ParameterContext parameterContext, ExtensionContext context) {
+<span class="nc" id="L144">        Class&lt;?&gt; parameterType = parameterContext.getParameter().getType();</span>
+<span class="nc bnc" id="L145" title="All 4 branches missed.">        return SUPPORTED_PARAMETERS.contains(parameterType) || FlowableDmnTestHelper.class.equals(parameterType)</span>
+<span class="nc bnc" id="L146" title="All 2 branches missed.">            || parameterContext.isAnnotated(DmnDeploymentId.class);</span>
+    }
+
+    @Override
+    public Object resolveParameter(ParameterContext parameterContext, ExtensionContext context) {
+<span class="nc" id="L151">        FlowableDmnTestHelper flowableTestHelper = getTestHelper(context);</span>
+<span class="nc bnc" id="L152" title="All 2 branches missed.">        if (parameterContext.isAnnotated(DmnDeploymentId.class)) {</span>
+<span class="nc" id="L153">            return flowableTestHelper.getDeploymentIdFromDeploymentAnnotation();</span>
+        }
+
+<span class="nc" id="L156">        Class&lt;?&gt; parameterType = parameterContext.getParameter().getType();</span>
+<span class="nc" id="L157">        DmnEngine dmnEngine = flowableTestHelper.getDmnEngine();</span>
+<span class="nc bnc" id="L158" title="All 2 branches missed.">        if (parameterType.isInstance(dmnEngine)) {</span>
+<span class="nc" id="L159">            return dmnEngine;</span>
+<span class="nc bnc" id="L160" title="All 2 branches missed.">        } else if (FlowableDmnTestHelper.class.equals(parameterType)) {</span>
+<span class="nc" id="L161">            return flowableTestHelper;</span>
+        }
+
+        try {
+<span class="nc" id="L165">            return DmnEngine.class.getDeclaredMethod(&quot;get&quot; + parameterType.getSimpleName()).invoke(dmnEngine);</span>
+<span class="nc" id="L166">        } catch (IllegalAccessException | InvocationTargetException | NoSuchMethodException ex) {</span>
+<span class="nc" id="L167">            throw new ParameterResolutionException(&quot;Could not find service &quot; + parameterType, ex);</span>
+        }
+    }
+
+    protected String getConfigurationResource(ExtensionContext context) {
+<span class="nc" id="L172">        return AnnotationSupport.findAnnotation(context.getTestClass(), DmnConfigurationResource.class)</span>
+<span class="nc" id="L173">            .map(DmnConfigurationResource::value)</span>
+<span class="nc" id="L174">            .orElse(DEFAULT_CONFIGURATION_RESOURCE);</span>
+    }
+
+    protected FlowableDmnTestHelper getTestHelper(ExtensionContext context) {
+<span class="nc" id="L178">        return getStore(context)</span>
+<span class="nc" id="L179">            .getOrComputeIfAbsent(context.getRequiredTestClass(),</span>
+<span class="nc" id="L180">                key -&gt; new FlowableDmnTestHelper(createDmnEngine(context)), FlowableDmnTestHelper.class);</span>
+    }
+
+    protected DmnEngine createDmnEngine(ExtensionContext context) {
+<span class="nc" id="L184">        return DmnTestHelper.getDmnEngine(getConfigurationResource(context));</span>
+    }
+
+    protected ExtensionContext.Store getStore(ExtensionContext context) {
+<span class="nc" id="L188">        return context.getRoot().getStore(NAMESPACE);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

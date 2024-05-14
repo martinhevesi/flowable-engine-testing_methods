@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AbstractSetProcessInstanceStateCmd.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.cmd</a> &gt; <span class="el_source">AbstractSetProcessInstanceStateCmd.java</span></div><h1>AbstractSetProcessInstanceStateCmd.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.impl.cmd;
+
+import java.util.Collection;
+import java.util.List;
+
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.FlowableIllegalArgumentException;
+import org.flowable.common.engine.api.FlowableObjectNotFoundException;
+import org.flowable.common.engine.impl.db.SuspensionState;
+import org.flowable.common.engine.impl.interceptor.Command;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntity;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntityManager;
+import org.flowable.engine.impl.persistence.entity.SuspensionStateUtil;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.engine.impl.util.Flowable5Util;
+import org.flowable.engine.runtime.Execution;
+import org.flowable.job.service.JobService;
+import org.flowable.job.service.JobServiceConfiguration;
+import org.flowable.job.service.TimerJobService;
+import org.flowable.job.service.impl.persistence.entity.ExternalWorkerJobEntity;
+import org.flowable.job.service.impl.persistence.entity.JobEntity;
+import org.flowable.job.service.impl.persistence.entity.SuspendedJobEntity;
+import org.flowable.job.service.impl.persistence.entity.TimerJobEntity;
+import org.flowable.task.service.impl.persistence.entity.TaskEntity;
+
+/**
+ * @author Joram Barrez
+ * @author Tijs Rademakers
+ */
+public abstract class AbstractSetProcessInstanceStateCmd implements Command&lt;Void&gt; {
+
+    protected final String processInstanceId;
+
+<span class="nc" id="L48">    public AbstractSetProcessInstanceStateCmd(String processInstanceId) {</span>
+<span class="nc" id="L49">        this.processInstanceId = processInstanceId;</span>
+<span class="nc" id="L50">    }</span>
+
+    @Override
+    public Void execute(CommandContext commandContext) {
+
+<span class="nc bnc" id="L55" title="All 2 branches missed.">        if (processInstanceId == null) {</span>
+<span class="nc" id="L56">            throw new FlowableIllegalArgumentException(&quot;ProcessInstanceId cannot be null.&quot;);</span>
+        }
+
+<span class="nc" id="L59">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc" id="L60">        ExecutionEntityManager executionEntityManager = processEngineConfiguration.getExecutionEntityManager();</span>
+<span class="nc" id="L61">        ExecutionEntity executionEntity = executionEntityManager.findById(processInstanceId);</span>
+
+<span class="nc bnc" id="L63" title="All 2 branches missed.">        if (executionEntity == null) {</span>
+<span class="nc" id="L64">            throw new FlowableObjectNotFoundException(&quot;Cannot find processInstance for id '&quot; + processInstanceId + &quot;'.&quot;, Execution.class);</span>
+        }
+<span class="nc bnc" id="L66" title="All 2 branches missed.">        if (!executionEntity.isProcessInstanceType()) {</span>
+<span class="nc" id="L67">            throw new FlowableException(&quot;Cannot set suspension state for execution '&quot; + executionEntity + &quot;': not a process instance.&quot;);</span>
+        }
+
+<span class="nc bnc" id="L70" title="All 2 branches missed.">        if (Flowable5Util.isFlowable5ProcessDefinitionId(commandContext, executionEntity.getProcessDefinitionId())) {</span>
+<span class="nc bnc" id="L71" title="All 2 branches missed.">            if (getNewState() == SuspensionState.ACTIVE) {</span>
+<span class="nc" id="L72">                processEngineConfiguration.getFlowable5CompatibilityHandler().activateProcessInstance(processInstanceId);</span>
+            } else {
+<span class="nc" id="L74">                processEngineConfiguration.getFlowable5CompatibilityHandler().suspendProcessInstance(processInstanceId);</span>
+            }
+<span class="nc" id="L76">            return null;</span>
+        }
+
+<span class="nc" id="L79">        SuspensionStateUtil.setSuspensionState(executionEntity, getNewState());</span>
+<span class="nc" id="L80">        executionEntityManager.update(executionEntity, false);</span>
+
+        // All child executions are suspended
+<span class="nc" id="L83">        Collection&lt;ExecutionEntity&gt; childExecutions = executionEntityManager.findChildExecutionsByProcessInstanceId(processInstanceId);</span>
+<span class="nc bnc" id="L84" title="All 2 branches missed.">        for (ExecutionEntity childExecution : childExecutions) {</span>
+<span class="nc bnc" id="L85" title="All 2 branches missed.">            if (!childExecution.getId().equals(processInstanceId)) {</span>
+<span class="nc" id="L86">                SuspensionStateUtil.setSuspensionState(childExecution, getNewState());</span>
+<span class="nc" id="L87">                executionEntityManager.update(childExecution, false);</span>
+            }
+<span class="nc" id="L89">        }</span>
+
+        // All tasks are suspended
+<span class="nc" id="L92">        List&lt;TaskEntity&gt; tasks = processEngineConfiguration.getTaskServiceConfiguration().getTaskService().findTasksByProcessInstanceId(processInstanceId);</span>
+<span class="nc bnc" id="L93" title="All 2 branches missed.">        for (TaskEntity taskEntity : tasks) {</span>
+<span class="nc" id="L94">            SuspensionStateUtil.setSuspensionState(taskEntity, getNewState());</span>
+<span class="nc" id="L95">            processEngineConfiguration.getTaskServiceConfiguration().getTaskService().updateTask(taskEntity, false);</span>
+<span class="nc" id="L96">        }</span>
+
+        // All jobs are suspended
+<span class="nc" id="L99">        JobServiceConfiguration jobServiceConfiguration = processEngineConfiguration.getJobServiceConfiguration();</span>
+<span class="nc" id="L100">        JobService jobService = jobServiceConfiguration.getJobService();</span>
+<span class="nc bnc" id="L101" title="All 2 branches missed.">        if (getNewState() == SuspensionState.ACTIVE) {</span>
+<span class="nc" id="L102">            List&lt;SuspendedJobEntity&gt; suspendedJobs = jobService.findSuspendedJobsByProcessInstanceId(processInstanceId);</span>
+<span class="nc bnc" id="L103" title="All 2 branches missed.">            for (SuspendedJobEntity suspendedJob : suspendedJobs) {</span>
+<span class="nc" id="L104">                jobService.activateSuspendedJob(suspendedJob);</span>
+<span class="nc" id="L105">            }</span>
+
+<span class="nc" id="L107">        } else {</span>
+<span class="nc" id="L108">            TimerJobService timerJobService = jobServiceConfiguration.getTimerJobService();</span>
+<span class="nc" id="L109">            List&lt;TimerJobEntity&gt; timerJobs = timerJobService.findTimerJobsByProcessInstanceId(processInstanceId);</span>
+<span class="nc bnc" id="L110" title="All 2 branches missed.">            for (TimerJobEntity timerJob : timerJobs) {</span>
+<span class="nc" id="L111">                jobService.moveJobToSuspendedJob(timerJob);</span>
+<span class="nc" id="L112">            }</span>
+
+<span class="nc" id="L114">            List&lt;JobEntity&gt; jobs = jobService.findJobsByProcessInstanceId(processInstanceId);</span>
+<span class="nc bnc" id="L115" title="All 2 branches missed.">            for (JobEntity job : jobs) {</span>
+<span class="nc" id="L116">                jobService.moveJobToSuspendedJob(job);</span>
+<span class="nc" id="L117">            }</span>
+
+<span class="nc" id="L119">            List&lt;ExternalWorkerJobEntity&gt; externalWorkerJobs = jobServiceConfiguration.getExternalWorkerJobEntityManager()</span>
+<span class="nc" id="L120">                    .findJobsByProcessInstanceId(processInstanceId);</span>
+
+<span class="nc bnc" id="L122" title="All 2 branches missed.">            for (ExternalWorkerJobEntity externalWorkerJob : externalWorkerJobs) {</span>
+<span class="nc" id="L123">                jobService.moveJobToSuspendedJob(externalWorkerJob);</span>
+<span class="nc" id="L124">            }</span>
+
+        }
+
+<span class="nc" id="L128">        return null;</span>
+    }
+
+    protected abstract SuspensionState getNewState();
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

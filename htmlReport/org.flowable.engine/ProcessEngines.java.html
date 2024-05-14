@@ -1,0 +1,271 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ProcessEngines.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine</a> &gt; <span class="el_source">ProcessEngines.java</span></div><h1>ProcessEngines.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.lang.reflect.Method;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.Enumeration;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.commons.lang3.exception.ExceptionUtils;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.FlowableIllegalArgumentException;
+import org.flowable.common.engine.impl.EngineInfo;
+import org.flowable.common.engine.impl.util.IoUtil;
+import org.flowable.common.engine.impl.util.ReflectUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Helper for initializing and closing process engines in server environments. &lt;br&gt;
+ * All created {@link ProcessEngine}s will be registered with this class. &lt;br&gt;
+ * The flowable-webapp-init webapp will call the {@link #init()} method when the webapp is deployed and it will call the {@link #destroy()} method when the webapp is destroyed, using a
+ * context-listener ( &lt;code&gt;org.flowable.impl.servlet.listener.ProcessEnginesServletContextListener&lt;/code&gt; ). That way, all applications can just use the {@link #getProcessEngines()} to obtain
+ * pre-initialized and cached process engines. &lt;br&gt;
+ * &lt;br&gt;
+ * Please note that there is &lt;b&gt;no lazy initialization&lt;/b&gt; of process engines, so make sure the context-listener is configured or {@link ProcessEngine}s are already created so they were registered on
+ * this class.&lt;br&gt;
+ * &lt;br&gt;
+ * The {@link #init()} method will try to build one {@link ProcessEngine} for each flowable.cfg.xml file found on the classpath. If you have more then one, make sure you specify different
+ * process.engine.name values.
+ * 
+ * @author Tom Baeyens
+ * @author Joram Barrez
+ */
+<span class="nc" id="L53">public abstract class ProcessEngines {</span>
+
+<span class="nc" id="L55">    private static final Logger LOGGER = LoggerFactory.getLogger(ProcessEngines.class);</span>
+
+    public static final String NAME_DEFAULT = &quot;default&quot;;
+
+    protected static boolean isInitialized;
+<span class="nc" id="L60">    protected static Map&lt;String, ProcessEngine&gt; processEngines = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L61">    protected static Map&lt;String, EngineInfo&gt; processEngineInfosByName = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L62">    protected static Map&lt;String, EngineInfo&gt; processEngineInfosByResourceUrl = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L63">    protected static List&lt;EngineInfo&gt; processEngineInfos = new ArrayList&lt;&gt;();</span>
+
+    /**
+     * Initializes all process engines that can be found on the classpath for resources &lt;code&gt;flowable.cfg.xml&lt;/code&gt; (plain Flowable style configuration) and for resources
+     * &lt;code&gt;flowable-context.xml&lt;/code&gt; (Spring style configuration).
+     */
+    public static synchronized void init() {
+<span class="nc bnc" id="L70" title="All 2 branches missed.">        if (!isInitialized()) {</span>
+<span class="nc bnc" id="L71" title="All 2 branches missed.">            if (processEngines == null) {</span>
+                // Create new map to store process-engines if current map is null
+<span class="nc" id="L73">                processEngines = new HashMap&lt;&gt;();</span>
+            }
+<span class="nc" id="L75">            ClassLoader classLoader = ReflectUtil.getClassLoader();</span>
+<span class="nc" id="L76">            Enumeration&lt;URL&gt; resources = null;</span>
+            try {
+<span class="nc" id="L78">                resources = classLoader.getResources(&quot;flowable.cfg.xml&quot;);</span>
+<span class="nc" id="L79">            } catch (IOException e) {</span>
+<span class="nc" id="L80">                throw new FlowableIllegalArgumentException(&quot;problem retrieving flowable.cfg.xml resources on the classpath: &quot; + System.getProperty(&quot;java.class.path&quot;), e);</span>
+<span class="nc" id="L81">            }</span>
+
+            // Remove duplicated configuration URL's using set. Some
+            // classloaders may return identical URL's twice, causing duplicate
+            // startups
+<span class="nc" id="L86">            Set&lt;URL&gt; configUrls = new HashSet&lt;&gt;();</span>
+<span class="nc bnc" id="L87" title="All 2 branches missed.">            while (resources.hasMoreElements()) {</span>
+<span class="nc" id="L88">                configUrls.add(resources.nextElement());</span>
+            }
+<span class="nc bnc" id="L90" title="All 2 branches missed.">            for (URL resource : configUrls) {</span>
+<span class="nc" id="L91">                LOGGER.info(&quot;Initializing process engine using configuration '{}'&quot;, resource);</span>
+<span class="nc" id="L92">                initProcessEngineFromResource(resource);</span>
+<span class="nc" id="L93">            }</span>
+
+            try {
+<span class="nc" id="L96">                resources = classLoader.getResources(&quot;flowable-context.xml&quot;);</span>
+<span class="nc" id="L97">            } catch (IOException e) {</span>
+<span class="nc" id="L98">                throw new FlowableIllegalArgumentException(&quot;problem retrieving flowable-context.xml resources on the classpath: &quot; + System.getProperty(&quot;java.class.path&quot;), e);</span>
+<span class="nc" id="L99">            }</span>
+<span class="nc bnc" id="L100" title="All 2 branches missed.">            while (resources.hasMoreElements()) {</span>
+<span class="nc" id="L101">                URL resource = resources.nextElement();</span>
+<span class="nc" id="L102">                LOGGER.info(&quot;Initializing process engine using Spring configuration '{}'&quot;, resource);</span>
+<span class="nc" id="L103">                initProcessEngineFromSpringResource(resource);</span>
+<span class="nc" id="L104">            }</span>
+
+<span class="nc" id="L106">            setInitialized(true);</span>
+<span class="nc" id="L107">        } else {</span>
+<span class="nc" id="L108">            LOGGER.info(&quot;Process engines already initialized&quot;);</span>
+        }
+<span class="nc" id="L110">    }</span>
+
+    protected static void initProcessEngineFromSpringResource(URL resource) {
+        try {
+<span class="nc" id="L114">            Class&lt;?&gt; springConfigurationHelperClass = ReflectUtil.loadClass(&quot;org.flowable.spring.SpringConfigurationHelper&quot;);</span>
+<span class="nc" id="L115">            Method method = springConfigurationHelperClass.getDeclaredMethod(&quot;buildProcessEngine&quot;, new Class&lt;?&gt;[] { URL.class });</span>
+<span class="nc" id="L116">            ProcessEngine processEngine = (ProcessEngine) method.invoke(null, new Object[] { resource });</span>
+
+<span class="nc" id="L118">            String processEngineName = processEngine.getName();</span>
+<span class="nc" id="L119">            EngineInfo processEngineInfo = new EngineInfo(processEngineName, resource.toString(), null);</span>
+<span class="nc" id="L120">            processEngineInfosByName.put(processEngineName, processEngineInfo);</span>
+<span class="nc" id="L121">            processEngineInfosByResourceUrl.put(resource.toString(), processEngineInfo);</span>
+
+<span class="nc" id="L123">        } catch (Exception e) {</span>
+<span class="nc" id="L124">            throw new FlowableException(&quot;couldn't initialize process engine from spring configuration resource &quot; + resource + &quot;: &quot; + e.getMessage(), e);</span>
+<span class="nc" id="L125">        }</span>
+<span class="nc" id="L126">    }</span>
+
+    /**
+     * Registers the given process engine. No {@link EngineInfo} will be available for this process engine. An engine that is registered will be closed when the {@link ProcessEngines#destroy()} is
+     * called.
+     */
+    public static void registerProcessEngine(ProcessEngine processEngine) {
+<span class="nc" id="L133">        processEngines.put(processEngine.getName(), processEngine);</span>
+<span class="nc" id="L134">    }</span>
+
+    /**
+     * Unregisters the given process engine.
+     */
+    public static void unregister(ProcessEngine processEngine) {
+<span class="nc" id="L140">        processEngines.remove(processEngine.getName());</span>
+<span class="nc" id="L141">    }</span>
+
+    private static EngineInfo initProcessEngineFromResource(URL resourceUrl) {
+<span class="nc" id="L144">        EngineInfo processEngineInfo = processEngineInfosByResourceUrl.get(resourceUrl.toString());</span>
+        // if there is an existing process engine info
+<span class="nc bnc" id="L146" title="All 2 branches missed.">        if (processEngineInfo != null) {</span>
+            // remove that process engine from the member fields
+<span class="nc" id="L148">            processEngineInfos.remove(processEngineInfo);</span>
+<span class="nc bnc" id="L149" title="All 2 branches missed.">            if (processEngineInfo.getException() == null) {</span>
+<span class="nc" id="L150">                String processEngineName = processEngineInfo.getName();</span>
+<span class="nc" id="L151">                processEngines.remove(processEngineName);</span>
+<span class="nc" id="L152">                processEngineInfosByName.remove(processEngineName);</span>
+            }
+<span class="nc" id="L154">            processEngineInfosByResourceUrl.remove(processEngineInfo.getResourceUrl());</span>
+        }
+
+<span class="nc" id="L157">        String resourceUrlString = resourceUrl.toString();</span>
+        try {
+<span class="nc" id="L159">            LOGGER.info(&quot;initializing process engine for resource {}&quot;, resourceUrl);</span>
+<span class="nc" id="L160">            ProcessEngine processEngine = buildProcessEngine(resourceUrl);</span>
+<span class="nc" id="L161">            String processEngineName = processEngine.getName();</span>
+<span class="nc" id="L162">            LOGGER.info(&quot;initialised process engine {}&quot;, processEngineName);</span>
+<span class="nc" id="L163">            processEngineInfo = new EngineInfo(processEngineName, resourceUrlString, null);</span>
+<span class="nc" id="L164">            processEngines.put(processEngineName, processEngine);</span>
+<span class="nc" id="L165">            processEngineInfosByName.put(processEngineName, processEngineInfo);</span>
+<span class="nc" id="L166">        } catch (Throwable e) {</span>
+<span class="nc" id="L167">            LOGGER.error(&quot;Exception while initializing process engine: {}&quot;, e.getMessage(), e);</span>
+<span class="nc" id="L168">            processEngineInfo = new EngineInfo(null, resourceUrlString, ExceptionUtils.getStackTrace(e));</span>
+<span class="nc" id="L169">        }</span>
+<span class="nc" id="L170">        processEngineInfosByResourceUrl.put(resourceUrlString, processEngineInfo);</span>
+<span class="nc" id="L171">        processEngineInfos.add(processEngineInfo);</span>
+<span class="nc" id="L172">        return processEngineInfo;</span>
+    }
+
+    private static ProcessEngine buildProcessEngine(URL resource) {
+<span class="nc" id="L176">        InputStream inputStream = null;</span>
+        try {
+<span class="nc" id="L178">            inputStream = resource.openStream();</span>
+<span class="nc" id="L179">            ProcessEngineConfiguration processEngineConfiguration = ProcessEngineConfiguration.createProcessEngineConfigurationFromInputStream(inputStream);</span>
+<span class="nc" id="L180">            return processEngineConfiguration.buildProcessEngine();</span>
+
+<span class="nc" id="L182">        } catch (IOException e) {</span>
+<span class="nc" id="L183">            throw new FlowableIllegalArgumentException(&quot;couldn't open resource stream: &quot; + e.getMessage(), e);</span>
+        } finally {
+<span class="nc" id="L185">            IoUtil.closeSilently(inputStream);</span>
+        }
+    }
+
+    /** Get initialization results. */
+    public static List&lt;EngineInfo&gt; getProcessEngineInfos() {
+<span class="nc" id="L191">        return processEngineInfos;</span>
+    }
+
+    /**
+     * Get initialization results. Only info will we available for process engines which were added in the {@link ProcessEngines#init()}. No {@link EngineInfo} is available for engines which were
+     * registered programmatically.
+     */
+    public static EngineInfo getProcessEngineInfo(String processEngineName) {
+<span class="nc" id="L199">        return processEngineInfosByName.get(processEngineName);</span>
+    }
+
+    public static ProcessEngine getDefaultProcessEngine() {
+<span class="nc" id="L203">        return getProcessEngine(NAME_DEFAULT);</span>
+    }
+
+    /**
+     * obtain a process engine by name.
+     * 
+     * @param processEngineName
+     *            is the name of the process engine or null for the default process engine.
+     */
+    public static ProcessEngine getProcessEngine(String processEngineName) {
+<span class="nc bnc" id="L213" title="All 2 branches missed.">        if (!isInitialized()) {</span>
+<span class="nc" id="L214">            init();</span>
+        }
+<span class="nc" id="L216">        return processEngines.get(processEngineName);</span>
+    }
+
+    /**
+     * retries to initialize a process engine that previously failed.
+     */
+    public static EngineInfo retry(String resourceUrl) {
+<span class="nc" id="L223">        LOGGER.debug(&quot;retying initializing of resource {}&quot;, resourceUrl);</span>
+        try {
+<span class="nc" id="L225">            return initProcessEngineFromResource(new URL(resourceUrl));</span>
+<span class="nc" id="L226">        } catch (MalformedURLException e) {</span>
+<span class="nc" id="L227">            throw new FlowableIllegalArgumentException(&quot;invalid url: &quot; + resourceUrl, e);</span>
+        }
+    }
+
+    /**
+     * provides access to process engine to application clients in a managed server environment.
+     */
+    public static Map&lt;String, ProcessEngine&gt; getProcessEngines() {
+<span class="nc" id="L235">        return processEngines;</span>
+    }
+
+    /**
+     * closes all process engines. This method should be called when the server shuts down.
+     */
+    public static synchronized void destroy() {
+<span class="nc bnc" id="L242" title="All 2 branches missed.">        if (isInitialized()) {</span>
+<span class="nc" id="L243">            Map&lt;String, ProcessEngine&gt; engines = new HashMap&lt;&gt;(processEngines);</span>
+<span class="nc" id="L244">            processEngines = new HashMap&lt;&gt;();</span>
+
+<span class="nc bnc" id="L246" title="All 2 branches missed.">            for (String processEngineName : engines.keySet()) {</span>
+<span class="nc" id="L247">                ProcessEngine processEngine = engines.get(processEngineName);</span>
+                try {
+<span class="nc" id="L249">                    processEngine.close();</span>
+<span class="nc" id="L250">                } catch (Exception e) {</span>
+<span class="nc bnc" id="L251" title="All 2 branches missed.">                    LOGGER.error(&quot;exception while closing {}&quot;, (processEngineName == null ? &quot;the default process engine&quot; : &quot;process engine &quot; + processEngineName), e);</span>
+<span class="nc" id="L252">                }</span>
+<span class="nc" id="L253">            }</span>
+
+<span class="nc" id="L255">            processEngineInfosByName.clear();</span>
+<span class="nc" id="L256">            processEngineInfosByResourceUrl.clear();</span>
+<span class="nc" id="L257">            processEngineInfos.clear();</span>
+
+<span class="nc" id="L259">            setInitialized(false);</span>
+        }
+<span class="nc" id="L261">    }</span>
+
+    public static boolean isInitialized() {
+<span class="nc" id="L264">        return isInitialized;</span>
+    }
+
+    public static void setInitialized(boolean isInitialized) {
+<span class="nc" id="L268">        ProcessEngines.isInitialized = isInitialized;</span>
+<span class="nc" id="L269">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

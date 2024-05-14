@@ -1,0 +1,194 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CmmnCommandInvoker.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.cmmn.engine.impl.interceptor</a> &gt; <span class="el_source">CmmnCommandInvoker.java</span></div><h1>CmmnCommandInvoker.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.cmmn.engine.impl.interceptor;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.flowable.cmmn.engine.impl.agenda.CmmnEngineAgenda;
+import org.flowable.cmmn.engine.impl.agenda.operation.CmmnOperation;
+import org.flowable.cmmn.engine.impl.util.CommandContextUtil;
+import org.flowable.common.engine.impl.agenda.AgendaOperationExecutionListener;
+import org.flowable.common.engine.impl.agenda.AgendaOperationRunner;
+import org.flowable.common.engine.impl.context.Context;
+import org.flowable.common.engine.impl.interceptor.AbstractCommandInterceptor;
+import org.flowable.common.engine.impl.interceptor.Command;
+import org.flowable.common.engine.impl.interceptor.CommandConfig;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.common.engine.impl.interceptor.CommandExecutor;
+import org.flowable.common.engine.impl.interceptor.CommandInterceptor;
+import org.flowable.common.engine.impl.util.ExceptionUtil;
+import org.flowable.common.engine.impl.variablelistener.VariableListenerSession;
+import org.flowable.common.engine.impl.variablelistener.VariableListenerSessionData;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * @author Joram Barrez
+ */
+public class CmmnCommandInvoker extends AbstractCommandInterceptor {
+
+<span class="nc" id="L44">    private static final Logger LOGGER = LoggerFactory.getLogger(CmmnCommandInvoker.class);</span>
+
+    protected AgendaOperationRunner agendaOperationRunner;
+    protected Collection&lt;AgendaOperationExecutionListener&gt; agendaOperationExecutionListeners;
+
+<span class="nc" id="L49">    public CmmnCommandInvoker(AgendaOperationRunner agendaOperationRunner, Collection&lt;AgendaOperationExecutionListener&gt; agendaOperationExecutionListeners) {</span>
+<span class="nc" id="L50">        this.agendaOperationRunner = agendaOperationRunner;</span>
+<span class="nc" id="L51">        this.agendaOperationExecutionListeners = agendaOperationExecutionListeners;</span>
+<span class="nc" id="L52">    }</span>
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    @Override
+    public &lt;T&gt; T execute(final CommandConfig config, final Command&lt;T&gt; command, final CommandExecutor commandExecutor) {
+<span class="nc" id="L57">        final CommandContext commandContext = Context.getCommandContext();</span>
+<span class="nc" id="L58">        final CmmnEngineAgenda agenda = CommandContextUtil.getAgenda(commandContext);</span>
+<span class="nc bnc" id="L59" title="All 4 branches missed.">        if (commandContext.isReused() &amp;&amp; !agenda.isEmpty()) {</span>
+<span class="nc" id="L60">            commandContext.setResult(command.execute(commandContext));</span>
+        } else {
+<span class="nc" id="L62">            agenda.planOperation(() -&gt; commandContext.setResult(command.execute(commandContext)));</span>
+
+<span class="nc" id="L64">            executeOperations(commandContext, true); // true -&gt; always store the case instance id for the regular operation loop, even if it's a no-op operation.</span>
+
+<span class="nc bnc" id="L66" title="All 2 branches missed.">            if (commandContext.isRootUsageOfCurrentEngine()) {</span>
+<span class="nc" id="L67">                evaluateUntilStable(commandContext);</span>
+            }
+        }
+        
+<span class="nc" id="L71">        return (T) commandContext.getResult();</span>
+    }
+
+    protected void executeOperations(CommandContext commandContext, boolean isStoreCaseInstanceIdOfNoOperation) {
+<span class="nc" id="L75">        CmmnEngineAgenda agenda = CommandContextUtil.getAgenda(commandContext);</span>
+<span class="nc bnc" id="L76" title="All 2 branches missed.">        while (!agenda.isEmpty()) {</span>
+<span class="nc" id="L77">            Runnable runnable = agenda.getNextOperation();</span>
+<span class="nc" id="L78">            executeExecutionListenersBeforeExecute(commandContext, runnable);</span>
+            try {
+<span class="nc" id="L80">                executeOperation(commandContext, isStoreCaseInstanceIdOfNoOperation, runnable);</span>
+<span class="nc" id="L81">            } catch (Throwable throwable) {</span>
+<span class="nc" id="L82">                executeExecutionListenersAfterException(commandContext, runnable, throwable);</span>
+<span class="nc" id="L83">                ExceptionUtil.sneakyThrow(throwable);</span>
+<span class="nc" id="L84">            }</span>
+<span class="nc" id="L85">            executeExecutionListenersAfterExecute(commandContext, runnable);</span>
+<span class="nc" id="L86">        }</span>
+<span class="nc" id="L87">    }</span>
+
+    protected void executeExecutionListenersBeforeExecute(CommandContext commandContext, Runnable runnable) {
+<span class="nc bnc" id="L90" title="All 4 branches missed.">        if (agendaOperationExecutionListeners != null &amp;&amp; !agendaOperationExecutionListeners.isEmpty()) {</span>
+<span class="nc bnc" id="L91" title="All 2 branches missed.">            for (AgendaOperationExecutionListener listener : agendaOperationExecutionListeners) {</span>
+<span class="nc" id="L92">                listener.beforeExecute(commandContext, runnable);</span>
+<span class="nc" id="L93">            }</span>
+        }
+<span class="nc" id="L95">    }</span>
+
+    protected void executeExecutionListenersAfterExecute(CommandContext commandContext, Runnable runnable) {
+<span class="nc bnc" id="L98" title="All 4 branches missed.">        if (agendaOperationExecutionListeners != null &amp;&amp; !agendaOperationExecutionListeners.isEmpty()) {</span>
+<span class="nc bnc" id="L99" title="All 2 branches missed.">            for (AgendaOperationExecutionListener listener : agendaOperationExecutionListeners) {</span>
+<span class="nc" id="L100">                listener.afterExecute(commandContext, runnable);</span>
+<span class="nc" id="L101">            }</span>
+        }
+<span class="nc" id="L103">    }</span>
+
+    protected void executeExecutionListenersAfterException(CommandContext commandContext, Runnable runnable, Throwable throwable) {
+<span class="nc bnc" id="L106" title="All 4 branches missed.">        if (agendaOperationExecutionListeners != null &amp;&amp; !agendaOperationExecutionListeners.isEmpty()) {</span>
+<span class="nc bnc" id="L107" title="All 2 branches missed.">            for (AgendaOperationExecutionListener listener : agendaOperationExecutionListeners) {</span>
+<span class="nc" id="L108">                listener.afterExecuteException(commandContext, runnable, throwable);</span>
+<span class="nc" id="L109">            }</span>
+        }
+<span class="nc" id="L111">    }</span>
+
+    protected void executeOperation(CommandContext commandContext, boolean isStoreCaseInstanceIdOfNoOperation, Runnable runnable) {
+
+<span class="nc bnc" id="L115" title="All 2 branches missed.">        if (runnable instanceof CmmnOperation) {</span>
+<span class="nc" id="L116">            CmmnOperation operation = (CmmnOperation) runnable;</span>
+
+<span class="nc bnc" id="L118" title="All 2 branches missed.">            if (LOGGER.isDebugEnabled()) {</span>
+<span class="nc" id="L119">                LOGGER.debug(&quot;Executing agenda operation {}&quot;, runnable);</span>
+            }
+
+<span class="nc" id="L122">            agendaOperationRunner.executeOperation(commandContext, runnable);</span>
+
+            // If the operation caused changes, a new evaluation needs to be planned,
+            // as the operations could have changed the state and/or variables.
+<span class="nc bnc" id="L126" title="All 4 branches missed.">            if (isStoreCaseInstanceIdOfNoOperation || !operation.isNoop()) {</span>
+
+<span class="nc" id="L128">                String caseInstanceId = operation.getCaseInstanceId();</span>
+<span class="nc bnc" id="L129" title="All 2 branches missed.">                if (caseInstanceId != null) {</span>
+<span class="nc" id="L130">                    CommandContextUtil.addInvolvedCaseInstanceId(commandContext, caseInstanceId);</span>
+                }
+
+            }
+
+<span class="nc" id="L135">        } else {</span>
+<span class="nc" id="L136">            runnable.run();</span>
+
+        }
+<span class="nc" id="L139">    }</span>
+
+    protected void evaluateUntilStable(CommandContext commandContext) {
+<span class="nc" id="L142">        Set&lt;String&gt; involvedCaseInstanceIds = CommandContextUtil.getInvolvedCaseInstanceIds(commandContext);</span>
+<span class="nc bnc" id="L143" title="All 4 branches missed.">        if (involvedCaseInstanceIds != null &amp;&amp; !involvedCaseInstanceIds.isEmpty()) {</span>
+            
+<span class="nc" id="L145">            CmmnEngineAgenda agenda = CommandContextUtil.getAgenda(commandContext);</span>
+
+<span class="nc bnc" id="L147" title="All 2 branches missed.">            for (String caseInstanceId : involvedCaseInstanceIds) {</span>
+<span class="nc" id="L148">                VariableListenerSession variableListenerSession = commandContext.getSession(VariableListenerSession.class);</span>
+<span class="nc" id="L149">                Map&lt;String, List&lt;VariableListenerSessionData&gt;&gt; variableSessionData = variableListenerSession.getVariableData();</span>
+                
+<span class="nc bnc" id="L151" title="All 2 branches missed.">                if (variableSessionData != null) {</span>
+<span class="nc" id="L152">                    List&lt;String&gt; variableListenerCaseInstanceIds = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L153" title="All 2 branches missed.">                    for (String variableName : variableSessionData.keySet()) {</span>
+<span class="nc" id="L154">                        List&lt;VariableListenerSessionData&gt; variableListenerDataList = variableSessionData.get(variableName);</span>
+<span class="nc bnc" id="L155" title="All 2 branches missed.">                        for (VariableListenerSessionData variableListenerData : variableListenerDataList) {</span>
+<span class="nc bnc" id="L156" title="All 2 branches missed.">                            if (!variableListenerCaseInstanceIds.contains(variableListenerData.getScopeId()) &amp;&amp; </span>
+<span class="nc bnc" id="L157" title="All 2 branches missed.">                                    caseInstanceId.equals(variableListenerData.getScopeId())) {</span>
+                                
+<span class="nc" id="L159">                                variableListenerCaseInstanceIds.add(variableListenerData.getScopeId());</span>
+<span class="nc" id="L160">                                agenda.planEvaluateVariableEventListenersOperation(variableListenerData.getScopeId());</span>
+                            }
+<span class="nc" id="L162">                        }</span>
+<span class="nc" id="L163">                    }</span>
+                }
+                
+<span class="nc" id="L166">                agenda.planEvaluateCriteriaOperation(caseInstanceId, true);</span>
+<span class="nc" id="L167">            }</span>
+
+<span class="nc" id="L169">            involvedCaseInstanceIds.clear(); // Clearing after scheduling the evaluation. If anything changes, new operations will add ids again.</span>
+<span class="nc" id="L170">            executeOperations(commandContext, false); // false -&gt; here, we're past the regular operation loop. Any operation now that is a no-op should not reschedule a new evaluation</span>
+
+            // If new involvedCaseInstanceIds have new entries, this means the evaluation has triggered new operations and data has changed.
+            // Need to retrigger the evaluations to make sure no new things can fire now.
+<span class="nc bnc" id="L174" title="All 2 branches missed.">            if (!involvedCaseInstanceIds.isEmpty()) {</span>
+<span class="nc" id="L175">                evaluateUntilStable(commandContext);</span>
+            }
+        }
+<span class="nc" id="L178">    }</span>
+
+    @Override
+    public void setNext(CommandInterceptor next) {
+<span class="nc" id="L182">        throw new UnsupportedOperationException(&quot;CommandInvoker must be the last interceptor in the chain&quot;);</span>
+    }
+
+    public AgendaOperationRunner getAgendaOperationRunner() {
+<span class="nc" id="L186">        return agendaOperationRunner;</span>
+    }
+
+    public void setAgendaOperationRunner(AgendaOperationRunner agendaOperationRunner) {
+<span class="nc" id="L190">        this.agendaOperationRunner = agendaOperationRunner;</span>
+<span class="nc" id="L191">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

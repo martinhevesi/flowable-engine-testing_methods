@@ -1,0 +1,293 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BpmnEventRegistryEventConsumer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.eventregistry</a> &gt; <span class="el_source">BpmnEventRegistryEventConsumer.java</span></div><h1>BpmnEventRegistryEventConsumer.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.impl.eventregistry;
+
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.bpmn.constants.BpmnXMLConstants;
+import org.flowable.bpmn.model.BpmnModel;
+import org.flowable.bpmn.model.ExtensionElement;
+import org.flowable.bpmn.model.StartEvent;
+import org.flowable.common.engine.api.constant.ReferenceTypes;
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.impl.lock.LockManager;
+import org.flowable.engine.ProcessEngineConfiguration;
+import org.flowable.engine.RuntimeService;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.repository.ProcessDefinition;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.runtime.ProcessInstanceBuilder;
+import org.flowable.engine.runtime.ProcessInstanceQuery;
+import org.flowable.eventregistry.api.EventConsumerInfo;
+import org.flowable.eventregistry.api.EventRegistryProcessingInfo;
+import org.flowable.eventregistry.api.runtime.EventInstance;
+import org.flowable.eventregistry.impl.constant.EventConstants;
+import org.flowable.eventregistry.impl.consumer.BaseEventRegistryEventConsumer;
+import org.flowable.eventregistry.impl.consumer.CorrelationKey;
+import org.flowable.eventsubscription.api.EventSubscription;
+import org.flowable.eventsubscription.api.EventSubscriptionQuery;
+import org.flowable.eventsubscription.service.impl.EventSubscriptionQueryImpl;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+public class BpmnEventRegistryEventConsumer extends BaseEventRegistryEventConsumer {
+
+<span class="nc" id="L51">    private static final Logger LOGGER = LoggerFactory.getLogger(BpmnEventRegistryEventConsumer.class);</span>
+
+    protected ProcessEngineConfigurationImpl processEngineConfiguration;
+
+    public BpmnEventRegistryEventConsumer(ProcessEngineConfigurationImpl processEngineConfiguration) {
+<span class="nc" id="L56">        super(processEngineConfiguration);</span>
+
+<span class="nc" id="L58">        this.processEngineConfiguration = processEngineConfiguration;</span>
+<span class="nc" id="L59">    }</span>
+
+    @Override
+    public String getConsumerKey() {
+<span class="nc" id="L63">        return &quot;bpmnEventConsumer&quot;;</span>
+    }
+
+    @Override
+    protected EventRegistryProcessingInfo eventReceived(EventInstance eventInstance) {
+
+        // Fetching the event subscriptions happens in one transaction,
+        // executing them one per subscription. There is no overarching transaction.
+        // The reason for this is that the handling of one event subscription
+        // should not influence (i.e. roll back) the handling of another.
+
+<span class="nc" id="L74">        EventRegistryProcessingInfo eventRegistryProcessingInfo = new EventRegistryProcessingInfo();</span>
+
+<span class="nc" id="L76">        Collection&lt;CorrelationKey&gt; correlationKeys = generateCorrelationKeys(eventInstance.getCorrelationParameterInstances());</span>
+<span class="nc" id="L77">        List&lt;EventSubscription&gt; eventSubscriptions = findEventSubscriptions(ScopeTypes.BPMN, eventInstance, correlationKeys);</span>
+<span class="nc bnc" id="L78" title="All 2 branches missed.">        if (LOGGER.isDebugEnabled()) {</span>
+<span class="nc" id="L79">            LOGGER.debug(&quot;Found {} for {}&quot;, eventSubscriptions, eventInstance);</span>
+        }
+<span class="nc" id="L81">        RuntimeService runtimeService = processEngineConfiguration.getRuntimeService();</span>
+<span class="nc bnc" id="L82" title="All 2 branches missed.">        for (EventSubscription eventSubscription : eventSubscriptions) {</span>
+<span class="nc" id="L83">            EventConsumerInfo eventConsumerInfo = new EventConsumerInfo(eventSubscription.getId(), eventSubscription.getExecutionId(),</span>
+<span class="nc" id="L84">                    eventSubscription.getProcessDefinitionId(), ScopeTypes.BPMN);</span>
+<span class="nc" id="L85">            handleEventSubscription(runtimeService, eventSubscription, eventInstance, correlationKeys, eventConsumerInfo);</span>
+<span class="nc" id="L86">            eventRegistryProcessingInfo.addEventConsumerInfo(eventConsumerInfo);</span>
+<span class="nc" id="L87">        }</span>
+
+<span class="nc" id="L89">        return eventRegistryProcessingInfo;</span>
+    }
+
+    protected void handleEventSubscription(RuntimeService runtimeService, EventSubscription eventSubscription,
+            EventInstance eventInstance, Collection&lt;CorrelationKey&gt; correlationKeys, EventConsumerInfo eventConsumerInfo) {
+
+<span class="nc" id="L95">        String executionId = eventSubscription.getExecutionId();</span>
+<span class="nc bnc" id="L96" title="All 2 branches missed.">        if (executionId != null) {</span>
+
+            // When an executionId is set, this means that the process instance is waiting at that step for an event
+
+<span class="nc" id="L100">            Map&lt;String, Object&gt; transientVariableMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L101">            transientVariableMap.put(EventConstants.EVENT_INSTANCE, eventInstance);</span>
+<span class="nc bnc" id="L102" title="All 2 branches missed.">            if (LOGGER.isDebugEnabled()) {</span>
+<span class="nc" id="L103">                LOGGER.debug(&quot;Triggering execution {} with {}&quot;, executionId, eventInstance);</span>
+            }
+<span class="nc" id="L105">            runtimeService.trigger(executionId, null, transientVariableMap);</span>
+
+<span class="nc bnc" id="L107" title="All 4 branches missed.">        } else if (eventSubscription.getProcessDefinitionId() != null &amp;&amp; eventSubscription.getProcessInstanceId() == null) {</span>
+
+            // If there is no execution/process instance set, but a definition id is set, this means that it's a start event
+
+<span class="nc bnc" id="L111" title="All 2 branches missed.">            if (correlationKeys != null) {</span>
+<span class="nc" id="L112">                String startCorrelationConfiguration = getStartCorrelationConfiguration(eventSubscription);</span>
+
+<span class="nc bnc" id="L114" title="All 2 branches missed.">                if (Objects.equals(startCorrelationConfiguration, BpmnXMLConstants.START_EVENT_CORRELATION_STORE_AS_UNIQUE_REFERENCE_ID)) {</span>
+
+<span class="nc" id="L116">                    CorrelationKey correlationKeyWithAllParameters = getCorrelationKeyWithAllParameters(correlationKeys);</span>
+
+<span class="nc" id="L118">                    ProcessDefinition processDefinition = processEngineConfiguration.getRepositoryService()</span>
+<span class="nc" id="L119">                            .getProcessDefinition(eventSubscription.getProcessDefinitionId());</span>
+
+<span class="nc" id="L121">                    long processInstanceCount = countProcessInstances(runtimeService, eventInstance, correlationKeyWithAllParameters, processDefinition);</span>
+<span class="nc bnc" id="L122" title="All 2 branches missed.">                    if (processInstanceCount &gt; 0) {</span>
+                        // Returning, no new instance should be started
+<span class="nc" id="L124">                        eventConsumerInfo.setHasExistingInstancesForUniqueCorrelation(true);</span>
+<span class="nc" id="L125">                        LOGGER.debug(&quot;Event received to start a new process instance, but a unique instance already exists.&quot;);</span>
+<span class="nc" id="L126">                        return;</span>
+
+<span class="nc bnc" id="L128" title="All 2 branches missed.">                    } else if (processEngineConfiguration.isEventRegistryUniqueProcessInstanceCheckWithLock()) {</span>
+
+                        /*
+                         * When multiple threads/transactions are querying concurrently, it could happen
+                         * that multiple times zero is returned as result of the count.
+                         *
+                         * To make sure only one unique instance is created, a lock is acquired for the reference correlation value,
+                         * which means that the current logic can now act on it when that's successful.
+                         *
+                         * Once the lock is acquired, the query is repeated (similar reasoning as when using synchronized methods).
+                         * If the result is again zero, the process instance can be started.
+                         *
+                         * Transitionally, there are 4 transactions at play here:
+                         * - tx 1 for acquiring a lock
+                         * - tx 2 for doing the process instance count
+                         * - tx 3 for starting the process instance (if tx 1 was successful and tx 2 returned 0)
+                         * - tx 4 for unlocking (if tx 1 was successful)
+                         *
+                         * The counting + process instance starting happens exclusively for a given event correlation value
+                         * and due to using separate transactions for the count and the start, it's guaranteed
+                         * other engine nodes or other threads will always see any other instance started.
+                         */
+
+<span class="nc" id="L151">                        String countLockName = &quot;belock&quot; + correlationKeyWithAllParameters.getValue() + processDefinition.getKey();</span>
+<span class="nc" id="L152">                        LockManager lockManager = processEngineConfiguration.getManagementService().getLockManager(countLockName);</span>
+<span class="nc" id="L153">                        boolean lockAcquired = lockManager.acquireLock(</span>
+<span class="nc" id="L154">                                processEngineConfiguration.getEventSubscriptionServiceConfiguration().getEventSubscriptionLockTime());</span>
+
+<span class="nc bnc" id="L156" title="All 2 branches missed.">                        if (lockAcquired) {</span>
+
+                            try {
+
+<span class="nc" id="L160">                                processInstanceCount = countProcessInstances(runtimeService, eventInstance, correlationKeyWithAllParameters, processDefinition);</span>
+<span class="nc bnc" id="L161" title="All 2 branches missed.">                                if (processInstanceCount &gt; 0) {</span>
+                                    // Returning, no new instance should be started
+<span class="nc" id="L163">                                    eventConsumerInfo.setHasExistingInstancesForUniqueCorrelation(true);</span>
+<span class="nc" id="L164">                                    LOGGER.debug(&quot;Event received to start a new process instance, but a unique instance already exists.&quot;);</span>
+<span class="nc" id="L165">                                    return;</span>
+                                }
+
+<span class="nc" id="L168">                                startProcessInstance(runtimeService, eventSubscription, eventInstance, correlationKeyWithAllParameters);</span>
+<span class="nc" id="L169">                                return;</span>
+
+                            } finally {
+<span class="nc" id="L172">                                lockManager.releaseLock();</span>
+
+                            }
+
+                        } else {
+<span class="nc" id="L177">                            LOGGER.info(</span>
+                                    &quot;Lock for {} was not acquired. This means that another event has already acquired that lock and will start a new process instance. Ignoring this one.&quot;,
+                                    countLockName);
+<span class="nc" id="L180">                            return;</span>
+
+                        }
+
+
+                    } else {
+<span class="nc" id="L186">                        startProcessInstance(runtimeService, eventSubscription, eventInstance, correlationKeyWithAllParameters);</span>
+<span class="nc" id="L187">                        return;</span>
+                    }
+
+                }
+
+            }
+
+<span class="nc" id="L194">            startProcessInstance(runtimeService, eventSubscription, eventInstance, null);</span>
+
+        } else {
+<span class="nc" id="L197">            LOGGER.warn(&quot;Ignoring {}. It was acquired by the bpmn event consumer, but it is not used&quot;, eventSubscription);</span>
+        }
+
+<span class="nc" id="L200">    }</span>
+
+    protected long countProcessInstances(RuntimeService runtimeService, EventInstance eventInstance,
+            CorrelationKey correlationKey, ProcessDefinition processDefinition) {
+
+<span class="nc" id="L205">        ProcessInstanceQuery processInstanceQuery = runtimeService.createProcessInstanceQuery()</span>
+<span class="nc" id="L206">                .processDefinitionKey(processDefinition.getKey())</span>
+<span class="nc" id="L207">                .processInstanceReferenceId(correlationKey.getValue())</span>
+<span class="nc" id="L208">                .processInstanceReferenceType(ReferenceTypes.EVENT_PROCESS);</span>
+
+<span class="nc bnc" id="L210" title="All 4 branches missed.">        if (eventInstance.getTenantId() != null &amp;&amp; !Objects.equals(ProcessEngineConfiguration.NO_TENANT_ID, eventInstance.getTenantId())) {</span>
+<span class="nc" id="L211">            processInstanceQuery.processInstanceTenantId(eventInstance.getTenantId());</span>
+        }
+
+<span class="nc" id="L214">        return processInstanceQuery.count();</span>
+    }
+
+    protected void startProcessInstance(RuntimeService runtimeService, EventSubscription eventSubscription, EventInstance eventInstance,
+            CorrelationKey correlationKey) {
+<span class="nc" id="L219">        ProcessInstanceBuilder processInstanceBuilder = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L220">                .processDefinitionId(eventSubscription.getProcessDefinitionId())</span>
+<span class="nc" id="L221">                .transientVariable(EventConstants.EVENT_INSTANCE, eventInstance);</span>
+
+<span class="nc bnc" id="L223" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(eventSubscription.getActivityId())) {</span>
+<span class="nc" id="L224">            processInstanceBuilder.startEventId(eventSubscription.getActivityId());</span>
+        }
+
+<span class="nc bnc" id="L227" title="All 4 branches missed.">        if (eventInstance.getTenantId() != null &amp;&amp; !Objects.equals(ProcessEngineConfiguration.NO_TENANT_ID, eventInstance.getTenantId())) {</span>
+<span class="nc" id="L228">            processInstanceBuilder.overrideProcessDefinitionTenantId(eventInstance.getTenantId());</span>
+        }
+
+<span class="nc bnc" id="L231" title="All 2 branches missed.">        if (correlationKey != null) {</span>
+<span class="nc" id="L232">            processInstanceBuilder</span>
+<span class="nc" id="L233">                    .referenceId(correlationKey.getValue())</span>
+<span class="nc" id="L234">                    .referenceType(ReferenceTypes.EVENT_PROCESS);</span>
+        }
+
+<span class="nc" id="L237">        boolean debugLoggingEnabled = LOGGER.isDebugEnabled();</span>
+<span class="nc bnc" id="L238" title="All 2 branches missed.">        if (processEngineConfiguration.isEventRegistryStartProcessInstanceAsync()) {</span>
+<span class="nc bnc" id="L239" title="All 2 branches missed.">            if (debugLoggingEnabled) {</span>
+<span class="nc" id="L240">                LOGGER.debug(&quot;Async starting process instance for {} with {}&quot;, eventSubscription, eventInstance);</span>
+            }
+
+<span class="nc" id="L243">            ProcessInstance processInstance = processInstanceBuilder.startAsync();</span>
+
+<span class="nc bnc" id="L245" title="All 2 branches missed.">            if (debugLoggingEnabled) {</span>
+<span class="nc" id="L246">                LOGGER.debug(&quot;Started {} async for {} with {}&quot;, processInstance, eventSubscription, eventInstance);</span>
+            }
+<span class="nc" id="L248">        } else {</span>
+<span class="nc bnc" id="L249" title="All 2 branches missed.">            if (debugLoggingEnabled) {</span>
+<span class="nc" id="L250">                LOGGER.debug(&quot;Starting process instance for {} with {}&quot;, eventSubscription, eventInstance);</span>
+            }
+
+<span class="nc" id="L253">            ProcessInstance processInstance = processInstanceBuilder.start();</span>
+
+<span class="nc bnc" id="L255" title="All 2 branches missed.">            if (debugLoggingEnabled) {</span>
+<span class="nc" id="L256">                LOGGER.debug(&quot;Started {} for {} with {}&quot;, processInstance, eventSubscription, eventInstance);</span>
+            }
+        }
+<span class="nc" id="L259">    }</span>
+
+    protected String getStartCorrelationConfiguration(EventSubscription eventSubscription) {
+<span class="nc" id="L262">        BpmnModel bpmnModel = processEngineConfiguration.getRepositoryService().getBpmnModel(eventSubscription.getProcessDefinitionId());</span>
+<span class="nc bnc" id="L263" title="All 2 branches missed.">        if (bpmnModel != null) {</span>
+
+            // There are potentially multiple start events, with different configurations.
+            // The one that has the matching eventType needs to be used
+
+<span class="nc" id="L268">            List&lt;StartEvent&gt; startEvents = bpmnModel.getMainProcess().findFlowElementsOfType(StartEvent.class);</span>
+<span class="nc bnc" id="L269" title="All 2 branches missed.">            for (StartEvent startEvent : startEvents) {</span>
+<span class="nc" id="L270">                List&lt;ExtensionElement&gt; eventTypes = startEvent.getExtensionElements().get(BpmnXMLConstants.ELEMENT_EVENT_TYPE);</span>
+<span class="nc bnc" id="L271" title="All 4 branches missed.">                if (eventTypes != null &amp;&amp; !eventTypes.isEmpty()</span>
+<span class="nc bnc" id="L272" title="All 2 branches missed.">                        &amp;&amp; Objects.equals(eventSubscription.getEventType(), eventTypes.get(0).getElementText())) {</span>
+
+<span class="nc" id="L274">                    List&lt;ExtensionElement&gt; correlationCfgExtensions = startEvent.getExtensionElements()</span>
+<span class="nc" id="L275">                            .getOrDefault(BpmnXMLConstants.START_EVENT_CORRELATION_CONFIGURATION, Collections.emptyList());</span>
+<span class="nc bnc" id="L276" title="All 2 branches missed.">                    if (!correlationCfgExtensions.isEmpty()) {</span>
+<span class="nc" id="L277">                        return correlationCfgExtensions.get(0).getElementText();</span>
+                    }
+                }
+<span class="nc" id="L280">            }</span>
+
+        }
+
+<span class="nc" id="L284">        return null;</span>
+    }
+
+    @Override
+    protected EventSubscriptionQuery createEventSubscriptionQuery() {
+<span class="nc" id="L289">        return new EventSubscriptionQueryImpl(commandExecutor, processEngineConfiguration.getEventSubscriptionServiceConfiguration());</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

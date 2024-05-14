@@ -1,0 +1,200 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MultiSchemaMultiTenantProcessEngineConfiguration.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.cfg.multitenant</a> &gt; <span class="el_source">MultiSchemaMultiTenantProcessEngineConfiguration.java</span></div><h1>MultiSchemaMultiTenantProcessEngineConfiguration.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.impl.cfg.multitenant;
+
+import java.util.concurrent.ExecutorService;
+
+import javax.sql.DataSource;
+
+import org.flowable.common.engine.impl.cfg.multitenant.TenantAwareDataSource;
+import org.flowable.common.engine.impl.cfg.multitenant.TenantInfoHolder;
+import org.flowable.common.engine.impl.interceptor.Command;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.common.engine.impl.interceptor.CommandInterceptor;
+import org.flowable.common.engine.impl.persistence.StrongUuidGenerator;
+import org.flowable.engine.ProcessEngine;
+import org.flowable.engine.ProcessEngineConfiguration;
+import org.flowable.engine.impl.SchemaOperationProcessEngineClose;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.cmd.ClearProcessInstanceLockTimesCmd;
+import org.flowable.engine.impl.db.DbIdGenerator;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.engine.repository.DeploymentBuilder;
+import org.flowable.job.service.impl.asyncexecutor.AsyncExecutor;
+import org.flowable.job.service.impl.asyncexecutor.multitenant.ExecutorPerTenantAsyncExecutor;
+import org.flowable.job.service.impl.asyncexecutor.multitenant.SharedExecutorServiceAsyncExecutor;
+import org.flowable.job.service.impl.asyncexecutor.multitenant.TenantAwareAsyncExecutor;
+
+/**
+ * A {@link ProcessEngineConfiguration} that builds a multi tenant {@link ProcessEngine} where each tenant has its own database schema.
+ * 
+ * If multitenancy is needed and no data isolation is needed: the default {@link ProcessEngineConfigurationImpl} of Flowable is multitenant enabled out of the box by setting a tenant identifier on a
+ * {@link DeploymentBuilder}.
+ * 
+ * This configuration has following characteristics:
+ * 
+ * - It needs a {@link TenantInfoHolder} to determine which tenant is currently 'active'. Ie for which tenant a certain API call is executed.
+ * 
+ * - The {@link StrongUuidGenerator} is used by default. The 'regular' {@link DbIdGenerator} cannot be used with this config.
+ * 
+ * - Adding tenants (also after boot!) is done using the {@link #registerTenant(String, DataSource)} operations.
+ * 
+ * - There are two different implementations: - The {@link ExecutorPerTenantAsyncExecutor}: creates one full {@link AsyncExecutor} for each tenant. - The {@link SharedExecutorServiceAsyncExecutor}: created acquisition threads for each tenant, but
+ * the job execution is done using a process engine shared {@link ExecutorService}. The {@link AsyncExecutor} needs to be injected using the {@link #setAsyncExecutor(AsyncExecutor)} method on this
+ * class.
+ * 
+ * databasetype
+ * 
+ * @author Joram Barrez
+ */
+public class MultiSchemaMultiTenantProcessEngineConfiguration extends ProcessEngineConfigurationImpl {
+
+    protected TenantInfoHolder tenantInfoHolder;
+    protected boolean booted;
+
+<span class="nc" id="L65">    public MultiSchemaMultiTenantProcessEngineConfiguration(TenantInfoHolder tenantInfoHolder) {</span>
+
+<span class="nc" id="L67">        this.tenantInfoHolder = tenantInfoHolder;</span>
+
+        // Using the UUID generator, as otherwise the ids are pulled from a global pool of ids, backed by
+        // a database table. Which is impossible with a multi-database-schema setup.
+
+        // Also: it avoids the need for having a process definition cache for each tenant
+
+<span class="nc" id="L74">        this.idGenerator = new StrongUuidGenerator();</span>
+
+<span class="nc" id="L76">        this.dataSource = new TenantAwareDataSource(tenantInfoHolder);</span>
+<span class="nc" id="L77">    }</span>
+
+    /**
+     * Add a new {@link DataSource} for a tenant, identified by the provided tenantId, to the engine. This can be done after the engine has booted up.
+     * 
+     * Note that the tenant identifier must have been added to the {@link TenantInfoHolder} *prior* to calling this method.
+     */
+    public void registerTenant(String tenantId, DataSource dataSource) {
+<span class="nc" id="L85">        ((TenantAwareDataSource) super.getDataSource()).addDataSource(tenantId, dataSource);</span>
+
+<span class="nc bnc" id="L87" title="All 2 branches missed.">        if (booted) {</span>
+<span class="nc" id="L88">            createTenantSchema(tenantId);</span>
+
+<span class="nc" id="L90">            createTenantAsyncJobExecutor(tenantId);</span>
+
+<span class="nc" id="L92">            tenantInfoHolder.setCurrentTenantId(tenantId);</span>
+<span class="nc" id="L93">            super.postProcessEngineInitialisation();</span>
+<span class="nc" id="L94">            tenantInfoHolder.clearCurrentTenantId();</span>
+        }
+<span class="nc" id="L96">    }</span>
+
+    @Override
+    public void initAsyncExecutor() {
+
+<span class="nc bnc" id="L101" title="All 2 branches missed.">        if (asyncExecutor == null) {</span>
+<span class="nc" id="L102">            asyncExecutor = new ExecutorPerTenantAsyncExecutor(tenantInfoHolder);</span>
+        }
+
+<span class="nc" id="L105">        super.initAsyncExecutor();</span>
+
+<span class="nc bnc" id="L107" title="All 2 branches missed.">        if (asyncExecutor instanceof TenantAwareAsyncExecutor) {</span>
+<span class="nc bnc" id="L108" title="All 2 branches missed.">            for (String tenantId : tenantInfoHolder.getAllTenants()) {</span>
+<span class="nc" id="L109">                ((TenantAwareAsyncExecutor) asyncExecutor).addTenantAsyncExecutor(tenantId, false); // false -&gt; will be started later with all the other executors</span>
+<span class="nc" id="L110">            }</span>
+        }
+<span class="nc" id="L112">    }</span>
+
+    @Override
+    public ProcessEngine buildProcessEngine() {
+
+        // Disable schema creation/validation by setting it to null.
+        // We'll do it manually, see buildProcessEngine() method (hence why it's copied first)
+<span class="nc" id="L119">        String originalDatabaseSchemaUpdate = this.databaseSchemaUpdate;</span>
+<span class="nc" id="L120">        this.databaseSchemaUpdate = null;</span>
+
+        // Also, we shouldn't start the async executor until *after* the schema's have been created
+<span class="nc" id="L123">        boolean originalIsAutoActivateAsyncExecutor = this.asyncExecutorActivate;</span>
+<span class="nc" id="L124">        this.asyncExecutorActivate = false;</span>
+
+<span class="nc" id="L126">        ProcessEngine processEngine = super.buildProcessEngine();</span>
+
+        // Reset to original values
+<span class="nc" id="L129">        this.databaseSchemaUpdate = originalDatabaseSchemaUpdate;</span>
+<span class="nc" id="L130">        this.asyncExecutorActivate = originalIsAutoActivateAsyncExecutor;</span>
+
+        // Create tenant schema
+<span class="nc bnc" id="L133" title="All 2 branches missed.">        for (String tenantId : tenantInfoHolder.getAllTenants()) {</span>
+<span class="nc" id="L134">            createTenantSchema(tenantId);</span>
+<span class="nc" id="L135">        }</span>
+
+        // Start async executor
+<span class="nc bnc" id="L138" title="All 4 branches missed.">        if (asyncExecutor != null &amp;&amp; originalIsAutoActivateAsyncExecutor) {</span>
+<span class="nc" id="L139">            asyncExecutor.start();</span>
+        }
+
+<span class="nc" id="L142">        booted = true;</span>
+<span class="nc" id="L143">        return processEngine;</span>
+    }
+
+    protected void createTenantSchema(String tenantId) {
+<span class="nc" id="L147">        logger.info(&quot;creating/validating database schema for tenant {}&quot;, tenantId);</span>
+<span class="nc" id="L148">        tenantInfoHolder.setCurrentTenantId(tenantId);</span>
+<span class="nc" id="L149">        getCommandExecutor().execute(getSchemaCommandConfig(), new ExecuteSchemaOperationCommand(databaseSchemaUpdate));</span>
+<span class="nc" id="L150">        tenantInfoHolder.clearCurrentTenantId();</span>
+<span class="nc" id="L151">    }</span>
+
+    protected void createTenantAsyncJobExecutor(String tenantId) {
+<span class="nc bnc" id="L154" title="All 4 branches missed.">        ((TenantAwareAsyncExecutor) asyncExecutor).addTenantAsyncExecutor(tenantId, isAsyncExecutorActivate() &amp;&amp; booted);</span>
+<span class="nc" id="L155">    }</span>
+
+    @Override
+    public CommandInterceptor createTransactionInterceptor() {
+<span class="nc" id="L159">        return null;</span>
+    }
+
+    @Override
+    protected void postProcessEngineInitialisation() {
+        // empty here. will be done in registerTenant
+<span class="nc" id="L165">    }</span>
+
+    @Override
+    public Runnable getProcessEngineCloseRunnable() {
+<span class="nc" id="L169">        return new Runnable() {</span>
+            @Override
+            public void run() {
+<span class="nc bnc" id="L172" title="All 2 branches missed.">                for (String tenantId : tenantInfoHolder.getAllTenants()) {</span>
+<span class="nc" id="L173">                    tenantInfoHolder.setCurrentTenantId(tenantId);</span>
+
+<span class="nc bnc" id="L175" title="All 2 branches missed.">                    if (asyncExecutor != null) {</span>
+<span class="nc" id="L176">                        commandExecutor.execute(new ClearProcessInstanceLockTimesCmd(asyncExecutor.getLockOwner()));</span>
+                    }
+
+<span class="nc" id="L179">                    commandExecutor.execute(getProcessEngineCloseCommand());</span>
+<span class="nc" id="L180">                    tenantInfoHolder.clearCurrentTenantId();</span>
+<span class="nc" id="L181">                }</span>
+<span class="nc" id="L182">            }</span>
+        };
+    }
+
+    public Command&lt;Void&gt; getProcessEngineCloseCommand() {
+<span class="nc" id="L187">        return new Command&lt;&gt;() {</span>
+            @Override
+            public Void execute(CommandContext commandContext) {
+<span class="nc" id="L190">                CommandContextUtil.getProcessEngineConfiguration(commandContext).getCommandExecutor().execute(new SchemaOperationProcessEngineClose());</span>
+<span class="nc" id="L191">                return null;</span>
+            }
+        };
+    }
+
+    public TenantInfoHolder getTenantInfoHolder() {
+<span class="nc" id="L197">        return tenantInfoHolder;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

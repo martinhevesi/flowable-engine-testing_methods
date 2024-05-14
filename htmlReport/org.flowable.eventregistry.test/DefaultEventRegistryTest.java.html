@@ -1,0 +1,504 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DefaultEventRegistryTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.eventregistry.test</a> &gt; <span class="el_source">DefaultEventRegistryTest.java</span></div><h1>DefaultEventRegistryTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.eventregistry.test;
+
+import static net.javacrumbs.jsonunit.assertj.JsonAssertions.assertThatJson;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
+
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.flowable.eventregistry.api.EventConsumerInfo;
+import org.flowable.eventregistry.api.EventDeployment;
+import org.flowable.eventregistry.api.EventRegistry;
+import org.flowable.eventregistry.api.EventRegistryEvent;
+import org.flowable.eventregistry.api.EventRegistryEventConsumer;
+import org.flowable.eventregistry.api.EventRegistryNonMatchingEventConsumer;
+import org.flowable.eventregistry.api.EventRegistryProcessingInfo;
+import org.flowable.eventregistry.api.InboundEventChannelAdapter;
+import org.flowable.eventregistry.api.InboundEventDeserializer;
+import org.flowable.eventregistry.api.InboundEventKeyDetector;
+import org.flowable.eventregistry.api.InboundEventPayloadExtractor;
+import org.flowable.eventregistry.api.model.EventPayloadTypes;
+import org.flowable.eventregistry.api.runtime.EventInstance;
+import org.flowable.eventregistry.api.runtime.EventPayloadInstance;
+import org.flowable.eventregistry.impl.DefaultInboundEventProcessor;
+import org.flowable.eventregistry.impl.event.FlowableEventRegistryEvent;
+import org.flowable.eventregistry.impl.pipeline.DefaultInboundEventProcessingPipeline;
+import org.flowable.eventregistry.impl.runtime.EventPayloadInstanceImpl;
+import org.flowable.eventregistry.model.EventModel;
+import org.flowable.eventregistry.model.EventPayload;
+import org.flowable.eventregistry.model.InboundChannelModel;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+import net.javacrumbs.jsonunit.core.Option;
+
+/**
+ * @author Joram Barrez
+ * @author Filip Hrisafov
+ */
+<span class="nc" id="L62">public class DefaultEventRegistryTest extends AbstractFlowableEventTest {</span>
+
+    protected TestEventConsumer testEventConsumer;
+
+    protected Map&lt;Object, Object&gt; initialBeans;
+
+    @BeforeEach
+    public void setup() {
+<span class="nc" id="L70">        testEventConsumer = new TestEventConsumer();</span>
+<span class="nc" id="L71">        initialBeans = eventEngineConfiguration.getExpressionManager().getBeans();</span>
+<span class="nc" id="L72">        eventEngineConfiguration.getExpressionManager().setBeans(new HashMap&lt;&gt;());</span>
+
+<span class="nc" id="L74">        EventRegistry eventRegistry = eventEngineConfiguration.getEventRegistry();</span>
+<span class="nc" id="L75">        eventRegistry.registerEventRegistryEventConsumer(this.testEventConsumer);</span>
+<span class="nc" id="L76">        eventRegistry.setInboundEventProcessor(new DefaultInboundEventProcessor(eventRegistry));</span>
+<span class="nc" id="L77">    }</span>
+
+    @AfterEach
+    public void tearDown() {
+<span class="nc" id="L81">        eventEngineConfiguration.getExpressionManager().setBeans(initialBeans);</span>
+<span class="nc" id="L82">        List&lt;EventDeployment&gt; eventDeployments = repositoryService.createDeploymentQuery().list();</span>
+<span class="nc bnc" id="L83" title="All 2 branches missed.">        for (EventDeployment eventDeployment : eventDeployments) {</span>
+<span class="nc" id="L84">            repositoryService.deleteDeployment(eventDeployment.getId());</span>
+<span class="nc" id="L85">        }</span>
+<span class="nc" id="L86">    }</span>
+
+    @Test
+    public void testPropertiesPassedToChannelAdapter() {
+<span class="nc" id="L90">        TestInboundEventChannelAdapter inboundEventChannelAdapter = setupTestChannel();</span>
+<span class="nc" id="L91">        assertThat(inboundEventChannelAdapter.inboundChannelModel.getKey()).isEqualTo(&quot;test-channel&quot;);</span>
+<span class="nc" id="L92">        assertThat(inboundEventChannelAdapter.eventRegistry).isEqualTo(eventEngineConfiguration.getEventRegistry());</span>
+<span class="nc" id="L93">    }</span>
+
+    @Test
+    public void testDefaultInboundEventPipeline() {
+<span class="nc" id="L97">        TestInboundEventChannelAdapter inboundEventChannelAdapter = setupTestChannel();</span>
+
+<span class="nc" id="L99">        repositoryService.createEventModelBuilder()</span>
+<span class="nc" id="L100">                .key(&quot;myEvent&quot;)</span>
+<span class="nc" id="L101">                .resourceName(&quot;myEvent.event&quot;)</span>
+<span class="nc" id="L102">                .correlationParameter(&quot;customerId&quot;, EventPayloadTypes.STRING)</span>
+<span class="nc" id="L103">                .payload(&quot;payload1&quot;, EventPayloadTypes.STRING)</span>
+<span class="nc" id="L104">                .payload(&quot;payload2&quot;, EventPayloadTypes.INTEGER)</span>
+<span class="nc" id="L105">                .deploy();</span>
+
+<span class="nc" id="L107">        inboundEventChannelAdapter.triggerTestEvent();</span>
+
+<span class="nc" id="L109">        assertThat(testEventConsumer.eventsReceived).hasSize(1);</span>
+<span class="nc" id="L110">        FlowableEventRegistryEvent eventRegistryEvent = (FlowableEventRegistryEvent) testEventConsumer.eventsReceived.get(0);</span>
+
+<span class="nc" id="L112">        EventInstance eventInstance = eventRegistryEvent.getEventInstance();</span>
+<span class="nc" id="L113">        assertThat(eventInstance.getEventKey()).isEqualTo(&quot;myEvent&quot;);</span>
+
+<span class="nc" id="L115">        assertThat(eventInstance.getCorrelationParameterInstances())</span>
+<span class="nc" id="L116">                .extracting(EventPayloadInstance::getValue)</span>
+<span class="nc" id="L117">                .containsOnly(&quot;test&quot;);</span>
+<span class="nc" id="L118">        assertThat(eventInstance.getPayloadInstances())</span>
+<span class="nc" id="L119">                .extracting(EventPayloadInstance::getDefinitionName, EventPayloadInstance::getDefinitionType, EventPayloadInstance::getValue)</span>
+<span class="nc" id="L120">                .containsOnly(</span>
+<span class="nc" id="L121">                        tuple(&quot;customerId&quot;, EventPayloadTypes.STRING, &quot;test&quot;),</span>
+<span class="nc" id="L122">                        tuple(&quot;payload1&quot;, EventPayloadTypes.STRING, &quot;Hello World&quot;),</span>
+<span class="nc" id="L123">                        tuple(&quot;payload2&quot;, EventPayloadTypes.INTEGER, 123)</span>
+                );
+<span class="nc" id="L125">    }</span>
+    
+    @Test
+    public void testFullPayloadPropertyName() {
+<span class="nc" id="L129">        TestInboundEventChannelAdapter inboundEventChannelAdapter = setupTestChannel();</span>
+
+<span class="nc" id="L131">        repositoryService.createEventModelBuilder()</span>
+<span class="nc" id="L132">                .key(&quot;myEvent&quot;)</span>
+<span class="nc" id="L133">                .resourceName(&quot;myEvent.event&quot;)</span>
+<span class="nc" id="L134">                .fullPayload(&quot;fullPayload&quot;)</span>
+<span class="nc" id="L135">                .deploy();</span>
+
+<span class="nc" id="L137">        inboundEventChannelAdapter.triggerTestEvent();</span>
+
+<span class="nc" id="L139">        assertThat(testEventConsumer.eventsReceived).hasSize(1);</span>
+<span class="nc" id="L140">        FlowableEventRegistryEvent eventRegistryEvent = (FlowableEventRegistryEvent) testEventConsumer.eventsReceived.get(0);</span>
+
+<span class="nc" id="L142">        EventInstance eventInstance = eventRegistryEvent.getEventInstance();</span>
+<span class="nc" id="L143">        assertThat(eventInstance.getEventKey()).isEqualTo(&quot;myEvent&quot;);</span>
+
+<span class="nc" id="L145">        assertThat(eventInstance.getPayloadInstances()).hasSize(1);</span>
+<span class="nc" id="L146">        EventPayloadInstance payloadInstance = eventInstance.getPayloadInstances().iterator().next();</span>
+<span class="nc" id="L147">        assertThatJson(payloadInstance.getValue())</span>
+<span class="nc" id="L148">            .when(Option.IGNORING_EXTRA_FIELDS)</span>
+<span class="nc" id="L149">            .isEqualTo(&quot;{&quot;</span>
+                    + &quot;    type: 'myEvent',&quot;
+                    + &quot;    customerId: 'test',&quot;
+                    + &quot;    payload1: 'Hello World',&quot;
+                    + &quot;    payload2: 123&quot;
+                    + &quot;}&quot;);
+<span class="nc" id="L155">    }</span>
+    
+    @Test
+    public void testFullPayloadPropertyNameWithCorrelationAndPayload() {
+<span class="nc" id="L159">        TestInboundEventChannelAdapter inboundEventChannelAdapter = setupTestChannel();</span>
+
+<span class="nc" id="L161">        repositoryService.createEventModelBuilder()</span>
+<span class="nc" id="L162">                .key(&quot;myEvent&quot;)</span>
+<span class="nc" id="L163">                .resourceName(&quot;myEvent.event&quot;)</span>
+<span class="nc" id="L164">                .correlationParameter(&quot;customerId&quot;, EventPayloadTypes.STRING)</span>
+<span class="nc" id="L165">                .payload(&quot;payload1&quot;, EventPayloadTypes.STRING)</span>
+<span class="nc" id="L166">                .fullPayload(&quot;fullPayload&quot;)</span>
+<span class="nc" id="L167">                .deploy();</span>
+
+<span class="nc" id="L169">        inboundEventChannelAdapter.triggerTestEvent();</span>
+
+<span class="nc" id="L171">        assertThat(testEventConsumer.eventsReceived).hasSize(1);</span>
+<span class="nc" id="L172">        FlowableEventRegistryEvent eventRegistryEvent = (FlowableEventRegistryEvent) testEventConsumer.eventsReceived.get(0);</span>
+
+<span class="nc" id="L174">        EventInstance eventInstance = eventRegistryEvent.getEventInstance();</span>
+<span class="nc" id="L175">        assertThat(eventInstance.getEventKey()).isEqualTo(&quot;myEvent&quot;);</span>
+
+<span class="nc" id="L177">        assertThat(eventInstance.getCorrelationParameterInstances())</span>
+<span class="nc" id="L178">            .extracting(EventPayloadInstance::getValue)</span>
+<span class="nc" id="L179">            .containsOnly(&quot;test&quot;);</span>
+<span class="nc" id="L180">        assertThat(eventInstance.getPayloadInstances())</span>
+<span class="nc" id="L181">            .extracting(EventPayloadInstance::getDefinitionName, EventPayloadInstance::getDefinitionType, EventPayloadInstance::getValue)</span>
+<span class="nc" id="L182">            .contains(</span>
+<span class="nc" id="L183">                    tuple(&quot;customerId&quot;, EventPayloadTypes.STRING, &quot;test&quot;),</span>
+<span class="nc" id="L184">                    tuple(&quot;payload1&quot;, EventPayloadTypes.STRING, &quot;Hello World&quot;)</span>
+            );
+        
+<span class="nc" id="L187">        EventPayloadInstance payloadInstance = null;</span>
+        
+<span class="nc bnc" id="L189" title="All 2 branches missed.">        for (EventPayloadInstance eventPayloadInstance : eventInstance.getPayloadInstances()) {</span>
+<span class="nc bnc" id="L190" title="All 2 branches missed.">            if (&quot;fullPayload&quot;.equalsIgnoreCase(eventPayloadInstance.getDefinitionName())) {</span>
+<span class="nc" id="L191">                payloadInstance = eventPayloadInstance;</span>
+            }
+<span class="nc" id="L193">        }</span>
+        
+<span class="nc" id="L195">        assertThat(payloadInstance).isNotNull();</span>
+<span class="nc" id="L196">        assertThatJson(payloadInstance.getValue())</span>
+<span class="nc" id="L197">            .when(Option.IGNORING_EXTRA_FIELDS)</span>
+<span class="nc" id="L198">            .isEqualTo(&quot;{&quot;</span>
+                    + &quot;    type: 'myEvent',&quot;
+                    + &quot;    customerId: 'test',&quot;
+                    + &quot;    payload1: 'Hello World',&quot;
+                    + &quot;    payload2: 123&quot;
+                    + &quot;}&quot;);
+<span class="nc" id="L204">    }</span>
+
+    @Test
+    public void testDefaultInboundEventPipelineWithCustomDeserializerAndExtractor() {
+<span class="nc" id="L208">        TestInboundEventChannelAdapter inboundEventChannelAdapter = setupTestChannelWithCustomDeserializer();</span>
+
+<span class="nc" id="L210">        repositoryService.createEventModelBuilder()</span>
+<span class="nc" id="L211">                .key(&quot;myEvent&quot;)</span>
+<span class="nc" id="L212">                .resourceName(&quot;myEvent.event&quot;)</span>
+<span class="nc" id="L213">                .correlationParameter(&quot;customerId&quot;, EventPayloadTypes.STRING)</span>
+<span class="nc" id="L214">                .payload(&quot;payload1&quot;, EventPayloadTypes.STRING)</span>
+<span class="nc" id="L215">                .payload(&quot;payload2&quot;, EventPayloadTypes.INTEGER)</span>
+<span class="nc" id="L216">                .deploy();</span>
+
+<span class="nc" id="L218">        inboundEventChannelAdapter.triggerTestEvent();</span>
+
+<span class="nc" id="L220">        assertThat(testEventConsumer.eventsReceived).hasSize(1);</span>
+<span class="nc" id="L221">        FlowableEventRegistryEvent eventRegistryEvent = (FlowableEventRegistryEvent) testEventConsumer.eventsReceived.get(0);</span>
+
+<span class="nc" id="L223">        EventInstance eventInstance = eventRegistryEvent.getEventInstance();</span>
+<span class="nc" id="L224">        assertThat(eventInstance.getEventKey()).isEqualTo(&quot;myEvent&quot;);</span>
+
+<span class="nc" id="L226">        assertThat(eventInstance.getCorrelationParameterInstances())</span>
+<span class="nc" id="L227">                .extracting(EventPayloadInstance::getValue)</span>
+<span class="nc" id="L228">                .containsOnly(&quot;test&quot;);</span>
+<span class="nc" id="L229">        assertThat(eventInstance.getPayloadInstances())</span>
+<span class="nc" id="L230">                .extracting(p -&gt; p.getEventPayloadDefinition().getName(), p -&gt; p.getEventPayloadDefinition().getType(), EventPayloadInstance::getValue)</span>
+<span class="nc" id="L231">                .containsOnly(</span>
+<span class="nc" id="L232">                        tuple(&quot;customerId&quot;, EventPayloadTypes.STRING, &quot;test&quot;),</span>
+<span class="nc" id="L233">                        tuple(&quot;payload1&quot;, EventPayloadTypes.STRING, &quot;Hello World&quot;),</span>
+<span class="nc" id="L234">                        tuple(&quot;payload2&quot;, EventPayloadTypes.INTEGER, 123)</span>
+                );
+<span class="nc" id="L236">    }</span>
+    
+    @Test
+    public void testMissingEventConsumer() {
+<span class="nc" id="L240">        eventEngineConfiguration.getEventRegistryEventConsumers().remove(testEventConsumer.getConsumerKey());</span>
+<span class="nc" id="L241">        TestNonMatchingEventConsumer testNonMatchingEventConsumer = new TestNonMatchingEventConsumer();</span>
+<span class="nc" id="L242">        eventEngineConfiguration.setNonMatchingEventConsumer(testNonMatchingEventConsumer);</span>
+        try {
+<span class="nc" id="L244">            TestInboundEventChannelAdapter inboundEventChannelAdapter = setupTestChannel();</span>
+    
+<span class="nc" id="L246">            repositoryService.createEventModelBuilder()</span>
+<span class="nc" id="L247">                    .key(&quot;myEvent&quot;)</span>
+<span class="nc" id="L248">                    .resourceName(&quot;myEvent.event&quot;)</span>
+<span class="nc" id="L249">                    .correlationParameter(&quot;customerId&quot;, EventPayloadTypes.STRING)</span>
+<span class="nc" id="L250">                    .payload(&quot;payload1&quot;, EventPayloadTypes.STRING)</span>
+<span class="nc" id="L251">                    .payload(&quot;payload2&quot;, EventPayloadTypes.INTEGER)</span>
+<span class="nc" id="L252">                    .deploy();</span>
+    
+<span class="nc" id="L254">            inboundEventChannelAdapter.triggerTestEvent();</span>
+    
+<span class="nc" id="L256">            assertThat(testNonMatchingEventConsumer.eventsReceived).hasSize(1);</span>
+<span class="nc" id="L257">            FlowableEventRegistryEvent eventRegistryEvent = (FlowableEventRegistryEvent) testNonMatchingEventConsumer.eventsReceived.get(0);</span>
+    
+<span class="nc" id="L259">            EventInstance eventInstance = eventRegistryEvent.getEventInstance();</span>
+<span class="nc" id="L260">            assertThat(eventInstance.getEventKey()).isEqualTo(&quot;myEvent&quot;);</span>
+    
+<span class="nc" id="L262">            assertThat(eventInstance.getCorrelationParameterInstances())</span>
+<span class="nc" id="L263">                    .extracting(EventPayloadInstance::getValue)</span>
+<span class="nc" id="L264">                    .containsOnly(&quot;test&quot;);</span>
+<span class="nc" id="L265">            assertThat(eventInstance.getPayloadInstances())</span>
+<span class="nc" id="L266">                    .extracting(EventPayloadInstance::getDefinitionName, EventPayloadInstance::getDefinitionType, EventPayloadInstance::getValue)</span>
+<span class="nc" id="L267">                    .containsOnly(</span>
+<span class="nc" id="L268">                            tuple(&quot;customerId&quot;, EventPayloadTypes.STRING, &quot;test&quot;),</span>
+<span class="nc" id="L269">                            tuple(&quot;payload1&quot;, EventPayloadTypes.STRING, &quot;Hello World&quot;),</span>
+<span class="nc" id="L270">                            tuple(&quot;payload2&quot;, EventPayloadTypes.INTEGER, 123)</span>
+                    );
+            
+        } finally {
+<span class="nc" id="L274">            eventEngineConfiguration.setNonMatchingEventConsumer(null);</span>
+        }
+<span class="nc" id="L276">    }</span>
+    
+    @Test
+    public void testMissingEventConsumerNotCalled() {
+<span class="nc" id="L280">        TestNonMatchingEventConsumer testNonMatchingEventConsumer = new TestNonMatchingEventConsumer();</span>
+<span class="nc" id="L281">        eventEngineConfiguration.setNonMatchingEventConsumer(testNonMatchingEventConsumer);</span>
+        try {
+<span class="nc" id="L283">            TestInboundEventChannelAdapter inboundEventChannelAdapter = setupTestChannel();</span>
+    
+<span class="nc" id="L285">            repositoryService.createEventModelBuilder()</span>
+<span class="nc" id="L286">                    .key(&quot;myEvent&quot;)</span>
+<span class="nc" id="L287">                    .resourceName(&quot;myEvent.event&quot;)</span>
+<span class="nc" id="L288">                    .correlationParameter(&quot;customerId&quot;, EventPayloadTypes.STRING)</span>
+<span class="nc" id="L289">                    .payload(&quot;payload1&quot;, EventPayloadTypes.STRING)</span>
+<span class="nc" id="L290">                    .payload(&quot;payload2&quot;, EventPayloadTypes.INTEGER)</span>
+<span class="nc" id="L291">                    .deploy();</span>
+    
+<span class="nc" id="L293">            inboundEventChannelAdapter.triggerTestEvent();</span>
+    
+<span class="nc" id="L295">            assertThat(testNonMatchingEventConsumer.eventsReceived).hasSize(0);</span>
+<span class="nc" id="L296">            assertThat(testEventConsumer.eventsReceived).hasSize(1);</span>
+<span class="nc" id="L297">            FlowableEventRegistryEvent eventRegistryEvent = (FlowableEventRegistryEvent) testEventConsumer.eventsReceived.get(0);</span>
+    
+<span class="nc" id="L299">            EventInstance eventInstance = eventRegistryEvent.getEventInstance();</span>
+<span class="nc" id="L300">            assertThat(eventInstance.getEventKey()).isEqualTo(&quot;myEvent&quot;);</span>
+    
+<span class="nc" id="L302">            assertThat(eventInstance.getCorrelationParameterInstances())</span>
+<span class="nc" id="L303">                    .extracting(EventPayloadInstance::getValue)</span>
+<span class="nc" id="L304">                    .containsOnly(&quot;test&quot;);</span>
+<span class="nc" id="L305">            assertThat(eventInstance.getPayloadInstances())</span>
+<span class="nc" id="L306">                    .extracting(EventPayloadInstance::getDefinitionName, EventPayloadInstance::getDefinitionType, EventPayloadInstance::getValue)</span>
+<span class="nc" id="L307">                    .containsOnly(</span>
+<span class="nc" id="L308">                            tuple(&quot;customerId&quot;, EventPayloadTypes.STRING, &quot;test&quot;),</span>
+<span class="nc" id="L309">                            tuple(&quot;payload1&quot;, EventPayloadTypes.STRING, &quot;Hello World&quot;),</span>
+<span class="nc" id="L310">                            tuple(&quot;payload2&quot;, EventPayloadTypes.INTEGER, 123)</span>
+                    );
+            
+        } finally {
+<span class="nc" id="L314">            eventEngineConfiguration.setNonMatchingEventConsumer(null);</span>
+        }
+<span class="nc" id="L316">    }</span>
+
+    protected TestInboundEventChannelAdapter setupTestChannel() {
+<span class="nc" id="L319">        TestInboundEventChannelAdapter inboundEventChannelAdapter = new TestInboundEventChannelAdapter();</span>
+<span class="nc" id="L320">        eventEngineConfiguration.getExpressionManager().getBeans()</span>
+<span class="nc" id="L321">                .put(&quot;inboundEventChannelAdapter&quot;, inboundEventChannelAdapter);</span>
+
+<span class="nc" id="L323">        eventEngineConfiguration.getEventRepositoryService().createInboundChannelModelBuilder()</span>
+<span class="nc" id="L324">                .key(&quot;test-channel&quot;)</span>
+<span class="nc" id="L325">                .resourceName(&quot;test.channel&quot;)</span>
+<span class="nc" id="L326">                .channelAdapter(&quot;${inboundEventChannelAdapter}&quot;)</span>
+<span class="nc" id="L327">                .jsonDeserializer()</span>
+<span class="nc" id="L328">                .detectEventKeyUsingJsonField(&quot;type&quot;)</span>
+<span class="nc" id="L329">                .jsonFieldsMapDirectlyToPayload()</span>
+<span class="nc" id="L330">                .deploy();</span>
+
+<span class="nc" id="L332">        return inboundEventChannelAdapter;</span>
+    }
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    protected TestInboundEventChannelAdapter setupTestChannelWithCustomDeserializer() {
+<span class="nc" id="L337">        eventEngineConfiguration.getEventRepositoryService().createInboundChannelModelBuilder()</span>
+<span class="nc" id="L338">                .key(&quot;test-channel&quot;)</span>
+<span class="nc" id="L339">                .resourceName(&quot;test.channel&quot;)</span>
+<span class="nc" id="L340">                .jmsChannelAdapter(&quot;test&quot;)</span>
+<span class="nc" id="L341">                .eventProcessingPipeline()</span>
+<span class="nc" id="L342">                .jsonDeserializer()</span>
+<span class="nc" id="L343">                .fixedEventKey(&quot;test&quot;)</span>
+<span class="nc" id="L344">                .jsonFieldsMapDirectlyToPayload()</span>
+<span class="nc" id="L345">                .deploy();</span>
+
+<span class="nc" id="L347">        TestInboundEventChannelAdapter inboundEventChannelAdapter = new TestInboundEventChannelAdapter();</span>
+<span class="nc" id="L348">        InboundChannelModel inboundChannelModel = (InboundChannelModel) eventEngineConfiguration.getEventRepositoryService()</span>
+<span class="nc" id="L349">                .getChannelModelByKey(&quot;test-channel&quot;);</span>
+<span class="nc" id="L350">        DefaultInboundEventProcessingPipeline&lt;Customer&gt; inboundEventProcessingPipeline = (DefaultInboundEventProcessingPipeline&lt;Customer&gt;) inboundChannelModel</span>
+<span class="nc" id="L351">                .getInboundEventProcessingPipeline();</span>
+<span class="nc" id="L352">        inboundEventProcessingPipeline.setInboundEventDeserializer(new InboundEventDeserializer&lt;&gt;() {</span>
+
+            @Override
+            public Customer deserialize(Object rawEvent) {
+                try {
+<span class="nc" id="L357">                    return new ObjectMapper().readValue(rawEvent.toString(), Customer.class);</span>
+<span class="nc" id="L358">                } catch (IOException e) {</span>
+<span class="nc" id="L359">                    throw new UncheckedIOException(e);</span>
+                }
+            }
+
+        });
+
+<span class="nc" id="L365">        inboundEventProcessingPipeline.setInboundEventKeyDetector(new InboundEventKeyDetector&lt;&gt;() {</span>
+
+            @Override
+            public String detectEventDefinitionKey(Customer payload) {
+<span class="nc" id="L369">                return payload.getType();</span>
+            }
+        });
+        
+<span class="nc" id="L373">        inboundEventProcessingPipeline.setInboundEventPayloadExtractor(new InboundEventPayloadExtractor&lt;&gt;() {</span>
+
+            @Override
+            public Collection&lt;EventPayloadInstance&gt; extractPayload(EventModel eventModel, Customer customer) {
+<span class="nc" id="L377">                Collection&lt;EventPayloadInstance&gt; payloadInstances = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L378" title="All 2 branches missed.">                for (EventPayload eventPayloadDefinition : eventModel.getPayload()) {</span>
+<span class="nc bnc" id="L379" title="All 4 branches missed.">                    switch (eventPayloadDefinition.getName()) {</span>
+                        case &quot;payload1&quot;:
+<span class="nc" id="L381">                            payloadInstances.add(new EventPayloadInstanceImpl(eventPayloadDefinition, customer.getPayload1()));</span>
+<span class="nc" id="L382">                            break;</span>
+                        case &quot;payload2&quot;:
+<span class="nc" id="L384">                            payloadInstances.add(new EventPayloadInstanceImpl(eventPayloadDefinition, customer.getPayload2()));</span>
+<span class="nc" id="L385">                            break;</span>
+                        case &quot;customerId&quot;:
+<span class="nc" id="L387">                            payloadInstances.add(new EventPayloadInstanceImpl(eventPayloadDefinition, customer.getCustomerId()));</span>
+                            break;
+                    }
+<span class="nc" id="L390">                }</span>
+
+<span class="nc" id="L392">                return payloadInstances;</span>
+            }
+        });
+
+<span class="nc" id="L396">        inboundEventChannelAdapter.setInboundChannelModel(inboundChannelModel);</span>
+<span class="nc" id="L397">        inboundEventChannelAdapter.setEventRegistry(eventEngineConfiguration.getEventRegistry());</span>
+
+<span class="nc" id="L399">        return inboundEventChannelAdapter;</span>
+    }
+
+<span class="nc" id="L402">    private static class TestEventConsumer implements EventRegistryEventConsumer {</span>
+
+<span class="nc" id="L404">        public List&lt;EventRegistryEvent&gt; eventsReceived = new ArrayList&lt;&gt;();</span>
+
+        @Override
+        public String getConsumerKey() {
+<span class="nc" id="L408">            return &quot;myTestEventConsumer&quot;;</span>
+        }
+
+        @Override
+        public EventRegistryProcessingInfo eventReceived(EventRegistryEvent event) {
+<span class="nc" id="L413">            eventsReceived.add(event);</span>
+<span class="nc" id="L414">            EventRegistryProcessingInfo eventRegistryProcessingInfo = new EventRegistryProcessingInfo();</span>
+<span class="nc" id="L415">            eventRegistryProcessingInfo.addEventConsumerInfo(new EventConsumerInfo());</span>
+<span class="nc" id="L416">            return eventRegistryProcessingInfo;</span>
+        }
+
+    }
+
+    private static class TestInboundEventChannelAdapter implements InboundEventChannelAdapter {
+
+        public InboundChannelModel inboundChannelModel;
+        public EventRegistry eventRegistry;
+
+        @Override
+        public void setInboundChannelModel(InboundChannelModel inboundChannelModel) {
+<span class="nc" id="L428">            this.inboundChannelModel = inboundChannelModel;</span>
+<span class="nc" id="L429">        }</span>
+
+        @Override
+        public void setEventRegistry(EventRegistry eventRegistry) {
+<span class="nc" id="L433">            this.eventRegistry = eventRegistry;</span>
+<span class="nc" id="L434">        }</span>
+
+        public void triggerTestEvent() {
+<span class="nc" id="L437">            ObjectMapper objectMapper = new ObjectMapper();</span>
+
+<span class="nc" id="L439">            ObjectNode json = objectMapper.createObjectNode();</span>
+<span class="nc" id="L440">            json.put(&quot;type&quot;, &quot;myEvent&quot;);</span>
+<span class="nc" id="L441">            json.put(&quot;customerId&quot;, &quot;test&quot;);</span>
+<span class="nc" id="L442">            json.put(&quot;payload1&quot;, &quot;Hello World&quot;);</span>
+<span class="nc" id="L443">            json.put(&quot;payload2&quot;, 123);</span>
+            try {
+<span class="nc" id="L445">                eventRegistry.eventReceived(inboundChannelModel, objectMapper.writeValueAsString(json));</span>
+<span class="nc" id="L446">            } catch (JsonProcessingException e) {</span>
+<span class="nc" id="L447">                throw new RuntimeException(e);</span>
+<span class="nc" id="L448">            }</span>
+<span class="nc" id="L449">        }</span>
+    }
+    
+<span class="nc" id="L452">    private static class TestNonMatchingEventConsumer implements EventRegistryNonMatchingEventConsumer {</span>
+
+<span class="nc" id="L454">        public List&lt;EventRegistryEvent&gt; eventsReceived = new ArrayList&lt;&gt;();</span>
+
+        @Override
+        public void handleNonMatchingEvent(EventRegistryEvent event, EventRegistryProcessingInfo eventRegistryProcessingInfo) {
+<span class="nc" id="L458">            eventsReceived.add(event);</span>
+<span class="nc" id="L459">        }</span>
+
+    }
+
+    private static class Customer {
+
+        protected String type;
+        protected String customerId;
+        protected String payload1;
+        protected Integer payload2;
+
+        public String getType() {
+<span class="nc" id="L471">            return type;</span>
+        }
+
+        public void setType(String type) {
+<span class="nc" id="L475">            this.type = type;</span>
+<span class="nc" id="L476">        }</span>
+
+        public String getCustomerId() {
+<span class="nc" id="L479">            return customerId;</span>
+        }
+
+        public void setCustomerId(String customerId) {
+<span class="nc" id="L483">            this.customerId = customerId;</span>
+<span class="nc" id="L484">        }</span>
+
+        public String getPayload1() {
+<span class="nc" id="L487">            return payload1;</span>
+        }
+
+        public void setPayload1(String payload1) {
+<span class="nc" id="L491">            this.payload1 = payload1;</span>
+<span class="nc" id="L492">        }</span>
+
+        public Integer getPayload2() {
+<span class="nc" id="L495">            return payload2;</span>
+        }
+
+        public void setPayload2(Integer payload2) {
+<span class="nc" id="L499">            this.payload2 = payload2;</span>
+<span class="nc" id="L500">        }</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

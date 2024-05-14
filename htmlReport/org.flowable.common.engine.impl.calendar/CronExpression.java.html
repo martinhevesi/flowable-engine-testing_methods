@@ -1,0 +1,1681 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CronExpression.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.common.engine.impl.calendar</a> &gt; <span class="el_source">CronExpression.java</span></div><h1>CronExpression.java</h1><pre class="source lang-java linenums">package org.flowable.common.engine.impl.calendar;
+
+/*
+ * Included from Quartz 2.3.0 (https://github.com/quartz-scheduler/quartz/tree/quartz-2.3.0)
+ * 
+ * All content copyright Terracotta, Inc., unless otherwise indicated. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;); you may not
+ * use this file except in compliance with the License. You may obtain a copy
+ * of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations
+ * under the License.
+ *
+ */
+
+import java.io.Serializable;
+import java.text.ParseException;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Locale;
+import java.util.Map;
+import java.util.SortedSet;
+import java.util.StringTokenizer;
+import java.util.TimeZone;
+import java.util.TreeSet;
+
+import org.flowable.common.engine.impl.runtime.ClockReader;
+
+/**
+ * Provides a parser and evaluator for unix-like cron expressions. Cron
+ * expressions provide the ability to specify complex time combinations such as
+ * &amp;quot;At 8:00am every Monday through Friday&amp;quot; or &amp;quot;At 1:30am every
+ * last Friday of the month&amp;quot;.
+ * &lt;P&gt;
+ * Cron expressions are comprised of 6 required fields and one optional field
+ * separated by white space. The fields respectively are described as follows:
+ * 
+ * &lt;table&gt;
+ * &lt;caption&gt;Cron expression fields&lt;/caption&gt;
+ * &lt;tr&gt;
+ * &lt;th style=&quot;text-align: left;&quot;&gt;Field Name&lt;/th&gt;
+ * &lt;th style=&quot;text-align: left;&quot;&gt;&amp;nbsp;&lt;/th&gt;
+ * &lt;th style=&quot;text-align: left;&quot;&gt;Allowed Values&lt;/th&gt;
+ * &lt;th style=&quot;text-align: left;&quot;&gt;&amp;nbsp;&lt;/th&gt;
+ * &lt;th style=&quot;text-align: left;&quot;&gt;Allowed Special Characters&lt;/th&gt;
+ * &lt;/tr&gt;
+ * &lt;tr&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&lt;code&gt;Seconds&lt;/code&gt;&lt;/td&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&amp;nbsp;&lt;/td&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&lt;code&gt;0-59&lt;/code&gt;&lt;/td&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&amp;nbsp;&lt;/td&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&lt;code&gt;, - * /&lt;/code&gt;&lt;/td&gt;
+ * &lt;/tr&gt;
+ * &lt;tr&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&lt;code&gt;Minutes&lt;/code&gt;&lt;/td&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&amp;nbsp;&lt;/td&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&lt;code&gt;0-59&lt;/code&gt;&lt;/td&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&amp;nbsp;&lt;/td&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&lt;code&gt;, - * /&lt;/code&gt;&lt;/td&gt;
+ * &lt;/tr&gt;
+ * &lt;tr&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&lt;code&gt;Hours&lt;/code&gt;&lt;/td&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&amp;nbsp;&lt;/td&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&lt;code&gt;0-23&lt;/code&gt;&lt;/td&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&amp;nbsp;&lt;/td&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&lt;code&gt;, - * /&lt;/code&gt;&lt;/td&gt;
+ * &lt;/tr&gt;
+ * &lt;tr&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&lt;code&gt;Day-of-month&lt;/code&gt;&lt;/td&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&amp;nbsp;&lt;/td&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&lt;code&gt;1-31&lt;/code&gt;&lt;/td&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&amp;nbsp;&lt;/td&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&lt;code&gt;, - * ? / L W&lt;/code&gt;&lt;/td&gt;
+ * &lt;/tr&gt;
+ * &lt;tr&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&lt;code&gt;Month&lt;/code&gt;&lt;/td&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&amp;nbsp;&lt;/td&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&lt;code&gt;0-11 or JAN-DEC&lt;/code&gt;&lt;/td&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&amp;nbsp;&lt;/td&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&lt;code&gt;, - * /&lt;/code&gt;&lt;/td&gt;
+ * &lt;/tr&gt;
+ * &lt;tr&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&lt;code&gt;Day-of-Week&lt;/code&gt;&lt;/td&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&amp;nbsp;&lt;/td&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&lt;code&gt;1-7 or SUN-SAT&lt;/code&gt;&lt;/td&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&amp;nbsp;&lt;/td&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&lt;code&gt;, - * ? / L #&lt;/code&gt;&lt;/td&gt;
+ * &lt;/tr&gt;
+ * &lt;tr&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&lt;code&gt;Year (Optional)&lt;/code&gt;&lt;/td&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&amp;nbsp;&lt;/td&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&lt;code&gt;empty, 1970-2199&lt;/code&gt;&lt;/td&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&amp;nbsp;&lt;/td&gt;
+ * &lt;td style=&quot;text-align: left;&quot;&gt;&lt;code&gt;, - * /&lt;/code&gt;&lt;/td&gt;
+ * &lt;/tr&gt;
+ * &lt;/table&gt;
+ * &lt;P&gt;
+ * The '*' character is used to specify all values. For example, &amp;quot;*&amp;quot;
+ * in the minute field means &amp;quot;every minute&amp;quot;.
+ * &lt;P&gt;
+ * The '?' character is allowed for the day-of-month and day-of-week fields. It
+ * is used to specify 'no specific value'. This is useful when you need to
+ * specify something in one of the two fields, but not the other.
+ * &lt;P&gt;
+ * The '-' character is used to specify ranges For example &amp;quot;10-12&amp;quot; in
+ * the hour field means &amp;quot;the hours 10, 11 and 12&amp;quot;.
+ * &lt;P&gt;
+ * The ',' character is used to specify additional values. For example
+ * &amp;quot;MON,WED,FRI&amp;quot; in the day-of-week field means &amp;quot;the days Monday,
+ * Wednesday, and Friday&amp;quot;.
+ * &lt;P&gt;
+ * The '/' character is used to specify increments. For example &amp;quot;0/15&amp;quot;
+ * in the seconds field means &amp;quot;the seconds 0, 15, 30, and 45&amp;quot;. And
+ * &amp;quot;5/15&amp;quot; in the seconds field means &amp;quot;the seconds 5, 20, 35, and
+ * 50&amp;quot;. Specifying '*' before the '/' is equivalent to specifying 0 is the
+ * value to start with. Essentially, for each field in the expression, there is
+ * a set of numbers that can be turned on or off. For seconds and minutes, the
+ * numbers range from 0 to 59. For hours 0 to 23, for days of the month 0 to 31,
+ * and for months 0 to 11 (JAN to DEC). The &amp;quot;/&amp;quot; character simply helps
+ * you turn on every &amp;quot;nth&amp;quot; value in the given set. Thus
+ * &amp;quot;7/6&amp;quot; in the month field only turns on month &amp;quot;7&amp;quot;, it does
+ * NOT mean every 6th month, please note that subtlety.
+ * &lt;P&gt;
+ * The 'L' character is allowed for the day-of-month and day-of-week fields.
+ * This character is short-hand for &amp;quot;last&amp;quot;, but it has different
+ * meaning in each of the two fields. For example, the value &amp;quot;L&amp;quot; in
+ * the day-of-month field means &amp;quot;the last day of the month&amp;quot; - day 31
+ * for January, day 28 for February on non-leap years. If used in the
+ * day-of-week field by itself, it simply means &amp;quot;7&amp;quot; or
+ * &amp;quot;SAT&amp;quot;. But if used in the day-of-week field after another value, it
+ * means &amp;quot;the last xxx day of the month&amp;quot; - for example &amp;quot;6L&amp;quot;
+ * means &amp;quot;the last friday of the month&amp;quot;. You can also specify an
+ * offset from the last day of the month, such as &quot;L-3&quot; which would mean the
+ * third-to-last day of the calendar month. &lt;i&gt;When using the 'L' option, it is
+ * important not to specify lists, or ranges of values, as you'll get
+ * confusing/unexpected results.&lt;/i&gt;
+ * &lt;P&gt;
+ * The 'W' character is allowed for the day-of-month field. This character is
+ * used to specify the weekday (Monday-Friday) nearest the given day. As an
+ * example, if you were to specify &amp;quot;15W&amp;quot; as the value for the
+ * day-of-month field, the meaning is: &amp;quot;the nearest weekday to the 15th of
+ * the month&amp;quot;. So if the 15th is a Saturday, the trigger will fire on
+ * Friday the 14th. If the 15th is a Sunday, the trigger will fire on Monday the
+ * 16th. If the 15th is a Tuesday, then it will fire on Tuesday the 15th.
+ * However if you specify &amp;quot;1W&amp;quot; as the value for day-of-month, and the
+ * 1st is a Saturday, the trigger will fire on Monday the 3rd, as it will not
+ * 'jump' over the boundary of a month's days. The 'W' character can only be
+ * specified when the day-of-month is a single day, not a range or list of days.
+ * &lt;P&gt;
+ * The 'L' and 'W' characters can also be combined for the day-of-month
+ * expression to yield 'LW', which translates to &amp;quot;last weekday of the
+ * month&amp;quot;.
+ * &lt;P&gt;
+ * The '#' character is allowed for the day-of-week field. This character is
+ * used to specify &amp;quot;the nth&amp;quot; XXX day of the month. For example, the
+ * value of &amp;quot;6#3&amp;quot; in the day-of-week field means the third Friday of
+ * the month (day 6 = Friday and &amp;quot;#3&amp;quot; = the 3rd one in the month).
+ * Other examples: &amp;quot;2#1&amp;quot; = the first Monday of the month and
+ * &amp;quot;4#5&amp;quot; = the fifth Wednesday of the month. Note that if you specify
+ * &amp;quot;#5&amp;quot; and there is not 5 of the given day-of-week in the month, then
+ * no firing will occur that month. If the '#' character is used, there can only
+ * be one expression in the day-of-week field (&amp;quot;3#1,6#3&amp;quot; is not valid,
+ * since there are two expressions).
+ * &lt;P&gt;
+ * The 'C' character is allowed for the day-of-month and day-of-week fields.
+ * This character is short-hand for &quot;calendar&quot;. This means values are calculated
+ * against the associated calendar, if any. If no calendar is associated, then
+ * it is equivalent to having an all-inclusive calendar. A value of &quot;5C&quot; in the
+ * day-of-month field means &quot;the first day included by the calendar on or after
+ * the 5th&quot;. A value of &quot;1C&quot; in the day-of-week field means &quot;the first day
+ * included by the calendar on or after Sunday&quot;.
+ * &lt;P&gt;
+ * The legal characters and the names of months and days of the week are not
+ * case sensitive.
+ * 
+ * &lt;p&gt;
+ * &lt;b&gt;NOTES:&lt;/b&gt;
+ * &lt;ul&gt;
+ * &lt;li&gt;Support for specifying both a day-of-week and a day-of-month value is not
+ * complete (you'll need to use the '?' character in one of these fields).&lt;/li&gt;
+ * &lt;li&gt;Overflowing ranges is supported - that is, having a larger number on the
+ * left hand side than the right. You might do 22-2 to catch 10 o'clock at night
+ * until 2 o'clock in the morning, or you might have NOV-FEB. It is very
+ * important to note that overuse of overflowing ranges creates ranges that
+ * don't make sense and no effort has been made to determine which
+ * interpretation CronExpression chooses. An example would be &quot;0 0 14-6 ? *
+ * FRI-MON&quot;.&lt;/li&gt;
+ * &lt;/ul&gt;
+ * 
+ * 
+ * @author Sharada Jambula, James House
+ * @author Contributions from Mads Henderson
+ * @author Refactoring from CronTrigger to CronExpression by Aaron Craven
+ */
+public class CronExpression implements Serializable, Cloneable {
+
+    private static final long serialVersionUID = 12423409423L;
+
+    protected static final int SECOND = 0;
+    protected static final int MINUTE = 1;
+    protected static final int HOUR = 2;
+    protected static final int DAY_OF_MONTH = 3;
+    protected static final int MONTH = 4;
+    protected static final int DAY_OF_WEEK = 5;
+    protected static final int YEAR = 6;
+    protected static final int ALL_SPEC_INT = 99; // '*'
+    protected static final int NO_SPEC_INT = 98; // '?'
+<span class="nc" id="L216">    protected static final Integer ALL_SPEC = ALL_SPEC_INT;</span>
+<span class="nc" id="L217">    protected static final Integer NO_SPEC = NO_SPEC_INT;</span>
+
+<span class="nc" id="L219">    protected static final Map&lt;String, Integer&gt; monthMap = new HashMap&lt;&gt;(20);</span>
+<span class="nc" id="L220">    protected static final Map&lt;String, Integer&gt; dayMap = new HashMap&lt;&gt;(60);</span>
+    static {
+<span class="nc" id="L222">        monthMap.put(&quot;JAN&quot;, 0);</span>
+<span class="nc" id="L223">        monthMap.put(&quot;FEB&quot;, 1);</span>
+<span class="nc" id="L224">        monthMap.put(&quot;MAR&quot;, 2);</span>
+<span class="nc" id="L225">        monthMap.put(&quot;APR&quot;, 3);</span>
+<span class="nc" id="L226">        monthMap.put(&quot;MAY&quot;, 4);</span>
+<span class="nc" id="L227">        monthMap.put(&quot;JUN&quot;, 5);</span>
+<span class="nc" id="L228">        monthMap.put(&quot;JUL&quot;, 6);</span>
+<span class="nc" id="L229">        monthMap.put(&quot;AUG&quot;, 7);</span>
+<span class="nc" id="L230">        monthMap.put(&quot;SEP&quot;, 8);</span>
+<span class="nc" id="L231">        monthMap.put(&quot;OCT&quot;, 9);</span>
+<span class="nc" id="L232">        monthMap.put(&quot;NOV&quot;, 10);</span>
+<span class="nc" id="L233">        monthMap.put(&quot;DEC&quot;, 11);</span>
+
+<span class="nc" id="L235">        dayMap.put(&quot;SUN&quot;, 1);</span>
+<span class="nc" id="L236">        dayMap.put(&quot;MON&quot;, 2);</span>
+<span class="nc" id="L237">        dayMap.put(&quot;TUE&quot;, 3);</span>
+<span class="nc" id="L238">        dayMap.put(&quot;WED&quot;, 4);</span>
+<span class="nc" id="L239">        dayMap.put(&quot;THU&quot;, 5);</span>
+<span class="nc" id="L240">        dayMap.put(&quot;FRI&quot;, 6);</span>
+<span class="nc" id="L241">        dayMap.put(&quot;SAT&quot;, 7);</span>
+    }
+
+    private final String cronExpression;
+<span class="nc" id="L245">    private TimeZone timeZone = null;</span>
+    protected transient TreeSet&lt;Integer&gt; seconds;
+    protected transient TreeSet&lt;Integer&gt; minutes;
+    protected transient TreeSet&lt;Integer&gt; hours;
+    protected transient TreeSet&lt;Integer&gt; daysOfMonth;
+    protected transient TreeSet&lt;Integer&gt; months;
+    protected transient TreeSet&lt;Integer&gt; daysOfWeek;
+    protected transient TreeSet&lt;Integer&gt; years;
+
+<span class="nc" id="L254">    protected transient boolean lastdayOfWeek = false;</span>
+<span class="nc" id="L255">    protected transient int nthdayOfWeek = 0;</span>
+<span class="nc" id="L256">    protected transient boolean lastdayOfMonth = false;</span>
+<span class="nc" id="L257">    protected transient boolean nearestWeekday = false;</span>
+<span class="nc" id="L258">    protected transient int lastdayOffset = 0;</span>
+<span class="nc" id="L259">    protected transient boolean expressionParsed = false;</span>
+
+<span class="nc" id="L261">    public static final int MAX_YEAR = Calendar.getInstance().get(Calendar.YEAR) + 100;</span>
+    
+    private ClockReader clockReader;
+
+    /**
+     * Constructs a new &lt;CODE&gt;CronExpression&lt;/CODE&gt; based on the specified
+     * parameter.
+     * 
+     * @param cronExpression
+     *            String representation of the cron expression the new object
+     *            should represent
+     * @param clockReader
+     *            The reader which will provide the current time
+     * @throws java.text.ParseException
+     *             if the string expression cannot be parsed into a valid
+     *             &lt;CODE&gt;CronExpression&lt;/CODE&gt;
+     */
+<span class="nc" id="L278">    public CronExpression(String cronExpression, ClockReader clockReader) throws ParseException {</span>
+<span class="nc bnc" id="L279" title="All 2 branches missed.">        if (cronExpression == null) {</span>
+<span class="nc" id="L280">            throw new IllegalArgumentException(&quot;cronExpression cannot be null&quot;);</span>
+        }
+
+<span class="nc" id="L283">        this.cronExpression = cronExpression.toUpperCase(Locale.US);</span>
+<span class="nc" id="L284">        this.clockReader = clockReader;</span>
+
+<span class="nc" id="L286">        buildExpression(this.cronExpression);</span>
+<span class="nc" id="L287">    }</span>
+
+    /**
+     * Constructs a new {@code CronExpression} as a copy of an existing
+     * instance.
+     * 
+     * @param expression
+     *            The existing cron expression to be copied
+     */
+<span class="nc" id="L296">    public CronExpression(CronExpression expression, ClockReader clockReader) {</span>
+        /*
+         * We don't call the other constructor here since we need to swallow the
+         * ParseException. We also elide some of the sanity checking as it is
+         * not logically trippable.
+         */
+<span class="nc" id="L302">        this.cronExpression = expression.getCronExpression();</span>
+<span class="nc" id="L303">        this.clockReader = clockReader;</span>
+        try {
+<span class="nc" id="L305">            buildExpression(cronExpression);</span>
+<span class="nc" id="L306">        } catch (ParseException ex) {</span>
+<span class="nc" id="L307">            throw new AssertionError(ex);</span>
+<span class="nc" id="L308">        }</span>
+<span class="nc bnc" id="L309" title="All 2 branches missed.">        if (expression.getTimeZone() != null) {</span>
+<span class="nc" id="L310">            setTimeZone((TimeZone) expression.getTimeZone().clone());</span>
+        }
+<span class="nc" id="L312">    }</span>
+
+    /**
+     * Indicates whether the given date satisfies the cron expression. Note that
+     * milliseconds are ignored, so two Dates falling on different milliseconds
+     * of the same second will always have the same result here.
+     * 
+     * @param date
+     *            the date to evaluate
+     * @return a boolean indicating whether the given date satisfies the cron
+     *         expression
+     */
+    public boolean isSatisfiedBy(Date date) {
+<span class="nc" id="L325">        Calendar testDateCal = Calendar.getInstance(getTimeZone());</span>
+<span class="nc" id="L326">        testDateCal.setTime(date);</span>
+<span class="nc" id="L327">        testDateCal.set(Calendar.MILLISECOND, 0);</span>
+<span class="nc" id="L328">        Date originalDate = testDateCal.getTime();</span>
+
+<span class="nc" id="L330">        testDateCal.add(Calendar.SECOND, -1);</span>
+
+<span class="nc" id="L332">        Date timeAfter = getTimeAfter(testDateCal.getTime());</span>
+
+<span class="nc" id="L334">        return (originalDate.equals(timeAfter));</span>
+    }
+
+    /**
+     * Returns the next date/time &lt;I&gt;after&lt;/I&gt; the given date/time which
+     * satisfies the cron expression.
+     * 
+     * @param date
+     *            the date/time at which to begin the search for the next valid
+     *            date/time
+     * @return the next valid date/time
+     */
+    public Date getNextValidTimeAfter(Date date) {
+<span class="nc" id="L347">        return getTimeAfter(date);</span>
+    }
+
+    /**
+     * Returns the next date/time &lt;I&gt;after&lt;/I&gt; the given date/time which does
+     * &lt;I&gt;not&lt;/I&gt; satisfy the expression
+     * 
+     * @param date
+     *            the date/time at which to begin the search for the next
+     *            invalid date/time
+     * @return the next valid date/time
+     */
+    public Date getNextInvalidTimeAfter(Date date) {
+<span class="nc" id="L360">        long difference = 1000;</span>
+
+        // move back to the nearest second so differences will be accurate
+<span class="nc" id="L363">        Calendar adjustCal = Calendar.getInstance(getTimeZone());</span>
+<span class="nc" id="L364">        adjustCal.setTime(date);</span>
+<span class="nc" id="L365">        adjustCal.set(Calendar.MILLISECOND, 0);</span>
+<span class="nc" id="L366">        Date lastDate = adjustCal.getTime();</span>
+
+        Date newDate;
+
+        // FUTURE_TODO: (QUARTZ-481) IMPROVE THIS! The following is a BAD
+        // solution to this problem. Performance will be very bad here,
+        // depending on the cron expression. It is, however A solution.
+
+        // keep getting the next included time until it's farther than one
+        // second
+        // apart. At that point, lastDate is the last valid fire time. We return
+        // the second immediately following it.
+<span class="nc bnc" id="L378" title="All 2 branches missed.">        while (difference == 1000) {</span>
+<span class="nc" id="L379">            newDate = getTimeAfter(lastDate);</span>
+<span class="nc bnc" id="L380" title="All 2 branches missed.">            if (newDate == null) {</span>
+<span class="nc" id="L381">                break;</span>
+            }
+
+<span class="nc" id="L384">            difference = newDate.getTime() - lastDate.getTime();</span>
+
+<span class="nc bnc" id="L386" title="All 2 branches missed.">            if (difference == 1000) {</span>
+<span class="nc" id="L387">                lastDate = newDate;</span>
+            }
+        }
+
+<span class="nc" id="L391">        return new Date(lastDate.getTime() + 1000);</span>
+    }
+
+    /**
+     * Returns the time zone for which this &lt;code&gt;CronExpression&lt;/code&gt; will be
+     * resolved.
+     */
+    public TimeZone getTimeZone() {
+<span class="nc bnc" id="L399" title="All 2 branches missed.">        if (timeZone == null) {</span>
+<span class="nc" id="L400">            timeZone = clockReader.getCurrentTimeZone();</span>
+        }
+
+<span class="nc" id="L403">        return timeZone;</span>
+    }
+
+    /**
+     * Sets the time zone for which this &lt;code&gt;CronExpression&lt;/code&gt; will be
+     * resolved.
+     */
+    public void setTimeZone(TimeZone timeZone) {
+<span class="nc" id="L411">        this.timeZone = timeZone;</span>
+<span class="nc" id="L412">    }</span>
+
+    /**
+     * Returns the string representation of the &lt;CODE&gt;CronExpression&lt;/CODE&gt;
+     * 
+     * @return a string representation of the &lt;CODE&gt;CronExpression&lt;/CODE&gt;
+     */
+    @Override
+    public String toString() {
+<span class="nc" id="L421">        return cronExpression;</span>
+    }
+
+    /**
+     * Indicates whether the specified cron expression can be parsed into a
+     * valid cron expression
+     * 
+     * @param cronExpression
+     *            the expression to evaluate
+     * @return a boolean indicating whether the given expression is a valid cron
+     *         expression
+     */
+    public static boolean isValidExpression(String cronExpression, ClockReader clockReader) {
+
+        try {
+<span class="nc" id="L436">            new CronExpression(cronExpression, clockReader);</span>
+<span class="nc" id="L437">        } catch (ParseException pe) {</span>
+<span class="nc" id="L438">            return false;</span>
+<span class="nc" id="L439">        }</span>
+
+<span class="nc" id="L441">        return true;</span>
+    }
+
+    public static void validateExpression(String cronExpression, ClockReader clockReader) throws ParseException {
+
+<span class="nc" id="L446">        new CronExpression(cronExpression, clockReader);</span>
+<span class="nc" id="L447">    }</span>
+
+    ////////////////////////////////////////////////////////////////////////////
+    //
+    // Expression Parsing Functions
+    //
+    ////////////////////////////////////////////////////////////////////////////
+
+    protected void buildExpression(String expression) throws ParseException {
+<span class="nc" id="L456">        expressionParsed = true;</span>
+
+        try {
+
+<span class="nc bnc" id="L460" title="All 2 branches missed.">            if (seconds == null) {</span>
+<span class="nc" id="L461">                seconds = new TreeSet&lt;&gt;();</span>
+            }
+<span class="nc bnc" id="L463" title="All 2 branches missed.">            if (minutes == null) {</span>
+<span class="nc" id="L464">                minutes = new TreeSet&lt;&gt;();</span>
+            }
+<span class="nc bnc" id="L466" title="All 2 branches missed.">            if (hours == null) {</span>
+<span class="nc" id="L467">                hours = new TreeSet&lt;&gt;();</span>
+            }
+<span class="nc bnc" id="L469" title="All 2 branches missed.">            if (daysOfMonth == null) {</span>
+<span class="nc" id="L470">                daysOfMonth = new TreeSet&lt;&gt;();</span>
+            }
+<span class="nc bnc" id="L472" title="All 2 branches missed.">            if (months == null) {</span>
+<span class="nc" id="L473">                months = new TreeSet&lt;&gt;();</span>
+            }
+<span class="nc bnc" id="L475" title="All 2 branches missed.">            if (daysOfWeek == null) {</span>
+<span class="nc" id="L476">                daysOfWeek = new TreeSet&lt;&gt;();</span>
+            }
+<span class="nc bnc" id="L478" title="All 2 branches missed.">            if (years == null) {</span>
+<span class="nc" id="L479">                years = new TreeSet&lt;&gt;();</span>
+            }
+
+<span class="nc" id="L482">            int exprOn = SECOND;</span>
+
+<span class="nc" id="L484">            StringTokenizer exprsTok = new StringTokenizer(expression, &quot; \t&quot;, false);</span>
+
+<span class="nc bnc" id="L486" title="All 4 branches missed.">            while (exprsTok.hasMoreTokens() &amp;&amp; exprOn &lt;= YEAR) {</span>
+<span class="nc" id="L487">                String expr = exprsTok.nextToken().trim();</span>
+
+                // throw an exception if L is used with other days of the month
+<span class="nc bnc" id="L490" title="All 8 branches missed.">                if (exprOn == DAY_OF_MONTH &amp;&amp; expr.indexOf('L') != -1 &amp;&amp; expr.length() &gt; 1 &amp;&amp; expr.contains(&quot;,&quot;)) {</span>
+<span class="nc" id="L491">                    throw new ParseException(</span>
+                            &quot;Support for specifying 'L' and 'LW' with other days of the month is not implemented&quot;, -1);
+                }
+                // throw an exception if L is used with other days of the week
+<span class="nc bnc" id="L495" title="All 8 branches missed.">                if (exprOn == DAY_OF_WEEK &amp;&amp; expr.indexOf('L') != -1 &amp;&amp; expr.length() &gt; 1 &amp;&amp; expr.contains(&quot;,&quot;)) {</span>
+<span class="nc" id="L496">                    throw new ParseException(</span>
+                            &quot;Support for specifying 'L' with other days of the week is not implemented&quot;, -1);
+                }
+<span class="nc bnc" id="L499" title="All 4 branches missed.">                if (exprOn == DAY_OF_WEEK &amp;&amp; expr.indexOf('#') != -1</span>
+<span class="nc bnc" id="L500" title="All 2 branches missed.">                        &amp;&amp; expr.indexOf('#', expr.indexOf('#') + 1) != -1) {</span>
+<span class="nc" id="L501">                    throw new ParseException(&quot;Support for specifying multiple \&quot;nth\&quot; days is not implemented.&quot;, -1);</span>
+                }
+
+<span class="nc" id="L504">                StringTokenizer vTok = new StringTokenizer(expr, &quot;,&quot;);</span>
+<span class="nc bnc" id="L505" title="All 2 branches missed.">                while (vTok.hasMoreTokens()) {</span>
+<span class="nc" id="L506">                    String v = vTok.nextToken();</span>
+<span class="nc" id="L507">                    storeExpressionVals(0, v, exprOn);</span>
+<span class="nc" id="L508">                }</span>
+
+<span class="nc" id="L510">                exprOn++;</span>
+<span class="nc" id="L511">            }</span>
+
+<span class="nc bnc" id="L513" title="All 2 branches missed.">            if (exprOn &lt;= DAY_OF_WEEK) {</span>
+<span class="nc" id="L514">                throw new ParseException(&quot;Unexpected end of expression.&quot;, expression.length());</span>
+            }
+
+<span class="nc bnc" id="L517" title="All 2 branches missed.">            if (exprOn &lt;= YEAR) {</span>
+<span class="nc" id="L518">                storeExpressionVals(0, &quot;*&quot;, YEAR);</span>
+            }
+
+<span class="nc" id="L521">            TreeSet&lt;Integer&gt; dow = getSet(DAY_OF_WEEK);</span>
+<span class="nc" id="L522">            TreeSet&lt;Integer&gt; dom = getSet(DAY_OF_MONTH);</span>
+
+            // Copying the logic from the UnsupportedOperationException below
+<span class="nc bnc" id="L525" title="All 2 branches missed.">            boolean dayOfMSpec = !dom.contains(NO_SPEC);</span>
+<span class="nc bnc" id="L526" title="All 2 branches missed.">            boolean dayOfWSpec = !dow.contains(NO_SPEC);</span>
+
+<span class="nc bnc" id="L528" title="All 4 branches missed.">            if (!dayOfMSpec || dayOfWSpec) {</span>
+<span class="nc bnc" id="L529" title="All 4 branches missed.">                if (!dayOfWSpec || dayOfMSpec) {</span>
+<span class="nc" id="L530">                    throw new ParseException(</span>
+                            &quot;Support for specifying both a day-of-week AND a day-of-month parameter is not implemented.&quot;,
+                            0);
+                }
+            }
+<span class="nc" id="L535">        } catch (ParseException pe) {</span>
+<span class="nc" id="L536">            throw pe;</span>
+<span class="nc" id="L537">        } catch (Exception e) {</span>
+<span class="nc" id="L538">            throw new ParseException(&quot;Illegal cron expression format (&quot; + e + &quot;)&quot;, 0);</span>
+<span class="nc" id="L539">        }</span>
+<span class="nc" id="L540">    }</span>
+
+    protected int storeExpressionVals(int pos, String s, int type) throws ParseException {
+
+<span class="nc" id="L544">        int incr = 0;</span>
+<span class="nc" id="L545">        int i = skipWhiteSpace(pos, s);</span>
+<span class="nc bnc" id="L546" title="All 2 branches missed.">        if (i &gt;= s.length()) {</span>
+<span class="nc" id="L547">            return i;</span>
+        }
+<span class="nc" id="L549">        char c = s.charAt(i);</span>
+<span class="nc bnc" id="L550" title="All 10 branches missed.">        if ((c &gt;= 'A') &amp;&amp; (c &lt;= 'Z') &amp;&amp; !&quot;L&quot;.equals(s) &amp;&amp; !&quot;LW&quot;.equals(s) &amp;&amp; !s.matches(&quot;^L-[0-9]*[W]?&quot;)) {</span>
+<span class="nc" id="L551">            String sub = s.substring(i, i + 3);</span>
+<span class="nc" id="L552">            int sval = -1;</span>
+<span class="nc" id="L553">            int eval = -1;</span>
+<span class="nc bnc" id="L554" title="All 2 branches missed.">            if (type == MONTH) {</span>
+<span class="nc" id="L555">                sval = getMonthNumber(sub) + 1;</span>
+<span class="nc bnc" id="L556" title="All 2 branches missed.">                if (sval &lt;= 0) {</span>
+<span class="nc" id="L557">                    throw new ParseException(&quot;Invalid Month value: '&quot; + sub + &quot;'&quot;, i);</span>
+                }
+<span class="nc bnc" id="L559" title="All 2 branches missed.">                if (s.length() &gt; i + 3) {</span>
+<span class="nc" id="L560">                    c = s.charAt(i + 3);</span>
+<span class="nc bnc" id="L561" title="All 2 branches missed.">                    if (c == '-') {</span>
+<span class="nc" id="L562">                        i += 4;</span>
+<span class="nc" id="L563">                        sub = s.substring(i, i + 3);</span>
+<span class="nc" id="L564">                        eval = getMonthNumber(sub) + 1;</span>
+<span class="nc bnc" id="L565" title="All 2 branches missed.">                        if (eval &lt;= 0) {</span>
+<span class="nc" id="L566">                            throw new ParseException(&quot;Invalid Month value: '&quot; + sub + &quot;'&quot;, i);</span>
+                        }
+                    }
+                }
+<span class="nc bnc" id="L570" title="All 2 branches missed.">            } else if (type == DAY_OF_WEEK) {</span>
+<span class="nc" id="L571">                sval = getDayOfWeekNumber(sub);</span>
+<span class="nc bnc" id="L572" title="All 2 branches missed.">                if (sval &lt; 0) {</span>
+<span class="nc" id="L573">                    throw new ParseException(&quot;Invalid Day-of-Week value: '&quot; + sub + &quot;'&quot;, i);</span>
+                }
+<span class="nc bnc" id="L575" title="All 2 branches missed.">                if (s.length() &gt; i + 3) {</span>
+<span class="nc" id="L576">                    c = s.charAt(i + 3);</span>
+<span class="nc bnc" id="L577" title="All 2 branches missed.">                    if (c == '-') {</span>
+<span class="nc" id="L578">                        i += 4;</span>
+<span class="nc" id="L579">                        sub = s.substring(i, i + 3);</span>
+<span class="nc" id="L580">                        eval = getDayOfWeekNumber(sub);</span>
+<span class="nc bnc" id="L581" title="All 2 branches missed.">                        if (eval &lt; 0) {</span>
+<span class="nc" id="L582">                            throw new ParseException(&quot;Invalid Day-of-Week value: '&quot; + sub + &quot;'&quot;, i);</span>
+                        }
+<span class="nc bnc" id="L584" title="All 2 branches missed.">                    } else if (c == '#') {</span>
+                        try {
+<span class="nc" id="L586">                            i += 4;</span>
+<span class="nc" id="L587">                            nthdayOfWeek = Integer.parseInt(s.substring(i));</span>
+<span class="nc bnc" id="L588" title="All 4 branches missed.">                            if (nthdayOfWeek &lt; 1 || nthdayOfWeek &gt; 5) {</span>
+<span class="nc" id="L589">                                throw new Exception();</span>
+                            }
+<span class="nc" id="L591">                        } catch (Exception e) {</span>
+<span class="nc" id="L592">                            throw new ParseException(&quot;A numeric value between 1 and 5 must follow the '#' option&quot;, i);</span>
+<span class="nc" id="L593">                        }</span>
+<span class="nc bnc" id="L594" title="All 2 branches missed.">                    } else if (c == 'L') {</span>
+<span class="nc" id="L595">                        lastdayOfWeek = true;</span>
+<span class="nc" id="L596">                        i++;</span>
+                    }
+                }
+
+            } else {
+<span class="nc" id="L601">                throw new ParseException(&quot;Illegal characters for this position: '&quot; + sub + &quot;'&quot;, i);</span>
+            }
+<span class="nc bnc" id="L603" title="All 2 branches missed.">            if (eval != -1) {</span>
+<span class="nc" id="L604">                incr = 1;</span>
+            }
+<span class="nc" id="L606">            addToSet(sval, eval, incr, type);</span>
+<span class="nc" id="L607">            return (i + 3);</span>
+        }
+
+<span class="nc bnc" id="L610" title="All 2 branches missed.">        if (c == '?') {</span>
+<span class="nc" id="L611">            i++;</span>
+<span class="nc bnc" id="L612" title="All 6 branches missed.">            if ((i + 1) &lt; s.length() &amp;&amp; (s.charAt(i) != ' ' &amp;&amp; s.charAt(i + 1) != '\t')) {</span>
+<span class="nc" id="L613">                throw new ParseException(&quot;Illegal character after '?': &quot; + s.charAt(i), i);</span>
+            }
+<span class="nc bnc" id="L615" title="All 4 branches missed.">            if (type != DAY_OF_WEEK &amp;&amp; type != DAY_OF_MONTH) {</span>
+<span class="nc" id="L616">                throw new ParseException(&quot;'?' can only be specified for Day-of-Month or Day-of-Week.&quot;, i);</span>
+            }
+<span class="nc bnc" id="L618" title="All 4 branches missed.">            if (type == DAY_OF_WEEK &amp;&amp; !lastdayOfMonth) {</span>
+<span class="nc" id="L619">                int val = daysOfMonth.last();</span>
+<span class="nc bnc" id="L620" title="All 2 branches missed.">                if (val == NO_SPEC_INT) {</span>
+<span class="nc" id="L621">                    throw new ParseException(&quot;'?' can only be specified for Day-of-Month -OR- Day-of-Week.&quot;, i);</span>
+                }
+            }
+
+<span class="nc" id="L625">            addToSet(NO_SPEC_INT, -1, 0, type);</span>
+<span class="nc" id="L626">            return i;</span>
+        }
+
+<span class="nc bnc" id="L629" title="All 4 branches missed.">        if (c == '*' || c == '/') {</span>
+<span class="nc bnc" id="L630" title="All 4 branches missed.">            if (c == '*' &amp;&amp; (i + 1) &gt;= s.length()) {</span>
+<span class="nc" id="L631">                addToSet(ALL_SPEC_INT, -1, incr, type);</span>
+<span class="nc" id="L632">                return i + 1;</span>
+<span class="nc bnc" id="L633" title="All 8 branches missed.">            } else if (c == '/' &amp;&amp; ((i + 1) &gt;= s.length() || s.charAt(i + 1) == ' ' || s.charAt(i + 1) == '\t')) {</span>
+<span class="nc" id="L634">                throw new ParseException(&quot;'/' must be followed by an integer.&quot;, i);</span>
+<span class="nc bnc" id="L635" title="All 2 branches missed.">            } else if (c == '*') {</span>
+<span class="nc" id="L636">                i++;</span>
+            }
+<span class="nc" id="L638">            c = s.charAt(i);</span>
+<span class="nc bnc" id="L639" title="All 2 branches missed.">            if (c == '/') { // is an increment specified?</span>
+<span class="nc" id="L640">                i++;</span>
+<span class="nc bnc" id="L641" title="All 2 branches missed.">                if (i &gt;= s.length()) {</span>
+<span class="nc" id="L642">                    throw new ParseException(&quot;Unexpected end of string.&quot;, i);</span>
+                }
+
+<span class="nc" id="L645">                incr = getNumericValue(s, i);</span>
+
+<span class="nc" id="L647">                i++;</span>
+<span class="nc bnc" id="L648" title="All 2 branches missed.">                if (incr &gt; 10) {</span>
+<span class="nc" id="L649">                    i++;</span>
+                }
+<span class="nc" id="L651">                checkIncrementRange(incr, type, i);</span>
+            } else {
+<span class="nc" id="L653">                incr = 1;</span>
+            }
+
+<span class="nc" id="L656">            addToSet(ALL_SPEC_INT, -1, incr, type);</span>
+<span class="nc" id="L657">            return i;</span>
+<span class="nc bnc" id="L658" title="All 2 branches missed.">        } else if (c == 'L') {</span>
+<span class="nc" id="L659">            i++;</span>
+<span class="nc bnc" id="L660" title="All 2 branches missed.">            if (type == DAY_OF_MONTH) {</span>
+<span class="nc" id="L661">                lastdayOfMonth = true;</span>
+            }
+<span class="nc bnc" id="L663" title="All 2 branches missed.">            if (type == DAY_OF_WEEK) {</span>
+<span class="nc" id="L664">                addToSet(7, 7, 0, type);</span>
+            }
+<span class="nc bnc" id="L666" title="All 4 branches missed.">            if (type == DAY_OF_MONTH &amp;&amp; s.length() &gt; i) {</span>
+<span class="nc" id="L667">                c = s.charAt(i);</span>
+<span class="nc bnc" id="L668" title="All 2 branches missed.">                if (c == '-') {</span>
+<span class="nc" id="L669">                    ValueSet vs = getValue(0, s, i + 1);</span>
+<span class="nc" id="L670">                    lastdayOffset = vs.value;</span>
+<span class="nc bnc" id="L671" title="All 2 branches missed.">                    if (lastdayOffset &gt; 30) {</span>
+<span class="nc" id="L672">                        throw new ParseException(&quot;Offset from last day must be &lt;= 30&quot;, i + 1);</span>
+                    }
+<span class="nc" id="L674">                    i = vs.pos;</span>
+                }
+<span class="nc bnc" id="L676" title="All 2 branches missed.">                if (s.length() &gt; i) {</span>
+<span class="nc" id="L677">                    c = s.charAt(i);</span>
+<span class="nc bnc" id="L678" title="All 2 branches missed.">                    if (c == 'W') {</span>
+<span class="nc" id="L679">                        nearestWeekday = true;</span>
+<span class="nc" id="L680">                        i++;</span>
+                    }
+                }
+            }
+<span class="nc" id="L684">            return i;</span>
+<span class="nc bnc" id="L685" title="All 4 branches missed.">        } else if (c &gt;= '0' &amp;&amp; c &lt;= '9') {</span>
+<span class="nc" id="L686">            int val = Integer.parseInt(String.valueOf(c));</span>
+<span class="nc" id="L687">            i++;</span>
+<span class="nc bnc" id="L688" title="All 2 branches missed.">            if (i &gt;= s.length()) {</span>
+<span class="nc" id="L689">                addToSet(val, -1, -1, type);</span>
+            } else {
+<span class="nc" id="L691">                c = s.charAt(i);</span>
+<span class="nc bnc" id="L692" title="All 4 branches missed.">                if (c &gt;= '0' &amp;&amp; c &lt;= '9') {</span>
+<span class="nc" id="L693">                    ValueSet vs = getValue(val, s, i);</span>
+<span class="nc" id="L694">                    val = vs.value;</span>
+<span class="nc" id="L695">                    i = vs.pos;</span>
+                }
+<span class="nc" id="L697">                i = checkNext(i, s, val, type);</span>
+<span class="nc" id="L698">                return i;</span>
+            }
+<span class="nc" id="L700">        } else {</span>
+<span class="nc" id="L701">            throw new ParseException(&quot;Unexpected character: &quot; + c, i);</span>
+        }
+
+<span class="nc" id="L704">        return i;</span>
+    }
+
+    private void checkIncrementRange(int incr, int type, int idxPos) throws ParseException {
+<span class="nc bnc" id="L708" title="All 6 branches missed.">        if (incr &gt; 59 &amp;&amp; (type == SECOND || type == MINUTE)) {</span>
+<span class="nc" id="L709">            throw new ParseException(&quot;Increment &gt; 60 : &quot; + incr, idxPos);</span>
+<span class="nc bnc" id="L710" title="All 4 branches missed.">        } else if (incr &gt; 23 &amp;&amp; (type == HOUR)) {</span>
+<span class="nc" id="L711">            throw new ParseException(&quot;Increment &gt; 24 : &quot; + incr, idxPos);</span>
+<span class="nc bnc" id="L712" title="All 4 branches missed.">        } else if (incr &gt; 31 &amp;&amp; (type == DAY_OF_MONTH)) {</span>
+<span class="nc" id="L713">            throw new ParseException(&quot;Increment &gt; 31 : &quot; + incr, idxPos);</span>
+<span class="nc bnc" id="L714" title="All 4 branches missed.">        } else if (incr &gt; 7 &amp;&amp; (type == DAY_OF_WEEK)) {</span>
+<span class="nc" id="L715">            throw new ParseException(&quot;Increment &gt; 7 : &quot; + incr, idxPos);</span>
+<span class="nc bnc" id="L716" title="All 4 branches missed.">        } else if (incr &gt; 12 &amp;&amp; (type == MONTH)) {</span>
+<span class="nc" id="L717">            throw new ParseException(&quot;Increment &gt; 12 : &quot; + incr, idxPos);</span>
+        }
+<span class="nc" id="L719">    }</span>
+
+    protected int checkNext(int pos, String s, int val, int type) throws ParseException {
+
+<span class="nc" id="L723">        int end = -1;</span>
+<span class="nc" id="L724">        int i = pos;</span>
+
+<span class="nc bnc" id="L726" title="All 2 branches missed.">        if (i &gt;= s.length()) {</span>
+<span class="nc" id="L727">            addToSet(val, end, -1, type);</span>
+<span class="nc" id="L728">            return i;</span>
+        }
+
+<span class="nc" id="L731">        char c = s.charAt(pos);</span>
+
+<span class="nc bnc" id="L733" title="All 2 branches missed.">        if (c == 'L') {</span>
+<span class="nc bnc" id="L734" title="All 2 branches missed.">            if (type == DAY_OF_WEEK) {</span>
+<span class="nc bnc" id="L735" title="All 4 branches missed.">                if (val &lt; 1 || val &gt; 7) {</span>
+<span class="nc" id="L736">                    throw new ParseException(&quot;Day-of-Week values must be between 1 and 7&quot;, -1);</span>
+                }
+<span class="nc" id="L738">                lastdayOfWeek = true;</span>
+            } else {
+<span class="nc" id="L740">                throw new ParseException(&quot;'L' option is not valid here. (pos=&quot; + i + &quot;)&quot;, i);</span>
+            }
+<span class="nc" id="L742">            TreeSet&lt;Integer&gt; set = getSet(type);</span>
+<span class="nc" id="L743">            set.add(val);</span>
+<span class="nc" id="L744">            i++;</span>
+<span class="nc" id="L745">            return i;</span>
+        }
+
+<span class="nc bnc" id="L748" title="All 2 branches missed.">        if (c == 'W') {</span>
+<span class="nc bnc" id="L749" title="All 2 branches missed.">            if (type == DAY_OF_MONTH) {</span>
+<span class="nc" id="L750">                nearestWeekday = true;</span>
+            } else {
+<span class="nc" id="L752">                throw new ParseException(&quot;'W' option is not valid here. (pos=&quot; + i + &quot;)&quot;, i);</span>
+            }
+<span class="nc bnc" id="L754" title="All 2 branches missed.">            if (val &gt; 31) {</span>
+<span class="nc" id="L755">                throw new ParseException(</span>
+                        &quot;The 'W' option does not make sense with values larger than 31 (max number of days in a month)&quot;,
+                        i);
+            }
+<span class="nc" id="L759">            TreeSet&lt;Integer&gt; set = getSet(type);</span>
+<span class="nc" id="L760">            set.add(val);</span>
+<span class="nc" id="L761">            i++;</span>
+<span class="nc" id="L762">            return i;</span>
+        }
+
+<span class="nc bnc" id="L765" title="All 2 branches missed.">        if (c == '#') {</span>
+<span class="nc bnc" id="L766" title="All 2 branches missed.">            if (type != DAY_OF_WEEK) {</span>
+<span class="nc" id="L767">                throw new ParseException(&quot;'#' option is not valid here. (pos=&quot; + i + &quot;)&quot;, i);</span>
+            }
+<span class="nc" id="L769">            i++;</span>
+            try {
+<span class="nc" id="L771">                nthdayOfWeek = Integer.parseInt(s.substring(i));</span>
+<span class="nc bnc" id="L772" title="All 4 branches missed.">                if (nthdayOfWeek &lt; 1 || nthdayOfWeek &gt; 5) {</span>
+<span class="nc" id="L773">                    throw new Exception();</span>
+                }
+<span class="nc" id="L775">            } catch (Exception e) {</span>
+<span class="nc" id="L776">                throw new ParseException(&quot;A numeric value between 1 and 5 must follow the '#' option&quot;, i);</span>
+<span class="nc" id="L777">            }</span>
+
+<span class="nc" id="L779">            TreeSet&lt;Integer&gt; set = getSet(type);</span>
+<span class="nc" id="L780">            set.add(val);</span>
+<span class="nc" id="L781">            i++;</span>
+<span class="nc" id="L782">            return i;</span>
+        }
+
+<span class="nc bnc" id="L785" title="All 2 branches missed.">        if (c == '-') {</span>
+<span class="nc" id="L786">            i++;</span>
+<span class="nc" id="L787">            c = s.charAt(i);</span>
+<span class="nc" id="L788">            int v = Integer.parseInt(String.valueOf(c));</span>
+<span class="nc" id="L789">            end = v;</span>
+<span class="nc" id="L790">            i++;</span>
+<span class="nc bnc" id="L791" title="All 2 branches missed.">            if (i &gt;= s.length()) {</span>
+<span class="nc" id="L792">                addToSet(val, end, 1, type);</span>
+<span class="nc" id="L793">                return i;</span>
+            }
+<span class="nc" id="L795">            c = s.charAt(i);</span>
+<span class="nc bnc" id="L796" title="All 4 branches missed.">            if (c &gt;= '0' &amp;&amp; c &lt;= '9') {</span>
+<span class="nc" id="L797">                ValueSet vs = getValue(v, s, i);</span>
+<span class="nc" id="L798">                end = vs.value;</span>
+<span class="nc" id="L799">                i = vs.pos;</span>
+            }
+<span class="nc bnc" id="L801" title="All 4 branches missed.">            if (i &lt; s.length() &amp;&amp; ((c = s.charAt(i)) == '/')) {</span>
+<span class="nc" id="L802">                i++;</span>
+<span class="nc" id="L803">                c = s.charAt(i);</span>
+<span class="nc" id="L804">                int v2 = Integer.parseInt(String.valueOf(c));</span>
+<span class="nc" id="L805">                i++;</span>
+<span class="nc bnc" id="L806" title="All 2 branches missed.">                if (i &gt;= s.length()) {</span>
+<span class="nc" id="L807">                    addToSet(val, end, v2, type);</span>
+<span class="nc" id="L808">                    return i;</span>
+                }
+<span class="nc" id="L810">                c = s.charAt(i);</span>
+<span class="nc bnc" id="L811" title="All 4 branches missed.">                if (c &gt;= '0' &amp;&amp; c &lt;= '9') {</span>
+<span class="nc" id="L812">                    ValueSet vs = getValue(v2, s, i);</span>
+<span class="nc" id="L813">                    int v3 = vs.value;</span>
+<span class="nc" id="L814">                    addToSet(val, end, v3, type);</span>
+<span class="nc" id="L815">                    i = vs.pos;</span>
+<span class="nc" id="L816">                    return i;</span>
+                } else {
+<span class="nc" id="L818">                    addToSet(val, end, v2, type);</span>
+<span class="nc" id="L819">                    return i;</span>
+                }
+            } else {
+<span class="nc" id="L822">                addToSet(val, end, 1, type);</span>
+<span class="nc" id="L823">                return i;</span>
+            }
+        }
+
+<span class="nc bnc" id="L827" title="All 2 branches missed.">        if (c == '/') {</span>
+<span class="nc bnc" id="L828" title="All 6 branches missed.">            if ((i + 1) &gt;= s.length() || s.charAt(i + 1) == ' ' || s.charAt(i + 1) == '\t') {</span>
+<span class="nc" id="L829">                throw new ParseException(&quot;'/' must be followed by an integer.&quot;, i);</span>
+            }
+
+<span class="nc" id="L832">            i++;</span>
+<span class="nc" id="L833">            c = s.charAt(i);</span>
+<span class="nc" id="L834">            int v2 = Integer.parseInt(String.valueOf(c));</span>
+<span class="nc" id="L835">            i++;</span>
+<span class="nc bnc" id="L836" title="All 2 branches missed.">            if (i &gt;= s.length()) {</span>
+<span class="nc" id="L837">                checkIncrementRange(v2, type, i);</span>
+<span class="nc" id="L838">                addToSet(val, end, v2, type);</span>
+<span class="nc" id="L839">                return i;</span>
+            }
+<span class="nc" id="L841">            c = s.charAt(i);</span>
+<span class="nc bnc" id="L842" title="All 4 branches missed.">            if (c &gt;= '0' &amp;&amp; c &lt;= '9') {</span>
+<span class="nc" id="L843">                ValueSet vs = getValue(v2, s, i);</span>
+<span class="nc" id="L844">                int v3 = vs.value;</span>
+<span class="nc" id="L845">                checkIncrementRange(v3, type, i);</span>
+<span class="nc" id="L846">                addToSet(val, end, v3, type);</span>
+<span class="nc" id="L847">                i = vs.pos;</span>
+<span class="nc" id="L848">                return i;</span>
+            } else {
+<span class="nc" id="L850">                throw new ParseException(&quot;Unexpected character '&quot; + c + &quot;' after '/'&quot;, i);</span>
+            }
+        }
+
+<span class="nc" id="L854">        addToSet(val, end, 0, type);</span>
+<span class="nc" id="L855">        i++;</span>
+<span class="nc" id="L856">        return i;</span>
+    }
+
+    public String getCronExpression() {
+<span class="nc" id="L860">        return cronExpression;</span>
+    }
+
+    public String getExpressionSummary() {
+<span class="nc" id="L864">        StringBuilder buf = new StringBuilder();</span>
+
+<span class="nc" id="L866">        buf.append(&quot;seconds: &quot;);</span>
+<span class="nc" id="L867">        buf.append(getExpressionSetSummary(seconds));</span>
+<span class="nc" id="L868">        buf.append(&quot;\n&quot;);</span>
+<span class="nc" id="L869">        buf.append(&quot;minutes: &quot;);</span>
+<span class="nc" id="L870">        buf.append(getExpressionSetSummary(minutes));</span>
+<span class="nc" id="L871">        buf.append(&quot;\n&quot;);</span>
+<span class="nc" id="L872">        buf.append(&quot;hours: &quot;);</span>
+<span class="nc" id="L873">        buf.append(getExpressionSetSummary(hours));</span>
+<span class="nc" id="L874">        buf.append(&quot;\n&quot;);</span>
+<span class="nc" id="L875">        buf.append(&quot;daysOfMonth: &quot;);</span>
+<span class="nc" id="L876">        buf.append(getExpressionSetSummary(daysOfMonth));</span>
+<span class="nc" id="L877">        buf.append(&quot;\n&quot;);</span>
+<span class="nc" id="L878">        buf.append(&quot;months: &quot;);</span>
+<span class="nc" id="L879">        buf.append(getExpressionSetSummary(months));</span>
+<span class="nc" id="L880">        buf.append(&quot;\n&quot;);</span>
+<span class="nc" id="L881">        buf.append(&quot;daysOfWeek: &quot;);</span>
+<span class="nc" id="L882">        buf.append(getExpressionSetSummary(daysOfWeek));</span>
+<span class="nc" id="L883">        buf.append(&quot;\n&quot;);</span>
+<span class="nc" id="L884">        buf.append(&quot;lastdayOfWeek: &quot;);</span>
+<span class="nc" id="L885">        buf.append(lastdayOfWeek);</span>
+<span class="nc" id="L886">        buf.append(&quot;\n&quot;);</span>
+<span class="nc" id="L887">        buf.append(&quot;nearestWeekday: &quot;);</span>
+<span class="nc" id="L888">        buf.append(nearestWeekday);</span>
+<span class="nc" id="L889">        buf.append(&quot;\n&quot;);</span>
+<span class="nc" id="L890">        buf.append(&quot;NthDayOfWeek: &quot;);</span>
+<span class="nc" id="L891">        buf.append(nthdayOfWeek);</span>
+<span class="nc" id="L892">        buf.append(&quot;\n&quot;);</span>
+<span class="nc" id="L893">        buf.append(&quot;lastdayOfMonth: &quot;);</span>
+<span class="nc" id="L894">        buf.append(lastdayOfMonth);</span>
+<span class="nc" id="L895">        buf.append(&quot;\n&quot;);</span>
+<span class="nc" id="L896">        buf.append(&quot;years: &quot;);</span>
+<span class="nc" id="L897">        buf.append(getExpressionSetSummary(years));</span>
+<span class="nc" id="L898">        buf.append(&quot;\n&quot;);</span>
+
+<span class="nc" id="L900">        return buf.toString();</span>
+    }
+
+    protected String getExpressionSetSummary(java.util.Set&lt;Integer&gt; set) {
+
+<span class="nc bnc" id="L905" title="All 2 branches missed.">        if (set.contains(NO_SPEC)) {</span>
+<span class="nc" id="L906">            return &quot;?&quot;;</span>
+        }
+<span class="nc bnc" id="L908" title="All 2 branches missed.">        if (set.contains(ALL_SPEC)) {</span>
+<span class="nc" id="L909">            return &quot;*&quot;;</span>
+        }
+
+<span class="nc" id="L912">        StringBuilder buf = new StringBuilder();</span>
+
+<span class="nc" id="L914">        Iterator&lt;Integer&gt; itr = set.iterator();</span>
+<span class="nc" id="L915">        boolean first = true;</span>
+<span class="nc bnc" id="L916" title="All 2 branches missed.">        while (itr.hasNext()) {</span>
+<span class="nc" id="L917">            Integer iVal = itr.next();</span>
+<span class="nc" id="L918">            String val = iVal.toString();</span>
+<span class="nc bnc" id="L919" title="All 2 branches missed.">            if (!first) {</span>
+<span class="nc" id="L920">                buf.append(&quot;,&quot;);</span>
+            }
+<span class="nc" id="L922">            buf.append(val);</span>
+<span class="nc" id="L923">            first = false;</span>
+<span class="nc" id="L924">        }</span>
+
+<span class="nc" id="L926">        return buf.toString();</span>
+    }
+
+    protected String getExpressionSetSummary(java.util.ArrayList&lt;Integer&gt; list) {
+
+<span class="nc bnc" id="L931" title="All 2 branches missed.">        if (list.contains(NO_SPEC)) {</span>
+<span class="nc" id="L932">            return &quot;?&quot;;</span>
+        }
+<span class="nc bnc" id="L934" title="All 2 branches missed.">        if (list.contains(ALL_SPEC)) {</span>
+<span class="nc" id="L935">            return &quot;*&quot;;</span>
+        }
+
+<span class="nc" id="L938">        StringBuilder buf = new StringBuilder();</span>
+
+<span class="nc" id="L940">        Iterator&lt;Integer&gt; itr = list.iterator();</span>
+<span class="nc" id="L941">        boolean first = true;</span>
+<span class="nc bnc" id="L942" title="All 2 branches missed.">        while (itr.hasNext()) {</span>
+<span class="nc" id="L943">            Integer iVal = itr.next();</span>
+<span class="nc" id="L944">            String val = iVal.toString();</span>
+<span class="nc bnc" id="L945" title="All 2 branches missed.">            if (!first) {</span>
+<span class="nc" id="L946">                buf.append(&quot;,&quot;);</span>
+            }
+<span class="nc" id="L948">            buf.append(val);</span>
+<span class="nc" id="L949">            first = false;</span>
+<span class="nc" id="L950">        }</span>
+
+<span class="nc" id="L952">        return buf.toString();</span>
+    }
+
+    protected int skipWhiteSpace(int i, String s) {
+<span class="nc bnc" id="L956" title="All 6 branches missed.">        for (; i &lt; s.length() &amp;&amp; (s.charAt(i) == ' ' || s.charAt(i) == '\t'); i++) {</span>
+        }
+
+<span class="nc" id="L959">        return i;</span>
+    }
+
+    protected int findNextWhiteSpace(int i, String s) {
+<span class="nc bnc" id="L963" title="All 6 branches missed.">        for (; i &lt; s.length() &amp;&amp; (s.charAt(i) != ' ' || s.charAt(i) != '\t'); i++) {</span>
+        }
+
+<span class="nc" id="L966">        return i;</span>
+    }
+
+    protected void addToSet(int val, int end, int incr, int type) throws ParseException {
+
+<span class="nc" id="L971">        TreeSet&lt;Integer&gt; set = getSet(type);</span>
+
+<span class="nc bnc" id="L973" title="All 4 branches missed.">        if (type == SECOND || type == MINUTE) {</span>
+<span class="nc bnc" id="L974" title="All 8 branches missed.">            if ((val &lt; 0 || val &gt; 59 || end &gt; 59) &amp;&amp; (val != ALL_SPEC_INT)) {</span>
+<span class="nc" id="L975">                throw new ParseException(&quot;Minute and Second values must be between 0 and 59&quot;, -1);</span>
+            }
+<span class="nc bnc" id="L977" title="All 2 branches missed.">        } else if (type == HOUR) {</span>
+<span class="nc bnc" id="L978" title="All 8 branches missed.">            if ((val &lt; 0 || val &gt; 23 || end &gt; 23) &amp;&amp; (val != ALL_SPEC_INT)) {</span>
+<span class="nc" id="L979">                throw new ParseException(&quot;Hour values must be between 0 and 23&quot;, -1);</span>
+            }
+<span class="nc bnc" id="L981" title="All 2 branches missed.">        } else if (type == DAY_OF_MONTH) {</span>
+<span class="nc bnc" id="L982" title="All 10 branches missed.">            if ((val &lt; 1 || val &gt; 31 || end &gt; 31) &amp;&amp; (val != ALL_SPEC_INT) &amp;&amp; (val != NO_SPEC_INT)) {</span>
+<span class="nc" id="L983">                throw new ParseException(&quot;Day of month values must be between 1 and 31&quot;, -1);</span>
+            }
+<span class="nc bnc" id="L985" title="All 2 branches missed.">        } else if (type == MONTH) {</span>
+<span class="nc bnc" id="L986" title="All 8 branches missed.">            if ((val &lt; 1 || val &gt; 12 || end &gt; 12) &amp;&amp; (val != ALL_SPEC_INT)) {</span>
+<span class="nc" id="L987">                throw new ParseException(&quot;Month values must be between 1 and 12&quot;, -1);</span>
+            }
+<span class="nc bnc" id="L989" title="All 2 branches missed.">        } else if (type == DAY_OF_WEEK) {</span>
+<span class="nc bnc" id="L990" title="All 10 branches missed.">            if ((val == 0 || val &gt; 7 || end &gt; 7) &amp;&amp; (val != ALL_SPEC_INT) &amp;&amp; (val != NO_SPEC_INT)) {</span>
+<span class="nc" id="L991">                throw new ParseException(&quot;Day-of-Week values must be between 1 and 7&quot;, -1);</span>
+            }
+        }
+
+<span class="nc bnc" id="L995" title="All 6 branches missed.">        if ((incr == 0 || incr == -1) &amp;&amp; val != ALL_SPEC_INT) {</span>
+<span class="nc bnc" id="L996" title="All 2 branches missed.">            if (val != -1) {</span>
+<span class="nc" id="L997">                set.add(val);</span>
+            } else {
+<span class="nc" id="L999">                set.add(NO_SPEC);</span>
+            }
+
+<span class="nc" id="L1002">            return;</span>
+        }
+
+<span class="nc" id="L1005">        int startAt = val;</span>
+<span class="nc" id="L1006">        int stopAt = end;</span>
+
+<span class="nc bnc" id="L1008" title="All 4 branches missed.">        if (val == ALL_SPEC_INT &amp;&amp; incr &lt;= 0) {</span>
+<span class="nc" id="L1009">            incr = 1;</span>
+<span class="nc" id="L1010">            set.add(ALL_SPEC); // put in a marker, but also fill values</span>
+        }
+
+<span class="nc bnc" id="L1013" title="All 4 branches missed.">        if (type == SECOND || type == MINUTE) {</span>
+<span class="nc bnc" id="L1014" title="All 2 branches missed.">            if (stopAt == -1) {</span>
+<span class="nc" id="L1015">                stopAt = 59;</span>
+            }
+<span class="nc bnc" id="L1017" title="All 4 branches missed.">            if (startAt == -1 || startAt == ALL_SPEC_INT) {</span>
+<span class="nc" id="L1018">                startAt = 0;</span>
+            }
+<span class="nc bnc" id="L1020" title="All 2 branches missed.">        } else if (type == HOUR) {</span>
+<span class="nc bnc" id="L1021" title="All 2 branches missed.">            if (stopAt == -1) {</span>
+<span class="nc" id="L1022">                stopAt = 23;</span>
+            }
+<span class="nc bnc" id="L1024" title="All 4 branches missed.">            if (startAt == -1 || startAt == ALL_SPEC_INT) {</span>
+<span class="nc" id="L1025">                startAt = 0;</span>
+            }
+<span class="nc bnc" id="L1027" title="All 2 branches missed.">        } else if (type == DAY_OF_MONTH) {</span>
+<span class="nc bnc" id="L1028" title="All 2 branches missed.">            if (stopAt == -1) {</span>
+<span class="nc" id="L1029">                stopAt = 31;</span>
+            }
+<span class="nc bnc" id="L1031" title="All 4 branches missed.">            if (startAt == -1 || startAt == ALL_SPEC_INT) {</span>
+<span class="nc" id="L1032">                startAt = 1;</span>
+            }
+<span class="nc bnc" id="L1034" title="All 2 branches missed.">        } else if (type == MONTH) {</span>
+<span class="nc bnc" id="L1035" title="All 2 branches missed.">            if (stopAt == -1) {</span>
+<span class="nc" id="L1036">                stopAt = 12;</span>
+            }
+<span class="nc bnc" id="L1038" title="All 4 branches missed.">            if (startAt == -1 || startAt == ALL_SPEC_INT) {</span>
+<span class="nc" id="L1039">                startAt = 1;</span>
+            }
+<span class="nc bnc" id="L1041" title="All 2 branches missed.">        } else if (type == DAY_OF_WEEK) {</span>
+<span class="nc bnc" id="L1042" title="All 2 branches missed.">            if (stopAt == -1) {</span>
+<span class="nc" id="L1043">                stopAt = 7;</span>
+            }
+<span class="nc bnc" id="L1045" title="All 4 branches missed.">            if (startAt == -1 || startAt == ALL_SPEC_INT) {</span>
+<span class="nc" id="L1046">                startAt = 1;</span>
+            }
+<span class="nc bnc" id="L1048" title="All 2 branches missed.">        } else if (type == YEAR) {</span>
+<span class="nc bnc" id="L1049" title="All 2 branches missed.">            if (stopAt == -1) {</span>
+<span class="nc" id="L1050">                stopAt = MAX_YEAR;</span>
+            }
+<span class="nc bnc" id="L1052" title="All 4 branches missed.">            if (startAt == -1 || startAt == ALL_SPEC_INT) {</span>
+<span class="nc" id="L1053">                startAt = 1970;</span>
+            }
+        }
+
+        // if the end of the range is before the start, then we need to overflow
+        // into
+        // the next day, month etc. This is done by adding the maximum amount
+        // for that
+        // type, and using modulus max to determine the value being added.
+<span class="nc" id="L1062">        int max = -1;</span>
+<span class="nc bnc" id="L1063" title="All 2 branches missed.">        if (stopAt &lt; startAt) {</span>
+<span class="nc bnc" id="L1064" title="All 8 branches missed.">            switch (type) {</span>
+            case SECOND:
+<span class="nc" id="L1066">                max = 60;</span>
+<span class="nc" id="L1067">                break;</span>
+            case MINUTE:
+<span class="nc" id="L1069">                max = 60;</span>
+<span class="nc" id="L1070">                break;</span>
+            case HOUR:
+<span class="nc" id="L1072">                max = 24;</span>
+<span class="nc" id="L1073">                break;</span>
+            case MONTH:
+<span class="nc" id="L1075">                max = 12;</span>
+<span class="nc" id="L1076">                break;</span>
+            case DAY_OF_WEEK:
+<span class="nc" id="L1078">                max = 7;</span>
+<span class="nc" id="L1079">                break;</span>
+            case DAY_OF_MONTH:
+<span class="nc" id="L1081">                max = 31;</span>
+<span class="nc" id="L1082">                break;</span>
+            case YEAR:
+<span class="nc" id="L1084">                throw new IllegalArgumentException(&quot;Start year must be less than stop year&quot;);</span>
+            default:
+<span class="nc" id="L1086">                throw new IllegalArgumentException(&quot;Unexpected type encountered&quot;);</span>
+            }
+<span class="nc" id="L1088">            stopAt += max;</span>
+        }
+
+<span class="nc bnc" id="L1091" title="All 2 branches missed.">        for (int i = startAt; i &lt;= stopAt; i += incr) {</span>
+<span class="nc bnc" id="L1092" title="All 2 branches missed.">            if (max == -1) {</span>
+                // ie: there's no max to overflow over
+<span class="nc" id="L1094">                set.add(i);</span>
+            } else {
+                // take the modulus to get the real value
+<span class="nc" id="L1097">                int i2 = i % max;</span>
+
+                // 1-indexed ranges should not include 0, and should include
+                // their max
+<span class="nc bnc" id="L1101" title="All 8 branches missed.">                if (i2 == 0 &amp;&amp; (type == MONTH || type == DAY_OF_WEEK || type == DAY_OF_MONTH)) {</span>
+<span class="nc" id="L1102">                    i2 = max;</span>
+                }
+
+<span class="nc" id="L1105">                set.add(i2);</span>
+            }
+        }
+<span class="nc" id="L1108">    }</span>
+
+    TreeSet&lt;Integer&gt; getSet(int type) {
+<span class="nc bnc" id="L1111" title="All 8 branches missed.">        switch (type) {</span>
+        case SECOND:
+<span class="nc" id="L1113">            return seconds;</span>
+        case MINUTE:
+<span class="nc" id="L1115">            return minutes;</span>
+        case HOUR:
+<span class="nc" id="L1117">            return hours;</span>
+        case DAY_OF_MONTH:
+<span class="nc" id="L1119">            return daysOfMonth;</span>
+        case MONTH:
+<span class="nc" id="L1121">            return months;</span>
+        case DAY_OF_WEEK:
+<span class="nc" id="L1123">            return daysOfWeek;</span>
+        case YEAR:
+<span class="nc" id="L1125">            return years;</span>
+        default:
+<span class="nc" id="L1127">            return null;</span>
+        }
+    }
+
+    protected ValueSet getValue(int v, String s, int i) {
+<span class="nc" id="L1132">        char c = s.charAt(i);</span>
+<span class="nc" id="L1133">        StringBuilder s1 = new StringBuilder(String.valueOf(v));</span>
+<span class="nc bnc" id="L1134" title="All 4 branches missed.">        while (c &gt;= '0' &amp;&amp; c &lt;= '9') {</span>
+<span class="nc" id="L1135">            s1.append(c);</span>
+<span class="nc" id="L1136">            i++;</span>
+<span class="nc bnc" id="L1137" title="All 2 branches missed.">            if (i &gt;= s.length()) {</span>
+<span class="nc" id="L1138">                break;</span>
+            }
+<span class="nc" id="L1140">            c = s.charAt(i);</span>
+        }
+<span class="nc" id="L1142">        ValueSet val = new ValueSet();</span>
+
+<span class="nc bnc" id="L1144" title="All 2 branches missed.">        val.pos = (i &lt; s.length()) ? i : i + 1;</span>
+<span class="nc" id="L1145">        val.value = Integer.parseInt(s1.toString());</span>
+<span class="nc" id="L1146">        return val;</span>
+    }
+
+    protected int getNumericValue(String s, int i) {
+<span class="nc" id="L1150">        int endOfVal = findNextWhiteSpace(i, s);</span>
+<span class="nc" id="L1151">        String val = s.substring(i, endOfVal);</span>
+<span class="nc" id="L1152">        return Integer.parseInt(val);</span>
+    }
+
+    protected int getMonthNumber(String s) {
+<span class="nc" id="L1156">        Integer integer = monthMap.get(s);</span>
+
+<span class="nc bnc" id="L1158" title="All 2 branches missed.">        if (integer == null) {</span>
+<span class="nc" id="L1159">            return -1;</span>
+        }
+
+<span class="nc" id="L1162">        return integer;</span>
+    }
+
+    protected int getDayOfWeekNumber(String s) {
+<span class="nc" id="L1166">        Integer integer = dayMap.get(s);</span>
+
+<span class="nc bnc" id="L1168" title="All 2 branches missed.">        if (integer == null) {</span>
+<span class="nc" id="L1169">            return -1;</span>
+        }
+
+<span class="nc" id="L1172">        return integer;</span>
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    //
+    // Computation Functions
+    //
+    ////////////////////////////////////////////////////////////////////////////
+
+    public Date getTimeAfter(Date afterTime) {
+
+        // Computation is based on Gregorian year only.
+<span class="nc" id="L1184">        Calendar cl = clockReader.getCurrentCalendar(getTimeZone()); </span>
+
+        // move ahead one second, since we're computing the time *after* the
+        // given time
+<span class="nc" id="L1188">        afterTime = new Date(afterTime.getTime() + 1000);</span>
+        // CronTrigger does not deal with milliseconds
+<span class="nc" id="L1190">        cl.setTime(afterTime);</span>
+<span class="nc" id="L1191">        cl.set(Calendar.MILLISECOND, 0);</span>
+
+<span class="nc" id="L1193">        boolean gotOne = false;</span>
+        // loop until we've computed the next time, or we've past the endTime
+<span class="nc bnc" id="L1195" title="All 2 branches missed.">        while (!gotOne) {</span>
+
+            // if (endTime != null &amp;&amp; cl.getTime().after(endTime)) return null;
+<span class="nc bnc" id="L1198" title="All 2 branches missed.">            if (cl.get(Calendar.YEAR) &gt; 2999) { // prevent endless loop...</span>
+<span class="nc" id="L1199">                return null;</span>
+            }
+
+<span class="nc" id="L1202">            SortedSet&lt;Integer&gt; st = null;</span>
+<span class="nc" id="L1203">            int t = 0;</span>
+
+<span class="nc" id="L1205">            int sec = cl.get(Calendar.SECOND);</span>
+<span class="nc" id="L1206">            int min = cl.get(Calendar.MINUTE);</span>
+
+            // get second.................................................
+<span class="nc" id="L1209">            st = seconds.tailSet(sec);</span>
+<span class="nc bnc" id="L1210" title="All 4 branches missed.">            if (st != null &amp;&amp; st.size() != 0) {</span>
+<span class="nc" id="L1211">                sec = st.first();</span>
+            } else {
+<span class="nc" id="L1213">                sec = seconds.first();</span>
+<span class="nc" id="L1214">                min++;</span>
+<span class="nc" id="L1215">                cl.set(Calendar.MINUTE, min);</span>
+            }
+<span class="nc" id="L1217">            cl.set(Calendar.SECOND, sec);</span>
+
+<span class="nc" id="L1219">            min = cl.get(Calendar.MINUTE);</span>
+<span class="nc" id="L1220">            int hr = cl.get(Calendar.HOUR_OF_DAY);</span>
+<span class="nc" id="L1221">            t = -1;</span>
+
+            // get minute.................................................
+<span class="nc" id="L1224">            st = minutes.tailSet(min);</span>
+<span class="nc bnc" id="L1225" title="All 4 branches missed.">            if (st != null &amp;&amp; st.size() != 0) {</span>
+<span class="nc" id="L1226">                t = min;</span>
+<span class="nc" id="L1227">                min = st.first();</span>
+            } else {
+<span class="nc" id="L1229">                min = minutes.first();</span>
+<span class="nc" id="L1230">                hr++;</span>
+            }
+<span class="nc bnc" id="L1232" title="All 2 branches missed.">            if (min != t) {</span>
+<span class="nc" id="L1233">                cl.set(Calendar.SECOND, 0);</span>
+<span class="nc" id="L1234">                cl.set(Calendar.MINUTE, min);</span>
+<span class="nc" id="L1235">                setCalendarHour(cl, hr);</span>
+<span class="nc" id="L1236">                continue;</span>
+            }
+<span class="nc" id="L1238">            cl.set(Calendar.MINUTE, min);</span>
+
+<span class="nc" id="L1240">            hr = cl.get(Calendar.HOUR_OF_DAY);</span>
+<span class="nc" id="L1241">            int day = cl.get(Calendar.DAY_OF_MONTH);</span>
+<span class="nc" id="L1242">            t = -1;</span>
+
+            // get hour...................................................
+<span class="nc" id="L1245">            st = hours.tailSet(hr);</span>
+<span class="nc bnc" id="L1246" title="All 4 branches missed.">            if (st != null &amp;&amp; st.size() != 0) {</span>
+<span class="nc" id="L1247">                t = hr;</span>
+<span class="nc" id="L1248">                hr = st.first();</span>
+            } else {
+<span class="nc" id="L1250">                hr = hours.first();</span>
+<span class="nc" id="L1251">                day++;</span>
+            }
+<span class="nc bnc" id="L1253" title="All 2 branches missed.">            if (hr != t) {</span>
+<span class="nc" id="L1254">                cl.set(Calendar.SECOND, 0);</span>
+<span class="nc" id="L1255">                cl.set(Calendar.MINUTE, 0);</span>
+<span class="nc" id="L1256">                cl.set(Calendar.DAY_OF_MONTH, day);</span>
+<span class="nc" id="L1257">                setCalendarHour(cl, hr);</span>
+<span class="nc" id="L1258">                continue;</span>
+            }
+<span class="nc" id="L1260">            cl.set(Calendar.HOUR_OF_DAY, hr);</span>
+
+<span class="nc" id="L1262">            day = cl.get(Calendar.DAY_OF_MONTH);</span>
+<span class="nc" id="L1263">            int mon = cl.get(Calendar.MONTH) + 1;</span>
+            // '+ 1' because calendar is 0-based for this field, and we are
+            // 1-based
+<span class="nc" id="L1266">            t = -1;</span>
+<span class="nc" id="L1267">            int tmon = mon;</span>
+
+            // get day...................................................
+<span class="nc bnc" id="L1270" title="All 2 branches missed.">            boolean dayOfMSpec = !daysOfMonth.contains(NO_SPEC);</span>
+<span class="nc bnc" id="L1271" title="All 2 branches missed.">            boolean dayOfWSpec = !daysOfWeek.contains(NO_SPEC);</span>
+<span class="nc bnc" id="L1272" title="All 4 branches missed.">            if (dayOfMSpec &amp;&amp; !dayOfWSpec) { // get day by day of month rule</span>
+<span class="nc" id="L1273">                st = daysOfMonth.tailSet(day);</span>
+<span class="nc bnc" id="L1274" title="All 2 branches missed.">                if (lastdayOfMonth) {</span>
+<span class="nc bnc" id="L1275" title="All 2 branches missed.">                    if (!nearestWeekday) {</span>
+<span class="nc" id="L1276">                        t = day;</span>
+<span class="nc" id="L1277">                        day = getLastDayOfMonth(mon, cl.get(Calendar.YEAR));</span>
+<span class="nc" id="L1278">                        day -= lastdayOffset;</span>
+<span class="nc bnc" id="L1279" title="All 2 branches missed.">                        if (t &gt; day) {</span>
+<span class="nc" id="L1280">                            mon++;</span>
+<span class="nc bnc" id="L1281" title="All 2 branches missed.">                            if (mon &gt; 12) {</span>
+<span class="nc" id="L1282">                                mon = 1;</span>
+<span class="nc" id="L1283">                                tmon = 3333; // ensure test of mon != tmon</span>
+                                             // further below fails
+<span class="nc" id="L1285">                                cl.add(Calendar.YEAR, 1);</span>
+                            }
+<span class="nc" id="L1287">                            day = 1;</span>
+                        }
+                    } else {
+<span class="nc" id="L1290">                        t = day;</span>
+<span class="nc" id="L1291">                        day = getLastDayOfMonth(mon, cl.get(Calendar.YEAR));</span>
+<span class="nc" id="L1292">                        day -= lastdayOffset;</span>
+
+//                        java.util.Calendar tcal = java.util.Calendar.getInstance(getTimeZone());
+<span class="nc" id="L1295">                        Calendar tcal = clockReader.getCurrentCalendar(getTimeZone());</span>
+<span class="nc" id="L1296">                        tcal.set(Calendar.SECOND, 0);</span>
+<span class="nc" id="L1297">                        tcal.set(Calendar.MINUTE, 0);</span>
+<span class="nc" id="L1298">                        tcal.set(Calendar.HOUR_OF_DAY, 0);</span>
+<span class="nc" id="L1299">                        tcal.set(Calendar.DAY_OF_MONTH, day);</span>
+<span class="nc" id="L1300">                        tcal.set(Calendar.MONTH, mon - 1);</span>
+<span class="nc" id="L1301">                        tcal.set(Calendar.YEAR, cl.get(Calendar.YEAR));</span>
+
+<span class="nc" id="L1303">                        int ldom = getLastDayOfMonth(mon, cl.get(Calendar.YEAR));</span>
+<span class="nc" id="L1304">                        int dow = tcal.get(Calendar.DAY_OF_WEEK);</span>
+
+<span class="nc bnc" id="L1306" title="All 4 branches missed.">                        if (dow == Calendar.SATURDAY &amp;&amp; day == 1) {</span>
+<span class="nc" id="L1307">                            day += 2;</span>
+<span class="nc bnc" id="L1308" title="All 2 branches missed.">                        } else if (dow == Calendar.SATURDAY) {</span>
+<span class="nc" id="L1309">                            day -= 1;</span>
+<span class="nc bnc" id="L1310" title="All 4 branches missed.">                        } else if (dow == Calendar.SUNDAY &amp;&amp; day == ldom) {</span>
+<span class="nc" id="L1311">                            day -= 2;</span>
+<span class="nc bnc" id="L1312" title="All 2 branches missed.">                        } else if (dow == Calendar.SUNDAY) {</span>
+<span class="nc" id="L1313">                            day += 1;</span>
+                        }
+
+<span class="nc" id="L1316">                        tcal.set(Calendar.SECOND, sec);</span>
+<span class="nc" id="L1317">                        tcal.set(Calendar.MINUTE, min);</span>
+<span class="nc" id="L1318">                        tcal.set(Calendar.HOUR_OF_DAY, hr);</span>
+<span class="nc" id="L1319">                        tcal.set(Calendar.DAY_OF_MONTH, day);</span>
+<span class="nc" id="L1320">                        tcal.set(Calendar.MONTH, mon - 1);</span>
+<span class="nc" id="L1321">                        Date nTime = tcal.getTime();</span>
+<span class="nc bnc" id="L1322" title="All 2 branches missed.">                        if (nTime.before(afterTime)) {</span>
+<span class="nc" id="L1323">                            day = 1;</span>
+<span class="nc" id="L1324">                            mon++;</span>
+                        }
+<span class="nc" id="L1326">                    }</span>
+<span class="nc bnc" id="L1327" title="All 2 branches missed.">                } else if (nearestWeekday) {</span>
+<span class="nc" id="L1328">                    t = day;</span>
+<span class="nc" id="L1329">                    day = daysOfMonth.first();</span>
+
+//                    java.util.Calendar tcal = java.util.Calendar.getInstance(getTimeZone());
+<span class="nc" id="L1332">                    Calendar tcal = clockReader.getCurrentCalendar(getTimeZone());</span>
+<span class="nc" id="L1333">                    tcal.set(Calendar.SECOND, 0);</span>
+<span class="nc" id="L1334">                    tcal.set(Calendar.MINUTE, 0);</span>
+<span class="nc" id="L1335">                    tcal.set(Calendar.HOUR_OF_DAY, 0);</span>
+<span class="nc" id="L1336">                    tcal.set(Calendar.DAY_OF_MONTH, day);</span>
+<span class="nc" id="L1337">                    tcal.set(Calendar.MONTH, mon - 1);</span>
+<span class="nc" id="L1338">                    tcal.set(Calendar.YEAR, cl.get(Calendar.YEAR));</span>
+
+<span class="nc" id="L1340">                    int ldom = getLastDayOfMonth(mon, cl.get(Calendar.YEAR));</span>
+<span class="nc" id="L1341">                    int dow = tcal.get(Calendar.DAY_OF_WEEK);</span>
+
+<span class="nc bnc" id="L1343" title="All 4 branches missed.">                    if (dow == Calendar.SATURDAY &amp;&amp; day == 1) {</span>
+<span class="nc" id="L1344">                        day += 2;</span>
+<span class="nc bnc" id="L1345" title="All 2 branches missed.">                    } else if (dow == Calendar.SATURDAY) {</span>
+<span class="nc" id="L1346">                        day -= 1;</span>
+<span class="nc bnc" id="L1347" title="All 4 branches missed.">                    } else if (dow == Calendar.SUNDAY &amp;&amp; day == ldom) {</span>
+<span class="nc" id="L1348">                        day -= 2;</span>
+<span class="nc bnc" id="L1349" title="All 2 branches missed.">                    } else if (dow == Calendar.SUNDAY) {</span>
+<span class="nc" id="L1350">                        day += 1;</span>
+                    }
+
+<span class="nc" id="L1353">                    tcal.set(Calendar.SECOND, sec);</span>
+<span class="nc" id="L1354">                    tcal.set(Calendar.MINUTE, min);</span>
+<span class="nc" id="L1355">                    tcal.set(Calendar.HOUR_OF_DAY, hr);</span>
+<span class="nc" id="L1356">                    tcal.set(Calendar.DAY_OF_MONTH, day);</span>
+<span class="nc" id="L1357">                    tcal.set(Calendar.MONTH, mon - 1);</span>
+<span class="nc" id="L1358">                    Date nTime = tcal.getTime();</span>
+<span class="nc bnc" id="L1359" title="All 2 branches missed.">                    if (nTime.before(afterTime)) {</span>
+<span class="nc" id="L1360">                        day = daysOfMonth.first();</span>
+<span class="nc" id="L1361">                        mon++;</span>
+                    }
+<span class="nc bnc" id="L1363" title="All 4 branches missed.">                } else if (st != null &amp;&amp; st.size() != 0) {</span>
+<span class="nc" id="L1364">                    t = day;</span>
+<span class="nc" id="L1365">                    day = st.first();</span>
+                    // make sure we don't over-run a short month, such as
+                    // february
+<span class="nc" id="L1368">                    int lastDay = getLastDayOfMonth(mon, cl.get(Calendar.YEAR));</span>
+<span class="nc bnc" id="L1369" title="All 2 branches missed.">                    if (day &gt; lastDay) {</span>
+<span class="nc" id="L1370">                        day = daysOfMonth.first();</span>
+<span class="nc" id="L1371">                        mon++;</span>
+                    }
+<span class="nc" id="L1373">                } else {</span>
+<span class="nc" id="L1374">                    day = daysOfMonth.first();</span>
+<span class="nc" id="L1375">                    mon++;</span>
+                }
+
+<span class="nc bnc" id="L1378" title="All 4 branches missed.">                if (day != t || mon != tmon) {</span>
+<span class="nc" id="L1379">                    cl.set(Calendar.SECOND, 0);</span>
+<span class="nc" id="L1380">                    cl.set(Calendar.MINUTE, 0);</span>
+<span class="nc" id="L1381">                    cl.set(Calendar.HOUR_OF_DAY, 0);</span>
+<span class="nc" id="L1382">                    cl.set(Calendar.DAY_OF_MONTH, day);</span>
+<span class="nc" id="L1383">                    cl.set(Calendar.MONTH, mon - 1);</span>
+                    // '- 1' because calendar is 0-based for this field, and we
+                    // are 1-based
+<span class="nc" id="L1386">                    continue;</span>
+                }
+<span class="nc bnc" id="L1388" title="All 4 branches missed.">            } else if (dayOfWSpec &amp;&amp; !dayOfMSpec) { // get day by day of week</span>
+                                                    // rule
+<span class="nc bnc" id="L1390" title="All 2 branches missed.">                if (lastdayOfWeek) { // are we looking for the last XXX day of</span>
+                    // the month?
+<span class="nc" id="L1392">                    int dow = daysOfWeek.first(); // desired</span>
+                    // d-o-w
+<span class="nc" id="L1394">                    int cDow = cl.get(Calendar.DAY_OF_WEEK); // current d-o-w</span>
+<span class="nc" id="L1395">                    int daysToAdd = 0;</span>
+<span class="nc bnc" id="L1396" title="All 2 branches missed.">                    if (cDow &lt; dow) {</span>
+<span class="nc" id="L1397">                        daysToAdd = dow - cDow;</span>
+                    }
+<span class="nc bnc" id="L1399" title="All 2 branches missed.">                    if (cDow &gt; dow) {</span>
+<span class="nc" id="L1400">                        daysToAdd = dow + (7 - cDow);</span>
+                    }
+
+<span class="nc" id="L1403">                    int lDay = getLastDayOfMonth(mon, cl.get(Calendar.YEAR));</span>
+
+<span class="nc bnc" id="L1405" title="All 2 branches missed.">                    if (day + daysToAdd &gt; lDay) { // did we already miss the</span>
+                        // last one?
+<span class="nc" id="L1407">                        cl.set(Calendar.SECOND, 0);</span>
+<span class="nc" id="L1408">                        cl.set(Calendar.MINUTE, 0);</span>
+<span class="nc" id="L1409">                        cl.set(Calendar.HOUR_OF_DAY, 0);</span>
+<span class="nc" id="L1410">                        cl.set(Calendar.DAY_OF_MONTH, 1);</span>
+<span class="nc" id="L1411">                        cl.set(Calendar.MONTH, mon);</span>
+                        // no '- 1' here because we are promoting the month
+<span class="nc" id="L1413">                        continue;</span>
+                    }
+
+                    // find date of last occurrence of this day in this month...
+<span class="nc bnc" id="L1417" title="All 2 branches missed.">                    while ((day + daysToAdd + 7) &lt;= lDay) {</span>
+<span class="nc" id="L1418">                        daysToAdd += 7;</span>
+                    }
+
+<span class="nc" id="L1421">                    day += daysToAdd;</span>
+
+<span class="nc bnc" id="L1423" title="All 2 branches missed.">                    if (daysToAdd &gt; 0) {</span>
+<span class="nc" id="L1424">                        cl.set(Calendar.SECOND, 0);</span>
+<span class="nc" id="L1425">                        cl.set(Calendar.MINUTE, 0);</span>
+<span class="nc" id="L1426">                        cl.set(Calendar.HOUR_OF_DAY, 0);</span>
+<span class="nc" id="L1427">                        cl.set(Calendar.DAY_OF_MONTH, day);</span>
+<span class="nc" id="L1428">                        cl.set(Calendar.MONTH, mon - 1);</span>
+                        // '- 1' here because we are not promoting the month
+<span class="nc" id="L1430">                        continue;</span>
+                    }
+
+<span class="nc bnc" id="L1433" title="All 2 branches missed.">                } else if (nthdayOfWeek != 0) {</span>
+                    // are we looking for the Nth XXX day in the month?
+<span class="nc" id="L1435">                    int dow = daysOfWeek.first(); // desired</span>
+                    // d-o-w
+<span class="nc" id="L1437">                    int cDow = cl.get(Calendar.DAY_OF_WEEK); // current d-o-w</span>
+<span class="nc" id="L1438">                    int daysToAdd = 0;</span>
+<span class="nc bnc" id="L1439" title="All 2 branches missed.">                    if (cDow &lt; dow) {</span>
+<span class="nc" id="L1440">                        daysToAdd = dow - cDow;</span>
+<span class="nc bnc" id="L1441" title="All 2 branches missed.">                    } else if (cDow &gt; dow) {</span>
+<span class="nc" id="L1442">                        daysToAdd = dow + (7 - cDow);</span>
+                    }
+
+<span class="nc" id="L1445">                    boolean dayShifted = false;</span>
+<span class="nc bnc" id="L1446" title="All 2 branches missed.">                    if (daysToAdd &gt; 0) {</span>
+<span class="nc" id="L1447">                        dayShifted = true;</span>
+                    }
+
+<span class="nc" id="L1450">                    day += daysToAdd;</span>
+<span class="nc" id="L1451">                    int weekOfMonth = day / 7;</span>
+<span class="nc bnc" id="L1452" title="All 2 branches missed.">                    if (day % 7 &gt; 0) {</span>
+<span class="nc" id="L1453">                        weekOfMonth++;</span>
+                    }
+
+<span class="nc" id="L1456">                    daysToAdd = (nthdayOfWeek - weekOfMonth) * 7;</span>
+<span class="nc" id="L1457">                    day += daysToAdd;</span>
+<span class="nc bnc" id="L1458" title="All 4 branches missed.">                    if (daysToAdd &lt; 0 || day &gt; getLastDayOfMonth(mon, cl.get(Calendar.YEAR))) {</span>
+<span class="nc" id="L1459">                        cl.set(Calendar.SECOND, 0);</span>
+<span class="nc" id="L1460">                        cl.set(Calendar.MINUTE, 0);</span>
+<span class="nc" id="L1461">                        cl.set(Calendar.HOUR_OF_DAY, 0);</span>
+<span class="nc" id="L1462">                        cl.set(Calendar.DAY_OF_MONTH, 1);</span>
+<span class="nc" id="L1463">                        cl.set(Calendar.MONTH, mon);</span>
+                        // no '- 1' here because we are promoting the month
+<span class="nc" id="L1465">                        continue;</span>
+<span class="nc bnc" id="L1466" title="All 4 branches missed.">                    } else if (daysToAdd &gt; 0 || dayShifted) {</span>
+<span class="nc" id="L1467">                        cl.set(Calendar.SECOND, 0);</span>
+<span class="nc" id="L1468">                        cl.set(Calendar.MINUTE, 0);</span>
+<span class="nc" id="L1469">                        cl.set(Calendar.HOUR_OF_DAY, 0);</span>
+<span class="nc" id="L1470">                        cl.set(Calendar.DAY_OF_MONTH, day);</span>
+<span class="nc" id="L1471">                        cl.set(Calendar.MONTH, mon - 1);</span>
+                        // '- 1' here because we are NOT promoting the month
+<span class="nc" id="L1473">                        continue;</span>
+                    }
+<span class="nc" id="L1475">                } else {</span>
+<span class="nc" id="L1476">                    int cDow = cl.get(Calendar.DAY_OF_WEEK); // current d-o-w</span>
+<span class="nc" id="L1477">                    int dow = daysOfWeek.first(); // desired</span>
+                    // d-o-w
+<span class="nc" id="L1479">                    st = daysOfWeek.tailSet(cDow);</span>
+<span class="nc bnc" id="L1480" title="All 4 branches missed.">                    if (st != null &amp;&amp; st.size() &gt; 0) {</span>
+<span class="nc" id="L1481">                        dow = st.first();</span>
+                    }
+
+<span class="nc" id="L1484">                    int daysToAdd = 0;</span>
+<span class="nc bnc" id="L1485" title="All 2 branches missed.">                    if (cDow &lt; dow) {</span>
+<span class="nc" id="L1486">                        daysToAdd = dow - cDow;</span>
+                    }
+<span class="nc bnc" id="L1488" title="All 2 branches missed.">                    if (cDow &gt; dow) {</span>
+<span class="nc" id="L1489">                        daysToAdd = dow + (7 - cDow);</span>
+                    }
+
+<span class="nc" id="L1492">                    int lDay = getLastDayOfMonth(mon, cl.get(Calendar.YEAR));</span>
+
+<span class="nc bnc" id="L1494" title="All 2 branches missed.">                    if (day + daysToAdd &gt; lDay) { // will we pass the end of</span>
+                        // the month?
+<span class="nc" id="L1496">                        cl.set(Calendar.SECOND, 0);</span>
+<span class="nc" id="L1497">                        cl.set(Calendar.MINUTE, 0);</span>
+<span class="nc" id="L1498">                        cl.set(Calendar.HOUR_OF_DAY, 0);</span>
+<span class="nc" id="L1499">                        cl.set(Calendar.DAY_OF_MONTH, 1);</span>
+<span class="nc" id="L1500">                        cl.set(Calendar.MONTH, mon);</span>
+                        // no '- 1' here because we are promoting the month
+<span class="nc" id="L1502">                        continue;</span>
+<span class="nc bnc" id="L1503" title="All 2 branches missed.">                    } else if (daysToAdd &gt; 0) { // are we swithing days?</span>
+<span class="nc" id="L1504">                        cl.set(Calendar.SECOND, 0);</span>
+<span class="nc" id="L1505">                        cl.set(Calendar.MINUTE, 0);</span>
+<span class="nc" id="L1506">                        cl.set(Calendar.HOUR_OF_DAY, 0);</span>
+<span class="nc" id="L1507">                        cl.set(Calendar.DAY_OF_MONTH, day + daysToAdd);</span>
+<span class="nc" id="L1508">                        cl.set(Calendar.MONTH, mon - 1);</span>
+                        // '- 1' because calendar is 0-based for this field,
+                        // and we are 1-based
+<span class="nc" id="L1511">                        continue;</span>
+                    }
+<span class="nc" id="L1513">                }</span>
+            } else { // dayOfWSpec &amp;&amp; !dayOfMSpec
+<span class="nc" id="L1515">                throw new UnsupportedOperationException(</span>
+                        &quot;Support for specifying both a day-of-week AND a day-of-month parameter is not implemented.&quot;);
+            }
+<span class="nc" id="L1518">            cl.set(Calendar.DAY_OF_MONTH, day);</span>
+
+<span class="nc" id="L1520">            mon = cl.get(Calendar.MONTH) + 1;</span>
+            // '+ 1' because calendar is 0-based for this field, and we are
+            // 1-based
+<span class="nc" id="L1523">            int year = cl.get(Calendar.YEAR);</span>
+<span class="nc" id="L1524">            t = -1;</span>
+
+            // test for expressions that never generate a valid fire date,
+            // but keep looping...
+<span class="nc bnc" id="L1528" title="All 2 branches missed.">            if (year &gt; MAX_YEAR) {</span>
+<span class="nc" id="L1529">                return null;</span>
+            }
+
+            // get month...................................................
+<span class="nc" id="L1533">            st = months.tailSet(mon);</span>
+<span class="nc bnc" id="L1534" title="All 4 branches missed.">            if (st != null &amp;&amp; st.size() != 0) {</span>
+<span class="nc" id="L1535">                t = mon;</span>
+<span class="nc" id="L1536">                mon = st.first();</span>
+            } else {
+<span class="nc" id="L1538">                mon = months.first();</span>
+<span class="nc" id="L1539">                year++;</span>
+            }
+<span class="nc bnc" id="L1541" title="All 2 branches missed.">            if (mon != t) {</span>
+<span class="nc" id="L1542">                cl.set(Calendar.SECOND, 0);</span>
+<span class="nc" id="L1543">                cl.set(Calendar.MINUTE, 0);</span>
+<span class="nc" id="L1544">                cl.set(Calendar.HOUR_OF_DAY, 0);</span>
+<span class="nc" id="L1545">                cl.set(Calendar.DAY_OF_MONTH, 1);</span>
+<span class="nc" id="L1546">                cl.set(Calendar.MONTH, mon - 1);</span>
+                // '- 1' because calendar is 0-based for this field, and we are
+                // 1-based
+<span class="nc" id="L1549">                cl.set(Calendar.YEAR, year);</span>
+<span class="nc" id="L1550">                continue;</span>
+            }
+<span class="nc" id="L1552">            cl.set(Calendar.MONTH, mon - 1);</span>
+            // '- 1' because calendar is 0-based for this field, and we are
+            // 1-based
+
+<span class="nc" id="L1556">            year = cl.get(Calendar.YEAR);</span>
+<span class="nc" id="L1557">            t = -1;</span>
+
+            // get year...................................................
+<span class="nc" id="L1560">            st = years.tailSet(year);</span>
+<span class="nc bnc" id="L1561" title="All 4 branches missed.">            if (st != null &amp;&amp; st.size() != 0) {</span>
+<span class="nc" id="L1562">                t = year;</span>
+<span class="nc" id="L1563">                year = st.first();</span>
+            } else {
+<span class="nc" id="L1565">                return null; // ran out of years...</span>
+            }
+
+<span class="nc bnc" id="L1568" title="All 2 branches missed.">            if (year != t) {</span>
+<span class="nc" id="L1569">                cl.set(Calendar.SECOND, 0);</span>
+<span class="nc" id="L1570">                cl.set(Calendar.MINUTE, 0);</span>
+<span class="nc" id="L1571">                cl.set(Calendar.HOUR_OF_DAY, 0);</span>
+<span class="nc" id="L1572">                cl.set(Calendar.DAY_OF_MONTH, 1);</span>
+<span class="nc" id="L1573">                cl.set(Calendar.MONTH, 0);</span>
+                // '- 1' because calendar is 0-based for this field, and we are
+                // 1-based
+<span class="nc" id="L1576">                cl.set(Calendar.YEAR, year);</span>
+<span class="nc" id="L1577">                continue;</span>
+            }
+<span class="nc" id="L1579">            cl.set(Calendar.YEAR, year);</span>
+
+<span class="nc" id="L1581">            gotOne = true;</span>
+<span class="nc" id="L1582">        } // while( !done )</span>
+
+<span class="nc" id="L1584">        return cl.getTime();</span>
+    }
+
+    /**
+     * Advance the calendar to the particular hour paying particular attention
+     * to daylight saving problems.
+     * 
+     * @param cal
+     *            the calendar to operate on
+     * @param hour
+     *            the hour to set
+     */
+    protected void setCalendarHour(Calendar cal, int hour) {
+<span class="nc" id="L1597">        cal.set(java.util.Calendar.HOUR_OF_DAY, hour);</span>
+<span class="nc bnc" id="L1598" title="All 4 branches missed.">        if (cal.get(java.util.Calendar.HOUR_OF_DAY) != hour &amp;&amp; hour != 24) {</span>
+<span class="nc" id="L1599">            cal.set(java.util.Calendar.HOUR_OF_DAY, hour + 1);</span>
+        }
+<span class="nc" id="L1601">    }</span>
+
+    /**
+     * NOT YET IMPLEMENTED: Returns the time before the given time that the
+     * &lt;code&gt;CronExpression&lt;/code&gt; matches.
+     */
+    public Date getTimeBefore(Date endTime) {
+        // FUTURE_TODO: implement QUARTZ-423
+<span class="nc" id="L1609">        return null;</span>
+    }
+
+    /**
+     * NOT YET IMPLEMENTED: Returns the final time that the
+     * &lt;code&gt;CronExpression&lt;/code&gt; will match.
+     */
+    public Date getFinalFireTime() {
+        // FUTURE_TODO: implement QUARTZ-423
+<span class="nc" id="L1618">        return null;</span>
+    }
+
+    protected boolean isLeapYear(int year) {
+<span class="nc bnc" id="L1622" title="All 6 branches missed.">        return ((year % 4 == 0 &amp;&amp; year % 100 != 0) || (year % 400 == 0));</span>
+    }
+
+    protected int getLastDayOfMonth(int monthNum, int year) {
+
+<span class="nc bnc" id="L1627" title="All 13 branches missed.">        switch (monthNum) {</span>
+        case 1:
+<span class="nc" id="L1629">            return 31;</span>
+        case 2:
+<span class="nc bnc" id="L1631" title="All 2 branches missed.">            return isLeapYear(year) ? 29 : 28;</span>
+        case 3:
+<span class="nc" id="L1633">            return 31;</span>
+        case 4:
+<span class="nc" id="L1635">            return 30;</span>
+        case 5:
+<span class="nc" id="L1637">            return 31;</span>
+        case 6:
+<span class="nc" id="L1639">            return 30;</span>
+        case 7:
+<span class="nc" id="L1641">            return 31;</span>
+        case 8:
+<span class="nc" id="L1643">            return 31;</span>
+        case 9:
+<span class="nc" id="L1645">            return 30;</span>
+        case 10:
+<span class="nc" id="L1647">            return 31;</span>
+        case 11:
+<span class="nc" id="L1649">            return 30;</span>
+        case 12:
+<span class="nc" id="L1651">            return 31;</span>
+        default:
+<span class="nc" id="L1653">            throw new IllegalArgumentException(&quot;Illegal month number: &quot; + monthNum);</span>
+        }
+    }
+
+    private void readObject(java.io.ObjectInputStream stream) throws java.io.IOException, ClassNotFoundException {
+
+<span class="nc" id="L1659">        stream.defaultReadObject();</span>
+        try {
+<span class="nc" id="L1661">            buildExpression(cronExpression);</span>
+<span class="nc" id="L1662">        } catch (Exception ignore) {</span>
+<span class="nc" id="L1663">        } // never happens</span>
+<span class="nc" id="L1664">    }</span>
+
+    /**
+     * @deprecated
+     */
+    @Override
+    @Deprecated
+    public Object clone() {
+<span class="nc" id="L1672">        return new CronExpression(this, clockReader);</span>
+    }
+}
+
+<span class="nc" id="L1676">class ValueSet {</span>
+    public int value;
+
+    public int pos;
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

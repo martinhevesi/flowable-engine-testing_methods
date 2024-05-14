@@ -1,0 +1,256 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DeleteHistoricCaseInstancesUsingBatchesCmd.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.cmmn.engine.impl.delete</a> &gt; <span class="el_source">DeleteHistoricCaseInstancesUsingBatchesCmd.java</span></div><h1>DeleteHistoricCaseInstancesUsingBatchesCmd.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.cmmn.engine.impl.delete;
+
+import static org.flowable.job.service.impl.history.async.util.AsyncHistoryJsonUtil.putIfNotNull;
+import static org.flowable.job.service.impl.history.async.util.AsyncHistoryJsonUtil.putIfNotNullOrEmpty;
+import static org.flowable.job.service.impl.history.async.util.AsyncHistoryJsonUtil.putIfTrue;
+
+import org.flowable.batch.api.Batch;
+import org.flowable.batch.api.BatchPart;
+import org.flowable.batch.api.BatchService;
+import org.flowable.cmmn.api.CmmnManagementService;
+import org.flowable.cmmn.engine.CmmnEngineConfiguration;
+import org.flowable.cmmn.engine.impl.IdentityLinkQueryObject;
+import org.flowable.cmmn.engine.impl.history.HistoricCaseInstanceQueryImpl;
+import org.flowable.cmmn.engine.impl.util.CommandContextUtil;
+import org.flowable.common.engine.api.FlowableIllegalArgumentException;
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.impl.calendar.BusinessCalendar;
+import org.flowable.common.engine.impl.calendar.CycleBusinessCalendar;
+import org.flowable.common.engine.impl.identity.Authentication;
+import org.flowable.common.engine.impl.interceptor.Command;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.job.api.Job;
+import org.flowable.job.service.JobService;
+import org.flowable.job.service.TimerJobService;
+import org.flowable.job.service.impl.persistence.entity.JobEntity;
+import org.flowable.job.service.impl.persistence.entity.TimerJobEntity;
+import org.flowable.variable.service.impl.QueryVariableValue;
+
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+/**
+ * @author Filip Hrisafov
+ */
+public class DeleteHistoricCaseInstancesUsingBatchesCmd implements Command&lt;String&gt; {
+
+    protected HistoricCaseInstanceQueryImpl historicCaseInstanceQuery;
+    protected int batchSize;
+    protected boolean sequential;
+    protected String batchName;
+
+<span class="nc" id="L54">    public DeleteHistoricCaseInstancesUsingBatchesCmd(HistoricCaseInstanceQueryImpl query, int batchSize, String batchName, boolean sequential) {</span>
+<span class="nc" id="L55">        this.historicCaseInstanceQuery = query;</span>
+<span class="nc" id="L56">        this.batchSize = batchSize;</span>
+<span class="nc" id="L57">        this.batchName = batchName;</span>
+<span class="nc" id="L58">        this.sequential = sequential;</span>
+<span class="nc" id="L59">    }</span>
+
+    @Override
+    public String execute(CommandContext commandContext) {
+<span class="nc bnc" id="L63" title="All 2 branches missed.">        if (historicCaseInstanceQuery == null) {</span>
+<span class="nc" id="L64">            throw new FlowableIllegalArgumentException(&quot;query is null&quot;);</span>
+        }
+
+<span class="nc bnc" id="L67" title="All 2 branches missed.">        if (batchSize &lt;= 0) {</span>
+<span class="nc" id="L68">            throw new FlowableIllegalArgumentException(&quot;batchSize has to be larger than 0&quot;);</span>
+        }
+
+<span class="nc" id="L71">        CmmnEngineConfiguration engineConfiguration = CommandContextUtil.getCmmnEngineConfiguration(commandContext);</span>
+<span class="nc" id="L72">        BatchService batchService = engineConfiguration.getBatchServiceConfiguration()</span>
+<span class="nc" id="L73">                .getBatchService();</span>
+
+<span class="nc" id="L75">        long numberOfCaseInstancesToDelete = historicCaseInstanceQuery.count();</span>
+
+<span class="nc" id="L77">        ObjectNode batchConfiguration = engineConfiguration.getObjectMapper().createObjectNode();</span>
+<span class="nc" id="L78">        batchConfiguration.put(&quot;numberOfInstances&quot;, numberOfCaseInstancesToDelete);</span>
+<span class="nc" id="L79">        batchConfiguration.put(&quot;batchSize&quot;, batchSize);</span>
+<span class="nc bnc" id="L80" title="All 2 branches missed.">        if (sequential) {</span>
+<span class="nc" id="L81">            batchConfiguration.put(&quot;sequential&quot;, true);</span>
+        }
+
+<span class="nc" id="L84">        ObjectNode queryNode = batchConfiguration.putObject(&quot;query&quot;);</span>
+
+<span class="nc" id="L86">        populateQueryNode(queryNode, historicCaseInstanceQuery);</span>
+<span class="nc bnc" id="L87" title="All 2 branches missed.">        for (HistoricCaseInstanceQueryImpl orQueryObject : historicCaseInstanceQuery.getOrQueryObjects()) {</span>
+<span class="nc" id="L88">            ObjectNode orQueryNode = queryNode.withArray(&quot;orQueryObjects&quot;)</span>
+<span class="nc" id="L89">                    .addObject();</span>
+<span class="nc" id="L90">            populateQueryNode(orQueryNode, orQueryObject);</span>
+<span class="nc" id="L91">        }</span>
+
+<span class="nc" id="L93">        String tenantId = historicCaseInstanceQuery.getTenantId();</span>
+<span class="nc bnc" id="L94" title="All 2 branches missed.">        if (historicCaseInstanceQuery.isWithoutTenantId()) {</span>
+<span class="nc" id="L95">            tenantId = CmmnEngineConfiguration.NO_TENANT_ID;</span>
+        }
+
+<span class="nc" id="L98">        Batch batch = batchService.createBatchBuilder()</span>
+<span class="nc" id="L99">                .batchType(Batch.HISTORIC_CASE_DELETE_TYPE)</span>
+<span class="nc" id="L100">                .tenantId(tenantId)</span>
+<span class="nc" id="L101">                .searchKey(batchName)</span>
+<span class="nc" id="L102">                .searchKey2(Authentication.getAuthenticatedUserId())</span>
+<span class="nc" id="L103">                .status(DeleteCaseInstanceBatchConstants.STATUS_IN_PROGRESS)</span>
+<span class="nc" id="L104">                .batchDocumentJson(batchConfiguration.toString())</span>
+<span class="nc" id="L105">                .create();</span>
+
+<span class="nc bnc" id="L107" title="All 2 branches missed.">        if (numberOfCaseInstancesToDelete &gt; 0) {</span>
+            // We convert to double, and tet the ceiling of the division to get the parts
+<span class="nc" id="L109">            long numberOfBatchParts = (long) Math.ceil(((double) numberOfCaseInstancesToDelete) / batchSize);</span>
+
+<span class="nc bnc" id="L111" title="All 2 branches missed.">            if (sequential) {</span>
+<span class="nc" id="L112">                createBatchPartsForSequentialExecution(engineConfiguration, batch, numberOfBatchParts);</span>
+            } else {
+<span class="nc" id="L114">                createBatchPartsForParallelExecution(engineConfiguration, batch, numberOfBatchParts);</span>
+            }
+<span class="nc" id="L116">        } else {</span>
+<span class="nc" id="L117">            batchService.completeBatch(batch.getId(), DeleteCaseInstanceBatchConstants.STATUS_COMPLETED);</span>
+        }
+
+<span class="nc" id="L120">        return batch.getId();</span>
+    }
+
+    protected void createBatchPartsForParallelExecution(CmmnEngineConfiguration engineConfiguration, Batch batch, long numberOfBatchParts) {
+<span class="nc" id="L124">        JobService jobService = engineConfiguration.getJobServiceConfiguration()</span>
+<span class="nc" id="L125">                .getJobService();</span>
+
+<span class="nc" id="L127">        CmmnManagementService managementService = engineConfiguration.getCmmnManagementService();</span>
+
+<span class="nc bnc" id="L129" title="All 2 branches missed.">        for (int i = 0; i &lt; numberOfBatchParts; i++) {</span>
+
+<span class="nc" id="L131">            BatchPart batchPart = managementService.createBatchPartBuilder(batch)</span>
+<span class="nc" id="L132">                    .type(DeleteCaseInstanceBatchConstants.BATCH_PART_COMPUTE_IDS_TYPE)</span>
+<span class="nc" id="L133">                    .searchKey(Integer.toString(i))</span>
+<span class="nc" id="L134">                    .status(DeleteCaseInstanceBatchConstants.STATUS_WAITING)</span>
+<span class="nc" id="L135">                    .create();</span>
+
+<span class="nc" id="L137">            JobEntity job = jobService.createJob();</span>
+<span class="nc" id="L138">            job.setJobHandlerType(ComputeDeleteHistoricCaseInstanceIdsJobHandler.TYPE);</span>
+<span class="nc" id="L139">            job.setJobHandlerConfiguration(batchPart.getId());</span>
+<span class="nc" id="L140">            job.setScopeType(ScopeTypes.CMMN);</span>
+<span class="nc" id="L141">            jobService.createAsyncJob(job, false);</span>
+<span class="nc" id="L142">            jobService.scheduleAsyncJob(job);</span>
+        }
+
+<span class="nc" id="L145">        TimerJobService timerJobService = engineConfiguration.getJobServiceConfiguration()</span>
+<span class="nc" id="L146">                .getTimerJobService();</span>
+<span class="nc" id="L147">        TimerJobEntity timerJob = timerJobService.createTimerJob();</span>
+<span class="nc" id="L148">        timerJob.setJobType(Job.JOB_TYPE_TIMER);</span>
+<span class="nc" id="L149">        timerJob.setRevision(1);</span>
+<span class="nc" id="L150">        timerJob.setJobHandlerType(ComputeDeleteHistoricCaseInstanceStatusJobHandler.TYPE);</span>
+<span class="nc" id="L151">        timerJob.setJobHandlerConfiguration(batch.getId());</span>
+<span class="nc" id="L152">        timerJob.setScopeType(ScopeTypes.CMMN);</span>
+
+<span class="nc" id="L154">        BusinessCalendar businessCalendar = engineConfiguration.getBusinessCalendarManager().getBusinessCalendar(CycleBusinessCalendar.NAME);</span>
+<span class="nc" id="L155">        timerJob.setDuedate(businessCalendar.resolveDuedate(engineConfiguration.getBatchStatusTimeCycleConfig()));</span>
+<span class="nc" id="L156">        timerJob.setRepeat(engineConfiguration.getBatchStatusTimeCycleConfig());</span>
+
+<span class="nc" id="L158">        timerJobService.scheduleTimerJob(timerJob);</span>
+<span class="nc" id="L159">    }</span>
+
+    protected void createBatchPartsForSequentialExecution(CmmnEngineConfiguration engineConfiguration, Batch batch, long numberOfBatchParts) {
+<span class="nc" id="L162">        CmmnManagementService managementService = engineConfiguration.getCmmnManagementService();</span>
+
+<span class="nc" id="L164">        BatchPart firstBatchPart = managementService.createBatchPartBuilder(batch)</span>
+<span class="nc" id="L165">                .type(DeleteCaseInstanceBatchConstants.BATCH_PART_DELETE_CASE_INSTANCES_TYPE)</span>
+<span class="nc" id="L166">                .searchKey(Integer.toString(0))</span>
+<span class="nc" id="L167">                .status(DeleteCaseInstanceBatchConstants.STATUS_WAITING)</span>
+<span class="nc" id="L168">                .create();</span>
+
+<span class="nc" id="L170">        JobService jobService = engineConfiguration.getJobServiceConfiguration().getJobService();</span>
+
+<span class="nc" id="L172">        JobEntity job = jobService.createJob();</span>
+<span class="nc" id="L173">        job.setJobHandlerType(DeleteHistoricCaseInstancesSequentialJobHandler.TYPE);</span>
+<span class="nc" id="L174">        job.setJobHandlerConfiguration(firstBatchPart.getId());</span>
+<span class="nc" id="L175">        job.setScopeType(ScopeTypes.CMMN);</span>
+<span class="nc" id="L176">        jobService.createAsyncJob(job, false);</span>
+<span class="nc" id="L177">        jobService.scheduleAsyncJob(job);</span>
+<span class="nc" id="L178">    }</span>
+
+    protected void populateQueryNode(ObjectNode queryNode, HistoricCaseInstanceQueryImpl query) {
+
+<span class="nc" id="L182">        putIfNotNull(queryNode, &quot;caseDefinitionId&quot;, query.getCaseDefinitionId());</span>
+<span class="nc" id="L183">        putIfNotNull(queryNode, &quot;caseDefinitionKey&quot;, query.getCaseDefinitionKey());</span>
+<span class="nc" id="L184">        putIfNotNullOrEmpty(queryNode, &quot;caseDefinitionKeys&quot;, query.getCaseDefinitionKeys());</span>
+<span class="nc" id="L185">        putIfNotNullOrEmpty(queryNode, &quot;caseDefinitionIds&quot;, query.getCaseDefinitionIds());</span>
+<span class="nc" id="L186">        putIfNotNull(queryNode, &quot;caseDefinitionName&quot;, query.getCaseDefinitionName());</span>
+<span class="nc" id="L187">        putIfNotNull(queryNode, &quot;caseDefinitionCategory&quot;, query.getCaseDefinitionCategory());</span>
+<span class="nc" id="L188">        putIfNotNull(queryNode, &quot;caseDefinitionVersion&quot;, query.getCaseDefinitionVersion());</span>
+<span class="nc" id="L189">        putIfNotNull(queryNode, &quot;caseInstanceId&quot;, query.getCaseInstanceId());</span>
+<span class="nc" id="L190">        putIfNotNullOrEmpty(queryNode, &quot;caseInstanceIds&quot;, query.getCaseInstanceIds());</span>
+<span class="nc" id="L191">        putIfNotNull(queryNode, &quot;caseInstanceName&quot;, query.getCaseInstanceName());</span>
+<span class="nc" id="L192">        putIfNotNull(queryNode, &quot;caseInstanceNameLike&quot;, query.getCaseInstanceNameLike());</span>
+<span class="nc" id="L193">        putIfNotNull(queryNode, &quot;caseInstanceNameLikeIgnoreCase&quot;, query.getCaseInstanceNameLikeIgnoreCase());</span>
+<span class="nc" id="L194">        putIfNotNull(queryNode, &quot;caseInstanceRootScopeId&quot;, query.getRootScopeId());</span>
+<span class="nc" id="L195">        putIfNotNull(queryNode, &quot;caseInstanceParentScopeId&quot;, query.getParentScopeId());</span>
+<span class="nc" id="L196">        putIfNotNull(queryNode, &quot;businessKey&quot;, query.getBusinessKey());</span>
+<span class="nc" id="L197">        putIfNotNull(queryNode, &quot;businessStatus&quot;, query.getBusinessStatus());</span>
+<span class="nc" id="L198">        putIfNotNull(queryNode, &quot;state&quot;, query.getState());</span>
+<span class="nc" id="L199">        putIfNotNull(queryNode, &quot;caseInstanceParentId&quot;, query.getCaseInstanceParentId());</span>
+<span class="nc" id="L200">        putIfTrue(queryNode, &quot;withoutCaseInstanceParentId&quot;, query.isWithoutCaseInstanceParentId());</span>
+<span class="nc" id="L201">        putIfNotNull(queryNode, &quot;deploymentId&quot;, query.getDeploymentId());</span>
+<span class="nc" id="L202">        putIfNotNullOrEmpty(queryNode, &quot;deploymentIds&quot;, query.getDeploymentIds());</span>
+<span class="nc" id="L203">        putIfTrue(queryNode, &quot;finished&quot;, query.isFinished());</span>
+<span class="nc" id="L204">        putIfTrue(queryNode, &quot;unfinished&quot;, query.isUnfinished());</span>
+<span class="nc" id="L205">        putIfNotNull(queryNode, &quot;startedBefore&quot;, query.getStartedBefore());</span>
+<span class="nc" id="L206">        putIfNotNull(queryNode, &quot;startedAfter&quot;, query.getStartedAfter());</span>
+<span class="nc" id="L207">        putIfNotNull(queryNode, &quot;finishedBefore&quot;, query.getFinishedBefore());</span>
+<span class="nc" id="L208">        putIfNotNull(queryNode, &quot;finishedAfter&quot;, query.getFinishedAfter());</span>
+<span class="nc" id="L209">        putIfNotNull(queryNode, &quot;startedBy&quot;, query.getStartedBy());</span>
+<span class="nc" id="L210">        putIfNotNull(queryNode, &quot;lastReactivatedBefore&quot;, query.getLastReactivatedBefore());</span>
+<span class="nc" id="L211">        putIfNotNull(queryNode, &quot;lastReactivatedAfter&quot;, query.getLastReactivatedAfter());</span>
+<span class="nc" id="L212">        putIfNotNull(queryNode, &quot;lastReactivatedBy&quot;, query.getLastReactivatedBy());</span>
+<span class="nc" id="L213">        putIfNotNull(queryNode, &quot;callbackId&quot;, query.getCallbackId());</span>
+<span class="nc" id="L214">        putIfNotNull(queryNode, &quot;callbackType&quot;, query.getCallbackType());</span>
+<span class="nc" id="L215">        putIfTrue(queryNode, &quot;withoutCallbackId&quot;, query.isWithoutCallbackId());</span>
+<span class="nc" id="L216">        putIfNotNull(queryNode, &quot;referenceId&quot;, query.getReferenceId());</span>
+<span class="nc" id="L217">        putIfNotNull(queryNode, &quot;referenceType&quot;, query.getReferenceType());</span>
+<span class="nc" id="L218">        putIfNotNull(queryNode, &quot;tenantId&quot;, query.getTenantId());</span>
+<span class="nc" id="L219">        putIfTrue(queryNode, &quot;withoutTenantId&quot;, query.isWithoutTenantId());</span>
+<span class="nc" id="L220">        putIfNotNull(queryNode, &quot;activePlanItemDefinitionId&quot;, query.getActivePlanItemDefinitionId());</span>
+<span class="nc" id="L221">        putIfNotNullOrEmpty(queryNode, &quot;activePlanItemDefinitionIds&quot;, query.getActivePlanItemDefinitionIds());</span>
+<span class="nc" id="L222">        putIfNotNull(queryNode, &quot;involvedUser&quot;, query.getInvolvedUser());</span>
+<span class="nc" id="L223">        putIdentityLinkQuery(queryNode, &quot;involvedUserIdentityLink&quot;, query.getInvolvedUserIdentityLink());</span>
+<span class="nc" id="L224">        putIfNotNullOrEmpty(queryNode, &quot;involvedGroups&quot;, query.getInvolvedGroups());</span>
+<span class="nc" id="L225">        putIdentityLinkQuery(queryNode, &quot;involvedGroupIdentityLink&quot;, query.getInvolvedGroupIdentityLink());</span>
+<span class="nc bnc" id="L226" title="All 2 branches missed.">        for (QueryVariableValue queryVariableValue : query.getQueryVariableValues()) {</span>
+<span class="nc" id="L227">            ArrayNode queryVariablesArrayNode = queryNode.withArray(&quot;queryVariableValues&quot;);</span>
+<span class="nc" id="L228">            populateQueryVariableValue(queryVariablesArrayNode, queryVariableValue);</span>
+<span class="nc" id="L229">        }</span>
+
+<span class="nc" id="L231">    }</span>
+
+    protected void putIdentityLinkQuery(ObjectNode queryNode, String key, IdentityLinkQueryObject linkQueryObject) {
+<span class="nc bnc" id="L234" title="All 2 branches missed.">        if (linkQueryObject != null) {</span>
+<span class="nc" id="L235">            ObjectNode linkNode = queryNode.putObject(key);</span>
+<span class="nc" id="L236">            putIfNotNull(linkNode, &quot;userId&quot;, linkQueryObject.getUserId());</span>
+<span class="nc" id="L237">            putIfNotNull(linkNode, &quot;groupId&quot;, linkQueryObject.getGroupId());</span>
+<span class="nc" id="L238">            putIfNotNull(linkNode, &quot;type&quot;, linkQueryObject.getType());</span>
+        }
+<span class="nc" id="L240">    }</span>
+
+    protected void populateQueryVariableValue(ArrayNode queryVariablesArrayNode, QueryVariableValue variableValue) {
+<span class="nc bnc" id="L243" title="All 2 branches missed.">        if (variableValue != null) {</span>
+<span class="nc" id="L244">            ObjectNode variableNode = queryVariablesArrayNode.addObject();</span>
+<span class="nc" id="L245">            putIfNotNull(variableNode, &quot;name&quot;, variableValue.getName());</span>
+<span class="nc" id="L246">            variableNode.put(&quot;operator&quot;, variableValue.getOperator());</span>
+<span class="nc" id="L247">            putIfNotNull(variableNode, &quot;textValue&quot;, variableValue.getTextValue());</span>
+<span class="nc" id="L248">            putIfNotNull(variableNode, &quot;textValue2&quot;, variableValue.getTextValue2());</span>
+<span class="nc" id="L249">            putIfNotNull(variableNode, &quot;longValue&quot;, variableValue.getLongValue());</span>
+<span class="nc" id="L250">            putIfNotNull(variableNode, &quot;doubleValue&quot;, variableValue.getDoubleValue());</span>
+<span class="nc" id="L251">            putIfNotNull(variableNode, &quot;type&quot;, variableValue.getType());</span>
+<span class="nc" id="L252">            putIfTrue(variableNode, &quot;local&quot;, variableValue.isLocal());</span>
+        }
+<span class="nc" id="L254">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

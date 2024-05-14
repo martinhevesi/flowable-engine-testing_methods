@@ -1,0 +1,539 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DefaultHistoryManager.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.history</a> &gt; <span class="el_source">DefaultHistoryManager.java</span></div><h1>DefaultHistoryManager.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.flowable.engine.impl.history;
+
+import java.util.Collection;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.common.engine.api.delegate.event.FlowableEngineEventType;
+import org.flowable.common.engine.api.delegate.event.FlowableEventDispatcher;
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.impl.history.HistoryLevel;
+import org.flowable.common.engine.impl.util.CollectionUtil;
+import org.flowable.engine.delegate.event.impl.FlowableEventBuilder;
+import org.flowable.engine.history.HistoricActivityInstance;
+import org.flowable.engine.history.HistoricProcessInstance;
+import org.flowable.engine.impl.HistoricActivityInstanceQueryImpl;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntity;
+import org.flowable.engine.impl.persistence.entity.HistoricActivityInstanceEntity;
+import org.flowable.engine.impl.persistence.entity.HistoricDetailVariableInstanceUpdateEntity;
+import org.flowable.engine.impl.persistence.entity.HistoricProcessInstanceEntity;
+import org.flowable.engine.impl.persistence.entity.ProcessDefinitionEntity;
+import org.flowable.engine.impl.util.TaskHelper;
+import org.flowable.engine.runtime.ActivityInstance;
+import org.flowable.entitylink.api.history.HistoricEntityLinkService;
+import org.flowable.entitylink.service.impl.persistence.entity.EntityLinkEntity;
+import org.flowable.entitylink.service.impl.persistence.entity.HistoricEntityLinkEntity;
+import org.flowable.identitylink.service.HistoricIdentityLinkService;
+import org.flowable.identitylink.service.impl.persistence.entity.HistoricIdentityLinkEntity;
+import org.flowable.identitylink.service.impl.persistence.entity.IdentityLinkEntity;
+import org.flowable.task.api.Task;
+import org.flowable.task.api.history.HistoricTaskInstance;
+import org.flowable.task.api.history.HistoricTaskLogEntryBuilder;
+import org.flowable.task.service.HistoricTaskService;
+import org.flowable.task.service.impl.HistoricTaskInstanceQueryImpl;
+import org.flowable.task.service.impl.persistence.entity.HistoricTaskInstanceEntity;
+import org.flowable.task.service.impl.persistence.entity.TaskEntity;
+import org.flowable.variable.service.impl.persistence.entity.VariableInstanceEntity;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Manager class that centralises recording of all history-related operations that are originated from inside the engine.
+ * 
+ * @author Frederik Heremans
+ * @author Joram Barrez
+ */
+public class DefaultHistoryManager extends AbstractHistoryManager {
+
+<span class="nc" id="L65">    private static final Logger LOGGER = LoggerFactory.getLogger(DefaultHistoryManager.class.getName());</span>
+    
+    public static final int MAX_SUB_PROCESS_INSTANCES = 1000;
+
+    public DefaultHistoryManager(ProcessEngineConfigurationImpl processEngineConfiguration) {
+<span class="nc" id="L70">        super(processEngineConfiguration);</span>
+<span class="nc" id="L71">    }</span>
+
+    // Process related history
+
+    @Override
+    public void recordProcessInstanceEnd(ExecutionEntity processInstance, String deleteReason, String activityId, Date endTime) {
+<span class="nc bnc" id="L77" title="All 2 branches missed.">        if (getHistoryConfigurationSettings().isHistoryEnabledForProcessInstance(processInstance)) {</span>
+<span class="nc" id="L78">            HistoricProcessInstanceEntity historicProcessInstance = getHistoricProcessInstanceEntityManager().findById(processInstance.getId());</span>
+
+<span class="nc bnc" id="L80" title="All 2 branches missed.">            if (historicProcessInstance != null) {</span>
+<span class="nc" id="L81">                historicProcessInstance.markEnded(deleteReason, endTime);</span>
+<span class="nc" id="L82">                historicProcessInstance.setEndActivityId(activityId);</span>
+
+                // Fire event
+<span class="nc" id="L85">                FlowableEventDispatcher eventDispatcher = getEventDispatcher();</span>
+<span class="nc bnc" id="L86" title="All 4 branches missed.">                if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L87">                    eventDispatcher.dispatchEvent(FlowableEventBuilder.createEntityEvent(</span>
+                            FlowableEngineEventType.HISTORIC_PROCESS_INSTANCE_ENDED, historicProcessInstance),
+<span class="nc" id="L89">                            processEngineConfiguration.getEngineCfgKey());</span>
+                }
+
+            }
+        }
+<span class="nc" id="L94">    }</span>
+
+    @Override
+    public void recordProcessInstanceNameChange(ExecutionEntity processInstanceExecution, String newName) {
+<span class="nc bnc" id="L98" title="All 2 branches missed.">        if (getHistoryConfigurationSettings().isHistoryEnabledForProcessInstance(processInstanceExecution)) {</span>
+<span class="nc" id="L99">            HistoricProcessInstanceEntity historicProcessInstance = getHistoricProcessInstanceEntityManager().findById(processInstanceExecution.getId());</span>
+
+<span class="nc bnc" id="L101" title="All 2 branches missed.">            if (historicProcessInstance != null) {</span>
+<span class="nc" id="L102">                historicProcessInstance.setName(newName);</span>
+            }
+        }
+<span class="nc" id="L105">    }</span>
+
+    @Override
+    public void recordProcessInstanceStart(ExecutionEntity processInstance) {
+<span class="nc bnc" id="L109" title="All 2 branches missed.">        if (getHistoryConfigurationSettings().isHistoryEnabledForProcessInstance(processInstance)) {</span>
+<span class="nc" id="L110">            HistoricProcessInstanceEntity historicProcessInstance = getHistoricProcessInstanceEntityManager().create(processInstance);</span>
+
+            // Insert historic process-instance
+<span class="nc" id="L113">            getHistoricProcessInstanceEntityManager().insert(historicProcessInstance, false);</span>
+
+            // Fire event
+<span class="nc" id="L116">            FlowableEventDispatcher eventDispatcher = getEventDispatcher();</span>
+<span class="nc bnc" id="L117" title="All 4 branches missed.">            if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L118">                eventDispatcher.dispatchEvent(FlowableEventBuilder.createEntityEvent(</span>
+                        FlowableEngineEventType.HISTORIC_PROCESS_INSTANCE_CREATED, historicProcessInstance),
+<span class="nc" id="L120">                        processEngineConfiguration.getEngineCfgKey());</span>
+            }
+
+        }
+<span class="nc" id="L124">    }</span>
+
+    @Override
+    public void recordProcessInstanceDeleted(String processInstanceId, String processDefinitionId, String processTenantId) {
+<span class="nc bnc" id="L128" title="All 2 branches missed.">        if (isHistoryEnabled(processDefinitionId)) {</span>
+<span class="nc" id="L129">            HistoricProcessInstanceEntity historicProcessInstance = getHistoricProcessInstanceEntityManager().findById(processInstanceId);</span>
+
+<span class="nc" id="L131">            getHistoricDetailEntityManager().deleteHistoricDetailsByProcessInstanceId(processInstanceId);</span>
+
+<span class="nc bnc" id="L133" title="All 2 branches missed.">            if (getHistoryConfigurationSettings().isHistoryEnabledForVariables(processDefinitionId)) {</span>
+<span class="nc" id="L134">                processEngineConfiguration.getVariableServiceConfiguration().getHistoricVariableService()</span>
+<span class="nc" id="L135">                        .deleteHistoricVariableInstancesByProcessInstanceId(processInstanceId);</span>
+            }
+<span class="nc" id="L137">            getHistoricActivityInstanceEntityManager().deleteHistoricActivityInstancesByProcessInstanceId(processInstanceId);</span>
+<span class="nc" id="L138">            TaskHelper.deleteHistoricTaskInstancesByProcessInstanceId(processInstanceId);</span>
+<span class="nc" id="L139">            processEngineConfiguration.getIdentityLinkServiceConfiguration().getHistoricIdentityLinkService().deleteHistoricIdentityLinksByProcessInstanceId(processInstanceId);</span>
+            
+<span class="nc bnc" id="L141" title="All 2 branches missed.">            if (processEngineConfiguration.isEnableEntityLinks()) {</span>
+<span class="nc" id="L142">                processEngineConfiguration.getEntityLinkServiceConfiguration().getHistoricEntityLinkService().deleteHistoricEntityLinksByScopeIdAndScopeType(processInstanceId, ScopeTypes.BPMN);</span>
+            }
+            
+<span class="nc" id="L145">            getCommentEntityManager().deleteCommentsByProcessInstanceId(processInstanceId);</span>
+
+<span class="nc bnc" id="L147" title="All 2 branches missed.">            if (historicProcessInstance != null) {</span>
+<span class="nc" id="L148">                getHistoricProcessInstanceEntityManager().delete(historicProcessInstance, false);</span>
+            }
+
+            // Also delete any sub-processes that may be active (ACT-821)
+
+<span class="nc" id="L153">            List&lt;HistoricProcessInstance&gt; selectList = getHistoricProcessInstanceEntityManager().findHistoricProcessInstancesBySuperProcessInstanceId(processInstanceId);</span>
+<span class="nc bnc" id="L154" title="All 2 branches missed.">            for (HistoricProcessInstance child : selectList) {</span>
+<span class="nc" id="L155">                recordProcessInstanceDeleted(child.getId(), processDefinitionId, child.getTenantId());</span>
+<span class="nc" id="L156">            }</span>
+        }
+<span class="nc" id="L158">    }</span>
+    
+    @Override
+    public void recordDeleteHistoricProcessInstancesByProcessDefinitionId(String processDefinitionId) {
+<span class="nc bnc" id="L162" title="All 2 branches missed.">        if (isHistoryEnabled(processDefinitionId)) {</span>
+<span class="nc" id="L163">            List&lt;String&gt; historicProcessInstanceIds = getHistoricProcessInstanceEntityManager().findHistoricProcessInstanceIdsByProcessDefinitionId(processDefinitionId);</span>
+<span class="nc bnc" id="L164" title="All 2 branches missed.">            for (String historicProcessInstanceId : historicProcessInstanceIds) {</span>
+                // The tenantId is not important for the DefaultHistoryManager
+<span class="nc" id="L166">                recordProcessInstanceDeleted(historicProcessInstanceId, processDefinitionId, null);</span>
+<span class="nc" id="L167">            }</span>
+        }
+<span class="nc" id="L169">    }</span>
+    
+    @Override
+    public void recordBulkDeleteProcessInstances(Collection&lt;String&gt; processInstanceIds) {
+<span class="nc bnc" id="L173" title="All 6 branches missed.">        if (isHistoryEnabled() &amp;&amp; processInstanceIds != null &amp;&amp; !processInstanceIds.isEmpty()) {</span>
+<span class="nc" id="L174">            getHistoricDetailEntityManager().bulkDeleteHistoricDetailsByProcessInstanceIds(processInstanceIds);</span>
+<span class="nc" id="L175">            processEngineConfiguration.getVariableServiceConfiguration().getHistoricVariableService().bulkDeleteHistoricVariableInstancesByProcessInstanceIds(processInstanceIds);</span>
+<span class="nc" id="L176">            getHistoricActivityInstanceEntityManager().bulkDeleteHistoricActivityInstancesByProcessInstanceIds(processInstanceIds);</span>
+<span class="nc" id="L177">            TaskHelper.bulkDeleteHistoricTaskInstancesForProcessInstanceIds(processInstanceIds);</span>
+<span class="nc" id="L178">            processEngineConfiguration.getIdentityLinkServiceConfiguration().getHistoricIdentityLinkService().bulkDeleteHistoricIdentityLinksForProcessInstanceIds(processInstanceIds);</span>
+            
+<span class="nc bnc" id="L180" title="All 2 branches missed.">            if (processEngineConfiguration.isEnableEntityLinks()) {</span>
+<span class="nc" id="L181">                processEngineConfiguration.getEntityLinkServiceConfiguration().getHistoricEntityLinkService().bulkDeleteHistoricEntityLinksForScopeTypeAndScopeIds(ScopeTypes.BPMN, processInstanceIds);</span>
+            }
+            
+<span class="nc" id="L184">            getCommentEntityManager().bulkDeleteCommentsForProcessInstanceIds(processInstanceIds);</span>
+    
+<span class="nc" id="L186">            getHistoricProcessInstanceEntityManager().bulkDeleteHistoricProcessInstances(processInstanceIds);</span>
+    
+            // Also delete any sub-processes that may be active (ACT-821)
+    
+<span class="nc" id="L190">            List&lt;String&gt; subProcessInstanceIds = getHistoricProcessInstanceEntityManager().findHistoricProcessInstanceIdsBySuperProcessInstanceIds(processInstanceIds);</span>
+<span class="nc bnc" id="L191" title="All 4 branches missed.">            if (subProcessInstanceIds != null &amp;&amp; !subProcessInstanceIds.isEmpty()) {</span>
+<span class="nc" id="L192">                List&lt;List&lt;String&gt;&gt; partitionedSubProcessInstanceIds = CollectionUtil.partition(subProcessInstanceIds, MAX_SUB_PROCESS_INSTANCES);</span>
+<span class="nc bnc" id="L193" title="All 2 branches missed.">                for (List&lt;String&gt; batchSubProcessInstanceIds : partitionedSubProcessInstanceIds) {</span>
+<span class="nc" id="L194">                    processEngineConfiguration.getHistoryManager().recordBulkDeleteProcessInstances(batchSubProcessInstanceIds);</span>
+<span class="nc" id="L195">                }</span>
+            }
+        }
+<span class="nc" id="L198">    }</span>
+
+    // Activity related history
+
+    @Override
+    public void recordActivityStart(ActivityInstance activityInstance) {
+<span class="nc bnc" id="L204" title="All 4 branches missed.">        if (activityInstance != null &amp;&amp; getHistoryConfigurationSettings().isHistoryEnabledForActivity(activityInstance)) {</span>
+<span class="nc bnc" id="L205" title="All 2 branches missed.">            if (activityInstance.getActivityId() != null) {</span>
+                // Historic activity instance could have been created (but only in cache, never persisted)
+                // for example when submitting form properties
+<span class="nc" id="L208">                HistoricActivityInstanceEntity historicActivityInstanceEntity = createNewHistoricActivityInstance(activityInstance);</span>
+                // Fire event
+<span class="nc" id="L210">                FlowableEventDispatcher eventDispatcher = getEventDispatcher();</span>
+<span class="nc bnc" id="L211" title="All 4 branches missed.">                if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L212">                    eventDispatcher.dispatchEvent(FlowableEventBuilder.createEntityEvent(FlowableEngineEventType.HISTORIC_ACTIVITY_INSTANCE_CREATED, historicActivityInstanceEntity),</span>
+<span class="nc" id="L213">                            processEngineConfiguration.getEngineCfgKey());</span>
+                }
+            }
+        }
+<span class="nc" id="L217">    }</span>
+
+    @Override
+    public void recordActivityEnd(ActivityInstance activityInstance) {
+<span class="nc bnc" id="L221" title="All 4 branches missed.">        if (activityInstance != null &amp;&amp; getHistoryConfigurationSettings().isHistoryEnabledForActivity(activityInstance)) {</span>
+<span class="nc" id="L222">            HistoricActivityInstanceEntity historicActivityInstance = getHistoricActivityInstanceEntityManager().findById(activityInstance.getId());</span>
+<span class="nc bnc" id="L223" title="All 2 branches missed.">            if (historicActivityInstance != null) {</span>
+<span class="nc" id="L224">                historicActivityInstance.setDeleteReason(activityInstance.getDeleteReason());</span>
+<span class="nc" id="L225">                historicActivityInstance.setEndTime(activityInstance.getEndTime());</span>
+<span class="nc" id="L226">                historicActivityInstance.setDurationInMillis(activityInstance.getDurationInMillis());</span>
+
+                // Fire event
+<span class="nc" id="L229">                FlowableEventDispatcher eventDispatcher = getEventDispatcher();</span>
+<span class="nc bnc" id="L230" title="All 4 branches missed.">                if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L231">                    eventDispatcher.dispatchEvent(FlowableEventBuilder.createEntityEvent(FlowableEngineEventType.HISTORIC_ACTIVITY_INSTANCE_ENDED, historicActivityInstance),</span>
+<span class="nc" id="L232">                            processEngineConfiguration.getEngineCfgKey());</span>
+                }
+<span class="nc" id="L234">            } else {</span>
+<span class="nc" id="L235">                LOGGER.debug(&quot;Historic activity instance was not found.&quot;);</span>
+            }
+        }
+<span class="nc" id="L238">    }</span>
+
+    @Override
+    public void recordProcessDefinitionChange(String processInstanceId, String processDefinitionId) {
+<span class="nc bnc" id="L242" title="All 2 branches missed.">        if (isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processDefinitionId)) {</span>
+<span class="nc" id="L243">            HistoricProcessInstanceEntity historicProcessInstance = getHistoricProcessInstanceEntityManager().findById(processInstanceId);</span>
+<span class="nc bnc" id="L244" title="All 2 branches missed.">            if (historicProcessInstance != null) {</span>
+<span class="nc" id="L245">                historicProcessInstance.setProcessDefinitionId(processDefinitionId);</span>
+            }
+        }
+<span class="nc" id="L248">    }</span>
+
+    // Task related history
+
+    @Override
+    public void recordTaskCreated(TaskEntity task, ExecutionEntity execution) {
+<span class="nc bnc" id="L254" title="All 2 branches missed.">        if (getHistoryConfigurationSettings().isHistoryEnabledForUserTask(execution, task)) {</span>
+<span class="nc bnc" id="L255" title="All 2 branches missed.">            if (execution != null) {</span>
+<span class="nc" id="L256">                task.setExecutionId(execution.getId());</span>
+<span class="nc" id="L257">                task.setProcessInstanceId(execution.getProcessInstanceId());</span>
+<span class="nc" id="L258">                task.setProcessDefinitionId(execution.getProcessDefinitionId());</span>
+                
+<span class="nc bnc" id="L260" title="All 2 branches missed.">                if (execution.getTenantId() != null) {</span>
+<span class="nc" id="L261">                    task.setTenantId(execution.getTenantId());</span>
+                }
+            }
+<span class="nc" id="L264">            HistoricTaskInstanceEntity historicTaskInstance = processEngineConfiguration.getTaskServiceConfiguration().getHistoricTaskService().recordTaskCreated(task);</span>
+<span class="nc" id="L265">            historicTaskInstance.setLastUpdateTime(processEngineConfiguration.getClock().getCurrentTime());</span>
+
+<span class="nc bnc" id="L267" title="All 2 branches missed.">            if (execution != null) {</span>
+<span class="nc" id="L268">                historicTaskInstance.setExecutionId(execution.getId());</span>
+            }
+        }
+<span class="nc" id="L271">    }</span>
+
+    @Override
+    public void recordTaskEnd(TaskEntity task, ExecutionEntity execution, String userId, String deleteReason, Date endTime) {
+<span class="nc bnc" id="L275" title="All 2 branches missed.">        if (getHistoryConfigurationSettings().isHistoryEnabledForUserTask(execution, task)) {</span>
+<span class="nc" id="L276">            HistoricTaskInstanceEntity historicTaskInstance = processEngineConfiguration.getTaskServiceConfiguration().getHistoricTaskService().recordTaskEnd(task, deleteReason, endTime);</span>
+<span class="nc bnc" id="L277" title="All 2 branches missed.">            if (historicTaskInstance != null) {</span>
+<span class="nc" id="L278">                historicTaskInstance.setState(Task.COMPLETED);</span>
+<span class="nc" id="L279">                historicTaskInstance.setCompletedBy(userId);</span>
+<span class="nc" id="L280">                historicTaskInstance.setLastUpdateTime(endTime);</span>
+            }
+        }
+<span class="nc" id="L283">    }</span>
+
+    @Override
+    public void recordTaskInfoChange(TaskEntity taskEntity, String activityInstanceId, Date changeTime) {
+<span class="nc" id="L287">        boolean assigneeChanged = false;</span>
+<span class="nc bnc" id="L288" title="All 2 branches missed.">        if (getHistoryConfigurationSettings().isHistoryEnabledForUserTask(taskEntity)) {</span>
+<span class="nc" id="L289">            HistoricTaskService historicTaskService = processEngineConfiguration.getTaskServiceConfiguration().getHistoricTaskService();</span>
+<span class="nc" id="L290">            HistoricTaskInstanceEntity originalHistoricTaskInstanceEntity = historicTaskService.getHistoricTask(taskEntity.getId());</span>
+<span class="nc" id="L291">            String originalAssignee = null;</span>
+<span class="nc bnc" id="L292" title="All 2 branches missed.">            if (originalHistoricTaskInstanceEntity != null) {</span>
+<span class="nc" id="L293">                originalAssignee = originalHistoricTaskInstanceEntity.getAssignee();</span>
+            }
+
+<span class="nc" id="L296">            HistoricTaskInstanceEntity historicTaskInstance = historicTaskService.recordTaskInfoChange(taskEntity, changeTime, processEngineConfiguration);</span>
+<span class="nc bnc" id="L297" title="All 2 branches missed.">            if (historicTaskInstance != null) {</span>
+<span class="nc bnc" id="L298" title="All 2 branches missed.">                if (!Objects.equals(originalAssignee, taskEntity.getAssignee())) {</span>
+<span class="nc" id="L299">                    assigneeChanged = true;</span>
+                }
+            }
+        }
+
+<span class="nc bnc" id="L304" title="All 4 branches missed.">        if (assigneeChanged &amp;&amp; getHistoryConfigurationSettings().isHistoryEnabledForActivity(taskEntity.getProcessDefinitionId(), taskEntity.getTaskDefinitionKey())) {</span>
+<span class="nc bnc" id="L305" title="All 2 branches missed.">            if (taskEntity.getExecutionId() != null) {</span>
+                HistoricActivityInstanceEntity historicActivityInstance;
+<span class="nc bnc" id="L307" title="All 2 branches missed.">                if (activityInstanceId != null) {</span>
+<span class="nc" id="L308">                    historicActivityInstance = getHistoricActivityInstanceEntityManager().findById(activityInstanceId);</span>
+                } else {
+                    // backup for the case when runtime activityInstance was not created
+<span class="nc" id="L311">                    ExecutionEntity executionEntity = getExecutionEntityManager().findById(taskEntity.getExecutionId());</span>
+<span class="nc" id="L312">                    historicActivityInstance = findHistoricActivityInstance(executionEntity, true);</span>
+                }
+<span class="nc bnc" id="L314" title="All 2 branches missed.">                if (historicActivityInstance != null) {</span>
+<span class="nc" id="L315">                    historicActivityInstance.setAssignee(taskEntity.getAssignee());</span>
+                }
+            }
+        }
+<span class="nc" id="L319">    }</span>
+
+    @Override
+    public void recordHistoricTaskDeleted(HistoricTaskInstance task) {
+<span class="nc bnc" id="L323" title="All 4 branches missed.">        if (task != null &amp;&amp; getHistoryConfigurationSettings().isHistoryEnabledForUserTask(task)) {</span>
+<span class="nc" id="L324">            TaskHelper.deleteHistoricTask(task.getId());</span>
+        }
+<span class="nc" id="L326">    }</span>
+
+    // Variables related history
+
+    @Override
+    public void recordVariableCreate(VariableInstanceEntity variable, Date createTime) {
+<span class="nc bnc" id="L332" title="All 2 branches missed.">        if (getHistoryConfigurationSettings().isHistoryEnabledForVariableInstance(variable)) {</span>
+<span class="nc" id="L333">            processEngineConfiguration.getVariableServiceConfiguration().getHistoricVariableService().createAndInsert(variable, createTime);</span>
+        }
+<span class="nc" id="L335">    }</span>
+
+    @Override
+    public void recordHistoricDetailVariableCreate(VariableInstanceEntity variable, ExecutionEntity sourceActivityExecution, boolean useActivityId,
+        String activityInstanceId, Date createTime) {
+<span class="nc" id="L340">        String processDefinitionId = getProcessDefinitionId(variable, sourceActivityExecution);</span>
+
+<span class="nc bnc" id="L342" title="All 2 branches missed.">        if (getHistoryConfigurationSettings().isHistoryEnabledForVariableInstance(processDefinitionId, variable)</span>
+<span class="nc bnc" id="L343" title="All 2 branches missed.">                &amp;&amp; isHistoryLevelAtLeast(HistoryLevel.FULL, processDefinitionId)) {</span>
+
+<span class="nc" id="L345">            HistoricDetailVariableInstanceUpdateEntity historicVariableUpdate = getHistoricDetailEntityManager().copyAndInsertHistoricDetailVariableInstanceUpdateEntity(variable, createTime);</span>
+
+<span class="nc bnc" id="L347" title="All 2 branches missed.">            if (StringUtils.isNotEmpty(activityInstanceId)) {</span>
+<span class="nc" id="L348">                historicVariableUpdate.setActivityInstanceId(activityInstanceId);</span>
+            } else {
+<span class="nc bnc" id="L350" title="All 4 branches missed.">                if (useActivityId &amp;&amp; sourceActivityExecution != null) {</span>
+<span class="nc" id="L351">                    HistoricActivityInstanceEntity historicActivityInstance = findHistoricActivityInstance(sourceActivityExecution, false);</span>
+<span class="nc bnc" id="L352" title="All 2 branches missed.">                    if (historicActivityInstance != null) {</span>
+<span class="nc" id="L353">                        historicVariableUpdate.setActivityInstanceId(historicActivityInstance.getId());</span>
+                    }
+                }
+            }
+        }
+<span class="nc" id="L358">    }</span>
+
+    @Override
+    public void recordVariableUpdate(VariableInstanceEntity variableInstanceEntity, Date updateTime) {
+<span class="nc bnc" id="L362" title="All 2 branches missed.">        if (getHistoryConfigurationSettings().isHistoryEnabledForVariableInstance(variableInstanceEntity)) {</span>
+<span class="nc" id="L363">            processEngineConfiguration.getVariableServiceConfiguration().getHistoricVariableService().recordVariableUpdate(variableInstanceEntity, updateTime);</span>
+        }
+<span class="nc" id="L365">    }</span>
+
+    @Override
+    public void recordVariableRemoved(VariableInstanceEntity variableInstanceEntity) {
+<span class="nc bnc" id="L369" title="All 2 branches missed.">        if (getHistoryConfigurationSettings().isHistoryEnabledForVariableInstance(variableInstanceEntity)) {</span>
+<span class="nc" id="L370">            processEngineConfiguration.getVariableServiceConfiguration().getHistoricVariableService().recordVariableRemoved(variableInstanceEntity);</span>
+        }
+<span class="nc" id="L372">    }</span>
+
+    @Override
+    public void recordFormPropertiesSubmitted(ExecutionEntity processInstance, Map&lt;String, String&gt; properties, String taskId, Date createTime) {
+<span class="nc bnc" id="L376" title="All 2 branches missed.">        if (isHistoryLevelAtLeast(HistoryLevel.AUDIT, processInstance.getProcessDefinitionId())) {</span>
+<span class="nc bnc" id="L377" title="All 2 branches missed.">            for (String propertyId : properties.keySet()) {</span>
+<span class="nc" id="L378">                String propertyValue = properties.get(propertyId);</span>
+<span class="nc" id="L379">                getHistoricDetailEntityManager().insertHistoricFormPropertyEntity(processInstance, propertyId, propertyValue, taskId, createTime);</span>
+<span class="nc" id="L380">            }</span>
+        }
+<span class="nc" id="L382">    }</span>
+
+    // Identity link related history
+    @Override
+    public void recordIdentityLinkCreated(IdentityLinkEntity identityLink) {
+        // It makes no sense storing historic counterpart for an identity link that is related
+        // to a process definition only as this is never kept in history
+<span class="nc bnc" id="L389" title="All 2 branches missed.">        if (getHistoryConfigurationSettings().isHistoryEnabledForIdentityLink(identityLink)</span>
+<span class="nc bnc" id="L390" title="All 4 branches missed.">                &amp;&amp; (identityLink.getProcessInstanceId() != null || identityLink.getTaskId() != null)) {</span>
+<span class="nc" id="L391">            HistoricIdentityLinkService historicIdentityLinkService = processEngineConfiguration.getIdentityLinkServiceConfiguration().getHistoricIdentityLinkService();</span>
+<span class="nc" id="L392">            HistoricIdentityLinkEntity historicIdentityLinkEntity = historicIdentityLinkService.createHistoricIdentityLink();</span>
+<span class="nc" id="L393">            historicIdentityLinkEntity.setId(identityLink.getId());</span>
+<span class="nc" id="L394">            historicIdentityLinkEntity.setGroupId(identityLink.getGroupId());</span>
+<span class="nc" id="L395">            historicIdentityLinkEntity.setProcessInstanceId(identityLink.getProcessInstanceId());</span>
+<span class="nc" id="L396">            historicIdentityLinkEntity.setTaskId(identityLink.getTaskId());</span>
+<span class="nc" id="L397">            historicIdentityLinkEntity.setType(identityLink.getType());</span>
+<span class="nc" id="L398">            historicIdentityLinkEntity.setUserId(identityLink.getUserId());</span>
+<span class="nc" id="L399">            historicIdentityLinkService.insertHistoricIdentityLink(historicIdentityLinkEntity, false);</span>
+        }
+<span class="nc" id="L401">    }</span>
+    
+    @Override
+    public void recordIdentityLinkDeleted(IdentityLinkEntity identityLink) {
+<span class="nc bnc" id="L405" title="All 2 branches missed.">        if (getHistoryConfigurationSettings().isHistoryEnabledForIdentityLink(identityLink)) {</span>
+<span class="nc" id="L406">            processEngineConfiguration.getIdentityLinkServiceConfiguration().getHistoricIdentityLinkService().deleteHistoricIdentityLink(identityLink.getId());</span>
+        }
+<span class="nc" id="L408">    }</span>
+    
+    // Entity link related history
+    @Override
+    public void recordEntityLinkCreated(EntityLinkEntity entityLink) {
+<span class="nc bnc" id="L413" title="All 2 branches missed.">        if (getHistoryConfigurationSettings().isHistoryEnabledForEntityLink(entityLink)) {</span>
+<span class="nc" id="L414">            HistoricEntityLinkService historicEntityLinkService = processEngineConfiguration.getEntityLinkServiceConfiguration().getHistoricEntityLinkService();</span>
+<span class="nc" id="L415">            HistoricEntityLinkEntity historicEntityLinkEntity = (HistoricEntityLinkEntity) historicEntityLinkService.createHistoricEntityLink();</span>
+<span class="nc" id="L416">            historicEntityLinkEntity.setId(entityLink.getId());</span>
+<span class="nc" id="L417">            historicEntityLinkEntity.setLinkType(entityLink.getLinkType());</span>
+<span class="nc" id="L418">            historicEntityLinkEntity.setCreateTime(entityLink.getCreateTime());</span>
+<span class="nc" id="L419">            historicEntityLinkEntity.setScopeId(entityLink.getScopeId());</span>
+<span class="nc" id="L420">            historicEntityLinkEntity.setSubScopeId(entityLink.getSubScopeId());</span>
+<span class="nc" id="L421">            historicEntityLinkEntity.setScopeType(entityLink.getScopeType());</span>
+<span class="nc" id="L422">            historicEntityLinkEntity.setScopeDefinitionId(entityLink.getScopeDefinitionId());</span>
+<span class="nc" id="L423">            historicEntityLinkEntity.setParentElementId(entityLink.getParentElementId());</span>
+<span class="nc" id="L424">            historicEntityLinkEntity.setReferenceScopeId(entityLink.getReferenceScopeId());</span>
+<span class="nc" id="L425">            historicEntityLinkEntity.setReferenceScopeType(entityLink.getReferenceScopeType());</span>
+<span class="nc" id="L426">            historicEntityLinkEntity.setReferenceScopeDefinitionId(entityLink.getReferenceScopeDefinitionId());</span>
+<span class="nc" id="L427">            historicEntityLinkEntity.setRootScopeId(entityLink.getRootScopeId());</span>
+<span class="nc" id="L428">            historicEntityLinkEntity.setRootScopeType(entityLink.getRootScopeType());</span>
+<span class="nc" id="L429">            historicEntityLinkEntity.setHierarchyType(entityLink.getHierarchyType());</span>
+<span class="nc" id="L430">            historicEntityLinkService.insertHistoricEntityLink(historicEntityLinkEntity, false);</span>
+        }
+<span class="nc" id="L432">    }</span>
+    
+    @Override
+    public void recordEntityLinkDeleted(EntityLinkEntity entityLink) {
+<span class="nc bnc" id="L436" title="All 2 branches missed.">        if (getHistoryConfigurationSettings().isHistoryEnabledForEntityLink(entityLink)) {</span>
+<span class="nc" id="L437">            processEngineConfiguration.getEntityLinkServiceConfiguration().getHistoricEntityLinkService().deleteHistoricEntityLink(entityLink.getId());</span>
+        }
+<span class="nc" id="L439">    }</span>
+
+    @Override
+    public void updateProcessBusinessKeyInHistory(ExecutionEntity processInstance) {
+<span class="nc bnc" id="L443" title="All 2 branches missed.">        if (processInstance != null) {</span>
+<span class="nc bnc" id="L444" title="All 2 branches missed.">            if (isHistoryEnabled(processInstance.getProcessDefinitionId())) {</span>
+<span class="nc" id="L445">                HistoricProcessInstanceEntity historicProcessInstance = getHistoricProcessInstanceEntityManager().findById(processInstance.getId());</span>
+<span class="nc bnc" id="L446" title="All 2 branches missed.">                if (historicProcessInstance != null) {</span>
+<span class="nc" id="L447">                    historicProcessInstance.setBusinessKey(processInstance.getProcessInstanceBusinessKey());</span>
+<span class="nc" id="L448">                    getHistoricProcessInstanceEntityManager().update(historicProcessInstance, false);</span>
+                }
+            }
+        }
+<span class="nc" id="L452">    }</span>
+    
+    @Override
+    public void updateProcessBusinessStatusInHistory(ExecutionEntity processInstance) {
+<span class="nc bnc" id="L456" title="All 2 branches missed.">        if (processInstance != null) {</span>
+<span class="nc bnc" id="L457" title="All 2 branches missed.">            if (isHistoryEnabled(processInstance.getProcessDefinitionId())) {</span>
+<span class="nc" id="L458">                HistoricProcessInstanceEntity historicProcessInstance = getHistoricProcessInstanceEntityManager().findById(processInstance.getId());</span>
+<span class="nc bnc" id="L459" title="All 2 branches missed.">                if (historicProcessInstance != null) {</span>
+<span class="nc" id="L460">                    historicProcessInstance.setBusinessStatus(processInstance.getProcessInstanceBusinessStatus());</span>
+<span class="nc" id="L461">                    getHistoricProcessInstanceEntityManager().update(historicProcessInstance, false);</span>
+                }
+            }
+        }
+<span class="nc" id="L465">    }</span>
+    
+    @Override
+    public void updateProcessDefinitionIdInHistory(ProcessDefinitionEntity processDefinitionEntity, ExecutionEntity processInstance) {
+<span class="nc bnc" id="L469" title="All 2 branches missed.">        if (isHistoryEnabled(processDefinitionEntity.getId())) {</span>
+<span class="nc" id="L470">            HistoricProcessInstanceEntity historicProcessInstance = getHistoricProcessInstanceEntityManager().findById(processInstance.getId());</span>
+<span class="nc" id="L471">            historicProcessInstance.setProcessDefinitionId(processDefinitionEntity.getId());</span>
+<span class="nc" id="L472">            getHistoricProcessInstanceEntityManager().update(historicProcessInstance);</span>
+    
+<span class="nc" id="L474">            HistoricTaskService historicTaskService = processEngineConfiguration.getTaskServiceConfiguration().getHistoricTaskService();</span>
+<span class="nc" id="L475">            HistoricTaskInstanceQueryImpl taskQuery = new HistoricTaskInstanceQueryImpl();</span>
+<span class="nc" id="L476">            taskQuery.processInstanceId(processInstance.getId());</span>
+<span class="nc" id="L477">            List&lt;HistoricTaskInstance&gt; historicTasks = historicTaskService.findHistoricTaskInstancesByQueryCriteria(taskQuery);</span>
+<span class="nc bnc" id="L478" title="All 2 branches missed.">            if (historicTasks != null) {</span>
+<span class="nc bnc" id="L479" title="All 2 branches missed.">                for (HistoricTaskInstance historicTaskInstance : historicTasks) {</span>
+<span class="nc" id="L480">                    HistoricTaskInstanceEntity taskEntity = (HistoricTaskInstanceEntity) historicTaskInstance;</span>
+<span class="nc" id="L481">                    taskEntity.setProcessDefinitionId(processDefinitionEntity.getId());</span>
+<span class="nc" id="L482">                    historicTaskService.updateHistoricTask(taskEntity, true);</span>
+<span class="nc" id="L483">                }</span>
+            }
+
+            // because of upgrade runtimeActivity instances can be only subset of historicActivity instances
+<span class="nc" id="L487">            HistoricActivityInstanceQueryImpl historicActivityQuery = new HistoricActivityInstanceQueryImpl();</span>
+<span class="nc" id="L488">            historicActivityQuery.processInstanceId(processInstance.getId());</span>
+<span class="nc" id="L489">            List&lt;HistoricActivityInstance&gt; historicActivities = getHistoricActivityInstanceEntityManager().findHistoricActivityInstancesByQueryCriteria(historicActivityQuery);</span>
+<span class="nc bnc" id="L490" title="All 2 branches missed.">            if (historicActivities != null) {</span>
+<span class="nc bnc" id="L491" title="All 2 branches missed.">                for (HistoricActivityInstance historicActivityInstance : historicActivities) {</span>
+<span class="nc" id="L492">                    HistoricActivityInstanceEntity activityEntity = (HistoricActivityInstanceEntity) historicActivityInstance;</span>
+<span class="nc" id="L493">                    activityEntity.setProcessDefinitionId(processDefinitionEntity.getId());</span>
+<span class="nc" id="L494">                    getHistoricActivityInstanceEntityManager().update(activityEntity);</span>
+<span class="nc" id="L495">                }</span>
+            }
+        }
+<span class="nc" id="L498">    }</span>
+
+    @Override
+    public void updateHistoricActivityInstance(ActivityInstance activityInstance) {
+<span class="nc bnc" id="L502" title="All 2 branches missed.">        if (getHistoryConfigurationSettings().isHistoryEnabledForActivity(activityInstance)) {</span>
+<span class="nc bnc" id="L503" title="All 2 branches missed.">            if (activityInstance.getExecutionId() != null) {</span>
+<span class="nc" id="L504">                HistoricActivityInstanceEntity historicActivityInstance = getHistoricActivityInstanceEntityManager().findById(activityInstance.getId());</span>
+<span class="nc bnc" id="L505" title="All 2 branches missed.">                if (historicActivityInstance != null) {</span>
+<span class="nc" id="L506">                    historicActivityInstance.setTaskId(activityInstance.getTaskId());</span>
+<span class="nc" id="L507">                    historicActivityInstance.setAssignee(activityInstance.getAssignee());</span>
+<span class="nc" id="L508">                    historicActivityInstance.setCalledProcessInstanceId(activityInstance.getCalledProcessInstanceId());</span>
+                }
+            }
+        }
+<span class="nc" id="L512">    }</span>
+    
+    @Override
+    public void recordHistoricUserTaskLogEntry(HistoricTaskLogEntryBuilder taskLogEntryBuilder) {
+<span class="nc" id="L516">        processEngineConfiguration.getTaskServiceConfiguration().getHistoricTaskService().createHistoricTaskLogEntry(taskLogEntryBuilder);</span>
+<span class="nc" id="L517">    }</span>
+
+    @Override
+    public void deleteHistoryUserTaskLog(long logNumber) {
+<span class="nc" id="L521">        processEngineConfiguration.getTaskServiceConfiguration().getHistoricTaskService().deleteHistoricTaskLogEntry(logNumber);</span>
+<span class="nc" id="L522">    }</span>
+
+    @Override
+    public void createHistoricActivityInstance(ActivityInstance activityInstance) {
+<span class="nc bnc" id="L526" title="All 2 branches missed.">        if (getHistoryConfigurationSettings().isHistoryEnabledForActivity(activityInstance)) {</span>
+<span class="nc" id="L527">            createNewHistoricActivityInstance(activityInstance);</span>
+        }
+<span class="nc" id="L529">    }</span>
+
+    protected HistoricActivityInstanceEntity createNewHistoricActivityInstance(ActivityInstance activityInstance) {
+<span class="nc" id="L532">        HistoricActivityInstanceEntity historicActivityInstanceEntity = getHistoricActivityInstanceEntityManager().create(activityInstance);</span>
+
+<span class="nc" id="L534">        getHistoricActivityInstanceEntityManager().insert(historicActivityInstanceEntity);</span>
+<span class="nc" id="L535">        return historicActivityInstanceEntity;</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

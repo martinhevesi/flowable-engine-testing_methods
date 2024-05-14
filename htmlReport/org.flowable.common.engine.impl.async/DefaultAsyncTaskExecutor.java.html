@@ -1,0 +1,250 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DefaultAsyncTaskExecutor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.common.engine.impl.async</a> &gt; <span class="el_source">DefaultAsyncTaskExecutor.java</span></div><h1>DefaultAsyncTaskExecutor.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.common.engine.impl.async;
+
+import static org.flowable.common.engine.impl.util.ExceptionUtil.sneakyThrow;
+
+import java.time.Duration;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionHandler;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.concurrent.BasicThreadFactory;
+import org.flowable.common.engine.api.async.AsyncTaskExecutor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * @author Joram Barrez
+ * @author Tijs Rademakers
+ * @author Filip Hrisafov
+ */
+public class DefaultAsyncTaskExecutor implements AsyncTaskExecutor {
+
+<span class="nc" id="L41">    protected final Logger logger = LoggerFactory.getLogger(getClass());</span>
+
+    protected final AsyncTaskExecutorConfiguration configuration;
+
+    /**
+     * The executor service used for task execution.
+     */
+    protected ExecutorService executorService;
+
+    /**
+     * Whether the executor needs a shutdown.
+     * This is true if the executor service has not been set from the outside.
+     */
+    protected boolean executorNeedsShutdown;
+
+    /**
+     * The queue used for job execution work
+     */
+    protected BlockingQueue&lt;Runnable&gt; threadPoolQueue;
+
+    protected ThreadFactory threadFactory;
+
+    protected RejectedExecutionHandler rejectedExecutionHandler;
+
+    public DefaultAsyncTaskExecutor() {
+<span class="nc" id="L66">        this(new AsyncTaskExecutorConfiguration());</span>
+<span class="nc" id="L67">        this.configuration.setThreadPoolNamingPattern(&quot;flowable-async-job-executor-thread-%d&quot;);</span>
+<span class="nc" id="L68">    }</span>
+
+<span class="nc" id="L70">    public DefaultAsyncTaskExecutor(AsyncTaskExecutorConfiguration configuration) {</span>
+<span class="nc" id="L71">        this.configuration = configuration;</span>
+<span class="nc bnc" id="L72" title="All 2 branches missed.">        if (StringUtils.isEmpty(this.configuration.getThreadPoolNamingPattern())) {</span>
+<span class="nc" id="L73">            this.configuration.setThreadPoolNamingPattern(&quot;flowable-async-job-executor-thread-%d&quot;);</span>
+        }
+<span class="nc" id="L75">    }</span>
+
+    @Override
+    public void execute(Runnable task) {
+<span class="nc" id="L79">        executorService.execute(task);</span>
+<span class="nc" id="L80">    }</span>
+
+    @Override
+    public CompletableFuture&lt;?&gt; submit(Runnable task) {
+<span class="nc" id="L84">        return CompletableFuture.runAsync(task, executorService);</span>
+    }
+
+    @Override
+    public &lt;T&gt; CompletableFuture&lt;T&gt; submit(Callable&lt;T&gt; task) {
+<span class="nc" id="L89">        return CompletableFuture.supplyAsync(() -&gt; {</span>
+            try {
+<span class="nc" id="L91">                return task.call();</span>
+<span class="nc" id="L92">            } catch (Exception exception) {</span>
+<span class="nc" id="L93">                sneakyThrow(exception);</span>
+<span class="nc" id="L94">                return null;</span>
+            }
+        }, executorService);
+    }
+
+    public void start() {
+<span class="nc bnc" id="L100" title="All 2 branches missed.">        if (executorService == null) {</span>
+<span class="nc" id="L101">            this.executorService = initializeExecutor();</span>
+<span class="nc" id="L102">            this.executorNeedsShutdown = true;</span>
+        }
+<span class="nc" id="L104">    }</span>
+
+    @Override
+    public void shutdown() {
+<span class="nc bnc" id="L108" title="All 4 branches missed.">        if (executorService != null &amp;&amp; executorNeedsShutdown) {</span>
+            // Ask the thread pool to finish and exit
+<span class="nc" id="L110">            executorService.shutdown();</span>
+
+            // Waits for the configured time to finish all currently executing jobs
+            try {
+<span class="nc" id="L114">                long secondsToWaitOnShutdown = configuration.getAwaitTerminationPeriod().getSeconds();</span>
+<span class="nc bnc" id="L115" title="All 2 branches missed.">                if (!executorService.awaitTermination(secondsToWaitOnShutdown, TimeUnit.SECONDS)) {</span>
+<span class="nc" id="L116">                    logger.warn(</span>
+                            &quot;Timeout during shutdown of async job executor. The current running jobs could not end within {} seconds after shutdown operation.&quot;,
+<span class="nc" id="L118">                            secondsToWaitOnShutdown);</span>
+                }
+<span class="nc" id="L120">            } catch (InterruptedException e) {</span>
+<span class="nc" id="L121">                logger.warn(&quot;Interrupted while shutting down the async job executor. &quot;, e);</span>
+<span class="nc" id="L122">                Thread.currentThread().interrupt();</span>
+<span class="nc" id="L123">            }</span>
+
+<span class="nc" id="L125">            executorService = null;</span>
+        }
+<span class="nc" id="L127">    }</span>
+
+    protected ExecutorService initializeExecutor() {
+<span class="nc bnc" id="L130" title="All 2 branches missed.">        if (threadPoolQueue == null) {</span>
+<span class="nc" id="L131">            int queueSize = getQueueSize();</span>
+<span class="nc" id="L132">            logger.info(&quot;Creating thread pool queue of size {}&quot;, queueSize);</span>
+<span class="nc" id="L133">            threadPoolQueue = new ArrayBlockingQueue&lt;&gt;(queueSize);</span>
+        }
+
+<span class="nc bnc" id="L136" title="All 2 branches missed.">        if (threadFactory == null) {</span>
+<span class="nc" id="L137">            String threadPoolNamingPattern = getThreadPoolNamingPattern();</span>
+<span class="nc" id="L138">            logger.info(&quot;Creating thread factory with naming pattern {}&quot;, threadPoolNamingPattern);</span>
+<span class="nc" id="L139">            threadFactory = new BasicThreadFactory.Builder().namingPattern(threadPoolNamingPattern).build();</span>
+
+        }
+
+<span class="nc" id="L143">        int corePoolSize = getCorePoolSize();</span>
+<span class="nc" id="L144">        int maxPoolSize = getMaxPoolSize();</span>
+<span class="nc" id="L145">        long keepAliveTime = getKeepAliveTime();</span>
+<span class="nc" id="L146">        logger.info(&quot;Creating executor service with corePoolSize {}, maxPoolSize {} and keepAliveTime {}&quot;, corePoolSize, maxPoolSize, keepAliveTime);</span>
+<span class="nc" id="L147">        ThreadPoolExecutor threadPoolExecutor = new ThreadPoolExecutor(corePoolSize, maxPoolSize, keepAliveTime,</span>
+                TimeUnit.MILLISECONDS, threadPoolQueue, threadFactory);
+<span class="nc" id="L149">        threadPoolExecutor.allowCoreThreadTimeOut(isAllowCoreThreadTimeout());</span>
+
+<span class="nc bnc" id="L151" title="All 2 branches missed.">        if (rejectedExecutionHandler != null) {</span>
+<span class="nc" id="L152">            logger.info(&quot;Using rejectedExecutionHandler {}&quot;, rejectedExecutionHandler);</span>
+<span class="nc" id="L153">            threadPoolExecutor.setRejectedExecutionHandler(rejectedExecutionHandler);</span>
+
+        }
+
+<span class="nc" id="L157">        return threadPoolExecutor;</span>
+
+    }
+
+    public AsyncTaskExecutorConfiguration getConfiguration() {
+<span class="nc" id="L162">        return configuration;</span>
+    }
+
+    public int getCorePoolSize() {
+<span class="nc" id="L166">        return getConfiguration().getCorePoolSize();</span>
+    }
+
+    public void setCorePoolSize(int corePoolSize) {
+<span class="nc" id="L170">        getConfiguration().setCorePoolSize(corePoolSize);</span>
+<span class="nc" id="L171">    }</span>
+
+    public int getMaxPoolSize() {
+<span class="nc" id="L174">        return getConfiguration().getMaxPoolSize();</span>
+    }
+
+    public void setMaxPoolSize(int maxPoolSize) {
+<span class="nc" id="L178">        getConfiguration().setMaxPoolSize(maxPoolSize);</span>
+<span class="nc" id="L179">    }</span>
+
+    public long getKeepAliveTime() {
+<span class="nc" id="L182">        return getConfiguration().getKeepAlive().toMillis();</span>
+    }
+
+    public void setKeepAliveTime(long keepAliveTime) {
+<span class="nc" id="L186">        getConfiguration().setKeepAlive(Duration.ofMillis(keepAliveTime));</span>
+<span class="nc" id="L187">    }</span>
+
+    public int getQueueSize() {
+<span class="nc" id="L190">        return getConfiguration().getQueueSize();</span>
+    }
+
+    public void setQueueSize(int queueSize) {
+<span class="nc" id="L194">        getConfiguration().setQueueSize(queueSize);</span>
+<span class="nc" id="L195">    }</span>
+
+    public boolean isAllowCoreThreadTimeout() {
+<span class="nc" id="L198">        return getConfiguration().isAllowCoreThreadTimeout();</span>
+    }
+
+    public void setAllowCoreThreadTimeout(boolean allowCoreThreadTimeout) {
+<span class="nc" id="L202">        getConfiguration().setAllowCoreThreadTimeout(allowCoreThreadTimeout);</span>
+<span class="nc" id="L203">    }</span>
+
+    public long getSecondsToWaitOnShutdown() {
+<span class="nc" id="L206">        return getConfiguration().getAwaitTerminationPeriod().getSeconds();</span>
+    }
+
+    public void setSecondsToWaitOnShutdown(long secondsToWaitOnShutdown) {
+<span class="nc" id="L210">        getConfiguration().setAwaitTerminationPeriod(Duration.ofSeconds(secondsToWaitOnShutdown));</span>
+<span class="nc" id="L211">    }</span>
+
+    public BlockingQueue&lt;Runnable&gt; getThreadPoolQueue() {
+<span class="nc" id="L214">        return threadPoolQueue;</span>
+    }
+
+    public void setThreadPoolQueue(BlockingQueue&lt;Runnable&gt; threadPoolQueue) {
+<span class="nc" id="L218">        this.threadPoolQueue = threadPoolQueue;</span>
+<span class="nc" id="L219">    }</span>
+
+    public String getThreadPoolNamingPattern() {
+<span class="nc" id="L222">        return getConfiguration().getThreadPoolNamingPattern();</span>
+    }
+
+    public void setThreadPoolNamingPattern(String threadPoolNamingPattern) {
+<span class="nc" id="L226">        getConfiguration().setThreadPoolNamingPattern(threadPoolNamingPattern);</span>
+<span class="nc" id="L227">    }</span>
+
+    public ThreadFactory getThreadFactory() {
+<span class="nc" id="L230">        return threadFactory;</span>
+    }
+
+    public void setThreadFactory(ThreadFactory threadFactory) {
+<span class="nc" id="L234">        this.threadFactory = threadFactory;</span>
+<span class="nc" id="L235">    }</span>
+
+    public RejectedExecutionHandler getRejectedExecutionHandler() {
+<span class="nc" id="L238">        return rejectedExecutionHandler;</span>
+    }
+
+    public void setRejectedExecutionHandler(RejectedExecutionHandler rejectedExecutionHandler) {
+<span class="nc" id="L242">        this.rejectedExecutionHandler = rejectedExecutionHandler;</span>
+<span class="nc" id="L243">    }</span>
+
+    @Override
+    public int getRemainingCapacity() {
+<span class="nc" id="L247">        return threadPoolQueue.remainingCapacity();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

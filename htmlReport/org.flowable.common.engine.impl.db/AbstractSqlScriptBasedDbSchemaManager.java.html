@@ -1,0 +1,392 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AbstractSqlScriptBasedDbSchemaManager.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.common.engine.impl.db</a> &gt; <span class="el_source">AbstractSqlScriptBasedDbSchemaManager.java</span></div><h1>AbstractSqlScriptBasedDbSchemaManager.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.common.engine.impl.db;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.StringReader;
+import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
+import java.sql.DatabaseMetaData;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.impl.FlowableVersion;
+import org.flowable.common.engine.impl.FlowableVersions;
+import org.flowable.common.engine.impl.context.Context;
+import org.flowable.common.engine.impl.util.IoUtil;
+import org.flowable.common.engine.impl.util.ReflectUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * @author Joram Barrez
+ */
+<span class="nc" id="L40">public abstract class AbstractSqlScriptBasedDbSchemaManager implements SchemaManager {</span>
+    
+<span class="nc" id="L42">    protected final Logger logger = LoggerFactory.getLogger(getClass());</span>
+    
+<span class="nc" id="L44">    public static String[] JDBC_METADATA_TABLE_TYPES = { &quot;TABLE&quot; };</span>
+    
+    protected static final String PROPERTY_TABLE = &quot;ACT_GE_PROPERTY&quot;;
+    
+    protected static final String SCHEMA_VERSION_PROPERTY = &quot;schema.version&quot;;
+    
+    protected void dbSchemaUpgradeUntil6120(final String component, final int currentDatabaseVersionsIndex, final String dbVersion) {
+<span class="nc" id="L51">        FlowableVersion version = FlowableVersions.FLOWABLE_VERSIONS.get(currentDatabaseVersionsIndex);</span>
+<span class="nc" id="L52">        String currentVersion = version.getMainVersion();</span>
+<span class="nc" id="L53">        logger.info(&quot;upgrading flowable {} schema from {} to {}&quot;, component, currentVersion, FlowableVersions.LAST_V6_VERSION_BEFORE_SERVICES);</span>
+        
+        // Actual execution of schema DDL SQL
+<span class="nc bnc" id="L56" title="All 2 branches missed.">        for (int i = currentDatabaseVersionsIndex + 1; i &lt; FlowableVersions.getFlowableVersionIndexForDbVersion(FlowableVersions.LAST_V6_VERSION_BEFORE_SERVICES); i++) {</span>
+<span class="nc" id="L57">            String nextVersion = FlowableVersions.FLOWABLE_VERSIONS.get(i).getMainVersion();</span>
+
+            // Taking care of -SNAPSHOT version in development
+<span class="nc bnc" id="L60" title="All 2 branches missed.">            if (nextVersion.endsWith(&quot;-SNAPSHOT&quot;)) {</span>
+<span class="nc" id="L61">                nextVersion = nextVersion.substring(0, nextVersion.length() - &quot;-SNAPSHOT&quot;.length());</span>
+            }
+
+<span class="nc" id="L64">            currentVersion = currentVersion.replace(&quot;cam&quot;, &quot;&quot;);</span>
+<span class="nc" id="L65">            currentVersion = currentVersion.replace(&quot;.&quot;, &quot;&quot;);</span>
+<span class="nc bnc" id="L66" title="All 4 branches missed.">            if (&quot;fox&quot;.equalsIgnoreCase(dbVersion) &amp;&amp; FlowableVersions.hasCamMigrationVersion(nextVersion)) {</span>
+<span class="nc" id="L67">                nextVersion = &quot;cam&quot; + nextVersion;</span>
+            }
+<span class="nc" id="L69">            nextVersion = nextVersion.replace(&quot;.&quot;, &quot;&quot;);</span>
+            
+<span class="nc" id="L71">            logger.info(&quot;Upgrade needed: {} -&gt; {}. Looking for schema update resource for component '{}'&quot;, currentVersion, nextVersion, component);</span>
+<span class="nc" id="L72">            String databaseType = getDbSqlSession().getDbSqlSessionFactory().getDatabaseType();</span>
+<span class="nc" id="L73">            executeSchemaResource(&quot;upgrade&quot;, component, getResourceForDbOperation(&quot;upgrade&quot;, &quot;upgradestep.&quot; + currentVersion + &quot;.to.&quot; + nextVersion, component, databaseType), true);</span>
+            
+            // To avoid having too much similar scripts, for upgrades the 'all' database is supported and executed for every database type
+<span class="nc" id="L76">            executeSchemaResource(&quot;upgrade&quot;, component, getResourceForDbOperation(&quot;upgrade&quot;, &quot;upgradestep.&quot; + currentVersion + &quot;.to.&quot; + nextVersion, component, &quot;all&quot;), true);</span>
+            
+<span class="nc" id="L78">            currentVersion = nextVersion;</span>
+        }
+<span class="nc" id="L80">    }</span>
+    
+    protected void dbSchemaUpgrade(final String component, final int currentDatabaseVersionsIndex, final String engineDbVersion) {
+<span class="nc" id="L83">        FlowableVersion version = FlowableVersions.FLOWABLE_VERSIONS.get(currentDatabaseVersionsIndex);</span>
+<span class="nc" id="L84">        String currentVersion = version.getMainVersion();</span>
+<span class="nc" id="L85">        logger.info(&quot;upgrading flowable {} schema from {} to {}&quot;, component, currentVersion, FlowableVersions.CURRENT_VERSION);</span>
+
+        // Actual execution of schema DDL SQL
+<span class="nc bnc" id="L88" title="All 2 branches missed.">        for (int i = currentDatabaseVersionsIndex + 1; i &lt; FlowableVersions.FLOWABLE_VERSIONS.size(); i++) {</span>
+<span class="nc" id="L89">            String nextVersion = FlowableVersions.FLOWABLE_VERSIONS.get(i).getMainVersion();</span>
+
+            // Taking care of -SNAPSHOT version in development
+<span class="nc bnc" id="L92" title="All 2 branches missed.">            if (nextVersion.endsWith(&quot;-SNAPSHOT&quot;)) {</span>
+<span class="nc" id="L93">                nextVersion = nextVersion.substring(0, nextVersion.length() - &quot;-SNAPSHOT&quot;.length());</span>
+            }
+
+<span class="nc" id="L96">            currentVersion = currentVersion.replace(&quot;cam&quot;, &quot;&quot;);</span>
+<span class="nc" id="L97">            currentVersion = currentVersion.replace(&quot;.&quot;, &quot;&quot;);</span>
+<span class="nc bnc" id="L98" title="All 4 branches missed.">            if (&quot;fox&quot;.equalsIgnoreCase(engineDbVersion) &amp;&amp; FlowableVersions.hasCamMigrationVersion(nextVersion)) {</span>
+<span class="nc" id="L99">                nextVersion = &quot;cam&quot; + nextVersion;</span>
+            }
+<span class="nc" id="L101">            nextVersion = nextVersion.replace(&quot;.&quot;, &quot;&quot;);</span>
+            
+<span class="nc" id="L103">            logger.info(&quot;Upgrade needed: {} -&gt; {}. Looking for schema update resource for component '{}'&quot;, currentVersion, nextVersion, component);</span>
+<span class="nc" id="L104">            String databaseType = getDbSqlSession().getDbSqlSessionFactory().getDatabaseType();</span>
+            
+<span class="nc" id="L106">            executeSchemaResource(&quot;upgrade&quot;, component, getResourceForDbOperation(&quot;upgrade&quot;, &quot;upgradestep.&quot; + currentVersion + &quot;.to.&quot; + nextVersion, component, databaseType), true);</span>
+            
+            // To avoid having too much similar scripts, for upgrades the 'all' database is supported and executed for every database type
+<span class="nc" id="L109">            executeSchemaResource(&quot;upgrade&quot;, component, getResourceForDbOperation(&quot;upgrade&quot;, &quot;upgradestep.&quot; + currentVersion + &quot;.to.&quot; + nextVersion, component, &quot;all&quot;), true);</span>
+            
+<span class="nc" id="L111">            currentVersion = nextVersion;</span>
+        }
+<span class="nc" id="L113">    }</span>
+
+    public boolean isTablePresent(String tableName) {
+        // ACT-1610: in case the prefix IS the schema itself, we don't add the
+        // prefix, since the check is already aware of the schema
+<span class="nc" id="L118">        DbSqlSession dbSqlSession = getDbSqlSession();</span>
+<span class="nc" id="L119">        DbSqlSessionFactory dbSqlSessionFactory = dbSqlSession.getDbSqlSessionFactory();</span>
+<span class="nc bnc" id="L120" title="All 2 branches missed.">        if (!dbSqlSession.getDbSqlSessionFactory().isTablePrefixIsSchema()) {</span>
+<span class="nc" id="L121">            tableName = prependDatabaseTablePrefix(tableName);</span>
+        }
+
+<span class="nc" id="L124">        Connection connection = null;</span>
+        try {
+<span class="nc" id="L126">            connection = dbSqlSession.getSqlSession().getConnection();</span>
+<span class="nc" id="L127">            DatabaseMetaData databaseMetaData = connection.getMetaData();</span>
+<span class="nc" id="L128">            ResultSet tables = null;</span>
+
+<span class="nc" id="L130">            String catalog = dbSqlSession.getConnectionMetadataDefaultCatalog();</span>
+<span class="nc bnc" id="L131" title="All 4 branches missed.">            if (dbSqlSessionFactory.getDatabaseCatalog() != null &amp;&amp; dbSqlSessionFactory.getDatabaseCatalog().length() &gt; 0) {</span>
+<span class="nc" id="L132">                catalog = dbSqlSessionFactory.getDatabaseCatalog();</span>
+            }
+
+<span class="nc" id="L135">            String schema = dbSqlSession.getConnectionMetadataDefaultSchema();</span>
+<span class="nc bnc" id="L136" title="All 4 branches missed.">            if (dbSqlSessionFactory.getDatabaseSchema() != null &amp;&amp; dbSqlSessionFactory.getDatabaseSchema().length() &gt; 0) {</span>
+<span class="nc" id="L137">                schema = dbSqlSessionFactory.getDatabaseSchema();</span>
+<span class="nc bnc" id="L138" title="All 4 branches missed.">            } else if (dbSqlSessionFactory.isTablePrefixIsSchema() &amp;&amp; StringUtils.isNotEmpty(dbSqlSessionFactory.getDatabaseTablePrefix())) {</span>
+<span class="nc" id="L139">                schema = dbSqlSessionFactory.getDatabaseTablePrefix();</span>
+<span class="nc bnc" id="L140" title="All 4 branches missed.">                if (StringUtils.isNotEmpty(schema) &amp;&amp; schema.endsWith(&quot;.&quot;)) {</span>
+<span class="nc" id="L141">                    schema = schema.substring(0, schema.length() - 1);</span>
+                }
+            }
+
+<span class="nc" id="L145">            String databaseType = dbSqlSessionFactory.getDatabaseType();</span>
+
+<span class="nc bnc" id="L147" title="All 2 branches missed.">            if (&quot;postgres&quot;.equals(databaseType)) {</span>
+<span class="nc" id="L148">                tableName = tableName.toLowerCase();</span>
+<span class="nc bnc" id="L149" title="All 2 branches missed.">            } else if (&quot;cockroachdb&quot;.equals(databaseType)) {</span>
+<span class="nc" id="L150">                tableName = tableName.toLowerCase(); // same as postgres</span>
+<span class="nc" id="L151">                schema = &quot;public&quot;; // CRDB only supports public right now</span>
+            }
+
+<span class="nc bnc" id="L154" title="All 4 branches missed.">            if (schema != null &amp;&amp; &quot;oracle&quot;.equals(databaseType)) {</span>
+<span class="nc" id="L155">                schema = schema.toUpperCase();</span>
+            }
+
+<span class="nc bnc" id="L158" title="All 4 branches missed.">            if (catalog != null &amp;&amp; catalog.length() == 0) {</span>
+<span class="nc" id="L159">                catalog = null;</span>
+            }
+
+            try {
+<span class="nc" id="L163">                tables = databaseMetaData.getTables(catalog, schema, tableName, JDBC_METADATA_TABLE_TYPES);</span>
+<span class="nc" id="L164">                return tables.next();</span>
+            } finally {
+                try {
+<span class="nc bnc" id="L167" title="All 2 branches missed.">                    if (tables != null) {</span>
+<span class="nc" id="L168">                        tables.close();</span>
+                    }
+<span class="nc" id="L170">                } catch (Exception e) {</span>
+<span class="nc" id="L171">                    logger.error(&quot;Error closing meta data tables&quot;, e);</span>
+<span class="nc" id="L172">                }</span>
+            }
+
+<span class="nc" id="L175">        } catch (Exception e) {</span>
+<span class="nc" id="L176">            throw new FlowableException(&quot;couldn't check if tables are already present using metadata: &quot; + e.getMessage(), e);</span>
+        }
+    }
+    
+    protected String prependDatabaseTablePrefix(String tableName) {
+<span class="nc" id="L181">        return getDbSqlSession().getDbSqlSessionFactory().getDatabaseTablePrefix() + tableName;</span>
+    }
+    
+    public DbSqlSession getDbSqlSession() {
+<span class="nc" id="L185">        return Context.getCommandContext().getSession(DbSqlSession.class);</span>
+    }
+    
+    public String getProperty(String propertyName) {
+<span class="nc" id="L189">        String tableName = getPropertyTable();</span>
+       
+<span class="nc bnc" id="L191" title="All 2 branches missed.">        if (!isTablePresent(tableName)) { // isTablePresent will add the prefix, so adding it later</span>
+<span class="nc" id="L192">            return null;</span>
+        }
+        
+<span class="nc bnc" id="L195" title="All 2 branches missed.">        if (!getDbSqlSession().getDbSqlSessionFactory().isTablePrefixIsSchema()) {</span>
+<span class="nc" id="L196">            tableName = prependDatabaseTablePrefix(tableName);</span>
+        }
+<span class="nc" id="L198">        try (PreparedStatement statement = getDbSqlSession().getSqlSession().getConnection()</span>
+<span class="nc" id="L199">                .prepareStatement(&quot;select VALUE_ from &quot; + tableName + &quot; where NAME_ = ?&quot;)) {</span>
+
+<span class="nc" id="L201">            statement.setString(1, propertyName);</span>
+<span class="nc" id="L202">            ResultSet resultSet = statement.executeQuery();</span>
+<span class="nc bnc" id="L203" title="All 2 branches missed.">            if (resultSet.next()) {</span>
+<span class="nc" id="L204">                return resultSet.getString(1);</span>
+            } else {
+<span class="nc" id="L206">                return null;</span>
+            }
+<span class="nc bnc" id="L208" title="All 2 branches missed.">        } catch (SQLException e) {</span>
+<span class="nc" id="L209">            logger.error(&quot;Could not get property from table {}&quot;, tableName, e);</span>
+<span class="nc" id="L210">            return null;</span>
+        }
+    }
+    
+    protected String getPropertyTable() {
+<span class="nc" id="L215">        return PROPERTY_TABLE;</span>
+    }
+    
+    public String getResourceForDbOperation(String directory, String operation, String component, String databaseType) {
+<span class="nc" id="L219">        return getResourcesRootDirectory() + directory + &quot;/flowable.&quot; + databaseType + &quot;.&quot; + operation + &quot;.&quot; + component + &quot;.sql&quot;;</span>
+    }
+    
+    protected abstract String getResourcesRootDirectory();
+    
+    public void executeMandatorySchemaResource(String operation, String component) {
+<span class="nc" id="L225">        String databaseType = getDbSqlSession().getDbSqlSessionFactory().getDatabaseType();</span>
+<span class="nc" id="L226">        executeSchemaResource(operation, component, getResourceForDbOperation(operation, operation, component, databaseType), false);</span>
+<span class="nc" id="L227">    }</span>
+
+    public void executeSchemaResource(String operation, String component, String resourceName, boolean isOptional) {
+<span class="nc" id="L230">        InputStream inputStream = null;</span>
+        try {
+<span class="nc" id="L232">            inputStream = ReflectUtil.getResourceAsStream(resourceName);</span>
+<span class="nc bnc" id="L233" title="All 2 branches missed.">            if (inputStream == null) {</span>
+<span class="nc bnc" id="L234" title="All 2 branches missed.">                if (!isOptional) {</span>
+<span class="nc" id="L235">                    throw new FlowableException(&quot;resource '&quot; + resourceName + &quot;' is not available&quot;);</span>
+                }
+            } else {
+<span class="nc" id="L238">                executeSchemaResource(operation, component, resourceName, inputStream);</span>
+            }
+
+        } finally {
+<span class="nc" id="L242">            IoUtil.closeSilently(inputStream);</span>
+        }
+<span class="nc" id="L244">    }</span>
+
+    protected void executeSchemaResource(String operation, String component, String resourceName, InputStream inputStream) {
+<span class="nc" id="L247">        logger.info(&quot;performing {} on {} with resource {}&quot;, operation, component, resourceName);</span>
+<span class="nc" id="L248">        String sqlStatement = null;</span>
+<span class="nc" id="L249">        String exceptionSqlStatement = null;</span>
+<span class="nc" id="L250">        DbSqlSession dbSqlSession = getDbSqlSession();</span>
+        try {
+<span class="nc" id="L252">            Connection connection = dbSqlSession.getSqlSession().getConnection();</span>
+<span class="nc" id="L253">            Exception exception = null;</span>
+<span class="nc" id="L254">            byte[] bytes = IoUtil.readInputStream(inputStream, resourceName);</span>
+<span class="nc" id="L255">            String ddlStatements = new String(bytes, StandardCharsets.UTF_8);</span>
+
+            // Special DDL handling for certain databases
+            try {
+<span class="nc bnc" id="L259" title="All 2 branches missed.">                if (dbSqlSession.getDbSqlSessionFactory().isMysql()) {</span>
+<span class="nc" id="L260">                    DatabaseMetaData databaseMetaData = connection.getMetaData();</span>
+<span class="nc" id="L261">                    int majorVersion = databaseMetaData.getDatabaseMajorVersion();</span>
+<span class="nc" id="L262">                    int minorVersion = databaseMetaData.getDatabaseMinorVersion();</span>
+<span class="nc" id="L263">                    logger.info(&quot;Found MySQL: majorVersion={} minorVersion={}&quot;, majorVersion, minorVersion);</span>
+
+                    // Special care for MySQL &lt; 5.6
+<span class="nc bnc" id="L266" title="All 4 branches missed.">                    if (majorVersion &lt;= 5 &amp;&amp; minorVersion &lt; 6) {</span>
+<span class="nc" id="L267">                        ddlStatements = updateDdlForMySqlVersionLowerThan56(ddlStatements);</span>
+                    }
+                }
+<span class="nc" id="L270">            } catch (Exception e) {</span>
+<span class="nc" id="L271">                logger.info(&quot;Could not get database metadata&quot;, e);</span>
+<span class="nc" id="L272">            }</span>
+
+<span class="nc" id="L274">            BufferedReader reader = new BufferedReader(new StringReader(ddlStatements));</span>
+<span class="nc" id="L275">            String line = readNextTrimmedLine(reader);</span>
+<span class="nc" id="L276">            boolean inOraclePlsqlBlock = false;</span>
+<span class="nc bnc" id="L277" title="All 2 branches missed.">            while (line != null) {</span>
+<span class="nc bnc" id="L278" title="All 2 branches missed.">                if (line.startsWith(&quot;# &quot;)) {</span>
+<span class="nc" id="L279">                    logger.debug(line.substring(2));</span>
+
+<span class="nc bnc" id="L281" title="All 2 branches missed.">                } else if (line.startsWith(&quot;-- &quot;)) {</span>
+
+<span class="nc bnc" id="L283" title="All 2 branches missed.">                    if (&quot;-- force-commit&quot;.equals(line)) {</span>
+<span class="nc" id="L284">                        connection.commit();</span>
+<span class="nc" id="L285">                        logger.debug(&quot;Forcing commit&quot;);</span>
+
+                    } else {
+<span class="nc" id="L288">                        logger.debug(line.substring(3));</span>
+
+                    }
+
+<span class="nc bnc" id="L292" title="All 2 branches missed.">                } else if (line.startsWith(&quot;execute java &quot;)) {</span>
+<span class="nc" id="L293">                    String upgradestepClassName = line.substring(13).trim();</span>
+<span class="nc" id="L294">                    DbUpgradeStep dbUpgradeStep = null;</span>
+                    try {
+<span class="nc" id="L296">                        dbUpgradeStep = (DbUpgradeStep) ReflectUtil.instantiate(upgradestepClassName);</span>
+<span class="nc" id="L297">                    } catch (FlowableException e) {</span>
+<span class="nc" id="L298">                        throw new FlowableException(&quot;database update java class '&quot; + upgradestepClassName + &quot;' can't be instantiated: &quot; + e.getMessage(), e);</span>
+<span class="nc" id="L299">                    }</span>
+                    try {
+<span class="nc" id="L301">                        logger.debug(&quot;executing upgrade step java class {}&quot;, upgradestepClassName);</span>
+<span class="nc" id="L302">                        dbUpgradeStep.execute();</span>
+<span class="nc" id="L303">                    } catch (Exception e) {</span>
+<span class="nc" id="L304">                        throw new FlowableException(&quot;error while executing database update java class '&quot; + upgradestepClassName + &quot;': &quot; + e.getMessage(), e);</span>
+<span class="nc" id="L305">                    }</span>
+
+<span class="nc bnc" id="L307" title="All 2 branches missed.">                } else if (line.length() &gt; 0) {</span>
+
+<span class="nc bnc" id="L309" title="All 4 branches missed.">                    if (dbSqlSession.getDbSqlSessionFactory().isOracle() &amp;&amp; line.startsWith(&quot;begin&quot;)) {</span>
+<span class="nc" id="L310">                        inOraclePlsqlBlock = true;</span>
+<span class="nc" id="L311">                        sqlStatement = addSqlStatementPiece(sqlStatement, line);</span>
+
+<span class="nc bnc" id="L313" title="All 8 branches missed.">                    } else if ((line.endsWith(&quot;;&quot;) &amp;&amp; !inOraclePlsqlBlock) || (line.startsWith(&quot;/&quot;) &amp;&amp; inOraclePlsqlBlock)) {</span>
+
+<span class="nc bnc" id="L315" title="All 2 branches missed.">                        if (inOraclePlsqlBlock) {</span>
+<span class="nc" id="L316">                            inOraclePlsqlBlock = false;</span>
+                        } else {
+<span class="nc" id="L318">                            sqlStatement = addSqlStatementPiece(sqlStatement, line.substring(0, line.length() - 1));</span>
+                        }
+
+<span class="nc" id="L321">                        Statement jdbcStatement = connection.createStatement();</span>
+                        try {
+
+<span class="nc" id="L324">                            logger.debug(&quot;SQL: {}&quot;, sqlStatement);</span>
+<span class="nc" id="L325">                            jdbcStatement.execute(sqlStatement);</span>
+<span class="nc" id="L326">                            jdbcStatement.close();</span>
+                            
+<span class="nc" id="L328">                        } catch (Exception e) {</span>
+<span class="nc bnc" id="L329" title="All 2 branches missed.">                            if (exception == null) {</span>
+<span class="nc" id="L330">                                exception = e;</span>
+<span class="nc" id="L331">                                exceptionSqlStatement = sqlStatement;</span>
+                            }
+<span class="nc" id="L333">                            logger.error(&quot;problem during schema {}, statement {}&quot;, operation, sqlStatement, e);</span>
+                            
+                        } finally {
+<span class="nc" id="L336">                            sqlStatement = null;</span>
+                        }
+                        
+<span class="nc" id="L339">                    } else {</span>
+<span class="nc" id="L340">                        sqlStatement = addSqlStatementPiece(sqlStatement, line);</span>
+                    }
+                }
+
+<span class="nc" id="L344">                line = readNextTrimmedLine(reader);</span>
+            }
+
+<span class="nc bnc" id="L347" title="All 2 branches missed.">            if (exception != null) {</span>
+<span class="nc" id="L348">                throw exception;</span>
+            }
+
+<span class="nc" id="L351">            logger.debug(&quot;flowable db schema {} for component {} successful&quot;, operation, component);</span>
+
+<span class="nc" id="L353">        } catch (Exception e) {</span>
+<span class="nc" id="L354">            throw new FlowableException(&quot;couldn't &quot; + operation + &quot; db schema: &quot; + exceptionSqlStatement, e);</span>
+<span class="nc" id="L355">        }</span>
+<span class="nc" id="L356">    }</span>
+
+    /**
+     * MySQL is funny when it comes to timestamps and dates.
+     * 
+     * More specifically, for a DDL statement like 'MYCOLUMN timestamp(3)': - MySQL 5.6.4+ has support for timestamps/dates with millisecond (or smaller) precision. The DDL above works and the data in
+     * the table will have millisecond precision - MySQL before 5.5.3 allows the DDL statement, but ignores it. The DDL above works but the data won't have millisecond precision - 
+     * MySQL 5.5.3 before [version] after 5.6.4 gives and exception when using the DDL above.
+     * 
+     * Also, the 5.5 and 5.6 branches of MySQL are both actively developed and patched.
+     * 
+     * Hence, when doing auto-upgrade/creation of the Flowable tables, the default MySQL DDL file is used and all timestamps/datetimes are converted to not use the millisecond precision by string
+     * replacement done in the method below.
+     * 
+     * If using the DDL files directly (which is a sane choice in production env.), there is a distinction between MySQL version before 5.6.
+     */
+    protected String updateDdlForMySqlVersionLowerThan56(String ddlStatements) {
+<span class="nc" id="L373">        return ddlStatements.replace(&quot;timestamp(3)&quot;, &quot;timestamp&quot;).replace(&quot;datetime(3)&quot;, &quot;datetime&quot;).replace(&quot;TIMESTAMP(3)&quot;, &quot;TIMESTAMP&quot;).replace(&quot;DATETIME(3)&quot;, &quot;DATETIME&quot;);</span>
+    }
+
+    protected String addSqlStatementPiece(String sqlStatement, String line) {
+<span class="nc bnc" id="L377" title="All 2 branches missed.">        if (sqlStatement == null) {</span>
+<span class="nc" id="L378">            return line;</span>
+        }
+<span class="nc" id="L380">        return sqlStatement + &quot; \n&quot; + line;</span>
+    }
+
+    protected String readNextTrimmedLine(BufferedReader reader) throws IOException {
+<span class="nc" id="L384">        String line = reader.readLine();</span>
+<span class="nc bnc" id="L385" title="All 2 branches missed.">        if (line != null) {</span>
+<span class="nc" id="L386">            line = line.trim();</span>
+        }
+<span class="nc" id="L388">        return line;</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

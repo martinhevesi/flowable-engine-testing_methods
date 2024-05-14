@@ -1,0 +1,2157 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ProcessInstanceMigrationCallActivityTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.api.runtime.migration</a> &gt; <span class="el_source">ProcessInstanceMigrationCallActivityTest.java</span></div><h1>ProcessInstanceMigrationCallActivityTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.flowable.engine.test.api.runtime.migration;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
+
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+import org.assertj.core.api.Condition;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntity;
+import org.flowable.engine.impl.test.PluggableFlowableTestCase;
+import org.flowable.engine.migration.ActivityMigrationMapping;
+import org.flowable.engine.migration.ProcessInstanceMigrationBuilder;
+import org.flowable.engine.migration.ProcessInstanceMigrationValidationResult;
+import org.flowable.engine.repository.ProcessDefinition;
+import org.flowable.engine.runtime.Execution;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.job.api.Job;
+import org.flowable.task.api.Task;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
+
+/**
+ * @author Dennis Federico
+ */
+<span class="nc" id="L47">public class ProcessInstanceMigrationCallActivityTest extends PluggableFlowableTestCase {</span>
+
+    @AfterEach
+    protected void tearDown() {
+<span class="nc" id="L51">        deleteDeployments();</span>
+<span class="nc" id="L52">    }</span>
+
+    @Test
+    public void testValidationAutoMapOfMissingCallActivityInNewModel() {
+<span class="nc" id="L56">        ProcessDefinition procDefWithCallActivity = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/two-tasks-with-call-activity.bpmn20.xml&quot;);
+<span class="nc" id="L58">        ProcessDefinition procDefCallActivity = deployProcessDefinition(&quot;my deploy&quot;, &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot;);</span>
+<span class="nc" id="L59">        ProcessDefinition procDefSimpleOneTask = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-task-simple-process.bpmn20.xml&quot;);
+
+        //Start the processInstance and confirm the migration state to validate
+<span class="nc" id="L63">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procDefWithCallActivity.getId());</span>
+<span class="nc" id="L64">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L65">        assertThat(task)</span>
+<span class="nc" id="L66">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L67">                .isEqualTo(&quot;firstTask&quot;);</span>
+<span class="nc" id="L68">        assertThat(task)</span>
+<span class="nc" id="L69">                .extracting(Task::getProcessDefinitionId)</span>
+<span class="nc" id="L70">                .isEqualTo(procDefWithCallActivity.getId());</span>
+<span class="nc" id="L71">        completeTask(task);</span>
+
+<span class="nc" id="L73">        List&lt;Execution&gt; processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L74">        assertThat(processExecutions)</span>
+<span class="nc" id="L75">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L76">                .containsExactly(&quot;callActivity&quot;);</span>
+<span class="nc" id="L77">        assertThat(processExecutions)</span>
+<span class="nc" id="L78">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L79">                .containsOnly(procDefWithCallActivity.getId());</span>
+<span class="nc" id="L80">        ProcessInstance subProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L81">        List&lt;Execution&gt; subProcessExecutions = runtimeService.createExecutionQuery().processInstanceId(subProcessInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L82">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L83">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L84">                .containsExactly(&quot;theTask&quot;);</span>
+<span class="nc" id="L85">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L86">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L87">                .containsOnly(procDefCallActivity.getId());</span>
+<span class="nc" id="L88">        List&lt;Task&gt; subProcessTasks = taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).list();</span>
+<span class="nc" id="L89">        assertThat(subProcessTasks)</span>
+<span class="nc" id="L90">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L91">                .containsExactly(&quot;theTask&quot;);</span>
+<span class="nc" id="L92">        assertThat(subProcessTasks)</span>
+<span class="nc" id="L93">                .extracting(Task::getProcessDefinitionId)</span>
+<span class="nc" id="L94">                .containsOnly(procDefCallActivity.getId());</span>
+
+        //Prepare migration and validate
+<span class="nc" id="L97">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L98">                .migrateToProcessDefinition(procDefSimpleOneTask.getId());</span>
+<span class="nc" id="L99">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L100">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L101">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isFalse();</span>
+<span class="nc" id="L102">        assertThat(processInstanceMigrationValidationResult.getValidationMessages()).isEqualTo(Collections.singletonList(</span>
+                &quot;Call activity 'callActivity' does not exist in the new model. It must be mapped explicitly for migration (or all its child activities)&quot;));
+
+<span class="nc" id="L105">        assertThatThrownBy(() -&gt; processInstanceMigrationBuilder.migrate(processInstance.getId()))</span>
+<span class="nc" id="L106">                .as(&quot;Migration should not be possible&quot;)</span>
+<span class="nc" id="L107">                .isInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L108">                .hasMessageContaining(&quot;Call activity 'callActivity' does not exist in the new model. It must be mapped explicitly for migration (or all its child activities)&quot;);</span>
+
+<span class="nc" id="L110">        completeProcessInstanceTasks(subProcessInstance.getId());</span>
+<span class="nc" id="L111">        completeProcessInstanceTasks(processInstance.getId());</span>
+<span class="nc" id="L112">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L113">    }</span>
+
+    @Test
+    public void testValidationAutoMapOfCallActivityToDifferentActivityType() {
+<span class="nc" id="L117">        ProcessDefinition procDefWithCallActivity = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/two-tasks-with-call-activity.bpmn20.xml&quot;);
+<span class="nc" id="L119">        ProcessDefinition procDefSubProcess = deployProcessDefinition(&quot;my deploy&quot;, &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot;);</span>
+<span class="nc" id="L120">        ProcessDefinition procDefWithoutCallActivity = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-task-process-named-call-activity.bpmn20.xml&quot;);
+
+        //Start the processInstance and confirm the migration state to validate
+<span class="nc" id="L124">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procDefWithCallActivity.getId());</span>
+<span class="nc" id="L125">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L126">        assertThat(task)</span>
+<span class="nc" id="L127">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L128">                .isEqualTo(&quot;firstTask&quot;);</span>
+<span class="nc" id="L129">        completeTask(task);</span>
+
+<span class="nc" id="L131">        List&lt;Execution&gt; processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L132">        assertThat(processExecutions)</span>
+<span class="nc" id="L133">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L134">                .containsExactly(&quot;callActivity&quot;);</span>
+<span class="nc" id="L135">        assertThat(processExecutions)</span>
+<span class="nc" id="L136">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L137">                .containsOnly(procDefWithCallActivity.getId());</span>
+
+<span class="nc" id="L139">        ProcessInstance subProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L140">        List&lt;Execution&gt; subProcessExecutions = runtimeService.createExecutionQuery().processInstanceId(subProcessInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L141">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L142">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L143">                .containsExactly(&quot;theTask&quot;);</span>
+<span class="nc" id="L144">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L145">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L146">                .containsOnly(procDefSubProcess.getId());</span>
+<span class="nc" id="L147">        List&lt;Task&gt; subProcessTasks = taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).list();</span>
+<span class="nc" id="L148">        assertThat(subProcessTasks)</span>
+<span class="nc" id="L149">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L150">                .containsExactly(tuple(&quot;theTask&quot;, procDefSubProcess.getId()));</span>
+
+        //Prepare migration and validate
+<span class="nc" id="L153">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L154">                .migrateToProcessDefinition(procDefWithoutCallActivity.getId());</span>
+<span class="nc" id="L155">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L156">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L157">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isFalse();</span>
+<span class="nc" id="L158">        assertThat(processInstanceMigrationValidationResult.getValidationMessages()).isEqualTo(Collections.singletonList(</span>
+                &quot;Call activity 'callActivity' is not a Call Activity in the new model. It must be mapped explicitly for migration (or all its child activities)&quot;));
+
+<span class="nc" id="L161">        assertThatThrownBy(() -&gt; processInstanceMigrationBuilder.migrate(processInstance.getId()))</span>
+<span class="nc" id="L162">                .isExactlyInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L163">                .hasMessage(</span>
+                        &quot;Call activity 'callActivity' is not a Call Activity in the new model. It must be mapped explicitly for migration (or all its child activities)&quot;);
+
+<span class="nc" id="L166">        completeProcessInstanceTasks(subProcessInstance.getId());</span>
+<span class="nc" id="L167">        completeProcessInstanceTasks(processInstance.getId());</span>
+<span class="nc" id="L168">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L169">    }</span>
+
+    @Test
+    public void testValidationOfIncompleteMappingOfCallActivitySubProcessActivities() {
+<span class="nc" id="L173">        ProcessDefinition procDefWithCallActivityV1 = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/two-tasks-with-call-activity-v3.bpmn20.xml&quot;);
+<span class="nc" id="L175">        ProcessDefinition procDefSubProcessV1 = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-gateway-two-splits-four-tasks.bpmn20.xml&quot;);
+<span class="nc" id="L177">        ProcessDefinition procDefWithCallActivityV2 = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/two-tasks-with-call-activity.bpmn20.xml&quot;);
+<span class="nc" id="L179">        deployProcessDefinition(&quot;my deploy&quot;, &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot;);</span>
+
+        //Start the processInstance and confirm the migration state to validate
+<span class="nc" id="L182">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procDefWithCallActivityV1.getId());</span>
+<span class="nc" id="L183">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L184">        assertThat(task)</span>
+<span class="nc" id="L185">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L186">                .isEqualTo(&quot;firstTask&quot;);</span>
+<span class="nc" id="L187">        completeTask(task);</span>
+
+<span class="nc" id="L189">        List&lt;Execution&gt; processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L190">        assertThat(processExecutions)</span>
+<span class="nc" id="L191">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L192">                .containsExactly(&quot;callActivity&quot;);</span>
+<span class="nc" id="L193">        assertThat(processExecutions)</span>
+<span class="nc" id="L194">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L195">                .containsOnly(procDefWithCallActivityV1.getId());</span>
+
+<span class="nc" id="L197">        ProcessInstance subProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L198">        task = taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).singleResult();</span>
+<span class="nc" id="L199">        assertThat(task)</span>
+<span class="nc" id="L200">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L201">                .isEqualTo(&quot;taskBefore&quot;);</span>
+<span class="nc" id="L202">        completeTask(task);</span>
+<span class="nc" id="L203">        List&lt;Execution&gt; subProcessExecutions = runtimeService.createExecutionQuery().processInstanceId(subProcessInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L204">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L205">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L206">                .containsExactlyInAnyOrder(&quot;oddFlowTask1&quot;, &quot;evenFlowTask2&quot;);</span>
+<span class="nc" id="L207">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L208">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L209">                .containsOnly(procDefSubProcessV1.getId());</span>
+<span class="nc" id="L210">        List&lt;Task&gt; subProcessTasks = taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).list();</span>
+<span class="nc" id="L211">        assertThat(subProcessTasks)</span>
+<span class="nc" id="L212">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L213">                .containsExactlyInAnyOrder(&quot;oddFlowTask1&quot;, &quot;evenFlowTask2&quot;);</span>
+<span class="nc" id="L214">        assertThat(subProcessTasks)</span>
+<span class="nc" id="L215">                .extracting(Task::getProcessDefinitionId)</span>
+<span class="nc" id="L216">                .containsOnly(procDefSubProcessV1.getId());</span>
+
+        //Prepare migration and validate
+<span class="nc" id="L219">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L220">                .migrateToProcessDefinition(procDefWithCallActivityV2.getId())</span>
+<span class="nc" id="L221">                .addActivityMigrationMapping(</span>
+<span class="nc" id="L222">                        ActivityMigrationMapping.createMappingFor(&quot;evenFlowTask2&quot;, &quot;anyTask&quot;).inParentProcessOfCallActivityId(&quot;callActivity&quot;));</span>
+<span class="nc" id="L223">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L224">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L225">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isFalse();</span>
+<span class="nc" id="L226">        assertThat(processInstanceMigrationValidationResult.getValidationMessages())</span>
+<span class="nc" id="L227">                .isEqualTo(Collections.singletonList(</span>
+                        &quot;Incomplete migration mapping for call activity. The call activity 'callActivity' called element is different in the new model. Running subProcess activities '[oddFlowTask1]' should also be mapped for migration (or the call activity itself)&quot;));
+
+<span class="nc" id="L230">        assertThatThrownBy(() -&gt; processInstanceMigrationBuilder.migrate(processInstance.getId()))</span>
+<span class="nc" id="L231">                .isExactlyInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L232">                .hasMessage(</span>
+                        &quot;Call activity 'callActivity' has a different called element in the new model. It must be mapped explicitly for migration (or all its child activities)&quot;);
+
+<span class="nc" id="L235">        completeProcessInstanceTasks(subProcessInstance.getId());</span>
+<span class="nc" id="L236">        completeProcessInstanceTasks(processInstance.getId());</span>
+<span class="nc" id="L237">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L238">    }</span>
+
+    @Test
+    public void testValidationOfInvalidActivityInMigrationMappingToCallActivitySubProcess() {
+<span class="nc" id="L242">        ProcessDefinition procDefSimpleOneTask = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-task-simple-process.bpmn20.xml&quot;);
+<span class="nc" id="L244">        ProcessDefinition procDefWithCallActivity = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/two-tasks-with-call-activity.bpmn20.xml&quot;);
+<span class="nc" id="L246">        deployProcessDefinition(&quot;my deploy&quot;, &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot;);</span>
+
+        //Start the processInstance
+<span class="nc" id="L249">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procDefSimpleOneTask.getId());</span>
+
+        //Confirm the state to migrate
+<span class="nc" id="L252">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L253">        assertThat(executions)</span>
+<span class="nc" id="L254">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L255">                .containsExactly(&quot;userTask1Id&quot;);</span>
+<span class="nc" id="L256">        assertThat(executions)</span>
+<span class="nc" id="L257">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L258">                .containsOnly(procDefSimpleOneTask.getId());</span>
+<span class="nc" id="L259">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L260">        assertThat(task)</span>
+<span class="nc" id="L261">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L262">                .contains(&quot;userTask1Id&quot;, procDefSimpleOneTask.getId());</span>
+
+        //Prepare and action the migration - to a new ProcessDefinition containing a call activity subProcess
+<span class="nc" id="L265">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L266">                .migrateToProcessDefinition(procDefWithCallActivity.getId())</span>
+<span class="nc" id="L267">                .addActivityMigrationMapping(</span>
+<span class="nc" id="L268">                        ActivityMigrationMapping.createMappingFor(&quot;userTask1Id&quot;, &quot;wrongActivityId&quot;).inSubProcessOfCallActivityId(&quot;callActivity&quot;));</span>
+<span class="nc" id="L269">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L270">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L271">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isFalse();</span>
+<span class="nc" id="L272">        assertThat(processInstanceMigrationValidationResult.getValidationMessages())</span>
+<span class="nc" id="L273">                .isEqualTo(Collections.singletonList(</span>
+                        &quot;Invalid mapping for 'userTask1Id' to 'wrongActivityId', cannot be found in the process definition with id 'oneTaskProcess'&quot;));
+
+<span class="nc" id="L276">        assertThatThrownBy(() -&gt; processInstanceMigrationBuilder.migrate(processInstance.getId()))</span>
+<span class="nc" id="L277">                .isExactlyInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L278">                .hasMessage(&quot;Cannot find activity 'wrongActivityId' in process definition with id 'oneTaskProcess'&quot;);</span>
+
+<span class="nc" id="L280">        completeProcessInstanceTasks(processInstance.getId());</span>
+<span class="nc" id="L281">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L282">    }</span>
+
+    @Test
+    public void testValidationOfInvalidCallActivityInMigrateMappingToCallActivitySubProcess() {
+<span class="nc" id="L286">        ProcessDefinition procDefSimpleOneTask = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-task-simple-process.bpmn20.xml&quot;);
+<span class="nc" id="L288">        ProcessDefinition procDefWithCallActivity = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/two-tasks-with-call-activity.bpmn20.xml&quot;);
+<span class="nc" id="L290">        deployProcessDefinition(&quot;my deploy&quot;, &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot;);</span>
+
+        //Start the processInstance
+<span class="nc" id="L293">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procDefSimpleOneTask.getId());</span>
+
+        //Confirm the state to migrate
+<span class="nc" id="L296">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L297">        assertThat(executions)</span>
+<span class="nc" id="L298">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L299">                .containsExactly(&quot;userTask1Id&quot;);</span>
+<span class="nc" id="L300">        assertThat(executions)</span>
+<span class="nc" id="L301">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L302">                .containsOnly(procDefSimpleOneTask.getId());</span>
+<span class="nc" id="L303">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L304">        assertThat(task)</span>
+<span class="nc" id="L305">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L306">                .contains(&quot;userTask1Id&quot;, procDefSimpleOneTask.getId());</span>
+
+        //Prepare and action the migration - to a new ProcessDefinition containing a call activity subProcess
+<span class="nc" id="L309">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L310">                .migrateToProcessDefinition(procDefWithCallActivity.getId())</span>
+<span class="nc" id="L311">                .addActivityMigrationMapping(</span>
+<span class="nc" id="L312">                        ActivityMigrationMapping.createMappingFor(&quot;userTask1Id&quot;, &quot;theTask&quot;).inSubProcessOfCallActivityId(&quot;wrongCallActivity&quot;));</span>
+<span class="nc" id="L313">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L314">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L315">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isFalse();</span>
+<span class="nc" id="L316">        assertThat(processInstanceMigrationValidationResult.getValidationMessages())</span>
+<span class="nc" id="L317">                .isEqualTo(Collections.singletonList(</span>
+                        &quot;There's no call activity element with id 'wrongCallActivity' in the process definition with id 'twoTasksParentProcess'&quot;));
+
+<span class="nc" id="L320">        assertThatThrownBy(() -&gt; processInstanceMigrationBuilder.migrate(processInstance.getId()))</span>
+<span class="nc" id="L321">                .isExactlyInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L322">                .hasMessage(&quot;Cannot find activity 'wrongCallActivity' in process definition with id 'twoTasksParentProcess'&quot;);</span>
+
+<span class="nc" id="L324">        completeProcessInstanceTasks(processInstance.getId());</span>
+<span class="nc" id="L325">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L326">    }</span>
+
+    @Test
+    public void testMigrateMovingActivityIntoCallActivitySubProcessSpecificVersion() {
+<span class="nc" id="L330">        ProcessDefinition procDefSimpleOneTask = deployProcessDefinition(&quot;my deploy&quot;, &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot;);</span>
+<span class="nc" id="L331">        ProcessDefinition procDefWithCallActivity = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/two-tasks-with-call-activity-v2.bpmn20.xml&quot;);
+<span class="nc" id="L333">        ProcessDefinition procDefCallActivityV1 = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-task-simple-process.bpmn20.xml&quot;);
+<span class="nc" id="L335">        deployProcessDefinition(&quot;my deploy&quot;, &quot;org/flowable/engine/test/api/runtime/migration/one-task-simple-process-v2.bpmn20.xml&quot;);</span>
+
+        //Start the processInstance
+<span class="nc" id="L338">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procDefSimpleOneTask.getId());</span>
+
+        //Confirm the state to migrate
+<span class="nc" id="L341">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L342">        assertThat(executions).extracting(Execution::getActivityId).containsExactly(&quot;theTask&quot;);</span>
+<span class="nc" id="L343">        assertThat(executions).extracting(&quot;processDefinitionId&quot;).containsOnly(procDefSimpleOneTask.getId());</span>
+<span class="nc" id="L344">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L345">        assertThat(task)</span>
+<span class="nc" id="L346">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L347">                .contains(&quot;theTask&quot;, procDefSimpleOneTask.getId());</span>
+
+        //First migration attempt using latest &quot;latest&quot; version (default) - The first version of the subProcess contains &quot;userTaskId&quot; but the latest version does not
+<span class="nc" id="L350">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L351">                .migrateToProcessDefinition(procDefWithCallActivity.getId())</span>
+<span class="nc" id="L352">                .addActivityMigrationMapping(ActivityMigrationMapping.createMappingFor(&quot;theTask&quot;, &quot;userTask1Id&quot;).inSubProcessOfCallActivityId(&quot;callActivity&quot;));</span>
+<span class="nc" id="L353">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L354">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L355">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isFalse();</span>
+<span class="nc" id="L356">        assertThat(processInstanceMigrationValidationResult.getValidationMessages())</span>
+<span class="nc" id="L357">                .isEqualTo(Collections.singletonList(&quot;Invalid mapping for 'theTask' to 'userTask1Id', cannot be found in the process definition with id 'MP'&quot;));</span>
+
+<span class="nc" id="L359">        assertThatThrownBy(() -&gt; processInstanceMigrationBuilder.migrate(processInstance.getId()))</span>
+<span class="nc" id="L360">                .isExactlyInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L361">                .hasMessage(&quot;Cannot find activity 'userTask1Id' in process definition with id 'MP'&quot;);</span>
+
+        //Second migration attempt using and invalid &quot;unExistent&quot; version
+<span class="nc" id="L364">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder2 = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L365">                .migrateToProcessDefinition(procDefWithCallActivity.getId())</span>
+<span class="nc" id="L366">                .addActivityMigrationMapping(</span>
+<span class="nc" id="L367">                        ActivityMigrationMapping.createMappingFor(&quot;theTask&quot;, &quot;userTask1Id&quot;).inSubProcessOfCallActivityId(&quot;callActivity&quot;, 5));</span>
+<span class="nc" id="L368">        processInstanceMigrationValidationResult = processInstanceMigrationBuilder2.validateMigration(processInstance.getId());</span>
+<span class="nc" id="L369">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isFalse();</span>
+<span class="nc" id="L370">        assertThat(processInstanceMigrationValidationResult.getValidationMessages())</span>
+<span class="nc" id="L371">                .isEqualTo(Collections.singletonList(&quot;Invalid mapping for 'theTask' to 'userTask1Id', cannot be found in the process definition with id 'MP'&quot;));</span>
+
+<span class="nc" id="L373">        assertThatThrownBy(() -&gt; processInstanceMigrationBuilder2.migrate(processInstance.getId()))</span>
+<span class="nc" id="L374">                .isExactlyInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L375">                .hasMessage(&quot;Cannot find activity 'userTask1Id' in process definition with id 'MP'&quot;);</span>
+
+        //Second migration attempt specifies the version of the call activity subProcess
+<span class="nc" id="L378">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder3 = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L379">                .migrateToProcessDefinition(procDefWithCallActivity.getId())</span>
+<span class="nc" id="L380">                .addActivityMigrationMapping(</span>
+<span class="nc" id="L381">                        ActivityMigrationMapping.createMappingFor(&quot;theTask&quot;, &quot;userTask1Id&quot;).inSubProcessOfCallActivityId(&quot;callActivity&quot;, 1));</span>
+<span class="nc" id="L382">        processInstanceMigrationValidationResult = processInstanceMigrationBuilder3.validateMigration(processInstance.getId());</span>
+<span class="nc" id="L383">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L384">        assertThat(processInstanceMigrationValidationResult.getValidationMessages()).isNullOrEmpty();</span>
+
+<span class="nc" id="L386">        processInstanceMigrationBuilder3.migrate(processInstance.getId());</span>
+
+        //Confirm migration
+<span class="nc" id="L389">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L390">        assertThat(executions)</span>
+<span class="nc" id="L391">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L392">                .containsExactly(&quot;callActivity&quot;);</span>
+<span class="nc" id="L393">        assertThat(executions)</span>
+<span class="nc" id="L394">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L395">                .containsOnly(procDefWithCallActivity.getId());</span>
+
+<span class="nc" id="L397">        ProcessInstance subProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L398">        assertThat(subProcessInstance).isNotNull();</span>
+
+<span class="nc" id="L400">        List&lt;Execution&gt; subProcessExecutions = runtimeService.createExecutionQuery().processInstanceId(subProcessInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L401">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L402">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L403">                .containsExactly(&quot;userTask1Id&quot;);</span>
+<span class="nc" id="L404">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L405">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L406">                .containsOnly(procDefCallActivityV1.getId());</span>
+
+<span class="nc" id="L408">        List&lt;Task&gt; subProcessTasks = taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).list();</span>
+<span class="nc" id="L409">        assertThat(subProcessTasks)</span>
+<span class="nc" id="L410">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L411">                .contains(tuple(&quot;userTask1Id&quot;, procDefCallActivityV1.getId()));</span>
+
+        //Complete process
+<span class="nc" id="L414">        completeProcessInstanceTasks(subProcessInstance.getId());</span>
+<span class="nc" id="L415">        completeProcessInstanceTasks(processInstance.getId());</span>
+<span class="nc" id="L416">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L417">    }</span>
+
+    @Test
+    public void testMigrateMovingActivityIntoCallActivitySubProcessWithCalledElementExpression() {
+<span class="nc" id="L421">        ProcessDefinition procDefOneTask = deployProcessDefinition(&quot;my deploy&quot;, &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot;);</span>
+<span class="nc" id="L422">        ProcessDefinition procDefWithCallActivity = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/two-tasks-with-expression-call-activity.bpmn20.xml&quot;);
+<span class="nc" id="L424">        ProcessDefinition procDefCallActivity = deployProcessDefinition(&quot;my deploy&quot;, &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot;);</span>
+
+        //Start the processInstance
+<span class="nc" id="L427">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procDefOneTask.getId());</span>
+
+<span class="nc" id="L429">        ProcessInstance subProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L430">        assertThat(subProcessInstance).isNull();</span>
+
+<span class="nc" id="L432">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L433">        assertThat(task)</span>
+<span class="nc" id="L434">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L435">                .isEqualTo(&quot;theTask&quot;);</span>
+
+        //First migration attempt fails because the callElement expression cannot be evaluated
+<span class="nc" id="L438">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L439">                .migrateToProcessDefinition(procDefWithCallActivity.getId())</span>
+<span class="nc" id="L440">                .addActivityMigrationMapping(ActivityMigrationMapping.createMappingFor(&quot;theTask&quot;, &quot;theTask&quot;).inSubProcessOfCallActivityId(&quot;callActivity&quot;));</span>
+
+<span class="nc" id="L442">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L443">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L444">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isFalse();</span>
+<span class="nc" id="L445">        assertThat(processInstanceMigrationValidationResult.getValidationMessages())</span>
+<span class="nc" id="L446">                .isEqualTo(Collections.singletonList(</span>
+                        &quot;no processes deployed with key '${simpleSubProcessExpression}' for call activity element with id 'callActivity' in the process definition with id 'twoTasksParentProcess'&quot;));
+
+<span class="nc" id="L449">        assertThatThrownBy(() -&gt; processInstanceMigrationBuilder.migrate(processInstance.getId()))</span>
+<span class="nc" id="L450">                .isExactlyInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L451">                .hasMessage(&quot;Cannot resolve calledElement expression '${simpleSubProcessExpression}' of callActivity 'callActivity'&quot;);</span>
+
+        //Now we do the migration specifying the process variable to resolve the calledElement
+<span class="nc" id="L454">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder2 = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L455">                .migrateToProcessDefinition(procDefWithCallActivity.getId())</span>
+<span class="nc" id="L456">                .addActivityMigrationMapping(ActivityMigrationMapping.createMappingFor(&quot;theTask&quot;, &quot;theTask&quot;).inSubProcessOfCallActivityId(&quot;callActivity&quot;, 2))</span>
+<span class="nc" id="L457">                .withProcessInstanceVariable(&quot;simpleSubProcessExpression&quot;, &quot;oneTaskProcess&quot;);</span>
+
+<span class="nc" id="L459">        processInstanceMigrationValidationResult = processInstanceMigrationBuilder2.validateMigration(processInstance.getId());</span>
+<span class="nc" id="L460">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L461">        assertThat(processInstanceMigrationValidationResult.getValidationMessages()).isNullOrEmpty();</span>
+
+<span class="nc" id="L463">        processInstanceMigrationBuilder2.migrate(processInstance.getId());</span>
+
+        //Confirm migration
+<span class="nc" id="L466">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L467">        assertThat(executions)</span>
+<span class="nc" id="L468">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L469">                .containsExactly(&quot;callActivity&quot;);</span>
+<span class="nc" id="L470">        assertThat(executions)</span>
+<span class="nc" id="L471">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L472">                .containsOnly(procDefWithCallActivity.getId());</span>
+
+<span class="nc" id="L474">        subProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L475">        assertThat(subProcessInstance).extracting(ProcessInstance::getProcessDefinitionId).isEqualTo(procDefCallActivity.getId());</span>
+
+<span class="nc" id="L477">        List&lt;Execution&gt; subProcessExecutions = runtimeService.createExecutionQuery().processInstanceId(subProcessInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L478">        assertThat(subProcessExecutions).extracting(Execution::getActivityId).containsExactly(&quot;theTask&quot;);</span>
+<span class="nc" id="L479">        assertThat(subProcessExecutions).extracting(&quot;processDefinitionId&quot;).containsOnly(procDefCallActivity.getId());</span>
+
+<span class="nc" id="L481">        List&lt;Task&gt; subProcessTasks = taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).list();</span>
+<span class="nc" id="L482">        assertThat(subProcessTasks)</span>
+<span class="nc" id="L483">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L484">                .contains(tuple(&quot;theTask&quot;, procDefCallActivity.getId()));</span>
+
+        //Complete process
+<span class="nc" id="L487">        completeProcessInstanceTasks(subProcessInstance.getId());</span>
+<span class="nc" id="L488">        completeProcessInstanceTasks(processInstance.getId());</span>
+<span class="nc" id="L489">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L490">    }</span>
+
+    @Test
+    public void testMigrateMovingCallActivityToSimpleActivity() {
+<span class="nc" id="L494">        ProcessDefinition procDefWithCallActivity = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/two-tasks-with-call-activity.bpmn20.xml&quot;);
+<span class="nc" id="L496">        ProcessDefinition procDefSubProcess = deployProcessDefinition(&quot;my deploy&quot;, &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot;);</span>
+<span class="nc" id="L497">        ProcessDefinition procDefSimpleOneTask = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-task-simple-process.bpmn20.xml&quot;);
+
+        //Start the processInstance
+<span class="nc" id="L501">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procDefWithCallActivity.getId());</span>
+<span class="nc" id="L502">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L503">        assertThat(task)</span>
+<span class="nc" id="L504">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L505">                .isEqualTo(&quot;firstTask&quot;);</span>
+<span class="nc" id="L506">        completeTask(task);</span>
+
+        //Confirm the state to migrate
+<span class="nc" id="L509">        List&lt;Execution&gt; processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L510">        assertThat(processExecutions)</span>
+<span class="nc" id="L511">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L512">                .containsExactly(&quot;callActivity&quot;);</span>
+<span class="nc" id="L513">        assertThat(processExecutions)</span>
+<span class="nc" id="L514">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L515">                .containsOnly(procDefWithCallActivity.getId());</span>
+
+<span class="nc" id="L517">        ProcessInstance subProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L518">        List&lt;Execution&gt; subProcessExecutions = runtimeService.createExecutionQuery().processInstanceId(subProcessInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L519">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L520">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L521">                .containsExactlyInAnyOrder(&quot;theTask&quot;);</span>
+<span class="nc" id="L522">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L523">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L524">                .containsOnly(procDefSubProcess.getId());</span>
+<span class="nc" id="L525">        List&lt;Task&gt; subProcessTasks = taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).list();</span>
+<span class="nc" id="L526">        assertThat(subProcessTasks)</span>
+<span class="nc" id="L527">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L528">                .contains(tuple(&quot;theTask&quot;, procDefSubProcess.getId()));</span>
+
+        //Prepare and action the migration - to a new ProcessDefinition containing a call activity subProcess
+<span class="nc" id="L531">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L532">                .migrateToProcessDefinition(procDefSimpleOneTask.getId())</span>
+<span class="nc" id="L533">                .addActivityMigrationMapping(ActivityMigrationMapping.createMappingFor(&quot;callActivity&quot;, &quot;userTask1Id&quot;));</span>
+
+<span class="nc" id="L535">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L536">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L537">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L538">        assertThat(processInstanceMigrationValidationResult.getValidationMessages()).isNullOrEmpty();</span>
+
+<span class="nc" id="L540">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+        //Confirm migration
+<span class="nc" id="L543">        processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L544">        assertThat(processExecutions)</span>
+<span class="nc" id="L545">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L546">                .containsExactly(&quot;userTask1Id&quot;);</span>
+<span class="nc" id="L547">        assertThat(processExecutions)</span>
+<span class="nc" id="L548">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L549">                .containsOnly(procDefSimpleOneTask.getId());</span>
+
+<span class="nc" id="L551">        subProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L552">        assertThat(subProcessInstance).isNull();</span>
+
+<span class="nc" id="L554">        List&lt;Task&gt; processTasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L555">        assertThat(processTasks)</span>
+<span class="nc" id="L556">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L557">                .contains(tuple(&quot;userTask1Id&quot;, procDefSimpleOneTask.getId()));</span>
+
+<span class="nc" id="L559">        completeTask(processTasks.get(0));</span>
+
+<span class="nc" id="L561">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L562">    }</span>
+
+    @Test
+    public void testMigrateMovingParallelMultiInstanceCallActivityToSimpleActivity() {
+
+<span class="nc bnc" id="L567" title="All 2 branches missed.">        Condition&lt;Execution&gt; isInactiveExecution = new Condition&lt;&gt;(execution -&gt; !((ExecutionEntity) execution).isActive(), &quot;inactive execution&quot;);</span>
+
+<span class="nc" id="L569">        ProcessDefinition procDefWithCallActivity = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-multi-instance-call-activity.bpmn20.xml&quot;);
+<span class="nc" id="L571">        ProcessDefinition procDefSubProcess = deployProcessDefinition(&quot;my deploy&quot;, &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot;);</span>
+<span class="nc" id="L572">        ProcessDefinition procDefSimpleOneTask = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-task-simple-process.bpmn20.xml&quot;);
+
+        //Start the processInstance
+<span class="nc" id="L576">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procDefWithCallActivity.getId(), Collections.singletonMap(&quot;nrOfLoops&quot;, 3));</span>
+<span class="nc" id="L577">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L578">        assertThat(task)</span>
+<span class="nc" id="L579">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L580">                .isEqualTo(&quot;beforeMultiInstance&quot;);</span>
+<span class="nc" id="L581">        completeTask(task);</span>
+
+        //Confirm the state to migrate
+<span class="nc" id="L584">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        //MultiInstance parent and its parallel instances
+<span class="nc" id="L586">        assertThat(executions).hasSize(4);</span>
+<span class="nc" id="L587">        assertThat(executions)</span>
+<span class="nc" id="L588">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L589">                .containsOnly(&quot;parallelMICallActivity&quot;);</span>
+        //Parallel MI root execution is inactive
+<span class="nc" id="L591">        assertThat(executions).haveExactly(1, isInactiveExecution);</span>
+<span class="nc" id="L592">        assertThat(executions)</span>
+<span class="nc" id="L593">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L594">                .containsOnly(procDefWithCallActivity.getId());</span>
+
+<span class="nc" id="L596">        Execution miRoot = executions.stream().filter(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot()).findFirst().get();</span>
+<span class="nc" id="L597">        Map&lt;String, Object&gt; miRootVars = runtimeService.getVariables(miRoot.getId());</span>
+<span class="nc" id="L598">        assertThat(miRootVars)</span>
+<span class="nc" id="L599">                .extracting(&quot;nrOfActiveInstances&quot;, &quot;nrOfCompletedInstances&quot;, &quot;nrOfLoops&quot;)</span>
+<span class="nc" id="L600">                .containsExactly(3, 0, 3);</span>
+
+<span class="nc" id="L602">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L603">        assertThat(tasks).isEmpty();</span>
+
+<span class="nc" id="L605">        List&lt;ProcessInstance&gt; subProcessInstances = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L606">        assertThat(subProcessInstances).hasSize(3);</span>
+
+<span class="nc" id="L608">        tasks = subProcessInstances.stream()</span>
+<span class="nc" id="L609">                .map(ProcessInstance::getId)</span>
+<span class="nc" id="L610">                .map(subProcId -&gt; taskService.createTaskQuery().processInstanceId(subProcId).singleResult())</span>
+<span class="nc" id="L611">                .collect(Collectors.toList());</span>
+
+<span class="nc" id="L613">        assertThat(tasks)</span>
+<span class="nc" id="L614">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L615">                .containsOnly(tuple(&quot;theTask&quot;, procDefSubProcess.getId()));</span>
+
+        //Prepare and action the migration
+<span class="nc" id="L618">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L619">                .migrateToProcessDefinition(procDefSimpleOneTask.getId())</span>
+<span class="nc" id="L620">                .addActivityMigrationMapping(ActivityMigrationMapping.createMappingFor(&quot;parallelMICallActivity&quot;, &quot;userTask1Id&quot;));</span>
+<span class="nc" id="L621">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L622">                .validateMigration(processInstance.getId());</span>
+
+<span class="nc" id="L624">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L625">        assertThat(processInstanceMigrationValidationResult.getValidationMessages()).isNullOrEmpty();</span>
+
+<span class="nc" id="L627">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+        //Confirm migration
+<span class="nc" id="L630">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L631">        assertThat(executions)</span>
+<span class="nc" id="L632">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L633">                .containsExactly(&quot;userTask1Id&quot;);</span>
+<span class="nc" id="L634">        assertThat(executions)</span>
+<span class="nc" id="L635">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L636">                .containsOnly(procDefSimpleOneTask.getId());</span>
+
+<span class="nc" id="L638">        ProcessInstance subProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L639">        assertThat(subProcessInstance).isNull();</span>
+
+<span class="nc" id="L641">        List&lt;Task&gt; processTasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L642">        assertThat(processTasks)</span>
+<span class="nc" id="L643">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L644">                .containsOnly(tuple(&quot;userTask1Id&quot;, procDefSimpleOneTask.getId()));</span>
+
+<span class="nc" id="L646">        completeTask(processTasks.get(0));</span>
+
+<span class="nc" id="L648">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L649">    }</span>
+
+    @Test
+    @Disabled(&quot;Not supported - Cannot migrate to an arbitrary activity inside an MI subProcess&quot;)
+    public void testInvalidMigrationMovingCallActivityToActivityInsideMultiInstance() {
+<span class="nc" id="L654">        ProcessDefinition procDefWithCallActivity = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/two-tasks-with-call-activity.bpmn20.xml&quot;);
+<span class="nc" id="L656">        ProcessDefinition procDefSubProcess = deployProcessDefinition(&quot;my deploy&quot;, &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot;);</span>
+<span class="nc" id="L657">        ProcessDefinition procDefMITask = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-multi-instance-subprocess.bpmn20.xml&quot;);
+
+        //Start the processInstance
+<span class="nc" id="L661">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procDefWithCallActivity.getId());</span>
+<span class="nc" id="L662">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L663">        assertThat(task).extracting(Task::getTaskDefinitionKey).isEqualTo(&quot;firstTask&quot;);</span>
+<span class="nc" id="L664">        completeTask(task);</span>
+
+        //Confirm the state to migrate
+<span class="nc" id="L667">        List&lt;Execution&gt; processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L668">        assertThat(processExecutions)</span>
+<span class="nc" id="L669">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L670">                .containsExactly(&quot;callActivity&quot;);</span>
+<span class="nc" id="L671">        assertThat(processExecutions)</span>
+<span class="nc" id="L672">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L673">                .containsOnly(procDefWithCallActivity.getId());</span>
+
+<span class="nc" id="L675">        ProcessInstance subProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L676">        List&lt;Execution&gt; subProcessExecutions = runtimeService.createExecutionQuery().processInstanceId(subProcessInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L677">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L678">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L679">                .containsExactlyInAnyOrder(&quot;theTask&quot;);</span>
+<span class="nc" id="L680">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L681">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L682">                .containsOnly(procDefSubProcess.getId());</span>
+<span class="nc" id="L683">        List&lt;Task&gt; subProcessTasks = taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).list();</span>
+<span class="nc" id="L684">        assertThat(subProcessTasks)</span>
+<span class="nc" id="L685">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L686">                .containsOnly(tuple(&quot;theTask&quot;, procDefSubProcess.getId()));</span>
+
+        //Prepare and action the migration
+<span class="nc" id="L689">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L690">                .migrateToProcessDefinition(procDefMITask.getId())</span>
+<span class="nc" id="L691">                .addActivityMigrationMapping(ActivityMigrationMapping.createMappingFor(&quot;callActivity&quot;, &quot;subTask2&quot;));</span>
+
+<span class="nc" id="L693">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L694">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L695">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isFalse();</span>
+<span class="nc" id="L696">        assertThat(processInstanceMigrationValidationResult.getValidationMessages())</span>
+<span class="nc" id="L697">                .isEqualTo(Collections.singletonList(</span>
+                        &quot;Invalid mapping for 'callActivity' to 'subTask2', cannot migrate arbitrarily inside a Multi Instance container 'parallelMISubProcess' inside process definition with id 'parallelMultiInstanceSubProcess'&quot;));
+
+<span class="nc" id="L700">        assertThatThrownBy(() -&gt; processInstanceMigrationBuilder.migrate(processInstance.getId()))</span>
+<span class="nc" id="L701">                .isExactlyInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L702">                .hasMessage(&quot;Cannot find activity 'wrongActivityId' in process definition for with id 'oneTaskProcess'&quot;);</span>
+<span class="nc" id="L703">    }</span>
+
+    @Test
+    public void testMigrateMovingActivityIntoCallActivitySubProcess() {
+<span class="nc" id="L707">        ProcessDefinition procDefSimpleOneTask = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-task-simple-process.bpmn20.xml&quot;);
+<span class="nc" id="L709">        ProcessDefinition procDefWithCallActivity = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/two-tasks-with-call-activity.bpmn20.xml&quot;);
+<span class="nc" id="L711">        ProcessDefinition procDefCallActivity = deployProcessDefinition(&quot;my deploy&quot;, &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot;);</span>
+
+        //Start the processInstance
+<span class="nc" id="L714">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procDefSimpleOneTask.getId());</span>
+
+        //Confirm the state to migrate
+<span class="nc" id="L717">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L718">        assertThat(executions)</span>
+<span class="nc" id="L719">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L720">                .containsExactly(&quot;userTask1Id&quot;);</span>
+<span class="nc" id="L721">        assertThat(executions)</span>
+<span class="nc" id="L722">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L723">                .containsOnly(procDefSimpleOneTask.getId());</span>
+<span class="nc" id="L724">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L725">        assertThat(task)</span>
+<span class="nc" id="L726">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L727">                .containsOnly(&quot;userTask1Id&quot;, procDefSimpleOneTask.getId());</span>
+
+        //Prepare and action the migration - to a new ProcessDefinition containing a call activity subProcess
+<span class="nc" id="L730">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L731">                .migrateToProcessDefinition(procDefWithCallActivity.getId())</span>
+<span class="nc" id="L732">                .addActivityMigrationMapping(ActivityMigrationMapping.createMappingFor(&quot;userTask1Id&quot;, &quot;theTask&quot;).inSubProcessOfCallActivityId(&quot;callActivity&quot;));</span>
+
+<span class="nc" id="L734">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L735">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L736">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L737">        assertThat(processInstanceMigrationValidationResult.getValidationMessages()).isNullOrEmpty();</span>
+
+<span class="nc" id="L739">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+        //Confirm migration
+<span class="nc" id="L742">        ProcessInstance subProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L743">        assertThat(subProcessInstance).isNotNull();</span>
+
+<span class="nc" id="L745">        List&lt;Execution&gt; processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L746">        assertThat(processExecutions)</span>
+<span class="nc" id="L747">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L748">                .containsExactly(&quot;callActivity&quot;);</span>
+<span class="nc" id="L749">        assertThat(processExecutions)</span>
+<span class="nc" id="L750">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L751">                .containsOnly(procDefWithCallActivity.getId());</span>
+
+<span class="nc" id="L753">        List&lt;Execution&gt; subProcessExecutions = runtimeService.createExecutionQuery().processInstanceId(subProcessInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L754">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L755">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L756">                .containsExactly(&quot;theTask&quot;);</span>
+<span class="nc" id="L757">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L758">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L759">                .containsOnly(procDefCallActivity.getId());</span>
+
+<span class="nc" id="L761">        List&lt;Task&gt; processTasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L762">        assertThat(processTasks).isEmpty();</span>
+
+<span class="nc" id="L764">        List&lt;Task&gt; subProcessTasks = taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).list();</span>
+<span class="nc" id="L765">        assertThat(subProcessTasks)</span>
+<span class="nc" id="L766">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L767">                .containsOnly(tuple(&quot;theTask&quot;, procDefCallActivity.getId()));</span>
+
+<span class="nc" id="L769">        completeTask(subProcessTasks.get(0));</span>
+
+<span class="nc" id="L771">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L772">        assertThat(task)</span>
+<span class="nc" id="L773">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L774">                .containsOnly(&quot;secondTask&quot;, procDefWithCallActivity.getId());</span>
+
+<span class="nc" id="L776">        completeTask(task);</span>
+
+<span class="nc" id="L778">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L779">    }</span>
+
+    @Test
+    public void testMigrateMovingActivityIntoCallActivitySubProcessV2() {
+<span class="nc" id="L783">        ProcessDefinition procDefSimpleOneTask = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-task-simple-process.bpmn20.xml&quot;);
+<span class="nc" id="L785">        ProcessDefinition procDefWithCallActivity = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/two-tasks-with-call-activity-v2.bpmn20.xml&quot;);
+<span class="nc" id="L787">        ProcessDefinition procDefCallActivity = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/two-tasks-simple-process.bpmn20.xml&quot;);
+
+        //Start the processInstance
+<span class="nc" id="L791">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procDefSimpleOneTask.getId());</span>
+
+        //Confirm the state to migrate
+<span class="nc" id="L794">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L795">        assertThat(executions)</span>
+<span class="nc" id="L796">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L797">                .containsExactly(&quot;userTask1Id&quot;);</span>
+<span class="nc" id="L798">        assertThat(executions)</span>
+<span class="nc" id="L799">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L800">                .containsOnly(procDefSimpleOneTask.getId());</span>
+<span class="nc" id="L801">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L802">        assertThat(task)</span>
+<span class="nc" id="L803">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L804">                .containsOnly(&quot;userTask1Id&quot;, procDefSimpleOneTask.getId());</span>
+
+        //Prepare and action the migration - to a new ProcessDefinition containing a call activity subProcess
+<span class="nc" id="L807">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L808">                .migrateToProcessDefinition(procDefWithCallActivity.getId())</span>
+<span class="nc" id="L809">                .addActivityMigrationMapping(</span>
+<span class="nc" id="L810">                        ActivityMigrationMapping.createMappingFor(&quot;userTask1Id&quot;, &quot;userTask2Id&quot;).inSubProcessOfCallActivityId(&quot;callActivity&quot;));</span>
+
+<span class="nc" id="L812">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L813">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L814">        assertThat(processInstanceMigrationValidationResult.getValidationMessages()).isNullOrEmpty();</span>
+
+<span class="nc" id="L816">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+<span class="nc" id="L818">        ProcessInstance subProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L819">        assertThat(subProcessInstance).isNotNull();</span>
+
+<span class="nc" id="L821">        List&lt;Execution&gt; processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L822">        assertThat(processExecutions)</span>
+<span class="nc" id="L823">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L824">                .containsExactly(&quot;callActivity&quot;);</span>
+<span class="nc" id="L825">        assertThat(processExecutions)</span>
+<span class="nc" id="L826">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L827">                .containsOnly(procDefWithCallActivity.getId());</span>
+
+<span class="nc" id="L829">        List&lt;Execution&gt; subProcessExecutions = runtimeService.createExecutionQuery().processInstanceId(subProcessInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L830">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L831">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L832">                .containsExactly(&quot;userTask2Id&quot;);</span>
+<span class="nc" id="L833">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L834">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L835">                .containsOnly(procDefCallActivity.getId());</span>
+
+<span class="nc" id="L837">        List&lt;Task&gt; processTasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L838">        assertThat(processTasks).isEmpty();</span>
+
+<span class="nc" id="L840">        List&lt;Task&gt; subProcessTasks = taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).list();</span>
+<span class="nc" id="L841">        assertThat(subProcessTasks)</span>
+<span class="nc" id="L842">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L843">                .containsOnly(tuple(&quot;userTask2Id&quot;, procDefCallActivity.getId()));</span>
+
+<span class="nc" id="L845">        completeTask(subProcessTasks.get(0));</span>
+
+<span class="nc" id="L847">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L848">        assertThat(task)</span>
+<span class="nc" id="L849">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L850">                .containsOnly(&quot;secondTask&quot;, procDefWithCallActivity.getId());</span>
+
+<span class="nc" id="L852">        completeTask(task);</span>
+
+<span class="nc" id="L854">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L855">    }</span>
+
+    @Test
+    public void testMigrateMovingActivityIntoCallActivitySubProcessWithCallElementExpression() {
+<span class="nc" id="L859">        ProcessDefinition procDefSimpleOneTask = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-task-simple-process.bpmn20.xml&quot;);
+<span class="nc" id="L861">        ProcessDefinition procDefWithCallActivity = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/two-tasks-with-call-activity.bpmn20.xml&quot;);
+<span class="nc" id="L863">        ProcessDefinition procDefCallActivity = deployProcessDefinition(&quot;my deploy&quot;, &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot;);</span>
+
+        //Start the processInstance
+<span class="nc" id="L866">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procDefSimpleOneTask.getId());</span>
+
+        //Confirm the state to migrate
+<span class="nc" id="L869">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L870">        assertThat(executions)</span>
+<span class="nc" id="L871">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L872">                .containsExactly(&quot;userTask1Id&quot;);</span>
+<span class="nc" id="L873">        assertThat(executions)</span>
+<span class="nc" id="L874">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L875">                .containsOnly(procDefSimpleOneTask.getId());</span>
+<span class="nc" id="L876">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L877">        assertThat(task)</span>
+<span class="nc" id="L878">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L879">                .containsOnly(&quot;userTask1Id&quot;, procDefSimpleOneTask.getId());</span>
+
+        //Prepare and action the migration - to a new ProcessDefinition containing a call activity subProcess
+<span class="nc" id="L882">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L883">                .migrateToProcessDefinition(procDefWithCallActivity.getId())</span>
+<span class="nc" id="L884">                .addActivityMigrationMapping(ActivityMigrationMapping.createMappingFor(&quot;userTask1Id&quot;, &quot;theTask&quot;).inSubProcessOfCallActivityId(&quot;callActivity&quot;));</span>
+
+<span class="nc" id="L886">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L887">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L888">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L889">        assertThat(processInstanceMigrationValidationResult.getValidationMessages()).isNullOrEmpty();</span>
+
+<span class="nc" id="L891">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+        //Confirm migration
+<span class="nc" id="L894">        ProcessInstance subProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L895">        assertThat(subProcessInstance).isNotNull();</span>
+
+<span class="nc" id="L897">        List&lt;Execution&gt; processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L898">        assertThat(processExecutions)</span>
+<span class="nc" id="L899">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L900">                .containsExactly(&quot;callActivity&quot;);</span>
+<span class="nc" id="L901">        assertThat(processExecutions)</span>
+<span class="nc" id="L902">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L903">                .containsOnly(procDefWithCallActivity.getId());</span>
+
+<span class="nc" id="L905">        List&lt;Execution&gt; subProcessExecutions = runtimeService.createExecutionQuery().processInstanceId(subProcessInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L906">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L907">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L908">                .containsExactly(&quot;theTask&quot;);</span>
+<span class="nc" id="L909">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L910">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L911">                .containsOnly(procDefCallActivity.getId());</span>
+
+<span class="nc" id="L913">        List&lt;Task&gt; processTasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L914">        assertThat(processTasks).isEmpty();</span>
+
+<span class="nc" id="L916">        List&lt;Task&gt; subProcessTasks = taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).list();</span>
+<span class="nc" id="L917">        assertThat(subProcessTasks)</span>
+<span class="nc" id="L918">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L919">                .containsOnly(tuple(&quot;theTask&quot;, procDefCallActivity.getId()));</span>
+
+<span class="nc" id="L921">        completeTask(subProcessTasks.get(0));</span>
+
+<span class="nc" id="L923">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L924">        assertThat(task).extracting(Task::getTaskDefinitionKey).isEqualTo(&quot;secondTask&quot;);</span>
+<span class="nc" id="L925">        assertThat(task).extracting(Task::getProcessDefinitionId).isEqualTo(procDefWithCallActivity.getId());</span>
+<span class="nc" id="L926">        assertThat(task)</span>
+<span class="nc" id="L927">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L928">                .containsOnly(&quot;secondTask&quot;, procDefWithCallActivity.getId());</span>
+
+<span class="nc" id="L930">        completeTask(task);</span>
+
+<span class="nc" id="L932">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L933">    }</span>
+
+    @Test
+    public void testMigrateMovingCallActivitySubProcessActivityToSubProcessParent() {
+<span class="nc" id="L937">        ProcessDefinition procDefWithCallActivity = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/two-tasks-with-call-activity.bpmn20.xml&quot;);
+<span class="nc" id="L939">        ProcessDefinition procDefCallActivity = deployProcessDefinition(&quot;my deploy&quot;, &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot;);</span>
+<span class="nc" id="L940">        ProcessDefinition procDefSimpleOneTask = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-task-simple-process.bpmn20.xml&quot;);
+
+        //Start the processInstance
+<span class="nc" id="L944">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procDefWithCallActivity.getId());</span>
+
+        //Confirm the state to migrate
+<span class="nc" id="L947">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L948">        assertThat(task)</span>
+<span class="nc" id="L949">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L950">                .containsOnly(&quot;firstTask&quot;, procDefWithCallActivity.getId());</span>
+<span class="nc" id="L951">        completeTask(task);</span>
+
+<span class="nc" id="L953">        List&lt;Execution&gt; processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L954">        assertThat(processExecutions)</span>
+<span class="nc" id="L955">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L956">                .containsExactly(&quot;callActivity&quot;);</span>
+<span class="nc" id="L957">        assertThat(processExecutions)</span>
+<span class="nc" id="L958">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L959">                .containsOnly(procDefWithCallActivity.getId());</span>
+<span class="nc" id="L960">        ProcessInstance subProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L961">        List&lt;Execution&gt; subProcessExecutions = runtimeService.createExecutionQuery().processInstanceId(subProcessInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L962">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L963">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L964">                .containsExactly(&quot;theTask&quot;);</span>
+<span class="nc" id="L965">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L966">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L967">                .containsOnly(procDefCallActivity.getId());</span>
+<span class="nc" id="L968">        List&lt;Task&gt; subProcessTasks = taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).list();</span>
+<span class="nc" id="L969">        assertThat(subProcessTasks)</span>
+<span class="nc" id="L970">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L971">                .containsOnly(tuple(&quot;theTask&quot;, procDefCallActivity.getId()));</span>
+
+        //Prepare and action the migration - to a new ProcessDefinition containing a call activity subProcess
+<span class="nc" id="L974">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L975">                .migrateToProcessDefinition(procDefSimpleOneTask.getId())</span>
+<span class="nc" id="L976">                .addActivityMigrationMapping(</span>
+<span class="nc" id="L977">                        ActivityMigrationMapping.createMappingFor(&quot;theTask&quot;, &quot;userTask1Id&quot;).inParentProcessOfCallActivityId(&quot;callActivity&quot;));</span>
+
+<span class="nc" id="L979">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L980">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L981">        assertThat(processInstanceMigrationValidationResult.getValidationMessages()).isNullOrEmpty();</span>
+
+<span class="nc" id="L983">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+        //Confirm migration
+<span class="nc" id="L986">        subProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L987">        assertThat(subProcessInstance).isNull();</span>
+
+<span class="nc" id="L989">        processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L990">        assertThat(processExecutions)</span>
+<span class="nc" id="L991">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L992">                .containsExactly(&quot;userTask1Id&quot;);</span>
+<span class="nc" id="L993">        assertThat(processExecutions)</span>
+<span class="nc" id="L994">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L995">                .containsOnly(procDefSimpleOneTask.getId());</span>
+
+<span class="nc" id="L997">        List&lt;Task&gt; processTasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L998">        assertThat(processTasks)</span>
+<span class="nc" id="L999">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1000">                .containsOnly(tuple(&quot;userTask1Id&quot;, procDefSimpleOneTask.getId()));</span>
+
+        //Complete process
+<span class="nc" id="L1003">        completeTask(processTasks.get(0));</span>
+<span class="nc" id="L1004">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L1005">    }</span>
+
+    @Test
+    public void testMigrateMovingParallelActivitiesToParallelCallActivitySubProcesses() {
+<span class="nc" id="L1009">        ProcessDefinition procDefParallelGateway = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-gateway-two-splits-four-tasks.bpmn20.xml&quot;);
+<span class="nc" id="L1011">        ProcessDefinition procDefParallelCallActivity = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-gateway-two-splits-with-call-activities.bpmn20.xml&quot;);
+<span class="nc" id="L1013">        ProcessDefinition procDefCallActivity1 = deployProcessDefinition(&quot;my deploy&quot;, &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot;);</span>
+<span class="nc" id="L1014">        ProcessDefinition procDefCallActivity2 = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-task-simple-process.bpmn20.xml&quot;);
+
+        //Start the processInstance
+<span class="nc" id="L1018">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procDefParallelGateway.getId());</span>
+
+        //Confirm state to migrate
+<span class="nc" id="L1021">        Task initialTask = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1022">        assertThat(initialTask).extracting(Task::getTaskDefinitionKey).isEqualTo(&quot;taskBefore&quot;);</span>
+<span class="nc" id="L1023">        completeTask(initialTask);</span>
+
+<span class="nc" id="L1025">        List&lt;Execution&gt; processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1026">        assertThat(processExecutions)</span>
+<span class="nc" id="L1027">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1028">                .containsExactlyInAnyOrder(&quot;oddFlowTask1&quot;, &quot;evenFlowTask2&quot;);</span>
+<span class="nc" id="L1029">        assertThat(processExecutions)</span>
+<span class="nc" id="L1030">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1031">                .containsOnly(procDefParallelGateway.getId());</span>
+
+<span class="nc" id="L1033">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1034">        assertThat(tasks)</span>
+<span class="nc" id="L1035">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L1036">                .containsExactlyInAnyOrder(&quot;oddFlowTask1&quot;, &quot;evenFlowTask2&quot;);</span>
+<span class="nc" id="L1037">        assertThat(tasks)</span>
+<span class="nc" id="L1038">                .extracting(Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1039">                .containsOnly(procDefParallelGateway.getId());</span>
+
+        //Prepare and action the migration
+<span class="nc" id="L1042">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L1043">                .migrateToProcessDefinition(procDefParallelCallActivity.getId())</span>
+<span class="nc" id="L1044">                .addActivityMigrationMapping(ActivityMigrationMapping.createMappingFor(&quot;oddFlowTask1&quot;, &quot;callActivity1&quot;))</span>
+<span class="nc" id="L1045">                .addActivityMigrationMapping(ActivityMigrationMapping.createMappingFor(&quot;evenFlowTask2&quot;, &quot;callActivity2&quot;));</span>
+
+<span class="nc" id="L1047">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L1048">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L1049">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L1050">        assertThat(processInstanceMigrationValidationResult.getValidationMessages()).isNullOrEmpty();</span>
+
+<span class="nc" id="L1052">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+<span class="nc" id="L1054">        processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1055">        assertThat(processExecutions)</span>
+<span class="nc" id="L1056">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1057">                .containsExactlyInAnyOrder(&quot;callActivity1&quot;, &quot;callActivity2&quot;);</span>
+<span class="nc" id="L1058">        assertThat(processExecutions)</span>
+<span class="nc" id="L1059">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1060">                .containsOnly(procDefParallelCallActivity.getId());</span>
+
+<span class="nc" id="L1062">        List&lt;ProcessInstance&gt; subProcesses = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1063">        assertThat(subProcesses)</span>
+<span class="nc" id="L1064">                .extracting(ProcessInstance::getProcessDefinitionId)</span>
+<span class="nc" id="L1065">                .containsExactlyInAnyOrder(procDefCallActivity1.getId(), procDefCallActivity2.getId());</span>
+
+<span class="nc" id="L1067">        tasks = subProcesses.stream()</span>
+<span class="nc" id="L1068">                .map(ProcessInstance::getId)</span>
+<span class="nc" id="L1069">                .map(subProcInstanceId -&gt; taskService.createTaskQuery().processInstanceId(subProcInstanceId).list())</span>
+<span class="nc" id="L1070">                .flatMap(Collection::stream)</span>
+<span class="nc" id="L1071">                .collect(Collectors.toList());</span>
+<span class="nc" id="L1072">        assertThat(tasks)</span>
+<span class="nc" id="L1073">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L1074">                .containsExactlyInAnyOrder(&quot;userTask1Id&quot;, &quot;theTask&quot;);</span>
+<span class="nc" id="L1075">        assertThat(tasks)</span>
+<span class="nc" id="L1076">                .extracting(Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1077">                .containsExactlyInAnyOrder(procDefCallActivity1.getId(), procDefCallActivity2.getId());</span>
+
+        //Complete the process...
+<span class="nc" id="L1080">        tasks.forEach(this::completeTask);</span>
+
+<span class="nc" id="L1082">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1083">        assertThat(task)</span>
+<span class="nc" id="L1084">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1085">                .containsOnly(&quot;taskAfter&quot;, procDefParallelCallActivity.getId());</span>
+
+<span class="nc" id="L1087">        completeProcessInstanceTasks(processInstance.getId());</span>
+<span class="nc" id="L1088">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L1089">    }</span>
+
+    @Test
+    public void testMigrateMovingParallelActivitiesToInsideParallelCallActivitySubProcesses() {
+<span class="nc" id="L1093">        ProcessDefinition procDefParallelGateway = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-gateway-two-splits-four-tasks.bpmn20.xml&quot;);
+<span class="nc" id="L1095">        ProcessDefinition procDefParallelCallActivity = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-gateway-two-splits-with-call-activities.bpmn20.xml&quot;);
+<span class="nc" id="L1097">        ProcessDefinition procDefCallActivity1 = deployProcessDefinition(&quot;my deploy&quot;, &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot;);</span>
+<span class="nc" id="L1098">        ProcessDefinition procDefCallActivity2 = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-task-simple-process.bpmn20.xml&quot;);
+
+        //Start the processInstance
+<span class="nc" id="L1102">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procDefParallelGateway.getId());</span>
+
+        //Confirm state to migrate
+<span class="nc" id="L1105">        Task initialTask = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1106">        assertThat(initialTask).extracting(Task::getTaskDefinitionKey).isEqualTo(&quot;taskBefore&quot;);</span>
+<span class="nc" id="L1107">        completeTask(initialTask);</span>
+
+<span class="nc" id="L1109">        List&lt;Execution&gt; processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1110">        assertThat(processExecutions)</span>
+<span class="nc" id="L1111">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1112">                .containsExactlyInAnyOrder(&quot;oddFlowTask1&quot;, &quot;evenFlowTask2&quot;);</span>
+<span class="nc" id="L1113">        assertThat(processExecutions)</span>
+<span class="nc" id="L1114">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1115">                .containsOnly(procDefParallelGateway.getId());</span>
+
+<span class="nc" id="L1117">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1118">        assertThat(tasks)</span>
+<span class="nc" id="L1119">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L1120">                .containsExactlyInAnyOrder(&quot;oddFlowTask1&quot;, &quot;evenFlowTask2&quot;);</span>
+<span class="nc" id="L1121">        assertThat(tasks)</span>
+<span class="nc" id="L1122">                .extracting(Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1123">                .containsOnly(procDefParallelGateway.getId());</span>
+
+        //Prepare and action the migration
+<span class="nc" id="L1126">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L1127">                .migrateToProcessDefinition(procDefParallelCallActivity.getId())</span>
+<span class="nc" id="L1128">                .addActivityMigrationMapping(</span>
+<span class="nc" id="L1129">                        ActivityMigrationMapping.createMappingFor(&quot;oddFlowTask1&quot;, &quot;userTask1Id&quot;).inSubProcessOfCallActivityId(&quot;callActivity1&quot;))</span>
+<span class="nc" id="L1130">                .addActivityMigrationMapping(</span>
+<span class="nc" id="L1131">                        ActivityMigrationMapping.createMappingFor(&quot;evenFlowTask2&quot;, &quot;theTask&quot;).inSubProcessOfCallActivityId(&quot;callActivity2&quot;));</span>
+
+<span class="nc" id="L1133">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L1134">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L1135">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L1136">        assertThat(processInstanceMigrationValidationResult.getValidationMessages()).isNullOrEmpty();</span>
+
+<span class="nc" id="L1138">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+<span class="nc" id="L1140">        processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1141">        assertThat(processExecutions)</span>
+<span class="nc" id="L1142">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1143">                .containsExactlyInAnyOrder(&quot;callActivity1&quot;, &quot;callActivity2&quot;);</span>
+<span class="nc" id="L1144">        assertThat(processExecutions)</span>
+<span class="nc" id="L1145">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1146">                .containsOnly(procDefParallelCallActivity.getId());</span>
+
+<span class="nc" id="L1148">        List&lt;ProcessInstance&gt; subProcesses = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1149">        assertThat(subProcesses)</span>
+<span class="nc" id="L1150">                .extracting(ProcessInstance::getProcessDefinitionId)</span>
+<span class="nc" id="L1151">                .containsExactlyInAnyOrder(procDefCallActivity1.getId(), procDefCallActivity2.getId());</span>
+
+<span class="nc" id="L1153">        tasks = subProcesses.stream()</span>
+<span class="nc" id="L1154">                .map(ProcessInstance::getId)</span>
+<span class="nc" id="L1155">                .map(subProcInstanceId -&gt; taskService.createTaskQuery().processInstanceId(subProcInstanceId).list())</span>
+<span class="nc" id="L1156">                .flatMap(Collection::stream)</span>
+<span class="nc" id="L1157">                .collect(Collectors.toList());</span>
+<span class="nc" id="L1158">        assertThat(tasks)</span>
+<span class="nc" id="L1159">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L1160">                .containsExactlyInAnyOrder(&quot;userTask1Id&quot;, &quot;theTask&quot;);</span>
+<span class="nc" id="L1161">        assertThat(tasks)</span>
+<span class="nc" id="L1162">                .extracting(Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1163">                .containsExactlyInAnyOrder(procDefCallActivity1.getId(), procDefCallActivity2.getId());</span>
+
+        //Complete the process...
+<span class="nc" id="L1166">        tasks.forEach(this::completeTask);</span>
+
+<span class="nc" id="L1168">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1169">        assertThat(task)</span>
+<span class="nc" id="L1170">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1171">                .containsOnly(&quot;taskAfter&quot;, procDefParallelCallActivity.getId());</span>
+
+<span class="nc" id="L1173">        completeProcessInstanceTasks(processInstance.getId());</span>
+<span class="nc" id="L1174">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L1175">    }</span>
+
+    @Test
+    public void testMigrateMovingParallelGatewayActivitiesToSingleActivityInsideCallActivitySubProcess() {
+<span class="nc" id="L1179">        ProcessDefinition procDefParallelGateway = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-gateway-two-splits-four-tasks.bpmn20.xml&quot;);
+<span class="nc" id="L1181">        ProcessDefinition procDefWithCallActivity = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/two-tasks-with-call-activity.bpmn20.xml&quot;);
+<span class="nc" id="L1183">        ProcessDefinition procDefCallActivity = deployProcessDefinition(&quot;my deploy&quot;, &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot;);</span>
+
+        //Start the processInstance
+<span class="nc" id="L1186">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procDefParallelGateway.getId());</span>
+
+        //Confirm state to migrate
+<span class="nc" id="L1189">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1190">        assertThat(task).extracting(Task::getTaskDefinitionKey).isEqualTo(&quot;taskBefore&quot;);</span>
+<span class="nc" id="L1191">        completeTask(task);</span>
+
+<span class="nc" id="L1193">        List&lt;Execution&gt; processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1194">        assertThat(processExecutions)</span>
+<span class="nc" id="L1195">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1196">                .containsExactlyInAnyOrder(&quot;oddFlowTask1&quot;, &quot;evenFlowTask2&quot;);</span>
+<span class="nc" id="L1197">        assertThat(processExecutions)</span>
+<span class="nc" id="L1198">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1199">                .containsOnly(procDefParallelGateway.getId());</span>
+
+<span class="nc" id="L1201">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1202">        assertThat(tasks)</span>
+<span class="nc" id="L1203">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L1204">                .containsExactlyInAnyOrder(&quot;oddFlowTask1&quot;, &quot;evenFlowTask2&quot;);</span>
+<span class="nc" id="L1205">        assertThat(tasks)</span>
+<span class="nc" id="L1206">                .extracting(Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1207">                .containsOnly(procDefParallelGateway.getId());</span>
+
+        //Prepare and action the migration
+<span class="nc" id="L1210">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L1211">                .migrateToProcessDefinition(procDefWithCallActivity.getId())</span>
+<span class="nc" id="L1212">                .addActivityMigrationMapping(ActivityMigrationMapping.createMappingFor(Arrays.asList(&quot;oddFlowTask1&quot;, &quot;evenFlowTask2&quot;), &quot;theTask&quot;)</span>
+<span class="nc" id="L1213">                        .inSubProcessOfCallActivityId(&quot;callActivity&quot;));</span>
+
+<span class="nc" id="L1215">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L1216">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L1217">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L1218">        assertThat(processInstanceMigrationValidationResult.getValidationMessages()).isNullOrEmpty();</span>
+
+<span class="nc" id="L1220">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+        //Confirm migration
+<span class="nc" id="L1223">        ProcessInstance subProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1224">        assertThat(subProcessInstance).extracting(ProcessInstance::getProcessDefinitionId).isEqualTo(procDefCallActivity.getId());</span>
+
+<span class="nc" id="L1226">        processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1227">        assertThat(processExecutions)</span>
+<span class="nc" id="L1228">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1229">                .containsExactly(&quot;callActivity&quot;);</span>
+<span class="nc" id="L1230">        assertThat(processExecutions)</span>
+<span class="nc" id="L1231">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1232">                .containsOnly(procDefWithCallActivity.getId());</span>
+
+<span class="nc" id="L1234">        List&lt;Execution&gt; subProcessExecutions = runtimeService.createExecutionQuery().processInstanceId(subProcessInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1235">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L1236">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1237">                .containsExactly(&quot;theTask&quot;);</span>
+<span class="nc" id="L1238">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L1239">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1240">                .containsOnly(procDefCallActivity.getId());</span>
+
+<span class="nc" id="L1242">        List&lt;Task&gt; processTasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1243">        assertThat(processTasks).isEmpty();</span>
+
+<span class="nc" id="L1245">        List&lt;Task&gt; subProcessTasks = taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).list();</span>
+<span class="nc" id="L1246">        assertThat(subProcessTasks)</span>
+<span class="nc" id="L1247">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1248">                .containsOnly(tuple(&quot;theTask&quot;, procDefCallActivity.getId()));</span>
+
+<span class="nc" id="L1250">        completeTask(subProcessTasks.get(0));</span>
+
+<span class="nc" id="L1252">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1253">        assertThat(task)</span>
+<span class="nc" id="L1254">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1255">                .containsOnly(&quot;secondTask&quot;, procDefWithCallActivity.getId());</span>
+
+<span class="nc" id="L1257">        completeTask(task);</span>
+
+<span class="nc" id="L1259">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L1260">    }</span>
+
+    @Test
+    public void testMigrateMovingParallelActivitiesToSingleActivityInsideCallActivitySubProcess() {
+<span class="nc" id="L1264">        ProcessDefinition procParallelTask = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/timer-parallel-task.bpmn20.xml&quot;);
+<span class="nc" id="L1266">        ProcessDefinition procDefWithCallActivity = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/two-tasks-with-call-activity.bpmn20.xml&quot;);
+<span class="nc" id="L1268">        ProcessDefinition procDefCallActivity = deployProcessDefinition(&quot;my deploy&quot;, &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot;);</span>
+
+        //Start the processInstance
+<span class="nc" id="L1271">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procParallelTask.getId());</span>
+<span class="nc" id="L1272">        Job job = managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1273">        managementService.moveTimerToExecutableJob(job.getId());</span>
+<span class="nc" id="L1274">        managementService.executeJob(job.getId());</span>
+
+        //Confirm state to migrate
+<span class="nc" id="L1277">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1278">        assertThat(executions)</span>
+<span class="nc" id="L1279">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1280">                .containsExactlyInAnyOrder(&quot;timerBound&quot;, &quot;processTask&quot;, &quot;parallelTask&quot;);</span>
+<span class="nc" id="L1281">        assertThat(executions)</span>
+<span class="nc" id="L1282">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1283">                .containsOnly(procParallelTask.getId());</span>
+<span class="nc" id="L1284">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1285">        assertThat(tasks)</span>
+<span class="nc" id="L1286">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L1287">                .containsExactlyInAnyOrder(&quot;processTask&quot;, &quot;parallelTask&quot;);</span>
+<span class="nc" id="L1288">        assertThat(tasks)</span>
+<span class="nc" id="L1289">                .extracting(Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1290">                .containsOnly(procParallelTask.getId());</span>
+
+        //Prepare and action the migration
+<span class="nc" id="L1293">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L1294">                .migrateToProcessDefinition(procDefWithCallActivity.getId())</span>
+<span class="nc" id="L1295">                .addActivityMigrationMapping(ActivityMigrationMapping.createMappingFor(Arrays.asList(&quot;processTask&quot;, &quot;parallelTask&quot;), &quot;theTask&quot;)</span>
+<span class="nc" id="L1296">                        .inSubProcessOfCallActivityId(&quot;callActivity&quot;));</span>
+
+<span class="nc" id="L1298">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L1299">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L1300">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L1301">        assertThat(processInstanceMigrationValidationResult.getValidationMessages()).isNullOrEmpty();</span>
+
+<span class="nc" id="L1303">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+        //Confirm migration
+<span class="nc" id="L1306">        ProcessInstance subProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1307">        assertThat(subProcessInstance).extracting(ProcessInstance::getProcessDefinitionId).isEqualTo(procDefCallActivity.getId());</span>
+
+<span class="nc" id="L1309">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1310">        assertThat(executions)</span>
+<span class="nc" id="L1311">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1312">                .containsExactly(&quot;callActivity&quot;);</span>
+<span class="nc" id="L1313">        assertThat(executions)</span>
+<span class="nc" id="L1314">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1315">                .containsOnly(procDefWithCallActivity.getId());</span>
+
+<span class="nc" id="L1317">        List&lt;Execution&gt; subProcessExecutions = runtimeService.createExecutionQuery().processInstanceId(subProcessInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1318">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L1319">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1320">                .containsExactly(&quot;theTask&quot;);</span>
+<span class="nc" id="L1321">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L1322">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1323">                .containsOnly(procDefCallActivity.getId());</span>
+
+<span class="nc" id="L1325">        List&lt;Task&gt; processTasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1326">        assertThat(processTasks).isEmpty();</span>
+
+<span class="nc" id="L1328">        List&lt;Task&gt; subProcessTasks = taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).list();</span>
+<span class="nc" id="L1329">        assertThat(subProcessTasks)</span>
+<span class="nc" id="L1330">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1331">                .containsOnly(tuple(&quot;theTask&quot;, procDefCallActivity.getId()));</span>
+
+<span class="nc" id="L1333">        completeTask(subProcessTasks.get(0));</span>
+
+<span class="nc" id="L1335">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1336">        assertThat(task)</span>
+<span class="nc" id="L1337">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1338">                .containsOnly(&quot;secondTask&quot;, procDefWithCallActivity.getId());</span>
+
+<span class="nc" id="L1340">        completeTask(task);</span>
+
+<span class="nc" id="L1342">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L1343">    }</span>
+
+    @Test
+    public void testMigrateMovingParallelGatewayActivitiesToSingleActivityInSubProcessParent() {
+<span class="nc" id="L1347">        ProcessDefinition procDefWithCallActivity = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/two-tasks-with-expression-call-activity.bpmn20.xml&quot;);
+<span class="nc" id="L1349">        ProcessDefinition procDefCallActivity = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-gateway-two-splits-four-tasks.bpmn20.xml&quot;);
+<span class="nc" id="L1351">        ProcessDefinition procDefOneTask = deployProcessDefinition(&quot;my deploy&quot;, &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot;);</span>
+
+<span class="nc" id="L1353">        ProcessInstance processInstance = runtimeService</span>
+<span class="nc" id="L1354">                .startProcessInstanceById(procDefWithCallActivity.getId(), Collections.singletonMap(&quot;simpleSubProcessExpression&quot;, &quot;startParallelProcess&quot;));</span>
+
+        //Confirm state to migrate
+<span class="nc" id="L1357">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1358">        assertThat(task).extracting(Task::getTaskDefinitionKey).isEqualTo(&quot;taskBefore&quot;);</span>
+<span class="nc" id="L1359">        completeTask(task);</span>
+
+<span class="nc" id="L1361">        List&lt;Execution&gt; processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1362">        assertThat(processExecutions)</span>
+<span class="nc" id="L1363">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1364">                .containsExactly(&quot;callActivity&quot;);</span>
+<span class="nc" id="L1365">        assertThat(processExecutions)</span>
+<span class="nc" id="L1366">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1367">                .containsOnly(procDefWithCallActivity.getId());</span>
+
+<span class="nc" id="L1369">        ProcessInstance subProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1370">        assertThat(subProcessInstance).extracting(ProcessInstance::getProcessDefinitionId).isEqualTo(procDefCallActivity.getId());</span>
+
+<span class="nc" id="L1372">        task = taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).singleResult();</span>
+<span class="nc" id="L1373">        assertThat(task).extracting(Task::getTaskDefinitionKey).isEqualTo(&quot;taskBefore&quot;);</span>
+<span class="nc" id="L1374">        completeTask(task);</span>
+
+<span class="nc" id="L1376">        List&lt;Execution&gt; subProcessExecutions = runtimeService.createExecutionQuery().processInstanceId(subProcessInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1377">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L1378">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1379">                .containsExactlyInAnyOrder(&quot;oddFlowTask1&quot;, &quot;evenFlowTask2&quot;);</span>
+<span class="nc" id="L1380">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L1381">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1382">                .containsOnly(procDefCallActivity.getId());</span>
+
+<span class="nc" id="L1384">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).list();</span>
+<span class="nc" id="L1385">        assertThat(tasks)</span>
+<span class="nc" id="L1386">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L1387">                .containsExactlyInAnyOrder(&quot;oddFlowTask1&quot;, &quot;evenFlowTask2&quot;);</span>
+<span class="nc" id="L1388">        assertThat(tasks)</span>
+<span class="nc" id="L1389">                .extracting(Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1390">                .containsOnly(procDefCallActivity.getId());</span>
+
+        //Prepare and action the migration
+<span class="nc" id="L1393">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L1394">                .migrateToProcessDefinition(procDefOneTask.getId())</span>
+<span class="nc" id="L1395">                .addActivityMigrationMapping(ActivityMigrationMapping.createMappingFor(Arrays.asList(&quot;oddFlowTask1&quot;, &quot;evenFlowTask2&quot;), &quot;theTask&quot;)</span>
+<span class="nc" id="L1396">                        .inParentProcessOfCallActivityId(&quot;callActivity&quot;));</span>
+
+<span class="nc" id="L1398">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L1399">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L1400">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L1401">        assertThat(processInstanceMigrationValidationResult.getValidationMessages()).isNullOrEmpty();</span>
+
+<span class="nc" id="L1403">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+        //Confirm migration
+<span class="nc" id="L1406">        subProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1407">        assertThat(subProcessInstance).isNull();</span>
+
+<span class="nc" id="L1409">        processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1410">        assertThat(processExecutions)</span>
+<span class="nc" id="L1411">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1412">                .containsExactly(&quot;theTask&quot;);</span>
+<span class="nc" id="L1413">        assertThat(processExecutions)</span>
+<span class="nc" id="L1414">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1415">                .containsOnly(procDefOneTask.getId());</span>
+
+<span class="nc" id="L1417">        List&lt;Task&gt; processTasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1418">        assertThat(processTasks)</span>
+<span class="nc" id="L1419">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1420">                .containsOnly(tuple(&quot;theTask&quot;, procDefOneTask.getId()));</span>
+
+<span class="nc" id="L1422">        completeProcessInstanceTasks(processInstance.getId());</span>
+
+<span class="nc" id="L1424">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L1425">    }</span>
+
+    @Test
+    public void testMigrateMovingSingleActivityToParallelActivitiesInsideCallActivitySubProcess() {
+<span class="nc" id="L1429">        ProcessDefinition procDefOneTask = deployProcessDefinition(&quot;my deploy&quot;, &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot;);</span>
+<span class="nc" id="L1430">        ProcessDefinition procDefWithCallActivity = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/two-tasks-with-call-activity-v3.bpmn20.xml&quot;);
+<span class="nc" id="L1432">        ProcessDefinition procDefCallActivity = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-gateway-two-splits-four-tasks.bpmn20.xml&quot;);
+
+        //Start the processInstance
+<span class="nc" id="L1436">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procDefOneTask.getId());</span>
+
+        //Confirm state to migrate
+<span class="nc" id="L1439">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1440">        assertThat(executions)</span>
+<span class="nc" id="L1441">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1442">                .containsExactlyInAnyOrder(&quot;theTask&quot;);</span>
+<span class="nc" id="L1443">        assertThat(executions)</span>
+<span class="nc" id="L1444">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1445">                .containsOnly(procDefOneTask.getId());</span>
+<span class="nc" id="L1446">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1447">        assertThat(tasks)</span>
+<span class="nc" id="L1448">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1449">                .containsExactly(tuple(&quot;theTask&quot;, procDefOneTask.getId()));</span>
+
+        //Prepare and action the migration
+<span class="nc" id="L1452">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L1453">                .migrateToProcessDefinition(procDefWithCallActivity.getId())</span>
+<span class="nc" id="L1454">                .addActivityMigrationMapping(ActivityMigrationMapping.createMappingFor(&quot;theTask&quot;, Arrays.asList(&quot;oddFlowTask1&quot;, &quot;evenFlowTask4&quot;))</span>
+<span class="nc" id="L1455">                        .inSubProcessOfCallActivityId(&quot;callActivity&quot;));</span>
+
+<span class="nc" id="L1457">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L1458">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L1459">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L1460">        assertThat(processInstanceMigrationValidationResult.getValidationMessages()).isNullOrEmpty();</span>
+
+<span class="nc" id="L1462">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+        //Confirm migration
+<span class="nc" id="L1465">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1466">        assertThat(executions)</span>
+<span class="nc" id="L1467">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1468">                .containsExactly(&quot;callActivity&quot;);</span>
+<span class="nc" id="L1469">        assertThat(executions)</span>
+<span class="nc" id="L1470">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1471">                .containsOnly(procDefWithCallActivity.getId());</span>
+
+<span class="nc" id="L1473">        ProcessInstance subProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1474">        assertThat(subProcessInstance).extracting(ProcessInstance::getProcessDefinitionId).isEqualTo(procDefCallActivity.getId());</span>
+
+<span class="nc" id="L1476">        List&lt;Execution&gt; subProcessExecutions = runtimeService.createExecutionQuery().processInstanceId(subProcessInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1477">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L1478">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1479">                .containsExactlyInAnyOrder(&quot;oddFlowTask1&quot;, &quot;evenFlowTask4&quot;);</span>
+<span class="nc" id="L1480">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L1481">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1482">                .containsOnly(procDefCallActivity.getId());</span>
+
+<span class="nc" id="L1484">        List&lt;Task&gt; subProcessTasks = taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).list();</span>
+<span class="nc" id="L1485">        assertThat(subProcessTasks)</span>
+<span class="nc" id="L1486">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L1487">                .containsExactlyInAnyOrder(&quot;oddFlowTask1&quot;, &quot;evenFlowTask4&quot;);</span>
+<span class="nc" id="L1488">        assertThat(subProcessTasks)</span>
+<span class="nc" id="L1489">                .extracting(Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1490">                .containsOnly(procDefCallActivity.getId());</span>
+
+<span class="nc" id="L1492">        completeProcessInstanceTasks(subProcessInstance.getId());</span>
+
+<span class="nc" id="L1494">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1495">        assertThat(task)</span>
+<span class="nc" id="L1496">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1497">                .containsOnly(&quot;secondTask&quot;, procDefWithCallActivity.getId());</span>
+
+<span class="nc" id="L1499">        completeTask(task);</span>
+
+<span class="nc" id="L1501">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L1502">    }</span>
+
+    @Test
+    public void testMigrateMovingSingleActivityToParallelActivitiesInSubProcessParent() {
+<span class="nc" id="L1506">        ProcessDefinition procDefWithCallActivity = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/two-tasks-with-call-activity.bpmn20.xml&quot;);
+<span class="nc" id="L1508">        ProcessDefinition procDefCallActivity = deployProcessDefinition(&quot;my deploy&quot;, &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot;);</span>
+<span class="nc" id="L1509">        ProcessDefinition procDefParallelTasks = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-gateway-two-splits-four-tasks.bpmn20.xml&quot;);
+
+<span class="nc" id="L1512">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procDefWithCallActivity.getId());</span>
+
+        //Confirm state to migrate
+<span class="nc" id="L1515">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1516">        assertThat(task).extracting(Task::getTaskDefinitionKey).isEqualTo(&quot;firstTask&quot;);</span>
+<span class="nc" id="L1517">        completeTask(task);</span>
+
+<span class="nc" id="L1519">        List&lt;Execution&gt; processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1520">        assertThat(processExecutions)</span>
+<span class="nc" id="L1521">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1522">                .containsExactly(&quot;callActivity&quot;);</span>
+<span class="nc" id="L1523">        assertThat(processExecutions)</span>
+<span class="nc" id="L1524">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1525">                .containsOnly(procDefWithCallActivity.getId());</span>
+
+<span class="nc" id="L1527">        ProcessInstance subProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1528">        assertThat(subProcessInstance).extracting(ProcessInstance::getProcessDefinitionId).isEqualTo(procDefCallActivity.getId());</span>
+
+<span class="nc" id="L1530">        task = taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).singleResult();</span>
+<span class="nc" id="L1531">        assertThat(task).extracting(Task::getTaskDefinitionKey).isEqualTo(&quot;theTask&quot;);</span>
+
+        //Prepare and action the migration
+<span class="nc" id="L1534">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L1535">                .migrateToProcessDefinition(procDefParallelTasks.getId())</span>
+<span class="nc" id="L1536">                .addActivityMigrationMapping(ActivityMigrationMapping.createMappingFor(&quot;theTask&quot;, Arrays.asList(&quot;oddFlowTask1&quot;, &quot;evenFlowTask4&quot;))</span>
+<span class="nc" id="L1537">                        .inParentProcessOfCallActivityId(&quot;callActivity&quot;));</span>
+
+<span class="nc" id="L1539">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L1540">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L1541">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L1542">        assertThat(processInstanceMigrationValidationResult.getValidationMessages()).isNullOrEmpty();</span>
+
+<span class="nc" id="L1544">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+        //Confirm migration
+<span class="nc" id="L1547">        subProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1548">        assertThat(subProcessInstance).isNull();</span>
+
+<span class="nc" id="L1550">        processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1551">        assertThat(processExecutions)</span>
+<span class="nc" id="L1552">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1553">                .containsExactlyInAnyOrder(&quot;oddFlowTask1&quot;, &quot;evenFlowTask4&quot;);</span>
+<span class="nc" id="L1554">        assertThat(processExecutions)</span>
+<span class="nc" id="L1555">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1556">                .containsOnly(procDefParallelTasks.getId());</span>
+
+<span class="nc" id="L1558">        List&lt;Task&gt; processTasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1559">        assertThat(processTasks)</span>
+<span class="nc" id="L1560">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L1561">                .containsExactlyInAnyOrder(&quot;oddFlowTask1&quot;, &quot;evenFlowTask4&quot;);</span>
+<span class="nc" id="L1562">        assertThat(processTasks)</span>
+<span class="nc" id="L1563">                .extracting(Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1564">                .containsOnly(procDefParallelTasks.getId());</span>
+
+<span class="nc" id="L1566">        completeProcessInstanceTasks(processInstance.getId());</span>
+
+<span class="nc" id="L1568">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L1569">    }</span>
+
+    @Test
+    public void testMigrateMovingParallelCallActivitySubProcessesToParallelActivitiesInSubProcessParent() {
+<span class="nc" id="L1573">        ProcessDefinition procDefParallelCallActivity = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-gateway-two-splits-with-call-activities.bpmn20.xml&quot;);
+<span class="nc" id="L1575">        ProcessDefinition procDefCallActivity1 = deployProcessDefinition(&quot;my deploy&quot;, &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot;);</span>
+<span class="nc" id="L1576">        ProcessDefinition procDefCallActivity2 = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-task-simple-process.bpmn20.xml&quot;);
+<span class="nc" id="L1578">        ProcessDefinition procDefParallelGateway = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-gateway-two-splits-four-tasks.bpmn20.xml&quot;);
+
+        //Start the processInstance
+<span class="nc" id="L1582">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procDefParallelCallActivity.getId());</span>
+
+        //Confirm state to migrate
+<span class="nc" id="L1585">        Task initialTask = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1586">        assertThat(initialTask).extracting(Task::getTaskDefinitionKey).isEqualTo(&quot;taskBefore&quot;);</span>
+<span class="nc" id="L1587">        completeTask(initialTask);</span>
+
+<span class="nc" id="L1589">        List&lt;Execution&gt; processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1590">        assertThat(processExecutions)</span>
+<span class="nc" id="L1591">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1592">                .containsExactlyInAnyOrder(&quot;callActivity1&quot;, &quot;callActivity2&quot;);</span>
+<span class="nc" id="L1593">        assertThat(processExecutions)</span>
+<span class="nc" id="L1594">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1595">                .containsOnly(procDefParallelCallActivity.getId());</span>
+
+<span class="nc" id="L1597">        List&lt;ProcessInstance&gt; subProcesses = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1598">        assertThat(subProcesses)</span>
+<span class="nc" id="L1599">                .extracting(ProcessInstance::getProcessDefinitionId)</span>
+<span class="nc" id="L1600">                .containsExactlyInAnyOrder(procDefCallActivity1.getId(), procDefCallActivity2.getId());</span>
+
+<span class="nc" id="L1602">        List&lt;Task&gt; tasks = subProcesses.stream()</span>
+<span class="nc" id="L1603">                .map(ProcessInstance::getId)</span>
+<span class="nc" id="L1604">                .map(subProcInstanceId -&gt; taskService.createTaskQuery().processInstanceId(subProcInstanceId).list())</span>
+<span class="nc" id="L1605">                .flatMap(Collection::stream)</span>
+<span class="nc" id="L1606">                .collect(Collectors.toList());</span>
+<span class="nc" id="L1607">        assertThat(tasks)</span>
+<span class="nc" id="L1608">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L1609">                .containsExactlyInAnyOrder(&quot;userTask1Id&quot;, &quot;theTask&quot;);</span>
+<span class="nc" id="L1610">        assertThat(tasks)</span>
+<span class="nc" id="L1611">                .extracting(Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1612">                .containsExactlyInAnyOrder(procDefCallActivity1.getId(), procDefCallActivity2.getId());</span>
+
+        //Prepare and action the migration
+<span class="nc" id="L1615">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L1616">                .migrateToProcessDefinition(procDefParallelGateway.getId())</span>
+<span class="nc" id="L1617">                .addActivityMigrationMapping(ActivityMigrationMapping.createMappingFor(&quot;callActivity1&quot;, &quot;oddFlowTask1&quot;))</span>
+<span class="nc" id="L1618">                .addActivityMigrationMapping(ActivityMigrationMapping.createMappingFor(&quot;callActivity2&quot;, &quot;evenFlowTask2&quot;));</span>
+
+<span class="nc" id="L1620">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L1621">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L1622">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L1623">        assertThat(processInstanceMigrationValidationResult.getValidationMessages()).isNullOrEmpty();</span>
+
+<span class="nc" id="L1625">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+<span class="nc" id="L1627">        subProcesses = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1628">        assertThat(subProcesses).isEmpty();</span>
+
+<span class="nc" id="L1630">        processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1631">        assertThat(processExecutions)</span>
+<span class="nc" id="L1632">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1633">                .containsExactlyInAnyOrder(&quot;oddFlowTask1&quot;, &quot;evenFlowTask2&quot;);</span>
+<span class="nc" id="L1634">        assertThat(processExecutions)</span>
+<span class="nc" id="L1635">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1636">                .containsOnly(procDefParallelGateway.getId());</span>
+
+<span class="nc" id="L1638">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1639">        assertThat(tasks)</span>
+<span class="nc" id="L1640">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L1641">                .containsExactlyInAnyOrder(&quot;oddFlowTask1&quot;, &quot;evenFlowTask2&quot;);</span>
+<span class="nc" id="L1642">        assertThat(tasks)</span>
+<span class="nc" id="L1643">                .extracting(Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1644">                .containsOnly(procDefParallelGateway.getId());</span>
+
+        //Complete the process...
+<span class="nc" id="L1647">        completeProcessInstanceTasks(processInstance.getId());</span>
+<span class="nc" id="L1648">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L1649">    }</span>
+
+    @Test
+    public void testMigrateMovingActivitiesInParallelCallActivitySubProcessesToParallelActivitiesInSubProcessParent() {
+<span class="nc" id="L1653">        ProcessDefinition procDefParallelCallActivity = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-gateway-two-splits-with-call-activities.bpmn20.xml&quot;);
+<span class="nc" id="L1655">        ProcessDefinition procDefCallActivity1 = deployProcessDefinition(&quot;my deploy&quot;, &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot;);</span>
+<span class="nc" id="L1656">        ProcessDefinition procDefCallActivity2 = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-task-simple-process.bpmn20.xml&quot;);
+<span class="nc" id="L1658">        ProcessDefinition procDefParallelGateway = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-gateway-two-splits-four-tasks.bpmn20.xml&quot;);
+
+        //Start the processInstance
+<span class="nc" id="L1662">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procDefParallelCallActivity.getId());</span>
+
+        //Confirm state to migrate
+<span class="nc" id="L1665">        Task initialTask = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1666">        assertThat(initialTask).extracting(Task::getTaskDefinitionKey).isEqualTo(&quot;taskBefore&quot;);</span>
+<span class="nc" id="L1667">        completeTask(initialTask);</span>
+
+<span class="nc" id="L1669">        List&lt;Execution&gt; processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1670">        assertThat(processExecutions)</span>
+<span class="nc" id="L1671">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1672">                .containsExactlyInAnyOrder(&quot;callActivity1&quot;, &quot;callActivity2&quot;);</span>
+<span class="nc" id="L1673">        assertThat(processExecutions)</span>
+<span class="nc" id="L1674">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1675">                .containsOnly(procDefParallelCallActivity.getId());</span>
+
+<span class="nc" id="L1677">        List&lt;ProcessInstance&gt; subProcesses = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1678">        assertThat(subProcesses)</span>
+<span class="nc" id="L1679">                .extracting(ProcessInstance::getProcessDefinitionId)</span>
+<span class="nc" id="L1680">                .containsExactlyInAnyOrder(procDefCallActivity1.getId(), procDefCallActivity2.getId());</span>
+
+<span class="nc" id="L1682">        List&lt;Task&gt; tasks = subProcesses.stream()</span>
+<span class="nc" id="L1683">                .map(ProcessInstance::getId)</span>
+<span class="nc" id="L1684">                .map(subProcInstanceId -&gt; taskService.createTaskQuery().processInstanceId(subProcInstanceId).list())</span>
+<span class="nc" id="L1685">                .flatMap(Collection::stream)</span>
+<span class="nc" id="L1686">                .collect(Collectors.toList());</span>
+<span class="nc" id="L1687">        assertThat(tasks)</span>
+<span class="nc" id="L1688">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L1689">                .containsExactlyInAnyOrder(&quot;userTask1Id&quot;, &quot;theTask&quot;);</span>
+<span class="nc" id="L1690">        assertThat(tasks)</span>
+<span class="nc" id="L1691">                .extracting(Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1692">                .containsExactlyInAnyOrder(procDefCallActivity1.getId(), procDefCallActivity2.getId());</span>
+
+        //Prepare and action the migration
+<span class="nc" id="L1695">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L1696">                .migrateToProcessDefinition(procDefParallelGateway.getId())</span>
+<span class="nc" id="L1697">                .addActivityMigrationMapping(</span>
+<span class="nc" id="L1698">                        ActivityMigrationMapping.createMappingFor(&quot;userTask1Id&quot;, &quot;oddFlowTask1&quot;).inParentProcessOfCallActivityId(&quot;callActivity1&quot;))</span>
+<span class="nc" id="L1699">                .addActivityMigrationMapping(</span>
+<span class="nc" id="L1700">                        ActivityMigrationMapping.createMappingFor(&quot;theTask&quot;, &quot;evenFlowTask2&quot;).inParentProcessOfCallActivityId(&quot;callActivity2&quot;));</span>
+
+<span class="nc" id="L1702">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L1703">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L1704">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L1705">        assertThat(processInstanceMigrationValidationResult.getValidationMessages()).isNullOrEmpty();</span>
+
+<span class="nc" id="L1707">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+<span class="nc" id="L1709">        subProcesses = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1710">        assertThat(subProcesses).isEmpty();</span>
+
+<span class="nc" id="L1712">        processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1713">        assertThat(processExecutions)</span>
+<span class="nc" id="L1714">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1715">                .containsExactlyInAnyOrder(&quot;oddFlowTask1&quot;, &quot;evenFlowTask2&quot;);</span>
+<span class="nc" id="L1716">        assertThat(processExecutions)</span>
+<span class="nc" id="L1717">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1718">                .containsOnly(procDefParallelGateway.getId());</span>
+
+<span class="nc" id="L1720">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1721">        assertThat(tasks)</span>
+<span class="nc" id="L1722">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L1723">                .containsExactlyInAnyOrder(&quot;oddFlowTask1&quot;, &quot;evenFlowTask2&quot;);</span>
+<span class="nc" id="L1724">        assertThat(tasks)</span>
+<span class="nc" id="L1725">                .extracting(Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1726">                .containsOnly(procDefParallelGateway.getId());</span>
+
+        //Complete the process...
+<span class="nc" id="L1729">        completeProcessInstanceTasks(processInstance.getId());</span>
+<span class="nc" id="L1730">        assertProcessEnded(processInstance.getId());</span>
+
+<span class="nc" id="L1732">    }</span>
+
+    @Test
+    public void testMigrateProcessWithCallActivityWithoutAlteringTheSubProcessDefinitionAndExecution() {
+<span class="nc" id="L1736">        ProcessDefinition procDefWithCallActivityV1 = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-task-with-call-activity.bpmn20.xml&quot;);
+<span class="nc" id="L1738">        ProcessDefinition procDefWithCallActivityV2 = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/two-tasks-with-call-activity.bpmn20.xml&quot;);
+<span class="nc" id="L1740">        ProcessDefinition procDefSubProcess = deployProcessDefinition(&quot;my deploy&quot;, &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot;);</span>
+
+        //Start the processInstance and confirm the migration state to validate
+<span class="nc" id="L1743">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procDefWithCallActivityV1.getId());</span>
+
+<span class="nc" id="L1745">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1746">        assertThat(task).extracting(Task::getTaskDefinitionKey).isEqualTo(&quot;firstTask&quot;);</span>
+<span class="nc" id="L1747">        completeTask(task);</span>
+
+<span class="nc" id="L1749">        List&lt;Execution&gt; processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1750">        assertThat(processExecutions)</span>
+<span class="nc" id="L1751">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1752">                .containsExactly(&quot;callActivity&quot;);</span>
+<span class="nc" id="L1753">        assertThat(processExecutions)</span>
+<span class="nc" id="L1754">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1755">                .containsOnly(procDefWithCallActivityV1.getId());</span>
+
+<span class="nc" id="L1757">        ProcessInstance subProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1758">        List&lt;Execution&gt; subProcessExecutions = runtimeService.createExecutionQuery().processInstanceId(subProcessInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1759">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L1760">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1761">                .containsExactlyInAnyOrder(&quot;theTask&quot;);</span>
+<span class="nc" id="L1762">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L1763">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1764">                .containsOnly(procDefSubProcess.getId());</span>
+<span class="nc" id="L1765">        List&lt;Task&gt; subProcessTasks = taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).list();</span>
+<span class="nc" id="L1766">        assertThat(subProcessTasks)</span>
+<span class="nc" id="L1767">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1768">                .containsExactly(tuple(&quot;theTask&quot;, procDefSubProcess.getId()));</span>
+
+        //Prepare migration and validate
+        //Call activity is not mapped explicitly or by auto-map since the call activity element exists by id and refers to the same discernible subProcess (call element)
+<span class="nc" id="L1772">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L1773">                .migrateToProcessDefinition(procDefWithCallActivityV2.getId());</span>
+<span class="nc" id="L1774">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L1775">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L1776">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L1777">        assertThat(processInstanceMigrationValidationResult.getValidationMessages()).isNullOrEmpty();</span>
+<span class="nc" id="L1778">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+        //Confirm migration
+<span class="nc" id="L1781">        processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1782">        assertThat(processExecutions)</span>
+<span class="nc" id="L1783">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1784">                .containsExactly(&quot;callActivity&quot;);</span>
+<span class="nc" id="L1785">        assertThat(processExecutions)</span>
+<span class="nc" id="L1786">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1787">                .containsOnly(procDefWithCallActivityV2.getId());</span>
+
+        //Same subProcess but its call activity execution its for the new definition
+<span class="nc" id="L1790">        processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1791">        assertThat(processExecutions)</span>
+<span class="nc" id="L1792">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1793">                .containsExactly(&quot;callActivity&quot;);</span>
+<span class="nc" id="L1794">        assertThat(processExecutions)</span>
+<span class="nc" id="L1795">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1796">                .containsOnly(procDefWithCallActivityV2.getId());</span>
+<span class="nc" id="L1797">        ProcessInstance subProcessInstanceAfterMigration = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId())</span>
+<span class="nc" id="L1798">                .singleResult();</span>
+<span class="nc" id="L1799">        assertThat(subProcessInstanceAfterMigration)</span>
+<span class="nc" id="L1800">                .usingRecursiveComparison()</span>
+<span class="nc" id="L1801">                .isEqualTo(subProcessInstance);</span>
+<span class="nc" id="L1802">        List&lt;Execution&gt; subProcessExecutionsAfterMigration = runtimeService.createExecutionQuery().processInstanceId(subProcessInstanceAfterMigration.getId())</span>
+<span class="nc" id="L1803">                .onlyChildExecutions().list();</span>
+<span class="nc" id="L1804">        assertThat(subProcessExecutionsAfterMigration)</span>
+<span class="nc" id="L1805">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1806">                .containsExactlyInAnyOrder(&quot;theTask&quot;);</span>
+<span class="nc" id="L1807">        assertThat(subProcessExecutionsAfterMigration)</span>
+<span class="nc" id="L1808">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1809">                .containsOnly(procDefSubProcess.getId());</span>
+<span class="nc" id="L1810">        subProcessExecutions.sort(Comparator.comparing(Execution::getId));</span>
+<span class="nc" id="L1811">        subProcessExecutionsAfterMigration.sort(Comparator.comparing(Execution::getId));</span>
+<span class="nc" id="L1812">        assertThat(subProcessExecutionsAfterMigration)</span>
+<span class="nc" id="L1813">                .usingRecursiveFieldByFieldElementComparator()</span>
+<span class="nc" id="L1814">                .isEqualTo(subProcessExecutions);</span>
+
+<span class="nc" id="L1816">        List&lt;Task&gt; subProcessTasksAfterMigration = taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).list();</span>
+<span class="nc" id="L1817">        assertThat(subProcessTasksAfterMigration)</span>
+<span class="nc" id="L1818">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1819">                .containsExactly(tuple(&quot;theTask&quot;, procDefSubProcess.getId()));</span>
+
+<span class="nc" id="L1821">        subProcessTasks.sort(Comparator.comparing(Task::getId));</span>
+<span class="nc" id="L1822">        subProcessTasksAfterMigration.sort(Comparator.comparing(Task::getId));</span>
+<span class="nc" id="L1823">        assertThat(subProcessTasksAfterMigration)</span>
+<span class="nc" id="L1824">                .usingRecursiveFieldByFieldElementComparator()</span>
+<span class="nc" id="L1825">                .isEqualTo(subProcessTasks);</span>
+
+<span class="nc" id="L1827">        subProcessTasksAfterMigration.forEach(this::completeTask);</span>
+
+        //Check the new activity added with the migration
+<span class="nc" id="L1830">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1831">        assertThat(task)</span>
+<span class="nc" id="L1832">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1833">                .containsExactly(&quot;secondTask&quot;, procDefWithCallActivityV2.getId());</span>
+<span class="nc" id="L1834">    }</span>
+
+    @Test
+    @Disabled(&quot;WIP - Not supported, must use the actual callActivity when it is a MultiInstance activity @see testMigrateMovingParallelMultiInstanceCallActivityToSimpleActivity&quot;)
+    public void testMigrateMovingActivityInParallelMultiInstanceCallActivityToSubProcessParent() {
+<span class="nc" id="L1839">        ProcessDefinition procDefWithCallActivity = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-multi-instance-call-activity.bpmn20.xml&quot;);
+<span class="nc" id="L1841">        ProcessDefinition procDefCallActivity = deployProcessDefinition(&quot;my deploy&quot;, &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot;);</span>
+<span class="nc" id="L1842">        ProcessDefinition procDefTwoTasks = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/two-tasks-simple-process.bpmn20.xml&quot;);
+
+        //Start the processInstance
+<span class="nc" id="L1846">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procDefWithCallActivity.getId(), Collections.singletonMap(&quot;nrOfLoops&quot;, 3));</span>
+
+        //Confirm the state to migrate
+<span class="nc" id="L1849">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1850">        assertThat(task)</span>
+<span class="nc" id="L1851">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1852">                .containsExactly(&quot;beforeMultiInstance&quot;, procDefWithCallActivity.getId());</span>
+
+<span class="nc" id="L1854">        completeTask(task);</span>
+
+<span class="nc" id="L1856">        List&lt;ProcessInstance&gt; subProcesses = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1857">        assertThat(subProcesses).hasSize(3);</span>
+<span class="nc" id="L1858">        assertThat(subProcesses).extracting(ProcessInstance::getProcessDefinitionId).containsOnly(procDefCallActivity.getId());</span>
+
+<span class="nc" id="L1860">        List&lt;Task&gt; parallelTasks = subProcesses.stream().map(ProcessInstance::getId)</span>
+<span class="nc" id="L1861">                .map(subProcessId -&gt; taskService.createTaskQuery().processInstanceId(subProcessId).list()).flatMap(Collection::stream)</span>
+<span class="nc" id="L1862">                .collect(Collectors.toList());</span>
+<span class="nc" id="L1863">        assertThat(parallelTasks)</span>
+<span class="nc" id="L1864">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1865">                .containsExactly(tuple(&quot;theTask&quot;, procDefCallActivity.getId()));</span>
+
+        //Prepare and action the migration
+<span class="nc" id="L1868">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L1869">                .migrateToProcessDefinition(procDefTwoTasks.getId())</span>
+<span class="nc" id="L1870">                .addActivityMigrationMapping(</span>
+<span class="nc" id="L1871">                        ActivityMigrationMapping.createMappingFor(&quot;theTask&quot;, &quot;userTask2Id&quot;).inParentProcessOfCallActivityId(&quot;parallelMICallActivity&quot;));</span>
+
+<span class="nc" id="L1873">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L1874">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L1875">        assertThat(processInstanceMigrationValidationResult.getValidationMessages()).isNullOrEmpty();</span>
+
+<span class="nc" id="L1877">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+        //Confirm migration
+<span class="nc" id="L1880">        subProcesses = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1881">        assertThat(subProcesses).isEmpty();</span>
+
+<span class="nc" id="L1883">        List&lt;Execution&gt; processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1884">        assertThat(processExecutions)</span>
+<span class="nc" id="L1885">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1886">                .containsExactly(&quot;userTask2Id&quot;);</span>
+<span class="nc" id="L1887">        assertThat(processExecutions)</span>
+<span class="nc" id="L1888">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1889">                .containsOnly(procDefTwoTasks.getId());</span>
+
+<span class="nc" id="L1891">        List&lt;Task&gt; processTasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1892">        assertThat(processTasks)</span>
+<span class="nc" id="L1893">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1894">                .containsExactly(tuple(&quot;userTask2Id&quot;, procDefTwoTasks.getId()));</span>
+
+        //Complete the process
+<span class="nc" id="L1897">        completeProcessInstanceTasks(processInstance.getId());</span>
+<span class="nc" id="L1898">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L1899">    }</span>
+
+    //TIMERS
+
+    @Test
+    public void testMigrateCallActivityToCallActivityWithTimer() {
+<span class="nc" id="L1905">        ProcessDefinition procDefv1 = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/two-tasks-with-call-activity-v2.bpmn20.xml&quot;);
+<span class="nc" id="L1907">        ProcessDefinition procDefv2 = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/two-tasks-with-call-activity-with-timer.bpmn20.xml&quot;);
+<span class="nc" id="L1909">        ProcessDefinition procDefSimpleOneTask = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-task-simple-process.bpmn20.xml&quot;);
+
+        //Start the processInstance and confirm the migration state to validate
+<span class="nc" id="L1913">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procDefv1.getId());</span>
+<span class="nc" id="L1914">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1915">        assertThat(task)</span>
+<span class="nc" id="L1916">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L1917">                .isEqualTo(&quot;firstTask&quot;);</span>
+<span class="nc" id="L1918">        assertThat(task)</span>
+<span class="nc" id="L1919">                .extracting(Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1920">                .isEqualTo(procDefv1.getId());</span>
+        //complete task so the execution entity points at the callActivity
+<span class="nc" id="L1922">        completeTask(task);</span>
+
+<span class="nc" id="L1924">        List&lt;Execution&gt; processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1925">        assertThat(processExecutions)</span>
+<span class="nc" id="L1926">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1927">                .containsExactly(&quot;callActivity&quot;);</span>
+<span class="nc" id="L1928">        assertThat(processExecutions)</span>
+<span class="nc" id="L1929">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1930">                .containsOnly(procDefv1.getId());</span>
+
+<span class="nc" id="L1932">        Job timerJob = managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1933">        assertThat(timerJob).isNull();</span>
+
+        //Prepare migration and validate
+<span class="nc" id="L1936">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L1937">                .migrateToProcessDefinition(procDefv2.getId());</span>
+        //.addActivityMigrationMapping(ActivityMigrationMapping.createMappingFor(&quot;callActivity&quot;, &quot;callActivity&quot;));
+
+<span class="nc" id="L1940">        ProcessInstanceMigrationValidationResult processInstanceMigrationResult = processInstanceMigrationBuilder.validateMigration(processInstance.getId());</span>
+<span class="nc" id="L1941">        assertThat(processInstanceMigrationResult.isMigrationValid()).isTrue();</span>
+
+<span class="nc" id="L1943">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+        //Confirm
+<span class="nc" id="L1946">        List&lt;Execution&gt; executionsAfterMigration = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions()</span>
+<span class="nc" id="L1947">                .list();</span>
+<span class="nc" id="L1948">        assertThat(executionsAfterMigration)</span>
+<span class="nc" id="L1949">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1950">                .containsExactlyInAnyOrder(&quot;callActivity&quot;, &quot;boundaryTimerEvent&quot;);</span>
+<span class="nc" id="L1951">        assertThat(executionsAfterMigration)</span>
+<span class="nc" id="L1952">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1953">                .containsOnly(procDefv2.getId());</span>
+
+<span class="nc" id="L1955">        ProcessInstance subProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1956">        List&lt;Execution&gt; subProcessExecutions = runtimeService.createExecutionQuery().processInstanceId(subProcessInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1957">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L1958">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1959">                .containsExactly(&quot;userTask1Id&quot;);</span>
+<span class="nc" id="L1960">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L1961">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1962">                .containsOnly(procDefSimpleOneTask.getId());</span>
+<span class="nc" id="L1963">        List&lt;Task&gt; subProcessTasks = taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).list();</span>
+<span class="nc" id="L1964">        assertThat(subProcessTasks)</span>
+<span class="nc" id="L1965">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L1966">                .containsExactly(&quot;userTask1Id&quot;);</span>
+<span class="nc" id="L1967">        assertThat(subProcessTasks)</span>
+<span class="nc" id="L1968">                .extracting(Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1969">                .containsOnly(procDefSimpleOneTask.getId());</span>
+
+<span class="nc" id="L1971">        timerJob = managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1972">        assertThat(timerJob).isNotNull();</span>
+<span class="nc" id="L1973">    }</span>
+
+    @Test
+    public void testMigrateCallActivityWithTimerToCallActivityWithoutTimer() {
+<span class="nc" id="L1977">        ProcessDefinition procDefv1 = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/two-tasks-with-call-activity-with-timer.bpmn20.xml&quot;);
+<span class="nc" id="L1979">        ProcessDefinition procDefv2 = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/two-tasks-with-call-activity-v2.bpmn20.xml&quot;);
+<span class="nc" id="L1981">        ProcessDefinition procDefSimpleOneTask = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-task-simple-process.bpmn20.xml&quot;);
+
+        //Start the processInstance and confirm the migration state to validate
+<span class="nc" id="L1985">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procDefv1.getId());</span>
+<span class="nc" id="L1986">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1987">        assertThat(task)</span>
+<span class="nc" id="L1988">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L1989">                .isEqualTo(&quot;firstTask&quot;);</span>
+<span class="nc" id="L1990">        assertThat(task)</span>
+<span class="nc" id="L1991">                .extracting(Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1992">                .isEqualTo(procDefv1.getId());</span>
+        //complete task so the execution entity points at the callActivity
+<span class="nc" id="L1994">        completeTask(task);</span>
+
+<span class="nc" id="L1996">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1997">        assertThat(executions)</span>
+<span class="nc" id="L1998">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1999">                .containsExactlyInAnyOrder(&quot;callActivity&quot;, &quot;boundaryTimerEvent&quot;);</span>
+
+<span class="nc" id="L2001">        Job timerJob = managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L2002">        assertThat(timerJob).isNotNull();</span>
+
+        //Prepare migration and validate
+<span class="nc" id="L2005">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L2006">                .migrateToProcessDefinition(procDefv2.getId());</span>
+
+<span class="nc" id="L2008">        ProcessInstanceMigrationValidationResult processInstanceMigrationResult = processInstanceMigrationBuilder.validateMigration(processInstance.getId());</span>
+<span class="nc" id="L2009">        assertThat(processInstanceMigrationResult.isMigrationValid()).isTrue();</span>
+
+<span class="nc" id="L2011">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+        //Confirm
+<span class="nc" id="L2014">        List&lt;Execution&gt; executionsAfterMigration = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions()</span>
+<span class="nc" id="L2015">                .list();</span>
+<span class="nc" id="L2016">        assertThat(executionsAfterMigration)</span>
+<span class="nc" id="L2017">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L2018">                .containsExactlyInAnyOrder(&quot;callActivity&quot;);</span>
+<span class="nc" id="L2019">        assertThat(executionsAfterMigration)</span>
+<span class="nc" id="L2020">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L2021">                .containsOnly(procDefv2.getId());</span>
+
+<span class="nc" id="L2023">        ProcessInstance subProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L2024">        List&lt;Execution&gt; subProcessExecutions = runtimeService.createExecutionQuery().processInstanceId(subProcessInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L2025">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L2026">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L2027">                .containsExactly(&quot;userTask1Id&quot;);</span>
+<span class="nc" id="L2028">        assertThat(subProcessExecutions)</span>
+<span class="nc" id="L2029">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L2030">                .containsOnly(procDefSimpleOneTask.getId());</span>
+<span class="nc" id="L2031">        List&lt;Task&gt; subProcessTasks = taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).list();</span>
+<span class="nc" id="L2032">        assertThat(subProcessTasks)</span>
+<span class="nc" id="L2033">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L2034">                .containsExactly(&quot;userTask1Id&quot;);</span>
+<span class="nc" id="L2035">        assertThat(subProcessTasks)</span>
+<span class="nc" id="L2036">                .extracting(Task::getProcessDefinitionId)</span>
+<span class="nc" id="L2037">                .containsOnly(procDefSimpleOneTask.getId());</span>
+
+<span class="nc" id="L2039">        timerJob = managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L2040">        assertThat(timerJob).isNull();</span>
+<span class="nc" id="L2041">    }</span>
+
+    @Test
+    public void testMigrateActivityToActivityInsideCallActivityWithTimer() {
+<span class="nc" id="L2045">        ProcessDefinition procDefv1 = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/two-tasks-simple-process.bpmn20.xml&quot;);
+<span class="nc" id="L2047">        ProcessDefinition procDefv2 = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/two-tasks-with-call-activity-with-timer.bpmn20.xml&quot;);
+<span class="nc" id="L2049">        ProcessDefinition procDefSimpleOneTask = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-task-simple-process.bpmn20.xml&quot;);
+
+        //Start the processInstance and confirm the migration state to validate
+<span class="nc" id="L2053">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procDefv1.getId());</span>
+<span class="nc" id="L2054">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L2055">        assertThat(task)</span>
+<span class="nc" id="L2056">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L2057">                .isEqualTo(&quot;userTask1Id&quot;);</span>
+<span class="nc" id="L2058">        assertThat(task)</span>
+<span class="nc" id="L2059">                .extracting(Task::getProcessDefinitionId)</span>
+<span class="nc" id="L2060">                .isEqualTo(procDefv1.getId());</span>
+
+<span class="nc" id="L2062">        List&lt;Execution&gt; processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L2063">        assertThat(processExecutions)</span>
+<span class="nc" id="L2064">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L2065">                .containsExactly(&quot;userTask1Id&quot;);</span>
+<span class="nc" id="L2066">        assertThat(processExecutions)</span>
+<span class="nc" id="L2067">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L2068">                .containsOnly(procDefv1.getId());</span>
+
+<span class="nc" id="L2070">        Job timerJob = managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L2071">        assertThat(timerJob).isNull();</span>
+
+        //Prepare migration and validate
+<span class="nc" id="L2074">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L2075">                .migrateToProcessDefinition(procDefv2.getId())</span>
+<span class="nc" id="L2076">                .addActivityMigrationMapping(</span>
+<span class="nc" id="L2077">                        ActivityMigrationMapping.createMappingFor(&quot;userTask1Id&quot;, &quot;userTask1Id&quot;).inSubProcessOfCallActivityId(&quot;callActivity&quot;));</span>
+
+<span class="nc" id="L2079">        ProcessInstanceMigrationValidationResult processInstanceMigrationResult = processInstanceMigrationBuilder.validateMigration(processInstance.getId());</span>
+<span class="nc" id="L2080">        assertThat(processInstanceMigrationResult.isMigrationValid()).isTrue();</span>
+
+<span class="nc" id="L2082">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+        //Confirm
+<span class="nc" id="L2085">        List&lt;Execution&gt; executionsAfterMigration = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions()</span>
+<span class="nc" id="L2086">                .list();</span>
+<span class="nc" id="L2087">        assertThat(executionsAfterMigration)</span>
+<span class="nc" id="L2088">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L2089">                .containsExactlyInAnyOrder(&quot;callActivity&quot;, &quot;boundaryTimerEvent&quot;);</span>
+<span class="nc" id="L2090">        assertThat(executionsAfterMigration)</span>
+<span class="nc" id="L2091">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L2092">                .containsOnly(procDefv2.getId());</span>
+
+<span class="nc" id="L2094">        timerJob = managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L2095">        assertThat(timerJob).isNotNull();</span>
+<span class="nc" id="L2096">    }</span>
+
+    @Test
+    public void testMigrateActivityInsideCallActivityWithTimerToActivityInParentProcess() {
+<span class="nc" id="L2100">        ProcessDefinition procDefv1 = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/two-tasks-with-call-activity-with-timer.bpmn20.xml&quot;);
+<span class="nc" id="L2102">        ProcessDefinition procDefv2 = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/two-tasks-simple-process.bpmn20.xml&quot;);
+<span class="nc" id="L2104">        ProcessDefinition procDefSimpleOneTask = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-task-simple-process.bpmn20.xml&quot;);
+
+        //Start the processInstance and confirm the migration state to validate
+<span class="nc" id="L2108">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procDefv1.getId());</span>
+<span class="nc" id="L2109">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+        //complete task so the execution entity points at the callActivity
+<span class="nc" id="L2111">        completeTask(task);</span>
+
+<span class="nc" id="L2113">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions()</span>
+<span class="nc" id="L2114">                .list();</span>
+<span class="nc" id="L2115">        assertThat(executions)</span>
+<span class="nc" id="L2116">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L2117">                .containsExactlyInAnyOrder(&quot;callActivity&quot;, &quot;boundaryTimerEvent&quot;);</span>
+<span class="nc" id="L2118">        assertThat(executions)</span>
+<span class="nc" id="L2119">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L2120">                .containsOnly(procDefv1.getId());</span>
+
+<span class="nc" id="L2122">        Job timerJob = managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L2123">        assertThat(timerJob).isNotNull();</span>
+
+        //Prepare migration and validate
+<span class="nc" id="L2126">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L2127">                .migrateToProcessDefinition(procDefv2.getId())</span>
+<span class="nc" id="L2128">                .addActivityMigrationMapping(</span>
+<span class="nc" id="L2129">                        ActivityMigrationMapping.createMappingFor(&quot;userTask1Id&quot;, &quot;userTask1Id&quot;).inParentProcessOfCallActivityId(&quot;callActivity&quot;));</span>
+
+<span class="nc" id="L2131">        ProcessInstanceMigrationValidationResult processInstanceMigrationResult = processInstanceMigrationBuilder.validateMigration(processInstance.getId());</span>
+<span class="nc" id="L2132">        assertThat(processInstanceMigrationResult.isMigrationValid()).isTrue();</span>
+
+<span class="nc" id="L2134">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+        //Confirm
+<span class="nc" id="L2137">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L2138">        assertThat(task)</span>
+<span class="nc" id="L2139">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L2140">                .isEqualTo(&quot;userTask1Id&quot;);</span>
+<span class="nc" id="L2141">        assertThat(task)</span>
+<span class="nc" id="L2142">                .extracting(Task::getProcessDefinitionId)</span>
+<span class="nc" id="L2143">                .isEqualTo(procDefv2.getId());</span>
+
+<span class="nc" id="L2145">        List&lt;Execution&gt; processExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L2146">        assertThat(processExecutions)</span>
+<span class="nc" id="L2147">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L2148">                .containsExactly(&quot;userTask1Id&quot;);</span>
+<span class="nc" id="L2149">        assertThat(processExecutions)</span>
+<span class="nc" id="L2150">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L2151">                .containsOnly(procDefv2.getId());</span>
+
+<span class="nc" id="L2153">        timerJob = managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L2154">        assertThat(timerJob).isNull();</span>
+<span class="nc" id="L2155">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

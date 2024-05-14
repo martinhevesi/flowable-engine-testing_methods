@@ -1,0 +1,481 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AsyncExecutorTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.jobexecutor</a> &gt; <span class="el_source">AsyncExecutorTest.java</span></div><h1>AsyncExecutorTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.test.jobexecutor;
+
+import static java.time.temporal.ChronoUnit.SECONDS;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.awaitility.Awaitility.await;
+
+import java.time.Duration;
+import java.util.Date;
+import java.util.concurrent.Callable;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.delegate.event.FlowableEngineEventType;
+import org.flowable.common.engine.api.delegate.event.FlowableEvent;
+import org.flowable.common.engine.api.delegate.event.FlowableEventListener;
+import org.flowable.engine.ProcessEngine;
+import org.flowable.engine.delegate.DelegateExecution;
+import org.flowable.engine.delegate.JavaDelegate;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.cfg.StandaloneInMemProcessEngineConfiguration;
+import org.flowable.engine.impl.test.JobTestHelper;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.job.api.Job;
+import org.flowable.job.api.JobInfo;
+import org.flowable.job.service.impl.asyncexecutor.AsyncExecutor;
+import org.flowable.job.service.impl.asyncexecutor.DefaultAsyncJobExecutor;
+import org.junit.Assert;
+import org.junit.jupiter.api.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Tests specifically for the {@link AsyncExecutor}.
+ * 
+ * @author Joram Barrez
+ */
+<span class="nc" id="L51">public class AsyncExecutorTest {</span>
+
+    @Test
+    public void testRegularAsyncExecution() {
+
+<span class="nc" id="L56">        ProcessEngine processEngine = null;</span>
+
+        try {
+            // Deploy
+<span class="nc" id="L60">            processEngine = createProcessEngine(true);</span>
+<span class="nc" id="L61">            setClockToCurrentTime(processEngine);</span>
+<span class="nc" id="L62">            deploy(processEngine, &quot;AsyncExecutorTest.testRegularAsyncExecution.bpmn20.xml&quot;);</span>
+
+            // Start process instance. Wait for all jobs to be done
+<span class="nc" id="L65">            processEngine.getRuntimeService().startProcessInstanceByKey(&quot;asyncExecutor&quot;);</span>
+
+            // Move clock 3 minutes. Nothing should happen
+<span class="nc" id="L68">            addSecondsToCurrentTime(processEngine, 180L);</span>
+<span class="nc" id="L69">            ProcessEngine processEngine1 = processEngine;</span>
+<span class="nc" id="L70">            assertThatThrownBy(() -&gt; waitForAllJobsBeingExecuted(processEngine1, 500L))</span>
+<span class="nc" id="L71">                    .isExactlyInstanceOf(FlowableException.class);</span>
+<span class="nc" id="L72">            assertThat(processEngine.getTaskService().createTaskQuery().taskName(&quot;The Task&quot;).count()).isEqualTo(1);</span>
+<span class="nc" id="L73">            assertThat(processEngine.getTaskService().createTaskQuery().taskName(&quot;Task after timer&quot;).count()).isZero();</span>
+<span class="nc" id="L74">            assertThat(processEngine.getManagementService().createTimerJobQuery().count()).isEqualTo(1);</span>
+<span class="nc" id="L75">            assertThat(getAsyncExecutorJobCount(processEngine)).isZero();</span>
+
+            // Move clock 3 minutes and 1 second. Triggers the timer
+<span class="nc" id="L78">            addSecondsToCurrentTime(processEngine, 181);</span>
+<span class="nc" id="L79">            waitForAllJobsBeingExecuted(processEngine);</span>
+
+            // Verify if all is as expected
+<span class="nc" id="L82">            assertThat(processEngine.getTaskService().createTaskQuery().taskName(&quot;The Task&quot;).count()).isZero();</span>
+<span class="nc" id="L83">            assertThat(processEngine.getTaskService().createTaskQuery().taskName(&quot;Task after timer&quot;).count()).isEqualTo(1);</span>
+<span class="nc" id="L84">            assertThat(processEngine.getManagementService().createTimerJobQuery().count()).isZero();</span>
+<span class="nc" id="L85">            assertThat(processEngine.getManagementService().createJobQuery().count()).isZero();</span>
+
+<span class="nc" id="L87">            assertThat(getAsyncExecutorJobCount(processEngine)).isEqualTo(1);</span>
+        } finally {
+
+            // Clean up
+<span class="nc bnc" id="L91" title="All 2 branches missed.">            if (processEngine != null) {</span>
+<span class="nc" id="L92">                cleanup(processEngine);</span>
+            }
+        }
+<span class="nc" id="L95">    }</span>
+
+    @Test
+    public void testAsyncExecutionForStraightThroughParallelMultiInstance() {
+
+<span class="nc" id="L100">        ProcessEngine processEngine = null;</span>
+
+        try {
+            // Deploy
+<span class="nc" id="L104">            processEngine = createProcessEngine(true);</span>
+<span class="nc" id="L105">            setClockToCurrentTime(processEngine);</span>
+<span class="nc" id="L106">            deploy(processEngine, &quot;AsyncExecutorTest.testStraightThroughParallelMultiInstance.bpmn20.xml&quot;);</span>
+
+            // Start process instance. Wait for all jobs to be done
+<span class="nc" id="L109">            ProcessInstance processInstance = processEngine.getRuntimeService()</span>
+<span class="nc" id="L110">                    .createProcessInstanceBuilder()</span>
+<span class="nc" id="L111">                    .processDefinitionKey(&quot;asyncExecutor&quot;)</span>
+<span class="nc" id="L112">                    .transientVariable(&quot;loopCardinality&quot;, 2)</span>
+<span class="nc" id="L113">                    .start();</span>
+<span class="nc" id="L114">            assertThat(processEngine.getRuntimeService().createProcessInstanceQuery().processInstanceId(processInstance.getId()).singleResult())</span>
+<span class="nc" id="L115">                    .isNull();</span>
+
+<span class="nc" id="L117">            assertThat(getAsyncExecutorJobCount(processEngine)).isZero();</span>
+        } finally {
+
+            // Clean up
+<span class="nc bnc" id="L121" title="All 2 branches missed.">            if (processEngine != null) {</span>
+<span class="nc" id="L122">                cleanup(processEngine);</span>
+            }
+        }
+<span class="nc" id="L125">    }</span>
+
+    @Test
+    public void testAsyncExecutorDisabledOnOneEngine() {
+
+<span class="nc" id="L130">        ProcessEngine firstProcessEngine = null;</span>
+<span class="nc" id="L131">        ProcessEngine secondProcessEngine = null;</span>
+
+        try {
+
+            // Deploy on one engine, where the async executor is disabled
+<span class="nc" id="L136">            firstProcessEngine = createProcessEngine(false);</span>
+<span class="nc" id="L137">            Date now = setClockToCurrentTime(firstProcessEngine);</span>
+<span class="nc" id="L138">            deploy(firstProcessEngine, &quot;AsyncExecutorTest.testRegularAsyncExecution.bpmn20.xml&quot;);</span>
+
+            // Start process instance on first engine
+<span class="nc" id="L141">            firstProcessEngine.getRuntimeService().startProcessInstanceByKey(&quot;asyncExecutor&quot;);</span>
+
+            // Move clock 5 minutes and 1 second. Triggers the timer normally,
+            // but not now since async execution is disabled
+<span class="nc" id="L145">            addSecondsToCurrentTime(firstProcessEngine, 301); // 301 = 5m01s</span>
+<span class="nc" id="L146">            assertThat(firstProcessEngine.getTaskService().createTaskQuery().taskName(&quot;The Task&quot;).count()).isEqualTo(1);</span>
+<span class="nc" id="L147">            assertThat(firstProcessEngine.getTaskService().createTaskQuery().taskName(&quot;Task after timer&quot;).count()).isZero();</span>
+<span class="nc" id="L148">            assertThat(firstProcessEngine.getManagementService().createTimerJobQuery().count()).isEqualTo(1);</span>
+
+            // Create second engine, with async executor enabled. Same time as
+            // the first engine to start, then add 301 seconds
+<span class="nc" id="L152">            secondProcessEngine = createProcessEngine(true, null, now);</span>
+<span class="nc" id="L153">            addSecondsToCurrentTime(secondProcessEngine, 361);</span>
+<span class="nc" id="L154">            waitForAllJobsBeingExecuted(secondProcessEngine);</span>
+
+            // Verify if all is as expected
+<span class="nc" id="L157">            assertThat(firstProcessEngine.getTaskService().createTaskQuery().taskName(&quot;The Task&quot;).count()).isZero();</span>
+<span class="nc" id="L158">            assertThat(firstProcessEngine.getTaskService().createTaskQuery().taskName(&quot;Task after timer&quot;).count()).isEqualTo(1);</span>
+<span class="nc" id="L159">            assertThat(firstProcessEngine.getManagementService().createTimerJobQuery().count()).isZero();</span>
+<span class="nc" id="L160">            assertThat(firstProcessEngine.getManagementService().createJobQuery().count()).isZero();</span>
+
+<span class="nc" id="L162">            assertThat(getAsyncExecutorJobCount(firstProcessEngine)).isZero();</span>
+<span class="nc" id="L163">            assertThat(getAsyncExecutorJobCount(secondProcessEngine)).isEqualTo(1);</span>
+
+        } finally {
+
+            // Clean up
+<span class="nc" id="L168">            cleanup(firstProcessEngine);</span>
+<span class="nc" id="L169">            cleanup(secondProcessEngine);</span>
+
+        }
+
+<span class="nc" id="L173">    }</span>
+
+    @Test
+    public void testAsyncScriptExecution() {
+
+<span class="nc" id="L178">        ProcessEngine processEngine = null;</span>
+
+        try {
+
+            // Deploy
+<span class="nc" id="L183">            processEngine = createProcessEngine(true);</span>
+<span class="nc" id="L184">            setClockToCurrentTime(processEngine);</span>
+<span class="nc" id="L185">            deploy(processEngine, &quot;AsyncExecutorTest.testAsyncScriptExecution.bpmn20.xml&quot;);</span>
+
+            // Start process instance. Wait for all jobs to be done
+<span class="nc" id="L188">            ProcessInstance processInstance = processEngine.getRuntimeService().startProcessInstanceByKey(&quot;asyncScript&quot;);</span>
+<span class="nc" id="L189">            waitForAllJobsBeingExecuted(processEngine);</span>
+
+            // Verify if all is as expected
+<span class="nc" id="L192">            assertThat(processEngine.getManagementService().createJobQuery().count()).isZero();</span>
+<span class="nc" id="L193">            assertThat(processEngine.getManagementService().createTimerJobQuery().count()).isZero();</span>
+<span class="nc" id="L194">            assertThat(processEngine.getTaskService().createTaskQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(1);</span>
+<span class="nc" id="L195">            assertThat(processEngine.getTaskService().createTaskQuery().taskName(&quot;Task after script&quot;).count()).isEqualTo(1);</span>
+
+<span class="nc" id="L197">            assertThat(getAsyncExecutorJobCount(processEngine)).isEqualTo(1);</span>
+
+        } finally {
+
+            // Clean up
+<span class="nc" id="L202">            cleanup(processEngine);</span>
+        }
+<span class="nc" id="L204">    }</span>
+
+    @Test
+    public void testAsyncFailingScript() {
+
+<span class="nc" id="L209">        ProcessEngine processEngine = null;</span>
+
+        try {
+
+            // Deploy
+<span class="nc" id="L214">            processEngine = createProcessEngine(true);</span>
+<span class="nc" id="L215">            processEngine.getProcessEngineConfiguration().getClock().reset();</span>
+<span class="nc" id="L216">            deploy(processEngine, &quot;AsyncExecutorTest.testAsyncFailingScript.bpmn20.xml&quot;);</span>
+
+            // There is a back off mechanism for the retry, so need a bit of
+            // time. But to be sure, we make the wait time small
+<span class="nc" id="L220">            processEngine.getProcessEngineConfiguration().setAsyncFailedJobWaitTime(1);</span>
+<span class="nc" id="L221">            processEngine.getProcessEngineConfiguration().setDefaultFailedJobWaitTime(1);</span>
+
+            // Start process instance. Wait for all jobs to be done.
+<span class="nc" id="L224">            processEngine.getRuntimeService().startProcessInstanceByKey(&quot;asyncScript&quot;);</span>
+
+<span class="nc" id="L226">            final ProcessEngine processEngineCopy = processEngine;</span>
+<span class="nc" id="L227">            JobTestHelper.waitForJobExecutorOnCondition(processEngine.getProcessEngineConfiguration(), 10000L, 1000L, new Callable&lt;&gt;() {</span>
+
+                @Override
+                public Boolean call() throws Exception {
+<span class="nc" id="L231">                    long timerJobCount = processEngineCopy.getManagementService().createTimerJobQuery().count();</span>
+<span class="nc bnc" id="L232" title="All 2 branches missed.">                    if (timerJobCount == 0) {</span>
+<span class="nc bnc" id="L233" title="All 2 branches missed.">                        return processEngineCopy.getManagementService().createJobQuery().count() == 0;</span>
+                    } else {
+<span class="nc" id="L235">                        return false;</span>
+                    }
+                }
+            });
+
+            // Verify if all is as expected
+<span class="nc" id="L241">            assertThat(processEngine.getTaskService().createTaskQuery().taskName(&quot;Task after script&quot;).count()).isZero();</span>
+<span class="nc" id="L242">            assertThat(processEngine.getManagementService().createJobQuery().count()).isZero();</span>
+<span class="nc" id="L243">            assertThat(processEngine.getManagementService().createDeadLetterJobQuery().count()).isEqualTo(1);</span>
+
+<span class="nc" id="L245">            assertThat(getAsyncExecutorJobCount(processEngine)).isEqualTo(3);</span>
+
+        } finally {
+
+            // Clean up
+<span class="nc" id="L250">            cleanup(processEngine);</span>
+        }
+<span class="nc" id="L252">    }</span>
+    
+    @Test
+    public void testAsyncFailingScriptWithCategory() {
+<span class="nc" id="L256">        ProcessEngine processEngine = null;</span>
+
+        try {
+
+            // Deploy
+<span class="nc" id="L261">            processEngine = createProcessEngine(true, &quot;myCategory&quot;, null);</span>
+<span class="nc" id="L262">            processEngine.getProcessEngineConfiguration().getClock().reset();</span>
+<span class="nc" id="L263">            deploy(processEngine, &quot;AsyncExecutorTest.testAsyncFailingScriptWithCategory.bpmn20.xml&quot;);</span>
+
+            // There is a back off mechanism for the retry, so need a bit of time. But to be sure, we make the wait time small
+<span class="nc" id="L266">            processEngine.getProcessEngineConfiguration().setAsyncFailedJobWaitTime(1);</span>
+<span class="nc" id="L267">            processEngine.getProcessEngineConfiguration().setDefaultFailedJobWaitTime(1);</span>
+
+            // Start process instance. Wait for all jobs to be done.
+<span class="nc" id="L270">            processEngine.getRuntimeService().startProcessInstanceByKey(&quot;asyncScript&quot;);</span>
+
+<span class="nc" id="L272">            final ProcessEngine processEngineCopy = processEngine;</span>
+<span class="nc" id="L273">            JobTestHelper.waitForJobExecutorOnCondition(processEngine.getProcessEngineConfiguration(), 10000L, 1000L, new Callable&lt;&gt;() {</span>
+
+                @Override
+                public Boolean call() throws Exception {
+<span class="nc" id="L277">                    long timerJobCount = processEngineCopy.getManagementService().createTimerJobQuery().count();</span>
+<span class="nc bnc" id="L278" title="All 2 branches missed.">                    if (timerJobCount == 0) {</span>
+<span class="nc bnc" id="L279" title="All 2 branches missed.">                        return processEngineCopy.getManagementService().createJobQuery().count() == 0;</span>
+                    } else {
+<span class="nc" id="L281">                        return false;</span>
+                    }
+                }
+            });
+
+            // Verify if all is as expected
+<span class="nc" id="L287">            assertThat(processEngine.getTaskService().createTaskQuery().taskName(&quot;Task after script&quot;).count()).isZero();</span>
+<span class="nc" id="L288">            assertThat(processEngine.getManagementService().createJobQuery().count()).isZero();</span>
+<span class="nc" id="L289">            assertThat(processEngine.getManagementService().createDeadLetterJobQuery().count()).isEqualTo(1);</span>
+<span class="nc" id="L290">            Job job = processEngine.getManagementService().createDeadLetterJobQuery().singleResult();</span>
+<span class="nc" id="L291">            assertThat(job.getCategory()).isEqualTo(&quot;myCategory&quot;);</span>
+
+        } finally {
+            // Clean up
+<span class="nc" id="L295">            cleanup(processEngine);</span>
+        }
+<span class="nc" id="L297">    }</span>
+
+    @Test
+    public void testJobRejectionOnQueueFull() {
+<span class="nc" id="L301">        ProcessEngineConfigurationImpl processEngineConfiguration = new StandaloneInMemProcessEngineConfiguration();</span>
+<span class="nc" id="L302">        processEngineConfiguration.setJdbcUrl(&quot;jdbc:h2:mem:flowable-AsyncExecutorTest;DB_CLOSE_DELAY=1000&quot;);</span>
+<span class="nc" id="L303">        processEngineConfiguration.setDatabaseSchemaUpdate(&quot;true&quot;);</span>
+<span class="nc" id="L304">        processEngineConfiguration.setAsyncExecutorActivate(true);</span>
+
+        // Important for this test
+<span class="nc" id="L307">        processEngineConfiguration.setAsyncExecutorCorePoolSize(1);</span>
+<span class="nc" id="L308">        processEngineConfiguration.setAsyncExecutorMaxPoolSize(1);</span>
+<span class="nc" id="L309">        processEngineConfiguration.setAsyncExecutorThreadPoolQueueSize(1);</span>
+
+<span class="nc" id="L311">        ProcessEngine processEngine = processEngineConfiguration.buildProcessEngine();</span>
+
+<span class="nc" id="L313">        processEngine.getProcessEngineConfiguration().getEventDispatcher().addEventListener(new TestRejectionEventListener(), FlowableEngineEventType.JOB_REJECTED);</span>
+
+        // 3 starts:
+        // 1) 1 thread available -&gt; 1 thread blocked
+        // 2) no thread available -&gt; take 1 spot in queue
+        // 3) no thread + queue spot available -&gt; rejected
+<span class="nc" id="L319">        int nrOfProcesses = 3;</span>
+
+        try {
+<span class="nc" id="L322">            deploy(processEngine, &quot;AsyncExecutorTest.testAsyncJobRejection.bpmn20.xml&quot;);</span>
+
+<span class="nc" id="L324">            assertThat(TestRejectionEventListener.COUNTER.get()).isEqualTo(0);</span>
+<span class="nc bnc" id="L325" title="All 2 branches missed.">            for (int i = 0; i &lt; nrOfProcesses; i++) {</span>
+<span class="nc" id="L326">                processEngine.getRuntimeService().startProcessInstanceByKey(&quot;testRejection&quot;);</span>
+            }
+<span class="nc" id="L328">            assertThat(TestRejectionEventListener.COUNTER.get()).isEqualTo(1);</span>
+
+<span class="nc" id="L330">        } catch(Exception e)  {</span>
+<span class="nc" id="L331">            Assert.fail(&quot;Unexpected exception: &quot; + e.getMessage());</span>
+<span class="nc" id="L332">            throw e;</span>
+        } finally {
+
+<span class="nc" id="L335">            TestBlockingJavaDelegate.SEMAPHORE.release(nrOfProcesses);</span>
+
+            // 2 blocked jobs should be processed and end the process instance
+            // other job should have been changed to a timer job
+<span class="nc bnc" id="L339" title="All 2 branches missed.">            await().atMost(Duration.of(10, SECONDS)).until(() -&gt; processEngine.getRuntimeService().createProcessInstanceQuery().count() == 1);</span>
+<span class="nc" id="L340">            assertThat(TestRejectionEventListener.COUNTER.get()).isEqualTo(1);</span>
+
+<span class="nc bnc" id="L342" title="All 2 branches missed.">            if (processEngine != null) {</span>
+<span class="nc" id="L343">                cleanup(processEngine);</span>
+            }
+        }
+<span class="nc" id="L346">    }</span>
+
+    // Helpers ////////////////////////////////////////////////////////
+
+    private ProcessEngine createProcessEngine(boolean enableAsyncExecutor) {
+<span class="nc" id="L351">        return createProcessEngine(enableAsyncExecutor, null, null);</span>
+    }
+
+    private ProcessEngine createProcessEngine(boolean enableAsyncExecutor, String enabledJobCategory, Date time) {
+<span class="nc" id="L355">        ProcessEngineConfigurationImpl processEngineConfiguration = new StandaloneInMemProcessEngineConfiguration();</span>
+<span class="nc" id="L356">        processEngineConfiguration.setJdbcUrl(&quot;jdbc:h2:mem:flowable-AsyncExecutorTest;DB_CLOSE_DELAY=1000&quot;);</span>
+<span class="nc" id="L357">        processEngineConfiguration.setDatabaseSchemaUpdate(&quot;true&quot;);</span>
+
+<span class="nc bnc" id="L359" title="All 2 branches missed.">        if (enableAsyncExecutor) {</span>
+<span class="nc" id="L360">            processEngineConfiguration.setAsyncExecutorActivate(true);</span>
+
+<span class="nc" id="L362">            CountingAsyncExecutor countingAsyncExecutor = new CountingAsyncExecutor();</span>
+<span class="nc" id="L363">            countingAsyncExecutor.setDefaultAsyncJobAcquireWaitTimeInMillis(50); // To avoid waiting too long when a retry happens</span>
+<span class="nc" id="L364">            countingAsyncExecutor.setDefaultTimerJobAcquireWaitTimeInMillis(50);</span>
+<span class="nc" id="L365">            processEngineConfiguration.setAsyncExecutor(countingAsyncExecutor);</span>
+        }
+        
+<span class="nc bnc" id="L368" title="All 2 branches missed.">        if (enabledJobCategory != null) {</span>
+<span class="nc" id="L369">            processEngineConfiguration.addEnabledJobCategory(enabledJobCategory);</span>
+        }
+
+<span class="nc" id="L372">        ProcessEngine processEngine = processEngineConfiguration.buildProcessEngine();</span>
+
+<span class="nc bnc" id="L374" title="All 2 branches missed.">        if (time != null) {</span>
+<span class="nc" id="L375">            processEngine.getProcessEngineConfiguration().getClock().setCurrentTime(time);</span>
+        }
+
+<span class="nc" id="L378">        return processEngine;</span>
+    }
+
+    private Date setClockToCurrentTime(ProcessEngine processEngine) {
+<span class="nc" id="L382">        Date date = new Date();</span>
+<span class="nc" id="L383">        processEngine.getProcessEngineConfiguration().getClock().setCurrentTime(date);</span>
+<span class="nc" id="L384">        return date;</span>
+    }
+
+    private void addSecondsToCurrentTime(ProcessEngine processEngine, long nrOfSeconds) {
+<span class="nc" id="L388">        Date currentTime = processEngine.getProcessEngineConfiguration().getClock().getCurrentTime();</span>
+<span class="nc" id="L389">        processEngine.getProcessEngineConfiguration().getClock().setCurrentTime(new Date(currentTime.getTime() + (nrOfSeconds * 1000L)));</span>
+<span class="nc" id="L390">    }</span>
+
+    private void cleanup(ProcessEngine processEngine) {
+<span class="nc bnc" id="L393" title="All 2 branches missed.">        for (org.flowable.engine.repository.Deployment deployment : processEngine.getRepositoryService().createDeploymentQuery().list()) {</span>
+<span class="nc" id="L394">            processEngine.getRepositoryService().deleteDeployment(deployment.getId(), true);</span>
+<span class="nc" id="L395">        }</span>
+<span class="nc" id="L396">        processEngine.close();</span>
+<span class="nc" id="L397">    }</span>
+
+    private String deploy(ProcessEngine processEngine, String resource) {
+<span class="nc" id="L400">        return processEngine.getRepositoryService().createDeployment().addClasspathResource(&quot;org/flowable/engine/test/jobexecutor/&quot; + resource).deploy().getId();</span>
+    }
+
+    private void waitForAllJobsBeingExecuted(ProcessEngine processEngine) {
+<span class="nc" id="L404">        waitForAllJobsBeingExecuted(processEngine, 10000L);</span>
+<span class="nc" id="L405">    }</span>
+
+    private void waitForAllJobsBeingExecuted(ProcessEngine processEngine, long maxWaitTime) {
+<span class="nc" id="L408">        JobTestHelper.waitForJobExecutorToProcessAllJobsAndExecutableTimerJobs(processEngine.getProcessEngineConfiguration(), processEngine.getManagementService(), maxWaitTime, 1000L, false);</span>
+<span class="nc" id="L409">    }</span>
+
+    private int getAsyncExecutorJobCount(ProcessEngine processEngine) {
+<span class="nc" id="L412">        AsyncExecutor asyncExecutor = processEngine.getProcessEngineConfiguration().getAsyncExecutor();</span>
+<span class="nc bnc" id="L413" title="All 2 branches missed.">        if (asyncExecutor instanceof CountingAsyncExecutor) {</span>
+<span class="nc" id="L414">            return ((CountingAsyncExecutor) asyncExecutor).getCounter().get();</span>
+        }
+<span class="nc" id="L416">        return 0;</span>
+    }
+
+<span class="nc" id="L419">    static class CountingAsyncExecutor extends DefaultAsyncJobExecutor {</span>
+
+<span class="nc" id="L421">        private static final Logger LOGGER = LoggerFactory.getLogger(CountingAsyncExecutor.class);</span>
+
+<span class="nc" id="L423">        private AtomicInteger counter = new AtomicInteger(0);</span>
+
+        @Override
+        public boolean executeAsyncJob(JobInfo job) {
+<span class="nc" id="L427">            LOGGER.info(&quot;About to execute job {}&quot;, job.getId());</span>
+<span class="nc" id="L428">            counter.incrementAndGet();</span>
+<span class="nc" id="L429">            boolean success = super.executeAsyncJob(job);</span>
+<span class="nc" id="L430">            LOGGER.info(&quot;Handed off job {} to async executor (retries={})&quot;, job.getId(), job.getRetries());</span>
+<span class="nc" id="L431">            return success;</span>
+        }
+
+        public AtomicInteger getCounter() {
+<span class="nc" id="L435">            return counter;</span>
+        }
+
+        public void setCounter(AtomicInteger counter) {
+<span class="nc" id="L439">            this.counter = counter;</span>
+<span class="nc" id="L440">        }</span>
+
+    }
+
+<span class="nc" id="L444">    public static final class TestBlockingJavaDelegate implements JavaDelegate {</span>
+
+<span class="nc" id="L446">        public static Semaphore SEMAPHORE = new Semaphore(0);</span>
+
+        @Override
+        public void execute(DelegateExecution execution) {
+            try {
+<span class="nc" id="L451">                SEMAPHORE.acquire();</span>
+<span class="nc" id="L452">            } catch (InterruptedException e) {</span>
+<span class="nc" id="L453">                throw new FlowableException(&quot;Couldn't acquire semaphore&quot;, e);</span>
+<span class="nc" id="L454">            }</span>
+<span class="nc" id="L455">        }</span>
+    }
+
+<span class="nc" id="L458">    public static final class TestRejectionEventListener implements FlowableEventListener {</span>
+
+<span class="nc" id="L460">        public static AtomicInteger COUNTER = new AtomicInteger(0);</span>
+
+        @Override
+        public void onEvent(FlowableEvent event) {
+<span class="nc" id="L464">            COUNTER.incrementAndGet();</span>
+<span class="nc" id="L465">        }</span>
+        @Override
+        public boolean isFailOnException() {
+<span class="nc" id="L468">            return false;</span>
+        }
+        @Override
+        public boolean isFireOnTransactionLifecycleEvent() {
+<span class="nc" id="L472">            return false;</span>
+        }
+        @Override
+        public String getOnTransaction() {
+<span class="nc" id="L476">            return null;</span>
+        }
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

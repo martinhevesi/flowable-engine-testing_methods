@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ChangeTaskCountConfigAndRebootEngineTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.cfg.taskcount</a> &gt; <span class="el_source">ChangeTaskCountConfigAndRebootEngineTest.java</span></div><h1>ChangeTaskCountConfigAndRebootEngineTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.test.cfg.taskcount;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import org.flowable.common.engine.impl.interceptor.Command;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.common.engine.impl.persistence.entity.PropertyEntity;
+import org.flowable.engine.ProcessEngineConfiguration;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.cmd.ValidateTaskRelatedEntityCountCfgCmd;
+import org.flowable.engine.impl.test.ResourceFlowableTestCase;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.test.Deployment;
+import org.flowable.task.service.impl.persistence.CountingTaskEntity;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledIfSystemProperty;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+@DisabledIfSystemProperty(named = &quot;disableWhen&quot;, matches = &quot;cockroachdb&quot;) // Disabled due to having a retry interceptor for CRDB and barriers in this test
+public class ChangeTaskCountConfigAndRebootEngineTest extends ResourceFlowableTestCase {
+
+<span class="nc" id="L36">    private static final Logger LOGGER = LoggerFactory.getLogger(ChangeTaskCountConfigAndRebootEngineTest.class);</span>
+
+    protected boolean newTaskRelationshipCountValue;
+
+    public ChangeTaskCountConfigAndRebootEngineTest() {
+
+        // Simply boot up the same engine with the usual config file
+        // This way, database tests work. the only thing we have to make
+        // sure is to give the process engine a name so it is
+        // registered and unregistered separately.
+<span class="nc" id="L46">        super(&quot;flowable.cfg.xml&quot;, ChangeTaskCountConfigAndRebootEngineTest.class.getName());</span>
+<span class="nc" id="L47">    }</span>
+
+    @Override
+    protected void additionalConfiguration(ProcessEngineConfiguration processEngineConfiguration) {
+<span class="nc" id="L51">        LOGGER.info(&quot;Applying additional config: setting schema update to true and enabling task relationship count&quot;);</span>
+<span class="nc" id="L52">        processEngineConfiguration.setDatabaseSchemaUpdate(&quot;true&quot;);</span>
+<span class="nc" id="L53">        ((ProcessEngineConfigurationImpl) processEngineConfiguration).setEnableTaskRelationshipCounts(newTaskRelationshipCountValue);</span>
+<span class="nc" id="L54">    }</span>
+
+    protected void rebootEngine(boolean newTaskRelationshipCountValue) {
+<span class="nc" id="L57">        LOGGER.info(&quot;Rebooting engine&quot;);</span>
+<span class="nc" id="L58">        this.newTaskRelationshipCountValue = newTaskRelationshipCountValue;</span>
+<span class="nc" id="L59">        rebootEngine();</span>
+<span class="nc" id="L60">    }</span>
+
+    @Test
+    @Deployment
+    public void testChangeTaskCountSettingAndRebootengine() {
+
+<span class="nc" id="L66">        rebootFlagNotChanged(true);</span>
+
+<span class="nc" id="L68">        rebootFlagNotChanged(false);</span>
+
+<span class="nc" id="L70">        checkEnableFlagBetweenTasks();</span>
+
+<span class="nc" id="L72">        checkDisableFlagBetweenTasks();</span>
+
+<span class="nc" id="L74">    }</span>
+
+    private void checkEnableFlagBetweenTasks() {
+<span class="nc" id="L77">        rebootEngine(false);</span>
+<span class="nc" id="L78">        assertConfigProperty(false);</span>
+
+        // Start a new process
+<span class="nc" id="L81">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;twoTasksProcess&quot;);</span>
+<span class="nc" id="L82">        org.flowable.task.api.Task firstTask = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L83">        assertTaskCountFlag(firstTask, false);</span>
+
+        // Reboot, enabling the config property. however, the task won't get the flag now
+<span class="nc" id="L86">        rebootEngine(true);</span>
+<span class="nc" id="L87">        assertConfigProperty(true);</span>
+
+        // re-fetch the task
+<span class="nc" id="L90">        firstTask = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L91">        assertTaskCountFlag(firstTask, false);</span>
+
+        // complete the first task, move to the next one
+<span class="nc" id="L94">        taskService.complete(firstTask.getId());</span>
+
+        // second task created with the new flag (true)
+<span class="nc" id="L97">        org.flowable.task.api.Task secondTask = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L98">        assertTaskCountFlag(secondTask, true);</span>
+
+<span class="nc" id="L100">        finishProcessInstance(processInstance);</span>
+<span class="nc" id="L101">    }</span>
+
+    private void checkDisableFlagBetweenTasks() {
+<span class="nc" id="L104">        rebootEngine(true);</span>
+<span class="nc" id="L105">        assertConfigProperty(true);</span>
+
+        // Start a new process
+<span class="nc" id="L108">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;twoTasksProcess&quot;);</span>
+<span class="nc" id="L109">        org.flowable.task.api.Task firstTask = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L110">        assertTaskCountFlag(firstTask, true);</span>
+
+        // Reboot, disabling the config property. The existing task will have the flag updated.
+<span class="nc" id="L113">        rebootEngine(false);</span>
+<span class="nc" id="L114">        assertConfigProperty(false);</span>
+
+<span class="nc" id="L116">        firstTask = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L117">        assertTaskCountFlag(firstTask, false);</span>
+
+        // complete the first task, move to the next one
+<span class="nc" id="L120">        taskService.complete(firstTask.getId());</span>
+
+        // second task created with flag false
+<span class="nc" id="L123">        org.flowable.task.api.Task secondTask = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L124">        assertTaskCountFlag(secondTask, false);</span>
+
+<span class="nc" id="L126">        finishProcessInstance(processInstance);</span>
+<span class="nc" id="L127">    }</span>
+
+    private void rebootFlagNotChanged(boolean enableTaskCountFlag) {
+<span class="nc" id="L130">        rebootEngine(enableTaskCountFlag);</span>
+<span class="nc" id="L131">        assertConfigProperty(enableTaskCountFlag);</span>
+
+<span class="nc" id="L133">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;twoTasksProcess&quot;);</span>
+<span class="nc" id="L134">        org.flowable.task.api.Task firstTask = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+
+<span class="nc" id="L136">        assertTaskCountFlag(firstTask, enableTaskCountFlag);</span>
+
+        // Reboot with same settings. Nothing should have changed
+<span class="nc" id="L139">        rebootEngine(enableTaskCountFlag);</span>
+<span class="nc" id="L140">        assertConfigProperty(enableTaskCountFlag);</span>
+<span class="nc" id="L141">        assertTaskCountFlag(firstTask, enableTaskCountFlag);</span>
+
+        // The second task should have the same count flag
+<span class="nc" id="L144">        taskService.complete(firstTask.getId());</span>
+<span class="nc" id="L145">        org.flowable.task.api.Task secondTask = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L146">        assertTaskCountFlag(secondTask, enableTaskCountFlag);</span>
+
+        // See if we can finish the process
+<span class="nc" id="L149">        finishProcessInstance(processInstance);</span>
+<span class="nc" id="L150">    }</span>
+
+    /**
+     * Check the DB property against Process Engine flag.
+     */
+    protected void assertConfigProperty(boolean expectedValue) {
+<span class="nc" id="L156">        PropertyEntity propertyEntity = managementService.executeCommand(new Command&lt;&gt;() {</span>
+            @Override
+            public PropertyEntity execute(CommandContext commandContext) {
+<span class="nc" id="L159">                return CommandContextUtil.getPropertyEntityManager(commandContext).findById(</span>
+                        ValidateTaskRelatedEntityCountCfgCmd.PROPERTY_TASK_RELATED_ENTITY_COUNT);
+            }
+        });
+<span class="nc" id="L163">        assertThat(Boolean.parseBoolean(propertyEntity.getValue())).isEqualTo(expectedValue);</span>
+<span class="nc" id="L164">    }</span>
+
+    protected void assertTaskCountFlag(org.flowable.task.api.Task task, boolean enableTaskCountFlag) {
+<span class="nc" id="L167">        assertThat(enableTaskCountFlag).isEqualTo(((CountingTaskEntity) task).isCountEnabled());</span>
+<span class="nc" id="L168">    }</span>
+
+    protected void finishProcessInstance(ProcessInstance processInstance) {
+<span class="nc" id="L171">        org.flowable.task.api.Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L172">        taskService.complete(task.getId());</span>
+<span class="nc" id="L173">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L174">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

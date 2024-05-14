@@ -1,0 +1,566 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CaseWithFormTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.cmmn.test.validate</a> &gt; <span class="el_source">CaseWithFormTest.java</span></div><h1>CaseWithFormTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.cmmn.test.validate;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.entry;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import java.util.Collections;
+import java.util.Date;
+import java.util.Map;
+
+import org.flowable.cmmn.api.CmmnRepositoryService;
+import org.flowable.cmmn.api.repository.CaseDefinition;
+import org.flowable.cmmn.api.repository.CmmnDeployment;
+import org.flowable.cmmn.api.runtime.CaseInstance;
+import org.flowable.cmmn.test.AbstractProcessEngineIntegrationTest;
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.impl.interceptor.EngineConfigurationConstants;
+import org.flowable.form.api.FormEngineConfigurationApi;
+import org.flowable.form.api.FormFieldHandler;
+import org.flowable.form.api.FormInfo;
+import org.flowable.form.api.FormRepositoryService;
+import org.flowable.form.api.FormService;
+import org.flowable.identitylink.api.IdentityLinkType;
+import org.flowable.task.api.Task;
+import org.flowable.task.api.history.HistoricTaskLogEntryType;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
+import org.mockito.Mock;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
+import org.mockito.quality.Strictness;
+
+/**
+ * @author martin.grofcik
+ */
+<span class="nc" id="L54">public class CaseWithFormTest extends AbstractProcessEngineIntegrationTest {</span>
+
+    public static final String ONE_TASK_CASE = &quot;&quot;&quot;
+            &lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;
+            &lt;definitions xmlns=&quot;http://www.omg.org/spec/CMMN/20151109/MODEL&quot;
+                         xmlns:flowable=&quot;http://flowable.org/cmmn&quot;
+
+                         targetNamespace=&quot;http://flowable.org/cmmn&quot;&gt;
+
+
+                &lt;case id=&quot;oneTaskCaseWithForm&quot;&gt;
+                    &lt;casePlanModel id=&quot;myPlanModel&quot; name=&quot;My CasePlanModel&quot; flowable:formKey=&quot;form1&quot; flowable:formFieldValidation=&quot;CASE_VALIDATE_VALUE&quot;&gt;
+
+                        &lt;planItem id=&quot;planItem1&quot; name=&quot;Task One&quot; definitionRef=&quot;theTask&quot; /&gt;
+
+                        &lt;humanTask id=&quot;theTask&quot; name=&quot;The Task&quot; flowable:formKey=&quot;form1&quot; flowable:formFieldValidation=&quot;TASK_VALIDATE_VALUE&quot;&gt;
+                            &lt;extensionElements&gt;
+                                &lt;flowable:taskListener event=&quot;create&quot; class=&quot;org.flowable.cmmn.test.validate.SideEffectTaskListener&quot;&gt;&lt;/flowable:taskListener&gt;
+                                &lt;flowable:taskListener event=&quot;complete&quot; class=&quot;org.flowable.cmmn.test.validate.SideEffectTaskListener&quot;&gt;&lt;/flowable:taskListener&gt;
+                            &lt;/extensionElements&gt;
+                        &lt;/humanTask&gt;
+
+                    &lt;/casePlanModel&gt;
+                &lt;/case&gt;
+            &lt;/definitions&gt;
+            &quot;&quot;&quot;;
+
+<span class="nc" id="L81">    @Rule</span>
+<span class="nc" id="L82">    public MockitoRule mockitoRule = MockitoJUnit.rule().strictness(Strictness.STRICT_STUBS);</span>
+
+    @Mock
+    protected FormEngineConfigurationApi formEngineConfiguration;
+
+    @Mock
+    protected FormService formService;
+
+    @Mock
+    protected FormRepositoryService formRepositoryService;
+
+    @Mock
+    protected FormFieldHandler formFieldHandler;
+
+    protected FormFieldHandler originalFormFieldHandler;
+
+    @Before
+    @SuppressWarnings({ &quot;rawtypes&quot;, &quot;unchecked&quot; })
+    public void initialize() {
+<span class="nc" id="L101">        originalFormFieldHandler = cmmnEngineConfiguration.getFormFieldHandler();</span>
+<span class="nc" id="L102">        cmmnEngineConfiguration.setFormFieldHandler(formFieldHandler);</span>
+<span class="nc" id="L103">        cmmnTaskService = cmmnEngineConfiguration.getCmmnTaskService();</span>
+<span class="nc" id="L104">        cmmnRuntimeService = cmmnEngineConfiguration.getCmmnRuntimeService();</span>
+
+<span class="nc" id="L106">        Map engineConfigurations = cmmnEngineConfiguration.getEngineConfigurations();</span>
+<span class="nc" id="L107">        engineConfigurations.put(EngineConfigurationConstants.KEY_FORM_ENGINE_CONFIG, formEngineConfiguration);</span>
+
+<span class="nc" id="L109">        cmmnHistoryService = cmmnEngineConfiguration.getCmmnHistoryService();</span>
+
+<span class="nc" id="L111">        cmmnEngineConfiguration.getCmmnRepositoryService().createDeployment()</span>
+<span class="nc" id="L112">                .addString(&quot;org/flowable/cmmn/test/oneTasksCaseWithForm.cmmn&quot;, ONE_TASK_CASE</span>
+<span class="nc" id="L113">                        .replace(&quot;CASE_VALIDATE_VALUE&quot;, &quot;true&quot;)</span>
+<span class="nc" id="L114">                        .replace(&quot;TASK_VALIDATE_VALUE&quot;, &quot;true&quot;)</span>
+                )
+<span class="nc" id="L116">                .deploy();</span>
+<span class="nc" id="L117">        SideEffectTaskListener.reset();</span>
+<span class="nc" id="L118">    }</span>
+
+    @After
+    public void cleanDeployments() {
+<span class="nc" id="L122">        cmmnEngineConfiguration.setFormFieldHandler(originalFormFieldHandler);</span>
+<span class="nc" id="L123">        cmmnEngineConfiguration.getEngineConfigurations().remove(EngineConfigurationConstants.KEY_FORM_ENGINE_CONFIG);</span>
+<span class="nc" id="L124">        CmmnRepositoryService cmmnRepositoryService = cmmnEngineConfiguration.getCmmnRepositoryService();</span>
+<span class="nc" id="L125">        cmmnRepositoryService.createDeploymentQuery().list().forEach(</span>
+<span class="nc" id="L126">                cmmnDeployment -&gt; cmmnRepositoryService.deleteDeployment(cmmnDeployment.getId(), true)</span>
+        );
+
+<span class="nc" id="L129">        cmmnHistoryService.createHistoricTaskLogEntryQuery().list().forEach(</span>
+<span class="nc" id="L130">                historicTaskLogEntry -&gt; cmmnHistoryService.deleteHistoricTaskLogEntry(historicTaskLogEntry.getLogNumber())</span>
+        );
+<span class="nc" id="L132">    }</span>
+
+    @Test
+    public void startCaseWithForm() {
+<span class="nc" id="L136">        when(formEngineConfiguration.getFormService()).thenReturn(formService);</span>
+<span class="nc" id="L137">        when(formEngineConfiguration.getFormRepositoryService()).thenReturn(formRepositoryService);</span>
+
+<span class="nc" id="L139">        CaseDefinition caseDefinition = cmmnRepositoryService.createCaseDefinitionQuery()</span>
+<span class="nc" id="L140">                .caseDefinitionKey(&quot;oneTaskCaseWithForm&quot;)</span>
+<span class="nc" id="L141">                .singleResult();</span>
+<span class="nc" id="L142">        FormInfo formInfo = new FormInfo();</span>
+<span class="nc" id="L143">        when(formRepositoryService.getFormModelByKeyAndParentDeploymentId(&quot;form1&quot;, caseDefinition.getDeploymentId()))</span>
+<span class="nc" id="L144">                .thenReturn(formInfo);</span>
+
+<span class="nc" id="L146">        doThrow(new RuntimeException(&quot;Validation failed&quot;))</span>
+<span class="nc" id="L147">                .when(formService)</span>
+<span class="nc" id="L148">                .validateFormFields(null, &quot;planModel&quot;, null, caseDefinition.getId(), ScopeTypes.CMMN, </span>
+<span class="nc" id="L149">                        formInfo, Collections.singletonMap(&quot;variable&quot;, &quot;VariableValue&quot;));</span>
+
+<span class="nc" id="L151">        assertThatThrownBy(() -&gt; cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L152">                .caseDefinitionKey(&quot;oneTaskCaseWithForm&quot;)</span>
+<span class="nc" id="L153">                .startFormVariables(Collections.singletonMap(&quot;variable&quot;, &quot;VariableValue&quot;))</span>
+<span class="nc" id="L154">                .startWithForm())</span>
+<span class="nc" id="L155">                .isExactlyInstanceOf(RuntimeException.class)</span>
+<span class="nc" id="L156">                .hasMessage(&quot;Validation failed&quot;);</span>
+<span class="nc" id="L157">        assertThat(SideEffectTaskListener.getSideEffect()).isZero();</span>
+<span class="nc" id="L158">    }</span>
+
+    @Test
+    public void completeTaskWithFormAndCheckTaskLogEntries() {
+<span class="nc" id="L162">        CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L163">                .caseDefinitionKey(&quot;oneTaskCaseWithForm&quot;)</span>
+<span class="nc" id="L164">                .start();</span>
+
+<span class="nc" id="L166">        Task task = cmmnTaskService.createTaskQuery().caseInstanceId(caseInstance.getId()).singleResult();</span>
+
+<span class="nc" id="L168">        task.setName(&quot;newName&quot;);</span>
+<span class="nc" id="L169">        task.setPriority(0);</span>
+<span class="nc" id="L170">        cmmnTaskService.saveTask(task);</span>
+<span class="nc" id="L171">        cmmnTaskService.setAssignee(task.getId(), &quot;newAssignee&quot;);</span>
+<span class="nc" id="L172">        cmmnTaskService.setOwner(task.getId(), &quot;newOwner&quot;);</span>
+<span class="nc" id="L173">        cmmnTaskService.setDueDate(task.getId(), new Date());</span>
+<span class="nc" id="L174">        cmmnTaskService.addUserIdentityLink(task.getId(), &quot;testUser&quot;, IdentityLinkType.PARTICIPANT);</span>
+<span class="nc" id="L175">        cmmnTaskService.addGroupIdentityLink(task.getId(), &quot;testGroup&quot;, IdentityLinkType.PARTICIPANT);</span>
+<span class="nc" id="L176">        cmmnTaskService.deleteUserIdentityLink(task.getId(), &quot;testUser&quot;, IdentityLinkType.PARTICIPANT);</span>
+<span class="nc" id="L177">        cmmnTaskService.deleteGroupIdentityLink(task.getId(), &quot;testGroup&quot;, IdentityLinkType.PARTICIPANT);</span>
+
+<span class="nc" id="L179">        when(formEngineConfiguration.getFormService()).thenReturn(formService);</span>
+<span class="nc" id="L180">        when(formEngineConfiguration.getFormRepositoryService()).thenReturn(formRepositoryService);</span>
+
+<span class="nc" id="L182">        FormInfo formInfo = new FormInfo();</span>
+<span class="nc" id="L183">        Map&lt;String, Object&gt; completeVariables = Collections.singletonMap(&quot;doNotThrowException&quot;, &quot;&quot;);</span>
+<span class="nc" id="L184">        when(formRepositoryService.getFormModelById(&quot;formDefId&quot;)).thenReturn(formInfo);</span>
+<span class="nc" id="L185">        when(formService.getVariablesFromFormSubmission(task.getTaskDefinitionKey(), &quot;humanTask&quot;, caseInstance.getId(), </span>
+<span class="nc" id="L186">                caseInstance.getCaseDefinitionId(), ScopeTypes.CMMN, formInfo, completeVariables, &quot;__COMPLETE&quot;))</span>
+<span class="nc" id="L187">                .thenReturn(Collections.singletonMap(&quot;completeVar2&quot;, &quot;Testing&quot;));</span>
+
+<span class="nc" id="L189">        doNothing()</span>
+<span class="nc" id="L190">                .when(formService)</span>
+<span class="nc" id="L191">                .validateFormFields(task.getTaskDefinitionKey(), &quot;humanTask&quot;, caseInstance.getId(), </span>
+<span class="nc" id="L192">                        caseInstance.getCaseDefinitionId(), ScopeTypes.CMMN, formInfo, completeVariables);</span>
+
+<span class="nc" id="L194">        cmmnTaskService.completeTaskWithForm(task.getId(), &quot;formDefId&quot;, &quot;__COMPLETE&quot;, completeVariables);</span>
+
+<span class="nc" id="L196">        assertThat(cmmnHistoryService.createHistoricTaskLogEntryQuery().taskId(task.getId()).count()).isEqualTo(11);</span>
+<span class="nc" id="L197">        assertThat(cmmnHistoryService.createHistoricTaskLogEntryQuery().taskId(task.getId()).type(HistoricTaskLogEntryType.USER_TASK_CREATED.name()).count())</span>
+<span class="nc" id="L198">                .isEqualTo(1);</span>
+<span class="nc" id="L199">        assertThat(</span>
+<span class="nc" id="L200">                cmmnHistoryService.createHistoricTaskLogEntryQuery().taskId(task.getId()).type(HistoricTaskLogEntryType.USER_TASK_NAME_CHANGED.name()).count())</span>
+<span class="nc" id="L201">                .isEqualTo(1);</span>
+<span class="nc" id="L202">        assertThat(cmmnHistoryService.createHistoricTaskLogEntryQuery().taskId(task.getId()).type(HistoricTaskLogEntryType.USER_TASK_PRIORITY_CHANGED.name())</span>
+<span class="nc" id="L203">                .count()).isEqualTo(1);</span>
+<span class="nc" id="L204">        assertThat(cmmnHistoryService.createHistoricTaskLogEntryQuery().taskId(task.getId()).type(HistoricTaskLogEntryType.USER_TASK_ASSIGNEE_CHANGED.name())</span>
+<span class="nc" id="L205">                .count()).isEqualTo(1);</span>
+<span class="nc" id="L206">        assertThat(</span>
+<span class="nc" id="L207">                cmmnHistoryService.createHistoricTaskLogEntryQuery().taskId(task.getId()).type(HistoricTaskLogEntryType.USER_TASK_OWNER_CHANGED.name()).count())</span>
+<span class="nc" id="L208">                .isEqualTo(1);</span>
+<span class="nc" id="L209">        assertThat(cmmnHistoryService.createHistoricTaskLogEntryQuery().taskId(task.getId()).type(HistoricTaskLogEntryType.USER_TASK_DUEDATE_CHANGED.name())</span>
+<span class="nc" id="L210">                .count()).isEqualTo(1);</span>
+<span class="nc" id="L211">        assertThat(cmmnHistoryService.createHistoricTaskLogEntryQuery().taskId(task.getId()).type(HistoricTaskLogEntryType.USER_TASK_IDENTITY_LINK_ADDED.name())</span>
+<span class="nc" id="L212">                .count()).isEqualTo(2);</span>
+<span class="nc" id="L213">        assertThat(</span>
+<span class="nc" id="L214">                cmmnHistoryService.createHistoricTaskLogEntryQuery().taskId(task.getId()).type(HistoricTaskLogEntryType.USER_TASK_IDENTITY_LINK_REMOVED.name())</span>
+<span class="nc" id="L215">                        .count()).isEqualTo(2);</span>
+<span class="nc" id="L216">        assertThat(cmmnHistoryService.createHistoricTaskLogEntryQuery().taskId(task.getId()).type(HistoricTaskLogEntryType.USER_TASK_COMPLETED.name()).count())</span>
+<span class="nc" id="L217">                .isEqualTo(1);</span>
+<span class="nc" id="L218">    }</span>
+
+    @Test
+    public void startCaseAsyncWithForm() {
+<span class="nc" id="L222">        when(formEngineConfiguration.getFormService()).thenReturn(formService);</span>
+<span class="nc" id="L223">        when(formEngineConfiguration.getFormRepositoryService()).thenReturn(formRepositoryService);</span>
+
+<span class="nc" id="L225">        CaseDefinition caseDefinition = cmmnRepositoryService.createCaseDefinitionQuery()</span>
+<span class="nc" id="L226">                .caseDefinitionKey(&quot;oneTaskCaseWithForm&quot;)</span>
+<span class="nc" id="L227">                .singleResult();</span>
+<span class="nc" id="L228">        FormInfo formInfo = new FormInfo();</span>
+<span class="nc" id="L229">        when(formRepositoryService.getFormModelByKeyAndParentDeploymentId(&quot;form1&quot;, caseDefinition.getDeploymentId()))</span>
+<span class="nc" id="L230">                .thenReturn(formInfo);</span>
+
+<span class="nc" id="L232">        doThrow(new RuntimeException(&quot;Validation failed&quot;))</span>
+<span class="nc" id="L233">                .when(formService)</span>
+<span class="nc" id="L234">                .validateFormFields(null, &quot;planModel&quot;, null, caseDefinition.getId(), ScopeTypes.CMMN,</span>
+<span class="nc" id="L235">                        formInfo, Collections.singletonMap(&quot;variable&quot;, &quot;VariableValue&quot;));</span>
+
+<span class="nc" id="L237">        assertThatThrownBy(() -&gt; cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L238">                .caseDefinitionKey(&quot;oneTaskCaseWithForm&quot;)</span>
+<span class="nc" id="L239">                .startFormVariables(Collections.singletonMap(&quot;variable&quot;, &quot;VariableValue&quot;))</span>
+<span class="nc" id="L240">                .startWithForm())</span>
+<span class="nc" id="L241">                .isExactlyInstanceOf(RuntimeException.class)</span>
+<span class="nc" id="L242">                .hasMessage(&quot;Validation failed&quot;);</span>
+<span class="nc" id="L243">        assertThat(SideEffectTaskListener.getSideEffect()).isZero();</span>
+<span class="nc" id="L244">    }</span>
+
+    @Test
+    public void startCaseWithFormWithDisabledValidationOnEngineLevel() {
+<span class="nc" id="L248">        when(formEngineConfiguration.getFormService()).thenReturn(formService);</span>
+<span class="nc" id="L249">        when(formEngineConfiguration.getFormRepositoryService()).thenReturn(formRepositoryService);</span>
+
+<span class="nc" id="L251">        CaseDefinition caseDefinition = cmmnRepositoryService.createCaseDefinitionQuery()</span>
+<span class="nc" id="L252">                .caseDefinitionKey(&quot;oneTaskCaseWithForm&quot;)</span>
+<span class="nc" id="L253">                .singleResult();</span>
+<span class="nc" id="L254">        FormInfo formInfo = new FormInfo();</span>
+<span class="nc" id="L255">        when(formRepositoryService.getFormModelByKeyAndParentDeploymentId(&quot;form1&quot;, caseDefinition.getDeploymentId()))</span>
+<span class="nc" id="L256">                .thenReturn(formInfo);</span>
+<span class="nc" id="L257">        when(formService.getVariablesFromFormSubmission(null, &quot;planModel&quot;, null, caseDefinition.getId(), ScopeTypes.CMMN,</span>
+<span class="nc" id="L258">                formInfo, Collections.singletonMap(&quot;variable&quot;, &quot;VariableValue&quot;), null))</span>
+<span class="nc" id="L259">                .thenReturn(Collections.singletonMap(&quot;completeVar2&quot;, &quot;Testing&quot;));</span>
+
+<span class="nc" id="L261">        cmmnEngineConfiguration.setFormFieldValidationEnabled(false);</span>
+        try {
+<span class="nc" id="L263">            CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L264">                    .caseDefinitionKey(&quot;oneTaskCaseWithForm&quot;)</span>
+<span class="nc" id="L265">                    .startFormVariables(Collections.singletonMap(&quot;variable&quot;, &quot;VariableValue&quot;))</span>
+<span class="nc" id="L266">                    .startWithForm();</span>
+
+<span class="nc" id="L268">            assertThat(caseInstance).isNotNull();</span>
+<span class="nc" id="L269">            assertThat(caseInstance.getCaseVariables())</span>
+<span class="nc" id="L270">                    .containsOnly(entry(&quot;completeVar2&quot;, &quot;Testing&quot;));</span>
+<span class="nc" id="L271">            assertThat(SideEffectTaskListener.getSideEffect()).isEqualTo(1);</span>
+        } finally {
+<span class="nc" id="L273">            cmmnEngineConfiguration.setFormFieldValidationEnabled(true);</span>
+        }
+<span class="nc" id="L275">    }</span>
+
+    @Test
+    public void startCaseWithFormWithoutVariables() {
+<span class="nc" id="L279">        when(formEngineConfiguration.getFormService()).thenReturn(formService);</span>
+<span class="nc" id="L280">        when(formEngineConfiguration.getFormRepositoryService()).thenReturn(formRepositoryService);</span>
+
+<span class="nc" id="L282">        CaseDefinition caseDefinition = cmmnRepositoryService.createCaseDefinitionQuery()</span>
+<span class="nc" id="L283">                .caseDefinitionKey(&quot;oneTaskCaseWithForm&quot;)</span>
+<span class="nc" id="L284">                .singleResult();</span>
+<span class="nc" id="L285">        FormInfo formInfo = new FormInfo();</span>
+<span class="nc" id="L286">        when(formRepositoryService.getFormModelByKeyAndParentDeploymentId(&quot;form1&quot;, caseDefinition.getDeploymentId()))</span>
+<span class="nc" id="L287">                .thenReturn(formInfo);</span>
+<span class="nc" id="L288">        doThrow(new RuntimeException(&quot;Validation failed&quot;))</span>
+<span class="nc" id="L289">                .when(formService)</span>
+<span class="nc" id="L290">                .validateFormFields(null, &quot;planModel&quot;, null, caseDefinition.getId(), ScopeTypes.CMMN, formInfo, null);</span>
+
+<span class="nc" id="L292">        assertThatThrownBy(() -&gt; cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L293">                .caseDefinitionKey(&quot;oneTaskCaseWithForm&quot;)</span>
+<span class="nc" id="L294">                .startWithForm())</span>
+<span class="nc" id="L295">                .isExactlyInstanceOf(RuntimeException.class)</span>
+<span class="nc" id="L296">                .hasMessage(&quot;Validation failed&quot;);</span>
+<span class="nc" id="L297">        assertThat(SideEffectTaskListener.getSideEffect()).isZero();</span>
+<span class="nc" id="L298">    }</span>
+
+    @Test
+    public void completeCaseTaskWithFormWithValidationDisabledOnConfigLevel() {
+<span class="nc" id="L302">        cmmnEngineConfiguration.setFormFieldValidationEnabled(false);</span>
+        try {
+<span class="nc" id="L304">            when(formEngineConfiguration.getFormService()).thenReturn(formService);</span>
+<span class="nc" id="L305">            when(formEngineConfiguration.getFormRepositoryService()).thenReturn(formRepositoryService);</span>
+
+<span class="nc" id="L307">            FormInfo formInfo = new FormInfo();</span>
+<span class="nc" id="L308">            Map&lt;String, Object&gt; completeVariables = Collections.singletonMap(&quot;var&quot;, &quot;value&quot;);</span>
+<span class="nc" id="L309">            when(formRepositoryService.getFormModelById(&quot;formDefId&quot;)).thenReturn(formInfo);</span>
+
+<span class="nc" id="L311">            CaseInstance caze = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L312">                    .caseDefinitionKey(&quot;oneTaskCaseWithForm&quot;)</span>
+<span class="nc" id="L313">                    .start();</span>
+<span class="nc" id="L314">            Task task = cmmnTaskService.createTaskQuery().caseInstanceId(caze.getId()).singleResult();</span>
+<span class="nc" id="L315">            assertThat(SideEffectTaskListener.getSideEffect()).isEqualTo(1);</span>
+<span class="nc" id="L316">            SideEffectTaskListener.reset();</span>
+            
+<span class="nc" id="L318">            when(formService.getVariablesFromFormSubmission(task.getTaskDefinitionKey(), &quot;humanTask&quot;, caze.getId(), </span>
+<span class="nc" id="L319">                    caze.getCaseDefinitionId(), ScopeTypes.CMMN, formInfo, completeVariables, &quot;__COMPLETE&quot;))</span>
+<span class="nc" id="L320">                    .thenReturn(Collections.singletonMap(&quot;var2&quot;, &quot;value2&quot;));</span>
+
+<span class="nc" id="L322">            cmmnTaskService.completeTaskWithForm(task.getId(), &quot;formDefId&quot;, &quot;__COMPLETE&quot;, completeVariables);</span>
+<span class="nc" id="L323">            assertThat(SideEffectTaskListener.getSideEffect()).isEqualTo(1);</span>
+
+<span class="nc" id="L325">            verify(formService).saveFormInstanceWithScopeId(completeVariables, formInfo, task.getId(), caze.getId(), ScopeTypes.CMMN,</span>
+<span class="nc" id="L326">                    caze.getCaseDefinitionId(), caze.getTenantId(), &quot;__COMPLETE&quot;);</span>
+
+<span class="nc" id="L328">            verify(formFieldHandler).handleFormFieldsOnSubmit(formInfo, task.getId(), null, caze.getId(), ScopeTypes.CMMN,</span>
+<span class="nc" id="L329">                    Collections.singletonMap(&quot;var2&quot;, &quot;value2&quot;), caze.getTenantId());</span>
+        } finally {
+<span class="nc" id="L331">            cmmnEngineConfiguration.setFormFieldValidationEnabled(true);</span>
+        }
+<span class="nc" id="L333">    }</span>
+
+    @Test
+    public void completeCaseTaskWithForm() {
+<span class="nc" id="L337">        when(formEngineConfiguration.getFormService()).thenReturn(formService);</span>
+<span class="nc" id="L338">        when(formEngineConfiguration.getFormRepositoryService()).thenReturn(formRepositoryService);</span>
+
+<span class="nc" id="L340">        CaseInstance caze = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L341">                .caseDefinitionKey(&quot;oneTaskCaseWithForm&quot;)</span>
+<span class="nc" id="L342">                .start();</span>
+<span class="nc" id="L343">        Task task = cmmnTaskService.createTaskQuery().caseInstanceId(caze.getId()).singleResult();</span>
+<span class="nc" id="L344">        assertThat(SideEffectTaskListener.getSideEffect()).isEqualTo(1);</span>
+<span class="nc" id="L345">        SideEffectTaskListener.reset();</span>
+        
+<span class="nc" id="L347">        FormInfo formInfo = new FormInfo();</span>
+<span class="nc" id="L348">        when(formRepositoryService.getFormModelById(&quot;formDefId&quot;)).thenReturn(formInfo);</span>
+<span class="nc" id="L349">        doThrow(new RuntimeException(&quot;validation failed&quot;))</span>
+<span class="nc" id="L350">                .when(formService)</span>
+<span class="nc" id="L351">                .validateFormFields(task.getTaskDefinitionKey(), &quot;humanTask&quot;, caze.getId(), </span>
+<span class="nc" id="L352">                        caze.getCaseDefinitionId(), ScopeTypes.CMMN, formInfo, Collections.singletonMap(&quot;var&quot;, &quot;value&quot;));</span>
+
+<span class="nc" id="L354">        assertThatThrownBy(</span>
+<span class="nc" id="L355">                () -&gt; cmmnTaskService.completeTaskWithForm(task.getId(), &quot;formDefId&quot;, &quot;__COMPLETE&quot;, Collections.singletonMap(&quot;var&quot;, &quot;value&quot;)))</span>
+<span class="nc" id="L356">                .isExactlyInstanceOf(RuntimeException.class)</span>
+<span class="nc" id="L357">                .hasMessage(&quot;validation failed&quot;);</span>
+<span class="nc" id="L358">        assertThat(SideEffectTaskListener.getSideEffect()).isZero();</span>
+<span class="nc" id="L359">    }</span>
+
+    @Test
+    public void completeCaseTaskWithFormWithoutVariables() {
+<span class="nc" id="L363">        when(formEngineConfiguration.getFormService()).thenReturn(formService);</span>
+<span class="nc" id="L364">        when(formEngineConfiguration.getFormRepositoryService()).thenReturn(formRepositoryService);</span>
+        
+<span class="nc" id="L366">        CaseInstance caze = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L367">                .caseDefinitionKey(&quot;oneTaskCaseWithForm&quot;)</span>
+<span class="nc" id="L368">                .start();</span>
+<span class="nc" id="L369">        Task task = cmmnTaskService.createTaskQuery().caseInstanceId(caze.getId()).singleResult();</span>
+<span class="nc" id="L370">        assertThat(SideEffectTaskListener.getSideEffect()).isEqualTo(1);</span>
+<span class="nc" id="L371">        SideEffectTaskListener.reset();</span>
+
+<span class="nc" id="L373">        FormInfo formInfo = new FormInfo();</span>
+<span class="nc" id="L374">        when(formRepositoryService.getFormModelById(&quot;formDefId&quot;)).thenReturn(formInfo);</span>
+<span class="nc" id="L375">        doThrow(new RuntimeException(&quot;validation failed&quot;))</span>
+<span class="nc" id="L376">                .when(formService)</span>
+<span class="nc" id="L377">                .validateFormFields(task.getTaskDefinitionKey(), &quot;humanTask&quot;, caze.getId(), </span>
+<span class="nc" id="L378">                        caze.getCaseDefinitionId(), ScopeTypes.CMMN, formInfo, null);</span>
+
+<span class="nc" id="L380">        assertThatThrownBy(() -&gt; cmmnTaskService.completeTaskWithForm(task.getId(), &quot;formDefId&quot;, &quot;__COMPLETE&quot;, null))</span>
+<span class="nc" id="L381">                .isExactlyInstanceOf(RuntimeException.class)</span>
+<span class="nc" id="L382">                .hasMessage(&quot;validation failed&quot;);</span>
+<span class="nc" id="L383">        assertThat(SideEffectTaskListener.getSideEffect()).isZero();</span>
+<span class="nc" id="L384">    }</span>
+
+    @Test
+    public void completeTaskWithoutValidationOnModelLevel() {
+<span class="nc" id="L388">        cmmnEngineConfiguration.getCmmnRepositoryService().createDeployment()</span>
+<span class="nc" id="L389">                .addString(&quot;org/flowable/cmmn/test/oneTasksCaseWithForm.cmmn&quot;, ONE_TASK_CASE</span>
+<span class="nc" id="L390">                        .replace(&quot;CASE_VALIDATE_VALUE&quot;, &quot;false&quot;)</span>
+<span class="nc" id="L391">                        .replace(&quot;TASK_VALIDATE_VALUE&quot;, &quot;false&quot;)</span>
+                )
+<span class="nc" id="L393">                .deploy();</span>
+<span class="nc" id="L394">        CaseInstance caze = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L395">                .caseDefinitionKey(&quot;oneTaskCaseWithForm&quot;)</span>
+<span class="nc" id="L396">                .start();</span>
+<span class="nc" id="L397">        Task task = cmmnTaskService.createTaskQuery().caseInstanceId(caze.getId()).singleResult();</span>
+<span class="nc" id="L398">        assertThat(SideEffectTaskListener.getSideEffect()).isEqualTo(1);</span>
+<span class="nc" id="L399">        SideEffectTaskListener.reset();</span>
+
+<span class="nc" id="L401">        when(formEngineConfiguration.getFormService()).thenReturn(formService);</span>
+<span class="nc" id="L402">        when(formEngineConfiguration.getFormRepositoryService()).thenReturn(formRepositoryService);</span>
+
+<span class="nc" id="L404">        FormInfo formInfo = new FormInfo();</span>
+<span class="nc" id="L405">        Map&lt;String, Object&gt; completeVariables = Collections.singletonMap(&quot;completeVar&quot;, &quot;test&quot;);</span>
+<span class="nc" id="L406">        when(formRepositoryService.getFormModelById(&quot;formDefId&quot;)).thenReturn(formInfo);</span>
+<span class="nc" id="L407">        when(formService.getVariablesFromFormSubmission(task.getTaskDefinitionKey(), &quot;humanTask&quot;, caze.getId(), </span>
+<span class="nc" id="L408">                caze.getCaseDefinitionId(), ScopeTypes.CMMN, formInfo, completeVariables, &quot;__COMPLETE&quot;))</span>
+<span class="nc" id="L409">                .thenReturn(Collections.singletonMap(&quot;completeVar2&quot;, &quot;Testing&quot;));</span>
+
+<span class="nc" id="L411">        cmmnTaskService.completeTaskWithForm(task.getId(), &quot;formDefId&quot;, &quot;__COMPLETE&quot;, completeVariables);</span>
+<span class="nc" id="L412">        assertThat(SideEffectTaskListener.getSideEffect()).isEqualTo(1);</span>
+
+<span class="nc" id="L414">        verify(formService).saveFormInstanceWithScopeId(completeVariables, formInfo, task.getId(), caze.getId(), ScopeTypes.CMMN,</span>
+<span class="nc" id="L415">                caze.getCaseDefinitionId(), caze.getTenantId(), &quot;__COMPLETE&quot;);</span>
+
+<span class="nc" id="L417">        verify(formFieldHandler).handleFormFieldsOnSubmit(formInfo, task.getId(), null, caze.getId(), ScopeTypes.CMMN,</span>
+<span class="nc" id="L418">                Collections.singletonMap(&quot;completeVar2&quot;, &quot;Testing&quot;), caze.getTenantId());</span>
+<span class="nc" id="L419">    }</span>
+
+    @Test
+    public void completeTaskWithoutValidationOnModelLevelExpression() {
+<span class="nc" id="L423">        CmmnDeployment deployment = cmmnEngineConfiguration.getCmmnRepositoryService().createDeployment()</span>
+<span class="nc" id="L424">                .addString(&quot;org/flowable/cmmn/test/oneTasksCaseWithForm.cmmn&quot;, ONE_TASK_CASE</span>
+<span class="nc" id="L425">                        .replace(&quot;CASE_VALIDATE_VALUE&quot;, &quot;${true}&quot;)</span>
+<span class="nc" id="L426">                        .replace(&quot;TASK_VALIDATE_VALUE&quot;, &quot;${allowValidation}&quot;)</span>
+                )
+<span class="nc" id="L428">                .deploy();</span>
+
+<span class="nc" id="L430">        when(formEngineConfiguration.getFormService()).thenReturn(formService);</span>
+<span class="nc" id="L431">        when(formEngineConfiguration.getFormRepositoryService()).thenReturn(formRepositoryService);</span>
+        
+<span class="nc" id="L433">        CaseDefinition caseDefinition = cmmnRepositoryService.createCaseDefinitionQuery().caseDefinitionKey(&quot;oneTaskCaseWithForm&quot;).latestVersion().singleResult();</span>
+
+<span class="nc" id="L435">        FormInfo formInfo = new FormInfo();</span>
+<span class="nc" id="L436">        when(formRepositoryService.getFormModelByKeyAndParentDeploymentId(&quot;form1&quot;, deployment.getParentDeploymentId()))</span>
+<span class="nc" id="L437">                .thenReturn(formInfo);</span>
+<span class="nc" id="L438">        doThrow(new RuntimeException(&quot;validation failed&quot;))</span>
+<span class="nc" id="L439">                .when(formService)</span>
+<span class="nc" id="L440">                .validateFormFields(null, &quot;planModel&quot;, null, caseDefinition.getId(), ScopeTypes.CMMN, </span>
+<span class="nc" id="L441">                        formInfo, Collections.singletonMap(&quot;allowValidation&quot;, true));</span>
+
+<span class="nc" id="L443">        assertThatThrownBy(() -&gt; cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L444">                .caseDefinitionKey(&quot;oneTaskCaseWithForm&quot;)</span>
+<span class="nc" id="L445">                .startFormVariables(Collections.singletonMap(&quot;allowValidation&quot;, true))</span>
+<span class="nc" id="L446">                .startWithForm())</span>
+<span class="nc" id="L447">                .isExactlyInstanceOf(RuntimeException.class)</span>
+<span class="nc" id="L448">                .hasMessage(&quot;validation failed&quot;);</span>
+<span class="nc" id="L449">        assertThat(SideEffectTaskListener.getSideEffect()).isZero();</span>
+
+<span class="nc" id="L451">        CaseInstance caze = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L452">                .caseDefinitionKey(&quot;oneTaskCaseWithForm&quot;)</span>
+<span class="nc" id="L453">                .variables(Collections.singletonMap(&quot;allowValidation&quot;, true))</span>
+<span class="nc" id="L454">                .start();</span>
+<span class="nc" id="L455">        assertThat(SideEffectTaskListener.getSideEffect()).isEqualTo(1);</span>
+<span class="nc" id="L456">        SideEffectTaskListener.reset();</span>
+
+<span class="nc" id="L458">        Task task = cmmnTaskService.createTaskQuery().caseInstanceId(caze.getId()).singleResult();</span>
+
+<span class="nc" id="L460">        when(formRepositoryService.getFormModelById(&quot;formDefId&quot;)).thenReturn(formInfo);</span>
+<span class="nc" id="L461">        doThrow(new RuntimeException(&quot;validation failed for task&quot;))</span>
+<span class="nc" id="L462">                .when(formService)</span>
+<span class="nc" id="L463">                .validateFormFields(task.getTaskDefinitionKey(), &quot;humanTask&quot;, caze.getId(), </span>
+<span class="nc" id="L464">                        caze.getCaseDefinitionId(), ScopeTypes.CMMN, formInfo, null);</span>
+
+<span class="nc" id="L466">        assertThatThrownBy(() -&gt; cmmnTaskService.completeTaskWithForm(task.getId(), &quot;formDefId&quot;, &quot;__COMPLETE&quot;, null))</span>
+<span class="nc" id="L467">                .isInstanceOf(RuntimeException.class)</span>
+<span class="nc" id="L468">                .hasMessage(&quot;validation failed for task&quot;);</span>
+<span class="nc" id="L469">        assertThat(SideEffectTaskListener.getSideEffect()).isZero();</span>
+<span class="nc" id="L470">    }</span>
+
+    @Test
+    public void completeTaskWithoutValidationOnModelLevelBadExpression() {
+<span class="nc" id="L474">        when(formEngineConfiguration.getFormService()).thenReturn(formService);</span>
+<span class="nc" id="L475">        when(formEngineConfiguration.getFormRepositoryService()).thenReturn(formRepositoryService);</span>
+
+<span class="nc" id="L477">        FormInfo formInfo = new FormInfo();</span>
+<span class="nc" id="L478">        when(formRepositoryService.getFormModelById(&quot;formDefId&quot;)).thenReturn(formInfo);</span>
+
+<span class="nc" id="L480">        cmmnEngineConfiguration.getCmmnRepositoryService().createDeployment()</span>
+<span class="nc" id="L481">                .addString(&quot;org/flowable/cmmn/test/oneTasksCaseWithForm.cmmn&quot;, ONE_TASK_CASE</span>
+<span class="nc" id="L482">                        .replace(&quot;CASE_VALIDATE_VALUE&quot;, &quot;true&quot;)</span>
+<span class="nc" id="L483">                        .replace(&quot;TASK_VALIDATE_VALUE&quot;, &quot;${BAD_EXPRESSION}&quot;)</span>
+                )
+<span class="nc" id="L485">                .deploy();</span>
+
+<span class="nc" id="L487">        CaseInstance caze = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L488">                .caseDefinitionKey(&quot;oneTaskCaseWithForm&quot;)</span>
+<span class="nc" id="L489">                .start();</span>
+<span class="nc" id="L490">        Task task = cmmnTaskService.createTaskQuery().caseInstanceId(caze.getId()).singleResult();</span>
+<span class="nc" id="L491">        assertThat(SideEffectTaskListener.getSideEffect()).isEqualTo(1);</span>
+<span class="nc" id="L492">        SideEffectTaskListener.reset();</span>
+
+<span class="nc" id="L494">        assertThatThrownBy(() -&gt; cmmnTaskService.completeTaskWithForm(task.getId(), &quot;formDefId&quot;, &quot;__COMPLETE&quot;, null))</span>
+<span class="nc" id="L495">                .isInstanceOf(RuntimeException.class)</span>
+<span class="nc" id="L496">                .hasMessageStartingWith(&quot;Unknown property used in expression: ${BAD_EXPRESSION}&quot;);</span>
+<span class="nc" id="L497">        assertThat(SideEffectTaskListener.getSideEffect()).isZero();</span>
+<span class="nc" id="L498">    }</span>
+
+    @Test
+    public void completeTaskWithValidationOnModelLevelStringExpression() {
+<span class="nc" id="L502">        cmmnEngineConfiguration.getCmmnRepositoryService().createDeployment()</span>
+<span class="nc" id="L503">                .addString(&quot;org/flowable/cmmn/test/oneTasksCaseWithForm.cmmn&quot;, ONE_TASK_CASE</span>
+<span class="nc" id="L504">                        .replace(&quot;CASE_VALIDATE_VALUE&quot;, &quot;true&quot;)</span>
+<span class="nc" id="L505">                        .replace(&quot;TASK_VALIDATE_VALUE&quot;, &quot;${true}&quot;)</span>
+                )
+<span class="nc" id="L507">                .deploy();</span>
+
+<span class="nc" id="L509">        when(formEngineConfiguration.getFormService()).thenReturn(formService);</span>
+<span class="nc" id="L510">        when(formEngineConfiguration.getFormRepositoryService()).thenReturn(formRepositoryService);</span>
+
+<span class="nc" id="L512">        FormInfo formInfo = new FormInfo();</span>
+<span class="nc" id="L513">        when(formRepositoryService.getFormModelById(&quot;formDefId&quot;)).thenReturn(formInfo);</span>
+        
+<span class="nc" id="L515">        CaseInstance caze = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L516">                .caseDefinitionKey(&quot;oneTaskCaseWithForm&quot;)</span>
+<span class="nc" id="L517">                .start();</span>
+<span class="nc" id="L518">        Task task = cmmnTaskService.createTaskQuery().caseInstanceId(caze.getId()).singleResult();</span>
+<span class="nc" id="L519">        assertThat(SideEffectTaskListener.getSideEffect()).isEqualTo(1);</span>
+<span class="nc" id="L520">        SideEffectTaskListener.reset();</span>
+
+<span class="nc" id="L522">        doThrow(new RuntimeException(&quot;validation failed&quot;))</span>
+<span class="nc" id="L523">                .when(formService)</span>
+<span class="nc" id="L524">                .validateFormFields(task.getTaskDefinitionKey(), &quot;humanTask&quot;, caze.getId(), </span>
+<span class="nc" id="L525">                        caze.getCaseDefinitionId(), ScopeTypes.CMMN, formInfo, null);</span>
+
+<span class="nc" id="L527">        assertThatThrownBy(() -&gt; cmmnTaskService.completeTaskWithForm(task.getId(), &quot;formDefId&quot;, &quot;__COMPLETE&quot;, null))</span>
+<span class="nc" id="L528">                .isExactlyInstanceOf(RuntimeException.class)</span>
+<span class="nc" id="L529">                .hasMessage(&quot;validation failed&quot;);</span>
+<span class="nc" id="L530">        assertThat(SideEffectTaskListener.getSideEffect()).isZero();</span>
+<span class="nc" id="L531">    }</span>
+
+    @Test
+    public void completeTaskWithoutValidationOnMissingModelLevel() {
+<span class="nc" id="L535">        when(formEngineConfiguration.getFormService()).thenReturn(formService);</span>
+<span class="nc" id="L536">        when(formEngineConfiguration.getFormRepositoryService()).thenReturn(formRepositoryService);</span>
+
+<span class="nc" id="L538">        cmmnEngineConfiguration.getCmmnRepositoryService().createDeployment()</span>
+<span class="nc" id="L539">        .addString(&quot;org/flowable/cmmn/test/oneTasksCaseWithForm.cmmn&quot;, ONE_TASK_CASE</span>
+<span class="nc" id="L540">                .replace(&quot;flowable:formFieldValidation=\&quot;CASE_VALIDATE_VALUE\&quot;&quot;, &quot;&quot;)</span>
+<span class="nc" id="L541">                .replace(&quot;flowable:formFieldValidation=\&quot;TASK_VALIDATE_VALUE\&quot;&quot;, &quot;&quot;)</span>
+        )
+<span class="nc" id="L543">        .deploy();</span>
+
+<span class="nc" id="L545">        CaseInstance caze = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L546">                .caseDefinitionKey(&quot;oneTaskCaseWithForm&quot;)</span>
+<span class="nc" id="L547">                .start();</span>
+<span class="nc" id="L548">        Task task = cmmnTaskService.createTaskQuery().caseInstanceId(caze.getId()).singleResult();</span>
+<span class="nc" id="L549">        assertThat(SideEffectTaskListener.getSideEffect()).isEqualTo(1);</span>
+<span class="nc" id="L550">        SideEffectTaskListener.reset();</span>
+        
+<span class="nc" id="L552">        FormInfo formInfo = new FormInfo();</span>
+<span class="nc" id="L553">        when(formRepositoryService.getFormModelById(&quot;formDefId&quot;)).thenReturn(formInfo);</span>
+<span class="nc" id="L554">        doThrow(new RuntimeException(&quot;validation failed&quot;))</span>
+<span class="nc" id="L555">                .when(formService)</span>
+<span class="nc" id="L556">                .validateFormFields(task.getTaskDefinitionKey(), &quot;humanTask&quot;, caze.getId(), </span>
+<span class="nc" id="L557">                        caze.getCaseDefinitionId(), ScopeTypes.CMMN, formInfo, null);</span>
+
+<span class="nc" id="L559">        assertThatThrownBy(() -&gt; cmmnTaskService.completeTaskWithForm(task.getId(), &quot;formDefId&quot;, &quot;__COMPLETE&quot;, null))</span>
+<span class="nc" id="L560">                .isExactlyInstanceOf(RuntimeException.class)</span>
+<span class="nc" id="L561">                .hasMessage(&quot;validation failed&quot;);</span>
+<span class="nc" id="L562">        assertThat(SideEffectTaskListener.getSideEffect()).isZero();</span>
+<span class="nc" id="L563">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

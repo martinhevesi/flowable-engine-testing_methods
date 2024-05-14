@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AcquireTimerJobsLifecycleListenerTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.jobexecutor</a> &gt; <span class="el_source">AcquireTimerJobsLifecycleListenerTest.java</span></div><h1>AcquireTimerJobsLifecycleListenerTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.test.jobexecutor;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Date;
+import java.util.Deque;
+import java.util.LinkedHashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.impl.interceptor.CommandExecutor;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.job.api.Job;
+import org.flowable.job.service.TimerJobService;
+import org.flowable.job.service.impl.asyncexecutor.AcquireJobsRunnableConfiguration;
+import org.flowable.job.service.impl.asyncexecutor.AcquireTimerJobsRunnable;
+import org.flowable.job.service.impl.asyncexecutor.AcquireTimerLifecycleListener;
+import org.flowable.job.service.impl.asyncexecutor.AsyncExecutor;
+import org.flowable.job.service.impl.persistence.entity.TimerJobEntity;
+import org.junit.jupiter.api.Test;
+import org.opentest4j.AssertionFailedError;
+
+/**
+ * @author Filip Hrisafov
+ */
+<span class="nc" id="L49">class AcquireTimerJobsLifecycleListenerTest extends JobExecutorTestCase {</span>
+
+    @Override
+    protected void configureConfiguration(ProcessEngineConfigurationImpl processEngineConfiguration) {
+<span class="nc" id="L53">        super.configureConfiguration(processEngineConfiguration);</span>
+<span class="nc" id="L54">        processEngineConfiguration.getAsyncExecutorConfiguration().setDefaultTimerJobAcquireWaitTime(Duration.ofSeconds(1));</span>
+<span class="nc" id="L55">        processEngineConfiguration.getAsyncExecutorConfiguration().setMaxTimerJobsPerAcquisition(1);</span>
+<span class="nc bnc" id="L56" title="All 2 branches missed.">        if (processEngineConfiguration.getAsyncExecutor() != null) {</span>
+<span class="nc" id="L57">            processEngineConfiguration.getAsyncExecutor().setMaxTimerJobsPerAcquisition(1);</span>
+        }
+<span class="nc" id="L59">    }</span>
+
+    @Test
+    void lifecycleMethodsAreInvoked() throws InterruptedException {
+<span class="nc" id="L63">        Instant now = Instant.now();</span>
+<span class="nc" id="L64">        AsyncExecutor asyncExecutor = processEngineConfiguration.getAsyncExecutor();</span>
+<span class="nc" id="L65">        CountDownLatch waitingLatch = new CountDownLatch(2);</span>
+<span class="nc" id="L66">        TestAcquireTimerLifecycleListener listener = new TestAcquireTimerLifecycleListener(waitingLatch);</span>
+<span class="nc" id="L67">        AcquireTimerJobsRunnable runnable = new AcquireTimerJobsRunnable(asyncExecutor,</span>
+<span class="nc" id="L68">            processEngineConfiguration.getJobServiceConfiguration().getJobManager(), listener, AcquireJobsRunnableConfiguration.DEFAULT, 1);</span>
+
+<span class="nc" id="L70">        CommandExecutor commandExecutor = processEngineConfiguration.getCommandExecutor();</span>
+
+<span class="nc" id="L72">        commandExecutor.execute(commandContext -&gt; {</span>
+
+<span class="nc" id="L74">            TimerJobService timerJobService = CommandContextUtil.getProcessEngineConfiguration(commandContext).getJobServiceConfiguration()</span>
+<span class="nc" id="L75">                    .getTimerJobService();</span>
+
+<span class="nc" id="L77">            TimerJobEntity timer1 = createTweetTimer(&quot;Timer 1&quot;, Date.from(now.plusSeconds(10)));</span>
+<span class="nc" id="L78">            timerJobService.scheduleTimerJob(timer1);</span>
+
+<span class="nc" id="L80">            TimerJobEntity timer2 = createTweetTimer(&quot;Timer 2&quot;, Date.from(now.plusSeconds(20)));</span>
+<span class="nc" id="L81">            timerJobService.scheduleTimerJob(timer2);</span>
+
+<span class="nc" id="L83">            return null;</span>
+        });
+
+<span class="nc" id="L86">        processEngineConfiguration.getClock().setCurrentTime(Date.from(now.plusSeconds(60)));</span>
+
+<span class="nc" id="L88">        assertThat(managementService.createTimerJobQuery().list()).hasSize(2);</span>
+<span class="nc" id="L89">        assertThat(managementService.createJobQuery().list()).isEmpty();</span>
+
+<span class="nc" id="L91">        ExecutorService executorService = Executors.newSingleThreadExecutor();</span>
+<span class="nc" id="L92">        CompletableFuture.runAsync(runnable, executorService);</span>
+
+<span class="nc bnc" id="L94" title="All 2 branches missed.">        if (waitingLatch.await(10, TimeUnit.SECONDS)) {</span>
+<span class="nc" id="L95">            runnable.stop();</span>
+        } else {
+<span class="nc" id="L97">            throw new AssertionFailedError(&quot;Acquire timer runnable did not run twice&quot;);</span>
+        }
+
+<span class="nc" id="L100">        assertThat(managementService.createTimerJobQuery().list()).isEmpty();</span>
+<span class="nc" id="L101">        List&lt;Job&gt; jobs = managementService.createJobQuery().list();</span>
+<span class="nc" id="L102">        assertThat(jobs).hasSize(2);</span>
+
+<span class="nc" id="L104">        jobs.forEach(job -&gt; managementService.deleteJob(job.getId()));</span>
+
+<span class="nc" id="L106">        assertThat(listener.statesByEngine)</span>
+<span class="nc" id="L107">                .containsOnlyKeys(ScopeTypes.BPMN);</span>
+
+<span class="nc" id="L109">        assertThat(listener.statesByEngine.get(ScopeTypes.BPMN))</span>
+<span class="nc" id="L110">                .extracting(State::getJobsAcquired, State::getMaxTimerJobsPerAcquisition, State::getMillisToWait, State::isAcquireCycleStopped)</span>
+<span class="nc" id="L111">                .containsExactly(</span>
+<span class="nc" id="L112">                        tuple(0, 1, 1000L, true),</span>
+<span class="nc" id="L113">                        tuple(0, 1, 1000L, true),</span>
+<span class="nc" id="L114">                        tuple(1, 1, 0L, true),</span>
+<span class="nc" id="L115">                        tuple(1, 1, 0L, true)</span>
+                );
+<span class="nc" id="L117">    }</span>
+
+    static class TestAcquireTimerLifecycleListener implements AcquireTimerLifecycleListener {
+
+        protected final CountDownLatch waitingLatch;
+<span class="nc" id="L122">        protected final Map&lt;String, Deque&lt;State&gt;&gt; statesByEngine = new LinkedHashMap&lt;&gt;();</span>
+
+<span class="nc" id="L124">        TestAcquireTimerLifecycleListener(CountDownLatch waitingLatch) {</span>
+<span class="nc" id="L125">            this.waitingLatch = waitingLatch;</span>
+<span class="nc" id="L126">        }</span>
+
+        @Override
+        public void startAcquiring(String engineName, int maxTimerJobsPerAcquisition) {
+<span class="nc" id="L130">            statesByEngine.computeIfAbsent(engineName, key -&gt; new LinkedList&lt;&gt;()).addFirst(new State());</span>
+<span class="nc" id="L131">        }</span>
+
+        @Override
+        public void stopAcquiring(String engineName) {
+<span class="nc" id="L135">            State state = statesByEngine.get(engineName).getFirst();</span>
+<span class="nc" id="L136">            state.acquireCycleStopped = true;</span>
+<span class="nc" id="L137">        }</span>
+
+        @Override
+        public void acquiredJobs(String engineName, int jobsAcquired, int maxTimerJobsPerAcquisition) {
+<span class="nc" id="L141">            State state = statesByEngine.get(engineName).getFirst();</span>
+<span class="nc" id="L142">            state.jobsAcquired += jobsAcquired;</span>
+<span class="nc" id="L143">            state.maxTimerJobsPerAcquisition = maxTimerJobsPerAcquisition;</span>
+<span class="nc" id="L144">        }</span>
+
+        @Override
+        public void startWaiting(String engineName, long millisToWait) {
+<span class="nc" id="L148">            State state = statesByEngine.get(engineName).getFirst();</span>
+<span class="nc" id="L149">            state.millisToWait = millisToWait;</span>
+<span class="nc" id="L150">            waitingLatch.countDown();</span>
+<span class="nc" id="L151">        }</span>
+    }
+
+<span class="nc" id="L154">    static class State {</span>
+
+<span class="nc" id="L156">        protected int jobsAcquired = 0;</span>
+<span class="nc" id="L157">        protected int maxTimerJobsPerAcquisition = 0;</span>
+<span class="nc" id="L158">        protected long millisToWait = 0;</span>
+        protected boolean acquireCycleStopped;
+
+        public int getJobsAcquired() {
+<span class="nc" id="L162">            return jobsAcquired;</span>
+        }
+
+        public int getMaxTimerJobsPerAcquisition() {
+<span class="nc" id="L166">            return maxTimerJobsPerAcquisition;</span>
+        }
+
+        public long getMillisToWait() {
+<span class="nc" id="L170">            return millisToWait;</span>
+        }
+
+        public boolean isAcquireCycleStopped() {
+<span class="nc" id="L174">            return acquireCycleStopped;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

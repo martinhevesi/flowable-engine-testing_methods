@@ -1,0 +1,701 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DbSqlSession.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.common.engine.impl.db</a> &gt; <span class="el_source">DbSqlSession.java</span></div><h1>DbSqlSession.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.flowable.common.engine.impl.db;
+
+import java.sql.Connection;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.ibatis.session.SqlSession;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.FlowableOptimisticLockingException;
+import org.flowable.common.engine.api.query.CacheAwareQuery;
+import org.flowable.common.engine.impl.Page;
+import org.flowable.common.engine.impl.cfg.IdGenerator;
+import org.flowable.common.engine.impl.interceptor.Session;
+import org.flowable.common.engine.impl.persistence.cache.CachedEntity;
+import org.flowable.common.engine.impl.persistence.cache.EntityCache;
+import org.flowable.common.engine.impl.persistence.entity.AlwaysUpdatedPersistentObject;
+import org.flowable.common.engine.impl.persistence.entity.Entity;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * @author Tom Baeyens
+ * @author Joram Barrez
+ */
+public class DbSqlSession implements Session {
+
+<span class="nc" id="L47">    private static final Logger LOGGER = LoggerFactory.getLogger(DbSqlSession.class);</span>
+
+<span class="nc" id="L49">    public static String[] JDBC_METADATA_TABLE_TYPES = { &quot;TABLE&quot; };</span>
+
+    protected EntityCache entityCache;
+    protected SqlSession sqlSession;
+    protected DbSqlSessionFactory dbSqlSessionFactory;
+    protected String connectionMetadataDefaultCatalog;
+    protected String connectionMetadataDefaultSchema;
+
+<span class="nc" id="L57">    protected Map&lt;Class&lt;? extends Entity&gt;, Map&lt;String, Entity&gt;&gt; insertedObjects = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L58">    protected Map&lt;Class&lt;? extends Entity&gt;, Map&lt;String, Entity&gt;&gt; deletedObjects = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L59">    protected Map&lt;Class&lt;? extends Entity&gt;, List&lt;BulkDeleteOperation&gt;&gt; bulkDeleteOperations = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L60">    protected List&lt;Entity&gt; updatedObjects = new ArrayList&lt;&gt;();</span>
+
+<span class="nc" id="L62">    public DbSqlSession(DbSqlSessionFactory dbSqlSessionFactory, EntityCache entityCache) {</span>
+<span class="nc" id="L63">        this.dbSqlSessionFactory = dbSqlSessionFactory;</span>
+<span class="nc" id="L64">        this.entityCache = entityCache;</span>
+<span class="nc" id="L65">        this.sqlSession = dbSqlSessionFactory.getSqlSessionFactory().openSession();</span>
+<span class="nc" id="L66">    }</span>
+
+<span class="nc" id="L68">    public DbSqlSession(DbSqlSessionFactory dbSqlSessionFactory, EntityCache entityCache, Connection connection, String catalog, String schema) {</span>
+<span class="nc" id="L69">        this.dbSqlSessionFactory = dbSqlSessionFactory;</span>
+<span class="nc" id="L70">        this.entityCache = entityCache;</span>
+<span class="nc" id="L71">        this.sqlSession = dbSqlSessionFactory.getSqlSessionFactory().openSession(connection); // Note the use of connection param here, different from other constructor</span>
+<span class="nc" id="L72">        this.connectionMetadataDefaultCatalog = catalog;</span>
+<span class="nc" id="L73">        this.connectionMetadataDefaultSchema = schema;</span>
+<span class="nc" id="L74">    }</span>
+
+    // insert ///////////////////////////////////////////////////////////////////
+
+    public void insert(Entity entity, IdGenerator idGenerator) {
+<span class="nc bnc" id="L79" title="All 2 branches missed.">        if (entity.getId() == null) {</span>
+<span class="nc" id="L80">            String id = idGenerator.getNextId();</span>
+<span class="nc bnc" id="L81" title="All 2 branches missed.">            if (dbSqlSessionFactory.isUsePrefixId()) {</span>
+<span class="nc" id="L82">                id = entity.getIdPrefix() + id;</span>
+            }
+<span class="nc" id="L84">            entity.setId(id);</span>
+        }
+        
+<span class="nc" id="L87">        Class&lt;? extends Entity&gt; clazz = entity.getClass();</span>
+<span class="nc bnc" id="L88" title="All 2 branches missed.">        if (!insertedObjects.containsKey(clazz)) {</span>
+<span class="nc" id="L89">            insertedObjects.put(clazz, new LinkedHashMap&lt;&gt;()); // order of insert is important, hence LinkedHashMap</span>
+        }
+
+<span class="nc" id="L92">        insertedObjects.get(clazz).put(entity.getId(), entity);</span>
+<span class="nc" id="L93">        entityCache.put(entity, false); // False -&gt; entity is inserted, so always changed</span>
+<span class="nc" id="L94">        entity.setInserted(true);</span>
+<span class="nc" id="L95">    }</span>
+    
+    public int directInsert(String statement, Object parameters) {
+<span class="nc" id="L98">        String insertStatement = dbSqlSessionFactory.mapStatement(statement);</span>
+<span class="nc" id="L99">        return getSqlSession().insert(insertStatement, parameters);</span>
+    }
+
+    // update
+    // ///////////////////////////////////////////////////////////////////
+
+    public void update(Entity entity) {
+<span class="nc" id="L106">        entityCache.put(entity, false); // false -&gt; we don't store state, meaning it will always be seen as changed</span>
+<span class="nc" id="L107">        entity.setUpdated(true);</span>
+<span class="nc" id="L108">    }</span>
+
+    public int directUpdate(String statement, Object parameters) {
+<span class="nc" id="L111">        String updateStatement = dbSqlSessionFactory.mapStatement(statement);</span>
+<span class="nc" id="L112">        return getSqlSession().update(updateStatement, parameters);</span>
+    }
+
+    // delete
+    // ///////////////////////////////////////////////////////////////////
+
+    /**
+     * Executes a {@link BulkDeleteOperation}, with the sql in the statement parameter.
+     * The passed class determines when this operation will be executed: it will be executed depending on the place of the class in the EntityDependencyOrder.
+     */
+    public void delete(String statement, Object parameter, Class&lt;? extends Entity&gt; entityClass) {
+<span class="nc bnc" id="L123" title="All 2 branches missed.">        if (!bulkDeleteOperations.containsKey(entityClass)) {</span>
+<span class="nc" id="L124">            bulkDeleteOperations.put(entityClass, new ArrayList&lt;&gt;(1));</span>
+        }
+<span class="nc" id="L126">        bulkDeleteOperations.get(entityClass).add(new BulkDeleteOperation(dbSqlSessionFactory.mapStatement(statement), parameter));</span>
+<span class="nc" id="L127">    }</span>
+
+    public void delete(Entity entity) {
+<span class="nc" id="L130">        Class&lt;? extends Entity&gt; clazz = entity.getClass();</span>
+<span class="nc bnc" id="L131" title="All 2 branches missed.">        if (!deletedObjects.containsKey(clazz)) {</span>
+<span class="nc" id="L132">            deletedObjects.put(clazz, new LinkedHashMap&lt;&gt;()); // order of insert is important, hence LinkedHashMap</span>
+        }
+<span class="nc" id="L134">        deletedObjects.get(clazz).put(entity.getId(), entity);</span>
+<span class="nc" id="L135">        entity.setDeleted(true);</span>
+<span class="nc" id="L136">    }</span>
+
+    // select
+    // ///////////////////////////////////////////////////////////////////
+
+    @SuppressWarnings({ &quot;rawtypes&quot; })
+    public List selectList(String statement) {
+<span class="nc" id="L143">        return selectList(statement, null, -1, -1);</span>
+    }
+
+    @SuppressWarnings(&quot;rawtypes&quot;)
+    public List selectList(String statement, Object parameter) {
+<span class="nc" id="L148">        return selectList(statement, parameter, -1, -1);</span>
+    }
+
+    @SuppressWarnings(&quot;rawtypes&quot;)
+    public List selectList(String statement, Object parameter, Page page) {
+<span class="nc bnc" id="L153" title="All 2 branches missed.">        if (page != null) {</span>
+<span class="nc" id="L154">            return selectList(statement, parameter, page.getFirstResult(), page.getMaxResults());</span>
+        } else {
+<span class="nc" id="L156">            return selectList(statement, parameter, -1, -1);</span>
+        }
+    }
+
+    @SuppressWarnings(&quot;rawtypes&quot;)
+    public List selectList(String statement, ListQueryParameterObject parameter) {
+<span class="nc" id="L162">        parameter.setDatabaseType(dbSqlSessionFactory.getDatabaseType());</span>
+<span class="nc" id="L163">        return selectListWithRawParameter(statement, parameter);</span>
+    }
+    
+    @SuppressWarnings(&quot;rawtypes&quot;)
+    public List selectList(String statement, ListQueryParameterObject parameter, Class entityClass) {
+<span class="nc" id="L168">        parameter.setDatabaseType(dbSqlSessionFactory.getDatabaseType());</span>
+<span class="nc bnc" id="L169" title="All 2 branches missed.">        if (parameter instanceof CacheAwareQuery) {</span>
+<span class="nc" id="L170">            return queryWithRawParameter(statement, (CacheAwareQuery) parameter, entityClass, true);</span>
+        } else {
+<span class="nc" id="L172">            return selectListWithRawParameter(statement, parameter);</span>
+        }
+    }
+
+    @SuppressWarnings(&quot;rawtypes&quot;)
+    public List selectList(String statement, Object parameter, int firstResult, int maxResults) {
+<span class="nc" id="L178">        return selectList(statement, new ListQueryParameterObject(parameter, firstResult, maxResults));</span>
+    }
+
+    @SuppressWarnings(&quot;rawtypes&quot;)
+    public List selectListNoCacheLoadAndStore(String statement, Object parameter) {
+<span class="nc" id="L183">        return selectListWithRawParameter(statement, new ListQueryParameterObject(parameter, -1, -1), false);</span>
+    }
+
+    @SuppressWarnings({ &quot;rawtypes&quot; })
+    public List selectListWithRawParameterNoCacheLoadAndStore(String statement, Object parameter) {
+<span class="nc" id="L188">        return selectListWithRawParameter(statement, parameter, false);</span>
+    }
+
+    @SuppressWarnings({ &quot;rawtypes&quot; })
+    public List selectListWithRawParameterNoCacheLoadAndStore(String statement, ListQueryParameterObject parameter, Class entityClass) {
+<span class="nc" id="L193">        parameter.setDatabaseType(dbSqlSessionFactory.getDatabaseType());</span>
+        
+<span class="nc bnc" id="L195" title="All 2 branches missed.">        if (parameter instanceof CacheAwareQuery) {</span>
+<span class="nc" id="L196">            return queryWithRawParameter(statement, (CacheAwareQuery) parameter, entityClass, false);</span>
+        } else {
+<span class="nc" id="L198">            return selectListWithRawParameter(statement, parameter, false);</span>
+        }
+    }
+    
+    @SuppressWarnings({ &quot;rawtypes&quot; })
+    public List selectListWithRawParameterNoCacheLoadAndStore(String statement, ListQueryParameterObject parameter) {
+<span class="nc" id="L204">        parameter.setDatabaseType(dbSqlSessionFactory.getDatabaseType());</span>
+<span class="nc" id="L205">        return selectListWithRawParameter(statement, parameter, false);</span>
+    }
+
+    @SuppressWarnings(&quot;rawtypes&quot;)
+    public List selectListNoCacheLoadAndStore(String statement, ListQueryParameterObject parameter, Class entityClass) {
+<span class="nc" id="L210">        ListQueryParameterObject parameterToUse = parameter;</span>
+<span class="nc bnc" id="L211" title="All 2 branches missed.">        if (parameterToUse == null) {</span>
+<span class="nc" id="L212">            parameterToUse = new ListQueryParameterObject();</span>
+        }
+<span class="nc" id="L214">        parameterToUse.setDatabaseType(dbSqlSessionFactory.getDatabaseType());</span>
+        
+<span class="nc bnc" id="L216" title="All 2 branches missed.">        if (parameter instanceof CacheAwareQuery) {</span>
+<span class="nc" id="L217">            return queryWithRawParameter(statement, (CacheAwareQuery) parameter, entityClass, false);</span>
+        } else {
+<span class="nc" id="L219">            return selectListWithRawParameter(statement, parameterToUse, false);</span>
+        }
+    }
+    
+    @SuppressWarnings(&quot;rawtypes&quot;)
+    public List selectListNoCacheLoadAndStore(String statement, ListQueryParameterObject parameter) {
+<span class="nc" id="L225">        ListQueryParameterObject parameterToUse = parameter;</span>
+<span class="nc bnc" id="L226" title="All 2 branches missed.">        if (parameterToUse == null) {</span>
+<span class="nc" id="L227">            parameterToUse = new ListQueryParameterObject();</span>
+        }
+<span class="nc" id="L229">        parameterToUse.setDatabaseType(dbSqlSessionFactory.getDatabaseType());</span>
+        
+<span class="nc" id="L231">        return selectListWithRawParameter(statement, parameterToUse, false);</span>
+    }
+
+    @SuppressWarnings(&quot;rawtypes&quot;)
+    public List selectListWithRawParameter(String statement, Object parameter) {
+        // All other selectList methods eventually end up here, passing it into the method
+        // with the useCache parameter. By default true, which means everything is cached.
+        // Dedicated xNoCacheCheck methods will pass a false for that setting.
+<span class="nc" id="L239">        return selectListWithRawParameter(statement, parameter, true);</span>
+    }
+
+    @SuppressWarnings({ &quot;rawtypes&quot;, &quot;unchecked&quot; })
+    public List queryWithRawParameter(String statement, CacheAwareQuery parameter, Class entityClass, boolean cacheLoadAndStore) {
+<span class="nc bnc" id="L244" title="All 4 branches missed.">        if (parameter.getId() != null &amp;&amp; !parameter.getId().isEmpty()) {</span>
+<span class="nc" id="L245">            Object entity = entityCache.findInCache(entityClass, parameter.getId());</span>
+<span class="nc bnc" id="L246" title="All 2 branches missed.">            if (entity != null) {</span>
+<span class="nc" id="L247">                List resultList = new ArrayList&lt;&gt;();</span>
+                // enhance the cached entity
+<span class="nc" id="L249">                parameter.enhanceCachedValue(entity);</span>
+<span class="nc" id="L250">                resultList.add(entity);</span>
+<span class="nc" id="L251">                return resultList;</span>
+            }
+        }
+        
+<span class="nc" id="L255">        return selectListWithRawParameter(statement, parameter, cacheLoadAndStore);</span>
+    }
+    
+    @SuppressWarnings({ &quot;rawtypes&quot;, &quot;unchecked&quot; })
+    public List queryWithRawParameterNoCacheLoadAndStore(String statement, CacheAwareQuery parameter, Class entityClass) {
+<span class="nc bnc" id="L260" title="All 4 branches missed.">        if (parameter.getId() != null &amp;&amp; !parameter.getId().isEmpty()) {</span>
+<span class="nc" id="L261">            Object entity = entityCache.findInCache(entityClass, parameter.getId());</span>
+<span class="nc bnc" id="L262" title="All 2 branches missed.">            if (entity != null) {</span>
+<span class="nc" id="L263">                List resultList = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L264">                resultList.add(entity);</span>
+<span class="nc" id="L265">                return resultList;</span>
+            }
+        }
+        
+<span class="nc" id="L269">        statement = dbSqlSessionFactory.mapStatement(statement);</span>
+<span class="nc" id="L270">        return sqlSession.selectList(statement, parameter);</span>
+    }
+        
+    @SuppressWarnings({ &quot;rawtypes&quot;, &quot;unchecked&quot; })
+    public List selectListWithRawParameter(String statement, Object parameter, boolean useCache) {
+<span class="nc" id="L275">        statement = dbSqlSessionFactory.mapStatement(statement);</span>
+<span class="nc" id="L276">        List loadedObjects = sqlSession.selectList(statement, parameter);</span>
+<span class="nc bnc" id="L277" title="All 2 branches missed.">        if (useCache) {</span>
+<span class="nc" id="L278">            return cacheLoadOrStore(loadedObjects, parameter);</span>
+        } else {
+<span class="nc" id="L280">            return loadedObjects;</span>
+        }
+    }
+    
+    public Object selectOne(String statement, Object parameter) {
+<span class="nc" id="L285">        statement = dbSqlSessionFactory.mapStatement(statement);</span>
+<span class="nc" id="L286">        Object result = sqlSession.selectOne(statement, parameter);</span>
+<span class="nc bnc" id="L287" title="All 2 branches missed.">        if (result instanceof Entity) {</span>
+<span class="nc" id="L288">            Entity loadedObject = (Entity) result;</span>
+<span class="nc" id="L289">            result = cacheLoadOrStore(loadedObject, parameter);</span>
+        }
+<span class="nc" id="L291">        return result;</span>
+    }
+
+    public &lt;T extends Entity&gt; T selectById(Class&lt;T&gt; entityClass, String id) {
+<span class="nc" id="L295">        return selectById(entityClass, id, true);</span>
+    }
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    public &lt;T extends Entity&gt; T selectById(Class&lt;T&gt; entityClass, String id, boolean useCache) {
+<span class="nc" id="L300">        T entity = null;</span>
+
+<span class="nc bnc" id="L302" title="All 2 branches missed.">        if (useCache) {</span>
+<span class="nc" id="L303">            entity = entityCache.findInCache(entityClass, id);</span>
+<span class="nc bnc" id="L304" title="All 2 branches missed.">            if (entity != null) {</span>
+<span class="nc" id="L305">                return entity;</span>
+            }
+        }
+
+<span class="nc" id="L309">        String selectStatement = dbSqlSessionFactory.getSelectStatement(entityClass);</span>
+<span class="nc" id="L310">        selectStatement = dbSqlSessionFactory.mapStatement(selectStatement);</span>
+<span class="nc" id="L311">        entity = (T) sqlSession.selectOne(selectStatement, id);</span>
+<span class="nc bnc" id="L312" title="All 2 branches missed.">        if (entity == null) {</span>
+<span class="nc" id="L313">            return null;</span>
+        }
+
+<span class="nc" id="L316">        entityCache.put(entity, true); // true -&gt; store state so we can see later if it is updated later on</span>
+<span class="nc" id="L317">        return entity;</span>
+    }
+
+    // internal session cache
+    // ///////////////////////////////////////////////////
+
+    @SuppressWarnings(&quot;rawtypes&quot;)
+    protected List cacheLoadOrStore(List&lt;Object&gt; loadedObjects, Object parameter) {
+<span class="nc bnc" id="L325" title="All 2 branches missed.">        if (loadedObjects.isEmpty()) {</span>
+<span class="nc" id="L326">            return loadedObjects;</span>
+        }
+<span class="nc bnc" id="L328" title="All 2 branches missed.">        if (!(loadedObjects.get(0) instanceof Entity)) {</span>
+<span class="nc" id="L329">            return loadedObjects;</span>
+        }
+
+<span class="nc" id="L332">        List&lt;Entity&gt; filteredObjects = new ArrayList&lt;&gt;(loadedObjects.size());</span>
+<span class="nc bnc" id="L333" title="All 2 branches missed.">        for (Object loadedObject : loadedObjects) {</span>
+<span class="nc" id="L334">            Entity cachedEntity = cacheLoadOrStore((Entity) loadedObject, parameter);</span>
+<span class="nc" id="L335">            filteredObjects.add(cachedEntity);</span>
+<span class="nc" id="L336">        }</span>
+<span class="nc" id="L337">        return filteredObjects;</span>
+    }
+
+    /**
+     * Returns the object in the cache. If this object was loaded before, then the original object is returned (the cached version is more recent). If this is the first time this object is loaded,
+     * then the loadedObject is added to the cache.
+     */
+    protected Entity cacheLoadOrStore(Entity entity, Object parameter) {
+<span class="nc" id="L345">        Entity cachedEntity = entityCache.findInCache(entity.getClass(), entity.getId());</span>
+<span class="nc bnc" id="L346" title="All 2 branches missed.">        if (cachedEntity != null) {</span>
+<span class="nc bnc" id="L347" title="All 2 branches missed.">            if (parameter instanceof CacheAwareQuery) {</span>
+<span class="nc" id="L348">                ((CacheAwareQuery) parameter).enhanceCachedValue(cachedEntity);</span>
+            }
+<span class="nc" id="L350">            return cachedEntity;</span>
+        }
+<span class="nc" id="L352">        entityCache.put(entity, true);</span>
+<span class="nc" id="L353">        return entity;</span>
+    }
+
+    // flush
+    // ////////////////////////////////////////////////////////////////////
+
+    @Override
+    public void flush() {
+<span class="nc" id="L361">        determineUpdatedObjects(); // Needs to be done before the removeUnnecessaryOperations, as removeUnnecessaryOperations will remove stuff from the cache</span>
+<span class="nc" id="L362">        removeUnnecessaryOperations();</span>
+
+<span class="nc bnc" id="L364" title="All 2 branches missed.">        if (LOGGER.isDebugEnabled()) {</span>
+<span class="nc" id="L365">            debugFlush();</span>
+        }
+
+<span class="nc" id="L368">        flushInserts();</span>
+<span class="nc" id="L369">        flushUpdates();</span>
+<span class="nc" id="L370">        flushDeletes();</span>
+<span class="nc" id="L371">    }</span>
+
+    /**
+     * Clears all deleted and inserted objects from the cache, and removes inserts and deletes that cancel each other.
+     *
+     * Also removes deletes with duplicate ids.
+     */
+    protected void removeUnnecessaryOperations() {
+
+<span class="nc bnc" id="L380" title="All 2 branches missed.">        for (Class&lt;? extends Entity&gt; entityClass : deletedObjects.keySet()) {</span>
+
+            // Collect ids of deleted entities + remove duplicates
+<span class="nc" id="L383">            Set&lt;String&gt; ids = new HashSet&lt;&gt;();</span>
+<span class="nc" id="L384">            Iterator&lt;Entity&gt; entitiesToDeleteIterator = deletedObjects.get(entityClass).values().iterator();</span>
+<span class="nc bnc" id="L385" title="All 2 branches missed.">            while (entitiesToDeleteIterator.hasNext()) {</span>
+<span class="nc" id="L386">                Entity entityToDelete = entitiesToDeleteIterator.next();</span>
+<span class="nc bnc" id="L387" title="All 4 branches missed.">                if (entityToDelete.getId() != null &amp;&amp; !ids.contains(entityToDelete.getId())) {</span>
+<span class="nc" id="L388">                    ids.add(entityToDelete.getId());</span>
+                } else {
+<span class="nc" id="L390">                    entitiesToDeleteIterator.remove(); // Removing duplicate deletes or entities without id</span>
+                }
+<span class="nc" id="L392">            }</span>
+
+            // Now we have the deleted ids, we can remove the inserted objects (as they cancel each other)
+<span class="nc bnc" id="L395" title="All 2 branches missed.">            for (String id : ids) {</span>
+<span class="nc bnc" id="L396" title="All 4 branches missed.">                if (insertedObjects.containsKey(entityClass) &amp;&amp; insertedObjects.get(entityClass).containsKey(id)) {</span>
+<span class="nc" id="L397">                    insertedObjects.get(entityClass).remove(id);</span>
+<span class="nc" id="L398">                    deletedObjects.get(entityClass).remove(id);</span>
+                }
+<span class="nc" id="L400">            }</span>
+
+<span class="nc" id="L402">        }</span>
+<span class="nc" id="L403">    }</span>
+
+    public void determineUpdatedObjects() {
+<span class="nc" id="L406">        updatedObjects = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L407">        Map&lt;Class&lt;?&gt;, Map&lt;String, CachedEntity&gt;&gt; cachedObjects = entityCache.getAllCachedEntities();</span>
+<span class="nc bnc" id="L408" title="All 2 branches missed.">        for (Class&lt;?&gt; clazz : cachedObjects.keySet()) {</span>
+
+<span class="nc" id="L410">            Map&lt;String, CachedEntity&gt; classCache = cachedObjects.get(clazz);</span>
+<span class="nc bnc" id="L411" title="All 2 branches missed.">            for (CachedEntity cachedObject : classCache.values()) {</span>
+
+<span class="nc" id="L413">                Entity cachedEntity = cachedObject.getEntity();</span>
+
+                // Executions are stored as a hierarchical tree, and updates are important to execute
+                // even when the execution are deleted, as they can change the parent-child relationships.
+                // For the other entities, this is not applicable and an update can be discarded when an update follows.
+
+<span class="nc bnc" id="L419" title="All 4 branches missed.">                if (!isEntityInserted(cachedEntity) &amp;&amp;</span>
+<span class="nc bnc" id="L420" title="All 2 branches missed.">                        (cachedEntity instanceof AlwaysUpdatedPersistentObject || !isEntityToBeDeleted(cachedEntity)) &amp;&amp;</span>
+<span class="nc bnc" id="L421" title="All 2 branches missed.">                        cachedObject.hasChanged()) {</span>
+
+<span class="nc" id="L423">                    updatedObjects.add(cachedEntity);</span>
+                }
+<span class="nc" id="L425">            }</span>
+<span class="nc" id="L426">        }</span>
+<span class="nc" id="L427">    }</span>
+
+    protected void debugFlush() {
+<span class="nc" id="L430">        LOGGER.debug(&quot;Flushing dbSqlSession&quot;);</span>
+<span class="nc" id="L431">        int nrOfInserts = 0;</span>
+<span class="nc" id="L432">        int nrOfUpdates = 0;</span>
+<span class="nc" id="L433">        int nrOfDeletes = 0;</span>
+<span class="nc bnc" id="L434" title="All 2 branches missed.">        for (Map&lt;String, Entity&gt; insertedObjectMap : insertedObjects.values()) {</span>
+<span class="nc bnc" id="L435" title="All 2 branches missed.">            for (Entity insertedObject : insertedObjectMap.values()) {</span>
+<span class="nc" id="L436">                LOGGER.debug(&quot;insert {}&quot;, insertedObject);</span>
+<span class="nc" id="L437">                nrOfInserts++;</span>
+<span class="nc" id="L438">            }</span>
+<span class="nc" id="L439">        }</span>
+<span class="nc bnc" id="L440" title="All 2 branches missed.">        for (Entity updatedObject : updatedObjects) {</span>
+<span class="nc" id="L441">            LOGGER.debug(&quot;update {}&quot;, updatedObject);</span>
+<span class="nc" id="L442">            nrOfUpdates++;</span>
+<span class="nc" id="L443">        }</span>
+<span class="nc bnc" id="L444" title="All 2 branches missed.">        for (Map&lt;String, Entity&gt; deletedObjectMap : deletedObjects.values()) {</span>
+<span class="nc bnc" id="L445" title="All 2 branches missed.">            for (Entity deletedObject : deletedObjectMap.values()) {</span>
+<span class="nc" id="L446">                LOGGER.debug(&quot;delete {} with id {}&quot;, deletedObject, deletedObject.getId());</span>
+<span class="nc" id="L447">                nrOfDeletes++;</span>
+<span class="nc" id="L448">            }</span>
+<span class="nc" id="L449">        }</span>
+<span class="nc bnc" id="L450" title="All 2 branches missed.">        for (Collection&lt;BulkDeleteOperation&gt; bulkDeleteOperationList : bulkDeleteOperations.values()) {</span>
+<span class="nc bnc" id="L451" title="All 2 branches missed.">            for (BulkDeleteOperation bulkDeleteOperation : bulkDeleteOperationList) {</span>
+<span class="nc" id="L452">                LOGGER.debug(&quot;{}&quot;, bulkDeleteOperation);</span>
+<span class="nc" id="L453">                nrOfDeletes++;</span>
+<span class="nc" id="L454">            }</span>
+<span class="nc" id="L455">        }</span>
+<span class="nc" id="L456">        LOGGER.debug(&quot;flush summary: {} insert, {} update, {} delete.&quot;, nrOfInserts, nrOfUpdates, nrOfDeletes);</span>
+<span class="nc" id="L457">        LOGGER.debug(&quot;now executing flush...&quot;);</span>
+<span class="nc" id="L458">    }</span>
+
+    public boolean isEntityInserted(Entity entity) {
+<span class="nc" id="L461">        return isEntityInserted(entity.getClass(), entity.getId());</span>
+    }
+    
+    public boolean isEntityInserted(Class&lt;?&gt; entityClass, String entityId) {
+<span class="nc bnc" id="L465" title="All 2 branches missed.">        return insertedObjects.containsKey(entityClass)</span>
+<span class="nc bnc" id="L466" title="All 2 branches missed.">                &amp;&amp; insertedObjects.get(entityClass).containsKey(entityId);</span>
+    }
+
+    public boolean isEntityToBeDeleted(Entity entity) {
+<span class="nc bnc" id="L470" title="All 2 branches missed.">        return (deletedObjects.containsKey(entity.getClass())</span>
+<span class="nc bnc" id="L471" title="All 4 branches missed.">                &amp;&amp; deletedObjects.get(entity.getClass()).containsKey(entity.getId())) || entity.isDeleted();</span>
+    }
+
+    protected void flushInserts() {
+
+<span class="nc bnc" id="L476" title="All 2 branches missed.">        if (insertedObjects.size() == 0) {</span>
+<span class="nc" id="L477">            return;</span>
+        }
+        
+        // Handle in entity dependency order
+<span class="nc bnc" id="L481" title="All 2 branches missed.">        for (Class&lt;? extends Entity&gt; entityClass : dbSqlSessionFactory.getInsertionOrder()) {</span>
+<span class="nc bnc" id="L482" title="All 2 branches missed.">            if (insertedObjects.containsKey(entityClass)) {</span>
+<span class="nc" id="L483">                flushInsertEntities(entityClass, insertedObjects.get(entityClass).values());</span>
+<span class="nc" id="L484">                insertedObjects.remove(entityClass);</span>
+            }
+<span class="nc" id="L486">        }</span>
+
+        // Next, in case of custom entities or we've screwed up and forgotten some entity
+<span class="nc bnc" id="L489" title="All 2 branches missed.">        if (insertedObjects.size() &gt; 0) {</span>
+<span class="nc bnc" id="L490" title="All 2 branches missed.">            for (Class&lt;? extends Entity&gt; entityClass : insertedObjects.keySet()) {</span>
+<span class="nc" id="L491">                flushInsertEntities(entityClass, insertedObjects.get(entityClass).values());</span>
+<span class="nc" id="L492">            }</span>
+        }
+
+<span class="nc" id="L495">        insertedObjects.clear();</span>
+<span class="nc" id="L496">    }</span>
+
+    protected void flushInsertEntities(Class&lt;? extends Entity&gt; entityClass, Collection&lt;Entity&gt; entitiesToInsert) {
+<span class="nc bnc" id="L499" title="All 2 branches missed.">        if (entitiesToInsert.size() == 1) {</span>
+<span class="nc" id="L500">            flushRegularInsert(entitiesToInsert.iterator().next(), entityClass);</span>
+<span class="nc bnc" id="L501" title="All 2 branches missed.">        } else if (Boolean.FALSE.equals(dbSqlSessionFactory.isBulkInsertable(entityClass))) {</span>
+<span class="nc bnc" id="L502" title="All 2 branches missed.">            for (Entity entity : entitiesToInsert) {</span>
+<span class="nc" id="L503">                flushRegularInsert(entity, entityClass);</span>
+<span class="nc" id="L504">            }</span>
+        } else {
+<span class="nc" id="L506">            flushBulkInsert(entitiesToInsert, entityClass);</span>
+        }
+<span class="nc" id="L508">    }</span>
+
+    protected void flushRegularInsert(Entity entity, Class&lt;? extends Entity&gt; clazz) {
+<span class="nc" id="L511">        String insertStatement = dbSqlSessionFactory.getInsertStatement(entity);</span>
+<span class="nc" id="L512">        insertStatement = dbSqlSessionFactory.mapStatement(insertStatement);</span>
+
+<span class="nc bnc" id="L514" title="All 2 branches missed.">        if (insertStatement == null) {</span>
+<span class="nc" id="L515">            throw new FlowableException(&quot;no insert statement for &quot; + entity.getClass() + &quot; in the ibatis mapping files&quot;);</span>
+        }
+
+<span class="nc" id="L518">        LOGGER.debug(&quot;inserting: {}&quot;, entity);</span>
+<span class="nc" id="L519">        sqlSession.insert(insertStatement, entity);</span>
+
+        // See https://activiti.atlassian.net/browse/ACT-1290
+<span class="nc bnc" id="L522" title="All 2 branches missed.">        if (entity instanceof HasRevision) {</span>
+<span class="nc" id="L523">            incrementRevision(entity);</span>
+        }
+<span class="nc" id="L525">    }</span>
+
+    protected void flushBulkInsert(Collection&lt;Entity&gt; entities, Class&lt;? extends Entity&gt; clazz) {
+<span class="nc" id="L528">        String insertStatement = dbSqlSessionFactory.getBulkInsertStatement(clazz);</span>
+<span class="nc" id="L529">        insertStatement = dbSqlSessionFactory.mapStatement(insertStatement);</span>
+
+<span class="nc bnc" id="L531" title="All 2 branches missed.">        if (insertStatement == null) {</span>
+<span class="nc" id="L532">            throw new FlowableException(&quot;no insert statement for &quot; + entities.iterator().next().getClass() + &quot; in the ibatis mapping files&quot;);</span>
+        }
+
+<span class="nc" id="L535">        Iterator&lt;Entity&gt; entityIterator = entities.iterator();</span>
+<span class="nc" id="L536">        Boolean hasRevision = null;</span>
+
+<span class="nc bnc" id="L538" title="All 2 branches missed.">        while (entityIterator.hasNext()) {</span>
+<span class="nc" id="L539">            List&lt;Entity&gt; subList = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L540">            int index = 0;</span>
+<span class="nc bnc" id="L541" title="All 4 branches missed.">            while (entityIterator.hasNext() &amp;&amp; index &lt; dbSqlSessionFactory.getMaxNrOfStatementsInBulkInsert()) {</span>
+<span class="nc" id="L542">                Entity entity = entityIterator.next();</span>
+<span class="nc" id="L543">                subList.add(entity);</span>
+
+<span class="nc bnc" id="L545" title="All 2 branches missed.">                if (hasRevision == null) {</span>
+<span class="nc" id="L546">                    hasRevision = entity instanceof HasRevision;</span>
+                }
+<span class="nc" id="L548">                index++;</span>
+<span class="nc" id="L549">            }</span>
+<span class="nc" id="L550">            sqlSession.insert(insertStatement, subList);</span>
+<span class="nc" id="L551">        }</span>
+
+<span class="nc bnc" id="L553" title="All 4 branches missed.">        if (hasRevision != null &amp;&amp; hasRevision) {</span>
+<span class="nc" id="L554">            entityIterator = entities.iterator();</span>
+<span class="nc bnc" id="L555" title="All 2 branches missed.">            while (entityIterator.hasNext()) {</span>
+<span class="nc" id="L556">                incrementRevision(entityIterator.next());</span>
+            }
+        }
+
+<span class="nc" id="L560">    }</span>
+
+    protected void incrementRevision(Entity insertedObject) {
+<span class="nc" id="L563">        HasRevision revisionEntity = (HasRevision) insertedObject;</span>
+<span class="nc bnc" id="L564" title="All 2 branches missed.">        if (revisionEntity.getRevision() == 0) {</span>
+<span class="nc" id="L565">            revisionEntity.setRevision(revisionEntity.getRevisionNext());</span>
+        }
+<span class="nc" id="L567">    }</span>
+
+    protected void flushUpdates() {
+<span class="nc bnc" id="L570" title="All 2 branches missed.">        for (Entity updatedObject : updatedObjects) {</span>
+<span class="nc" id="L571">            String updateStatement = dbSqlSessionFactory.getUpdateStatement(updatedObject);</span>
+<span class="nc" id="L572">            updateStatement = dbSqlSessionFactory.mapStatement(updateStatement);</span>
+
+<span class="nc bnc" id="L574" title="All 2 branches missed.">            if (updateStatement == null) {</span>
+<span class="nc" id="L575">                throw new FlowableException(&quot;no update statement for &quot; + updatedObject.getClass() + &quot; in the ibatis mapping files&quot;);</span>
+            }
+
+<span class="nc" id="L578">            LOGGER.debug(&quot;updating: {}&quot;, updatedObject);</span>
+
+<span class="nc" id="L580">            int updatedRecords = sqlSession.update(updateStatement, updatedObject);</span>
+<span class="nc bnc" id="L581" title="All 2 branches missed.">            if (updatedRecords == 0) {</span>
+<span class="nc" id="L582">                throw new FlowableOptimisticLockingException(updatedObject + &quot; was updated by another transaction concurrently&quot;);</span>
+            }
+
+            // See https://activiti.atlassian.net/browse/ACT-1290
+<span class="nc bnc" id="L586" title="All 2 branches missed.">            if (updatedObject instanceof HasRevision) {</span>
+<span class="nc" id="L587">                ((HasRevision) updatedObject).setRevision(((HasRevision) updatedObject).getRevisionNext());</span>
+            }
+
+<span class="nc" id="L590">        }</span>
+<span class="nc" id="L591">        updatedObjects.clear();</span>
+<span class="nc" id="L592">    }</span>
+
+    protected void flushDeletes() {
+
+<span class="nc bnc" id="L596" title="All 4 branches missed.">        if (deletedObjects.size() == 0 &amp;&amp; bulkDeleteOperations.size() == 0) {</span>
+<span class="nc" id="L597">            return;</span>
+        }
+
+        // Handle in entity dependency order
+<span class="nc bnc" id="L601" title="All 2 branches missed.">        for (Class&lt;? extends Entity&gt; entityClass : dbSqlSessionFactory.getDeletionOrder()) {</span>
+<span class="nc bnc" id="L602" title="All 2 branches missed.">            if (deletedObjects.containsKey(entityClass)) {</span>
+<span class="nc" id="L603">                flushDeleteEntities(entityClass, deletedObjects.get(entityClass).values());</span>
+<span class="nc" id="L604">                deletedObjects.remove(entityClass);</span>
+            }
+<span class="nc" id="L606">            flushBulkDeletes(entityClass, this.bulkDeleteOperations.remove(entityClass));</span>
+<span class="nc" id="L607">        }</span>
+
+        // Next, in case of custom entities or we've screwed up and forgotten some entity
+<span class="nc bnc" id="L610" title="All 2 branches missed.">        if (deletedObjects.size() &gt; 0) {</span>
+<span class="nc bnc" id="L611" title="All 2 branches missed.">            for (Class&lt;? extends Entity&gt; entityClass : deletedObjects.keySet()) {</span>
+<span class="nc" id="L612">                flushDeleteEntities(entityClass, deletedObjects.get(entityClass).values());</span>
+<span class="nc" id="L613">                flushBulkDeletes(entityClass, this.bulkDeleteOperations.remove(entityClass));</span>
+<span class="nc" id="L614">            }</span>
+        }
+
+        // Last, in case there are still some pending entities or we have forgotten an entity for the bulk operations
+<span class="nc bnc" id="L618" title="All 2 branches missed.">        if (!bulkDeleteOperations.isEmpty()) {</span>
+<span class="nc" id="L619">            bulkDeleteOperations.forEach(this::flushBulkDeletes);</span>
+        }
+
+<span class="nc" id="L622">        deletedObjects.clear();</span>
+<span class="nc" id="L623">        bulkDeleteOperations.clear();</span>
+<span class="nc" id="L624">    }</span>
+
+    protected void flushBulkDeletes(Class&lt;? extends Entity&gt; entityClass, List&lt;BulkDeleteOperation&gt; deleteOperations) {
+        // Bulk deletes
+<span class="nc bnc" id="L628" title="All 2 branches missed.">        if (deleteOperations != null) {</span>
+<span class="nc bnc" id="L629" title="All 2 branches missed.">            for (BulkDeleteOperation bulkDeleteOperation : deleteOperations) {</span>
+<span class="nc" id="L630">                bulkDeleteOperation.execute(sqlSession, entityClass);</span>
+<span class="nc" id="L631">            }</span>
+        }
+<span class="nc" id="L633">    }</span>
+
+    protected void flushDeleteEntities(Class&lt;? extends Entity&gt; entityClass, Collection&lt;Entity&gt; entitiesToDelete) {
+<span class="nc bnc" id="L636" title="All 2 branches missed.">        for (Entity entity : entitiesToDelete) {</span>
+<span class="nc" id="L637">            String deleteStatement = dbSqlSessionFactory.getDeleteStatement(entity.getClass());</span>
+<span class="nc" id="L638">            deleteStatement = dbSqlSessionFactory.mapStatement(deleteStatement);</span>
+<span class="nc bnc" id="L639" title="All 2 branches missed.">            if (deleteStatement == null) {</span>
+<span class="nc" id="L640">                throw new FlowableException(&quot;no delete statement for &quot; + entity.getClass() + &quot; in the ibatis mapping files&quot;);</span>
+            }
+
+            // It only makes sense to check for optimistic locking exceptions
+            // for objects that actually have a revision
+<span class="nc bnc" id="L645" title="All 2 branches missed.">            if (entity instanceof HasRevision) {</span>
+<span class="nc" id="L646">                int nrOfRowsDeleted = sqlSession.delete(deleteStatement, entity);</span>
+<span class="nc bnc" id="L647" title="All 2 branches missed.">                if (nrOfRowsDeleted == 0) {</span>
+<span class="nc" id="L648">                    throw new FlowableOptimisticLockingException(entity + &quot; was updated by another transaction concurrently&quot;);</span>
+                }
+<span class="nc" id="L650">            } else {</span>
+<span class="nc" id="L651">                sqlSession.delete(deleteStatement, entity);</span>
+            }
+<span class="nc" id="L653">        }</span>
+<span class="nc" id="L654">    }</span>
+
+    @Override
+    public void close() {
+<span class="nc" id="L658">        sqlSession.close();</span>
+<span class="nc" id="L659">    }</span>
+
+    public void commit() {
+<span class="nc" id="L662">        sqlSession.commit();</span>
+<span class="nc" id="L663">    }</span>
+
+    public void rollback() {
+<span class="nc" id="L666">        sqlSession.rollback();</span>
+<span class="nc" id="L667">    }</span>
+
+    public &lt;T&gt; T getCustomMapper(Class&lt;T&gt; type) {
+<span class="nc" id="L670">        return sqlSession.getMapper(type);</span>
+    }
+
+    // getters and setters
+    // //////////////////////////////////////////////////////
+
+    public SqlSession getSqlSession() {
+<span class="nc" id="L677">        return sqlSession;</span>
+    }
+
+    public DbSqlSessionFactory getDbSqlSessionFactory() {
+<span class="nc" id="L681">        return dbSqlSessionFactory;</span>
+    }
+
+    public String getConnectionMetadataDefaultCatalog() {
+<span class="nc" id="L685">        return connectionMetadataDefaultCatalog;</span>
+    }
+
+    public void setConnectionMetadataDefaultCatalog(String connectionMetadataDefaultCatalog) {
+<span class="nc" id="L689">        this.connectionMetadataDefaultCatalog = connectionMetadataDefaultCatalog;</span>
+<span class="nc" id="L690">    }</span>
+
+    public String getConnectionMetadataDefaultSchema() {
+<span class="nc" id="L693">        return connectionMetadataDefaultSchema;</span>
+    }
+
+    public void setConnectionMetadataDefaultSchema(String connectionMetadataDefaultSchema) {
+<span class="nc" id="L697">        this.connectionMetadataDefaultSchema = connectionMetadataDefaultSchema;</span>
+<span class="nc" id="L698">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

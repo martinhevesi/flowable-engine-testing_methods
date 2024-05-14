@@ -1,0 +1,317 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>EscalationPropagation.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.bpmn.helper</a> &gt; <span class="el_source">EscalationPropagation.java</span></div><h1>EscalationPropagation.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.flowable.engine.impl.bpmn.helper;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.bpmn.model.BoundaryEvent;
+import org.flowable.bpmn.model.BpmnModel;
+import org.flowable.bpmn.model.Escalation;
+import org.flowable.bpmn.model.EscalationEventDefinition;
+import org.flowable.bpmn.model.Event;
+import org.flowable.bpmn.model.EventDefinition;
+import org.flowable.bpmn.model.EventSubProcess;
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.FlowElementsContainer;
+import org.flowable.bpmn.model.Process;
+import org.flowable.bpmn.model.StartEvent;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.delegate.event.FlowableEngineEventType;
+import org.flowable.common.engine.api.delegate.event.FlowableEventDispatcher;
+import org.flowable.common.engine.impl.util.CollectionUtil;
+import org.flowable.engine.delegate.DelegateExecution;
+import org.flowable.engine.delegate.event.impl.FlowableEventBuilder;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntity;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntityManager;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.engine.impl.util.ProcessDefinitionUtil;
+
+/**
+ * This class is responsible for finding and executing escalation handlers for BPMN Errors.
+ * 
+ * Possible escalation handlers include Escalation Intermediate Events and Escalation Event Sub-Processes.
+ * 
+ * @author Tijs Rademakers
+ */
+<span class="nc" id="L54">public class EscalationPropagation {</span>
+
+    public static void propagateEscalation(Escalation escalation, DelegateExecution execution) {
+<span class="nc" id="L57">        propagateEscalation(escalation.getEscalationCode(), escalation.getName(), execution);</span>
+<span class="nc" id="L58">    }</span>
+
+    public static void propagateEscalation(String escalationCode, String escalationName, DelegateExecution execution) {
+<span class="nc" id="L61">        Map&lt;String, List&lt;Event&gt;&gt; eventMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L62">        Set&lt;String&gt; rootProcessDefinitionIds = new HashSet&lt;&gt;();</span>
+<span class="nc bnc" id="L63" title="All 2 branches missed.">        if (!execution.getProcessInstanceId().equals(execution.getRootProcessInstanceId())) {</span>
+<span class="nc" id="L64">            ExecutionEntity parentExecution = (ExecutionEntity) execution;</span>
+<span class="nc bnc" id="L65" title="All 4 branches missed.">            while (parentExecution.getParentId() != null || parentExecution.getSuperExecutionId() != null) {</span>
+<span class="nc bnc" id="L66" title="All 2 branches missed.">                if (parentExecution.getParentId() != null) {</span>
+<span class="nc" id="L67">                    parentExecution = parentExecution.getParent();</span>
+                } else {
+<span class="nc" id="L69">                    parentExecution = parentExecution.getSuperExecution();</span>
+<span class="nc" id="L70">                    rootProcessDefinitionIds.add(parentExecution.getProcessDefinitionId());</span>
+                }
+            }
+        }
+        
+<span class="nc bnc" id="L75" title="All 2 branches missed.">        if (rootProcessDefinitionIds.size() &gt; 0) {</span>
+<span class="nc bnc" id="L76" title="All 2 branches missed.">            for (String processDefinitionId : rootProcessDefinitionIds) {</span>
+<span class="nc" id="L77">                eventMap.putAll(findCatchingEventsForProcess(processDefinitionId, escalationCode));</span>
+<span class="nc" id="L78">            }</span>
+        }
+        
+<span class="nc" id="L81">        eventMap.putAll(findCatchingEventsForProcess(execution.getProcessDefinitionId(), escalationCode));</span>
+<span class="nc bnc" id="L82" title="All 2 branches missed.">        if (eventMap.size() &gt; 0) {</span>
+<span class="nc" id="L83">            executeCatch(eventMap, execution, escalationCode, escalationName);</span>
+        }
+<span class="nc" id="L85">    }</span>
+
+    protected static void executeCatch(Map&lt;String, List&lt;Event&gt;&gt; eventMap, DelegateExecution delegateExecution, String escalationCode, String escalationName) {
+<span class="nc" id="L88">        Set&lt;String&gt; toDeleteProcessInstanceIds = new HashSet&lt;&gt;();</span>
+        
+<span class="nc" id="L90">        Event matchingEvent = null;</span>
+<span class="nc" id="L91">        ExecutionEntity currentExecution = (ExecutionEntity) delegateExecution;</span>
+<span class="nc" id="L92">        ExecutionEntity parentExecution = null;</span>
+
+<span class="nc bnc" id="L94" title="All 2 branches missed.">        if (eventMap.containsKey(currentExecution.getActivityId() + &quot;#&quot; + currentExecution.getProcessDefinitionId())) {</span>
+            // Check for multi instance
+<span class="nc bnc" id="L96" title="All 4 branches missed.">            if (currentExecution.getParentId() != null &amp;&amp; currentExecution.getParent().isMultiInstanceRoot()) {</span>
+<span class="nc" id="L97">                parentExecution = currentExecution.getParent();</span>
+            } else {
+<span class="nc" id="L99">                parentExecution = currentExecution;</span>
+            }
+            
+<span class="nc" id="L102">            matchingEvent = getCatchEventFromList(eventMap.get(currentExecution.getActivityId() + </span>
+<span class="nc" id="L103">                            &quot;#&quot; + currentExecution.getProcessDefinitionId()), parentExecution);</span>
+
+        } else {
+<span class="nc" id="L106">            parentExecution = currentExecution.getParent();</span>
+            
+            // Traverse parents until one is found that is a scope and matches the activity the boundary event is defined on
+<span class="nc bnc" id="L109" title="All 4 branches missed.">            while (matchingEvent == null &amp;&amp; parentExecution != null) {</span>
+<span class="nc" id="L110">                FlowElementsContainer currentContainer = null;</span>
+<span class="nc bnc" id="L111" title="All 2 branches missed.">                if (parentExecution.getCurrentFlowElement() instanceof FlowElementsContainer) {</span>
+<span class="nc" id="L112">                    currentContainer = (FlowElementsContainer) parentExecution.getCurrentFlowElement();</span>
+<span class="nc bnc" id="L113" title="All 2 branches missed.">                } else if (parentExecution.getId().equals(parentExecution.getProcessInstanceId())) {</span>
+<span class="nc" id="L114">                    currentContainer = ProcessDefinitionUtil.getProcess(parentExecution.getProcessDefinitionId());</span>
+                }
+
+<span class="nc bnc" id="L117" title="All 2 branches missed.">                if (currentContainer != null) {</span>
+<span class="nc bnc" id="L118" title="All 2 branches missed.">                    for (String refId : eventMap.keySet()) {</span>
+<span class="nc" id="L119">                        List&lt;Event&gt; events = eventMap.get(refId);</span>
+<span class="nc bnc" id="L120" title="All 4 branches missed.">                        if (CollectionUtil.isNotEmpty(events) &amp;&amp; events.get(0) instanceof StartEvent) {</span>
+<span class="nc" id="L121">                            String refActivityId = refId.substring(0, refId.indexOf('#'));</span>
+<span class="nc" id="L122">                            String refProcessDefinitionId = refId.substring(refId.indexOf('#') + 1);</span>
+<span class="nc bnc" id="L123" title="All 2 branches missed.">                            if (parentExecution.getProcessDefinitionId().equals(refProcessDefinitionId) &amp;&amp; </span>
+<span class="nc bnc" id="L124" title="All 2 branches missed.">                                            currentContainer.getFlowElement(refActivityId) != null) {</span>
+                                
+<span class="nc" id="L126">                                matchingEvent = getCatchEventFromList(events, parentExecution);</span>
+<span class="nc" id="L127">                                EscalationEventDefinition escalationEventDef = getEscalationEventDefinition(matchingEvent);</span>
+<span class="nc bnc" id="L128" title="All 2 branches missed.">                                if (StringUtils.isNotEmpty(escalationEventDef.getEscalationCode())) {</span>
+<span class="nc" id="L129">                                    break;</span>
+                                }
+                            }
+                        }
+<span class="nc" id="L133">                    }</span>
+                }
+
+<span class="nc bnc" id="L136" title="All 2 branches missed.">                if (matchingEvent == null) {</span>
+<span class="nc bnc" id="L137" title="All 2 branches missed.">                    if (eventMap.containsKey(parentExecution.getActivityId() + &quot;#&quot; + parentExecution.getProcessDefinitionId())) {</span>
+                        // Check for multi instance
+<span class="nc bnc" id="L139" title="All 4 branches missed.">                        if (parentExecution.getParentId() != null &amp;&amp; parentExecution.getParent().isMultiInstanceRoot()) {</span>
+<span class="nc" id="L140">                            parentExecution = parentExecution.getParent();</span>
+                        }
+                        
+<span class="nc" id="L143">                        matchingEvent = getCatchEventFromList(eventMap.get(parentExecution.getActivityId() + </span>
+<span class="nc" id="L144">                                        &quot;#&quot; + parentExecution.getProcessDefinitionId()), parentExecution);</span>
+
+<span class="nc bnc" id="L146" title="All 2 branches missed.">                    } else if (StringUtils.isNotEmpty(parentExecution.getParentId())) {</span>
+<span class="nc" id="L147">                        parentExecution = parentExecution.getParent();</span>
+                        
+                    } else {
+<span class="nc bnc" id="L150" title="All 2 branches missed.">                        if (parentExecution.getProcessInstanceId().equals(parentExecution.getRootProcessInstanceId()) == false) {</span>
+<span class="nc" id="L151">                            toDeleteProcessInstanceIds.add(parentExecution.getProcessInstanceId());</span>
+<span class="nc" id="L152">                            parentExecution = parentExecution.getSuperExecution();</span>
+                        } else {
+<span class="nc" id="L154">                            parentExecution = null;</span>
+                        }
+                    }
+                }
+<span class="nc" id="L158">            }</span>
+        }
+
+<span class="nc bnc" id="L161" title="All 4 branches missed.">        if (matchingEvent != null &amp;&amp; parentExecution != null) {</span>
+            
+<span class="nc bnc" id="L163" title="All 2 branches missed.">            for (String processInstanceId : toDeleteProcessInstanceIds) {</span>
+<span class="nc" id="L164">                ExecutionEntityManager executionEntityManager = CommandContextUtil.getExecutionEntityManager();</span>
+<span class="nc" id="L165">                ExecutionEntity processInstanceEntity = executionEntityManager.findById(processInstanceId);</span>
+
+                // Event
+<span class="nc" id="L168">                ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration();</span>
+<span class="nc" id="L169">                FlowableEventDispatcher eventDispatcher = null;</span>
+<span class="nc bnc" id="L170" title="All 2 branches missed.">                if (processEngineConfiguration != null) {</span>
+<span class="nc" id="L171">                    eventDispatcher = processEngineConfiguration.getEventDispatcher();</span>
+                }
+<span class="nc bnc" id="L173" title="All 4 branches missed.">                if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L174">                    processEngineConfiguration.getEventDispatcher().dispatchEvent(FlowableEventBuilder.createEntityEvent(</span>
+                            FlowableEngineEventType.PROCESS_COMPLETED_WITH_ESCALATION_END_EVENT, processInstanceEntity),
+<span class="nc" id="L176">                            processEngineConfiguration.getEngineCfgKey());</span>
+                }
+<span class="nc" id="L178">            }</span>
+            
+<span class="nc" id="L180">            executeEventHandler(matchingEvent, parentExecution, currentExecution, escalationCode, escalationName);   </span>
+        }
+<span class="nc" id="L182">    }</span>
+
+    protected static void executeEventHandler(Event event, ExecutionEntity parentExecution, ExecutionEntity currentExecution, String escalationCode, String escalationName) {
+<span class="nc" id="L185">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration();</span>
+<span class="nc" id="L186">        FlowableEventDispatcher eventDispatcher = null;</span>
+<span class="nc bnc" id="L187" title="All 2 branches missed.">        if (processEngineConfiguration != null) {</span>
+<span class="nc" id="L188">            eventDispatcher = processEngineConfiguration.getEventDispatcher();</span>
+        }
+        
+<span class="nc bnc" id="L191" title="All 4 branches missed.">        if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L192">            processEngineConfiguration.getEventDispatcher().dispatchEvent(</span>
+<span class="nc" id="L193">                    FlowableEventBuilder.createEscalationEvent(FlowableEngineEventType.ACTIVITY_ESCALATION_RECEIVED, event.getId(), escalationCode, </span>
+<span class="nc" id="L194">                            escalationName, parentExecution.getId(), parentExecution.getProcessInstanceId(), parentExecution.getProcessDefinitionId()),</span>
+<span class="nc" id="L195">                    processEngineConfiguration.getEngineCfgKey());</span>
+        }
+
+<span class="nc bnc" id="L198" title="All 2 branches missed.">        if (event instanceof StartEvent) {</span>
+<span class="nc" id="L199">            ExecutionEntityManager executionEntityManager = CommandContextUtil.getExecutionEntityManager();</span>
+
+<span class="nc" id="L201">            ExecutionEntity eventSubProcessExecution = executionEntityManager.createChildExecution(parentExecution);</span>
+<span class="nc bnc" id="L202" title="All 2 branches missed.">            eventSubProcessExecution.setCurrentFlowElement(event.getSubProcess() != null ? event.getSubProcess() : event);</span>
+<span class="nc" id="L203">            CommandContextUtil.getAgenda().planContinueProcessOperation(eventSubProcessExecution);</span>
+
+<span class="nc" id="L205">        } else {</span>
+<span class="nc" id="L206">            ExecutionEntity boundaryExecution = null;</span>
+<span class="nc" id="L207">            List&lt;? extends ExecutionEntity&gt; childExecutions = parentExecution.getExecutions();</span>
+<span class="nc bnc" id="L208" title="All 2 branches missed.">            for (ExecutionEntity childExecution : childExecutions) {</span>
+<span class="nc bnc" id="L209" title="All 2 branches missed.">                if (childExecution != null</span>
+<span class="nc bnc" id="L210" title="All 2 branches missed.">                        &amp;&amp; childExecution.getActivityId() != null</span>
+<span class="nc bnc" id="L211" title="All 2 branches missed.">                        &amp;&amp; childExecution.getActivityId().equals(event.getId())) {</span>
+<span class="nc" id="L212">                    boundaryExecution = childExecution;</span>
+                }
+<span class="nc" id="L214">            }</span>
+            
+<span class="nc bnc" id="L216" title="All 4 branches missed.">            if (boundaryExecution != null &amp;&amp; boundaryExecution.isSuspended()) {</span>
+<span class="nc" id="L217">                throw new FlowableException(</span>
+                        &quot;Cannot propagate escalation '&quot; + escalationName + &quot;' with code '&quot; + escalationCode + &quot;', because &quot; + boundaryExecution
+                                + &quot; is suspended&quot;);
+            }
+
+<span class="nc" id="L222">            CommandContextUtil.getAgenda().planTriggerExecutionOperation(boundaryExecution);</span>
+        }
+<span class="nc" id="L224">    }</span>
+
+    protected static Map&lt;String, List&lt;Event&gt;&gt; findCatchingEventsForProcess(String processDefinitionId, String escalationCode) {
+<span class="nc" id="L227">        Map&lt;String, List&lt;Event&gt;&gt; eventMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L228">        Process process = ProcessDefinitionUtil.getProcess(processDefinitionId);</span>
+<span class="nc" id="L229">        BpmnModel bpmnModel = ProcessDefinitionUtil.getBpmnModel(processDefinitionId);</span>
+
+<span class="nc" id="L231">        List&lt;EventSubProcess&gt; subProcesses = process.findFlowElementsOfType(EventSubProcess.class, true);</span>
+<span class="nc bnc" id="L232" title="All 2 branches missed.">        for (EventSubProcess eventSubProcess : subProcesses) {</span>
+<span class="nc bnc" id="L233" title="All 2 branches missed.">            for (FlowElement flowElement : eventSubProcess.getFlowElements()) {</span>
+<span class="nc bnc" id="L234" title="All 2 branches missed.">                if (flowElement instanceof StartEvent) {</span>
+<span class="nc" id="L235">                    StartEvent startEvent = (StartEvent) flowElement;</span>
+<span class="nc bnc" id="L236" title="All 4 branches missed.">                    if (CollectionUtil.isNotEmpty(startEvent.getEventDefinitions()) &amp;&amp; startEvent.getEventDefinitions().get(0) instanceof EscalationEventDefinition) {</span>
+<span class="nc" id="L237">                        EscalationEventDefinition escalationEventDef = (EscalationEventDefinition) startEvent.getEventDefinitions().get(0);</span>
+<span class="nc" id="L238">                        String eventEscalationCode = null;</span>
+<span class="nc bnc" id="L239" title="All 4 branches missed.">                        if (StringUtils.isNotEmpty(escalationEventDef.getEscalationCode()) &amp;&amp; bpmnModel.containsEscalationRef(escalationEventDef.getEscalationCode())) {</span>
+<span class="nc" id="L240">                            eventEscalationCode = bpmnModel.getEscalation(escalationEventDef.getEscalationCode()).getEscalationCode();</span>
+                        } else {
+<span class="nc" id="L242">                            eventEscalationCode = escalationEventDef.getEscalationCode();</span>
+                        }
+                        
+<span class="nc bnc" id="L245" title="All 6 branches missed.">                        if (eventEscalationCode == null || escalationCode == null || eventEscalationCode.equals(escalationCode)) {</span>
+<span class="nc" id="L246">                            List&lt;Event&gt; startEvents = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L247">                            startEvents.add(startEvent);</span>
+<span class="nc" id="L248">                            eventMap.put(eventSubProcess.getId() + &quot;#&quot; + processDefinitionId, startEvents);</span>
+                        }
+                    }
+                }
+<span class="nc" id="L252">            }</span>
+<span class="nc" id="L253">        }</span>
+
+<span class="nc" id="L255">        List&lt;BoundaryEvent&gt; boundaryEvents = process.findFlowElementsOfType(BoundaryEvent.class, true);</span>
+<span class="nc bnc" id="L256" title="All 2 branches missed.">        for (BoundaryEvent boundaryEvent : boundaryEvents) {</span>
+<span class="nc bnc" id="L257" title="All 6 branches missed.">            if (boundaryEvent.getAttachedToRefId() != null &amp;&amp; CollectionUtil.isNotEmpty(boundaryEvent.getEventDefinitions()) &amp;&amp; boundaryEvent.getEventDefinitions().get(0) instanceof EscalationEventDefinition) {</span>
+
+<span class="nc" id="L259">                EscalationEventDefinition escalationEventDef = (EscalationEventDefinition) boundaryEvent.getEventDefinitions().get(0);</span>
+<span class="nc" id="L260">                String eventEscalationCode = null;</span>
+<span class="nc bnc" id="L261" title="All 4 branches missed.">                if (StringUtils.isNotEmpty(escalationEventDef.getEscalationCode()) &amp;&amp; bpmnModel.containsEscalationRef(escalationEventDef.getEscalationCode())) {</span>
+<span class="nc" id="L262">                    eventEscalationCode = bpmnModel.getEscalation(escalationEventDef.getEscalationCode()).getEscalationCode();</span>
+                } else {
+<span class="nc" id="L264">                    eventEscalationCode = escalationEventDef.getEscalationCode();</span>
+                }
+
+<span class="nc bnc" id="L267" title="All 6 branches missed.">                if (eventEscalationCode == null || escalationCode == null || eventEscalationCode.equals(escalationCode)) {</span>
+<span class="nc" id="L268">                    List&lt;Event&gt; elementBoundaryEvents = null;</span>
+<span class="nc bnc" id="L269" title="All 2 branches missed.">                    if (!eventMap.containsKey(boundaryEvent.getAttachedToRefId() + &quot;#&quot; + processDefinitionId)) {</span>
+<span class="nc" id="L270">                        elementBoundaryEvents = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L271">                        eventMap.put(boundaryEvent.getAttachedToRefId() + &quot;#&quot; + processDefinitionId, elementBoundaryEvents);</span>
+                    } else {
+<span class="nc" id="L273">                        elementBoundaryEvents = eventMap.get(boundaryEvent.getAttachedToRefId() + &quot;#&quot; + processDefinitionId);</span>
+                    }
+<span class="nc" id="L275">                    elementBoundaryEvents.add(boundaryEvent);</span>
+                }
+            }
+<span class="nc" id="L278">        }</span>
+<span class="nc" id="L279">        return eventMap;</span>
+    }
+    
+    protected static Event getCatchEventFromList(List&lt;Event&gt; events, ExecutionEntity parentExecution) {
+<span class="nc" id="L283">        Event selectedEvent = null;</span>
+<span class="nc" id="L284">        String selectedEventEscalationCode = null;</span>
+        
+<span class="nc" id="L286">        BpmnModel bpmnModel = ProcessDefinitionUtil.getBpmnModel(parentExecution.getProcessDefinitionId());</span>
+<span class="nc bnc" id="L287" title="All 2 branches missed.">        for (Event event : events) {</span>
+<span class="nc" id="L288">            EscalationEventDefinition escalationEventDef = getEscalationEventDefinition(event);</span>
+<span class="nc" id="L289">            String escalationCode = escalationEventDef.getEscalationCode();</span>
+<span class="nc bnc" id="L290" title="All 2 branches missed.">            if (bpmnModel != null) {</span>
+<span class="nc bnc" id="L291" title="All 4 branches missed.">                if (StringUtils.isNotEmpty(escalationEventDef.getEscalationCode()) &amp;&amp; bpmnModel.containsEscalationRef(escalationEventDef.getEscalationCode())) {</span>
+<span class="nc" id="L292">                    escalationCode = bpmnModel.getEscalation(escalationEventDef.getEscalationCode()).getEscalationCode();</span>
+                } else {
+<span class="nc" id="L294">                    escalationCode = escalationEventDef.getEscalationCode();</span>
+                }
+            }
+            
+<span class="nc bnc" id="L298" title="All 6 branches missed.">            if (selectedEvent == null || (StringUtils.isEmpty(selectedEventEscalationCode) &amp;&amp; StringUtils.isNotEmpty(escalationCode))) {</span>
+<span class="nc" id="L299">                selectedEvent = event;</span>
+<span class="nc" id="L300">                selectedEventEscalationCode = escalationCode;</span>
+            }
+<span class="nc" id="L302">        }</span>
+        
+<span class="nc" id="L304">        return selectedEvent;</span>
+    }
+        
+    protected static EscalationEventDefinition getEscalationEventDefinition(Event event) {
+<span class="nc bnc" id="L308" title="All 2 branches missed.">        for (EventDefinition eventDefinition : event.getEventDefinitions()) {</span>
+<span class="nc bnc" id="L309" title="All 2 branches missed.">            if (eventDefinition instanceof EscalationEventDefinition) {</span>
+<span class="nc" id="L310">                return (EscalationEventDefinition) eventDefinition;</span>
+            }
+<span class="nc" id="L312">        }</span>
+        
+<span class="nc" id="L314">        return null;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,2094 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AbstractEngineConfiguration.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.common.engine.impl</a> &gt; <span class="el_source">AbstractEngineConfiguration.java</span></div><h1>AbstractEngineConfiguration.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.common.engine.impl;
+
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.Reader;
+import java.sql.Connection;
+import java.sql.DatabaseMetaData;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
+import java.util.ServiceLoader;
+import java.util.Set;
+
+import javax.naming.InitialContext;
+import javax.sql.DataSource;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.ibatis.builder.xml.XMLConfigBuilder;
+import org.apache.ibatis.builder.xml.XMLMapperBuilder;
+import org.apache.ibatis.datasource.pooled.PooledDataSource;
+import org.apache.ibatis.mapping.Environment;
+import org.apache.ibatis.plugin.Interceptor;
+import org.apache.ibatis.session.Configuration;
+import org.apache.ibatis.session.SqlSessionFactory;
+import org.apache.ibatis.session.defaults.DefaultSqlSessionFactory;
+import org.apache.ibatis.transaction.TransactionFactory;
+import org.apache.ibatis.transaction.jdbc.JdbcTransactionFactory;
+import org.apache.ibatis.transaction.managed.ManagedTransactionFactory;
+import org.apache.ibatis.type.ArrayTypeHandler;
+import org.apache.ibatis.type.BigDecimalTypeHandler;
+import org.apache.ibatis.type.BlobInputStreamTypeHandler;
+import org.apache.ibatis.type.BlobTypeHandler;
+import org.apache.ibatis.type.BooleanTypeHandler;
+import org.apache.ibatis.type.ByteTypeHandler;
+import org.apache.ibatis.type.ClobTypeHandler;
+import org.apache.ibatis.type.DateOnlyTypeHandler;
+import org.apache.ibatis.type.DateTypeHandler;
+import org.apache.ibatis.type.DoubleTypeHandler;
+import org.apache.ibatis.type.FloatTypeHandler;
+import org.apache.ibatis.type.IntegerTypeHandler;
+import org.apache.ibatis.type.JdbcType;
+import org.apache.ibatis.type.LongTypeHandler;
+import org.apache.ibatis.type.NClobTypeHandler;
+import org.apache.ibatis.type.NStringTypeHandler;
+import org.apache.ibatis.type.ShortTypeHandler;
+import org.apache.ibatis.type.SqlxmlTypeHandler;
+import org.apache.ibatis.type.StringTypeHandler;
+import org.apache.ibatis.type.TimeOnlyTypeHandler;
+import org.apache.ibatis.type.TypeHandlerRegistry;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.delegate.event.FlowableEngineEventType;
+import org.flowable.common.engine.api.delegate.event.FlowableEventDispatcher;
+import org.flowable.common.engine.api.delegate.event.FlowableEventListener;
+import org.flowable.common.engine.api.engine.EngineLifecycleListener;
+import org.flowable.common.engine.impl.agenda.AgendaOperationExecutionListener;
+import org.flowable.common.engine.impl.agenda.AgendaOperationRunner;
+import org.flowable.common.engine.impl.cfg.CommandExecutorImpl;
+import org.flowable.common.engine.impl.cfg.IdGenerator;
+import org.flowable.common.engine.impl.cfg.TransactionContextFactory;
+import org.flowable.common.engine.impl.cfg.standalone.StandaloneMybatisTransactionContextFactory;
+import org.flowable.common.engine.impl.db.CommonDbSchemaManager;
+import org.flowable.common.engine.impl.db.DbSqlSessionFactory;
+import org.flowable.common.engine.impl.db.LogSqlExecutionTimePlugin;
+import org.flowable.common.engine.impl.db.MybatisTypeAliasConfigurator;
+import org.flowable.common.engine.impl.db.MybatisTypeHandlerConfigurator;
+import org.flowable.common.engine.impl.db.SchemaManager;
+import org.flowable.common.engine.impl.event.EventDispatchAction;
+import org.flowable.common.engine.impl.event.FlowableEventDispatcherImpl;
+import org.flowable.common.engine.impl.interceptor.Command;
+import org.flowable.common.engine.impl.interceptor.CommandConfig;
+import org.flowable.common.engine.impl.interceptor.CommandContextFactory;
+import org.flowable.common.engine.impl.interceptor.CommandContextInterceptor;
+import org.flowable.common.engine.impl.interceptor.CommandExecutor;
+import org.flowable.common.engine.impl.interceptor.CommandInterceptor;
+import org.flowable.common.engine.impl.interceptor.CrDbRetryInterceptor;
+import org.flowable.common.engine.impl.interceptor.DefaultCommandInvoker;
+import org.flowable.common.engine.impl.interceptor.LogInterceptor;
+import org.flowable.common.engine.impl.interceptor.SessionFactory;
+import org.flowable.common.engine.impl.interceptor.TransactionContextInterceptor;
+import org.flowable.common.engine.impl.lock.LockManager;
+import org.flowable.common.engine.impl.lock.LockManagerImpl;
+import org.flowable.common.engine.impl.logging.LoggingListener;
+import org.flowable.common.engine.impl.logging.LoggingSession;
+import org.flowable.common.engine.impl.logging.LoggingSessionFactory;
+import org.flowable.common.engine.impl.persistence.GenericManagerFactory;
+import org.flowable.common.engine.impl.persistence.StrongUuidGenerator;
+import org.flowable.common.engine.impl.persistence.cache.EntityCache;
+import org.flowable.common.engine.impl.persistence.cache.EntityCacheImpl;
+import org.flowable.common.engine.impl.persistence.entity.ByteArrayEntityManager;
+import org.flowable.common.engine.impl.persistence.entity.ByteArrayEntityManagerImpl;
+import org.flowable.common.engine.impl.persistence.entity.Entity;
+import org.flowable.common.engine.impl.persistence.entity.PropertyEntityManager;
+import org.flowable.common.engine.impl.persistence.entity.PropertyEntityManagerImpl;
+import org.flowable.common.engine.impl.persistence.entity.TableDataManager;
+import org.flowable.common.engine.impl.persistence.entity.TableDataManagerImpl;
+import org.flowable.common.engine.impl.persistence.entity.data.ByteArrayDataManager;
+import org.flowable.common.engine.impl.persistence.entity.data.PropertyDataManager;
+import org.flowable.common.engine.impl.persistence.entity.data.impl.MybatisByteArrayDataManager;
+import org.flowable.common.engine.impl.persistence.entity.data.impl.MybatisPropertyDataManager;
+import org.flowable.common.engine.impl.runtime.Clock;
+import org.flowable.common.engine.impl.service.CommonEngineServiceImpl;
+import org.flowable.common.engine.impl.util.DefaultClockImpl;
+import org.flowable.common.engine.impl.util.IoUtil;
+import org.flowable.common.engine.impl.util.ReflectUtil;
+import org.flowable.eventregistry.api.EventRegistryEventConsumer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+
+<span class="nc" id="L133">public abstract class AbstractEngineConfiguration {</span>
+
+<span class="nc" id="L135">    protected final Logger logger = LoggerFactory.getLogger(getClass());</span>
+
+    /** The tenant id indicating 'no tenant' */
+    public static final String NO_TENANT_ID = &quot;&quot;;
+
+    /**
+     * Checks the version of the DB schema against the library when the form engine is being created and throws an exception if the versions don't match.
+     */
+    public static final String DB_SCHEMA_UPDATE_FALSE = &quot;false&quot;;
+    public static final String DB_SCHEMA_UPDATE_CREATE = &quot;create&quot;;
+    public static final String DB_SCHEMA_UPDATE_CREATE_DROP = &quot;create-drop&quot;;
+
+    /**
+     * Creates the schema when the form engine is being created and drops the schema when the form engine is being closed.
+     */
+    public static final String DB_SCHEMA_UPDATE_DROP_CREATE = &quot;drop-create&quot;;
+
+    /**
+     * Upon building of the process engine, a check is performed and an update of the schema is performed if it is necessary.
+     */
+    public static final String DB_SCHEMA_UPDATE_TRUE = &quot;true&quot;;
+
+<span class="nc" id="L157">    protected boolean forceCloseMybatisConnectionPool = true;</span>
+
+    protected String databaseType;
+<span class="nc" id="L160">    protected String jdbcDriver = &quot;org.h2.Driver&quot;;</span>
+<span class="nc" id="L161">    protected String jdbcUrl = &quot;jdbc:h2:tcp://localhost/~/flowable&quot;;</span>
+<span class="nc" id="L162">    protected String jdbcUsername = &quot;sa&quot;;</span>
+<span class="nc" id="L163">    protected String jdbcPassword = &quot;&quot;;</span>
+    protected String dataSourceJndiName;
+<span class="nc" id="L165">    protected int jdbcMaxActiveConnections = 16;</span>
+<span class="nc" id="L166">    protected int jdbcMaxIdleConnections = 8;</span>
+    protected int jdbcMaxCheckoutTime;
+    protected int jdbcMaxWaitTime;
+    protected boolean jdbcPingEnabled;
+    protected String jdbcPingQuery;
+    protected int jdbcPingConnectionNotUsedFor;
+    protected int jdbcDefaultTransactionIsolationLevel;
+    protected DataSource dataSource;
+    protected SchemaManager commonSchemaManager;
+    protected SchemaManager schemaManager;
+    protected Command&lt;Void&gt; schemaManagementCmd;
+
+<span class="nc" id="L178">    protected String databaseSchemaUpdate = DB_SCHEMA_UPDATE_FALSE;</span>
+
+    /**
+     * Whether to use a lock when performing the database schema create or update operations.
+     */
+<span class="nc" id="L183">    protected boolean useLockForDatabaseSchemaUpdate = false;</span>
+
+<span class="nc" id="L185">    protected String xmlEncoding = &quot;UTF-8&quot;;</span>
+
+    // COMMAND EXECUTORS ///////////////////////////////////////////////
+
+    protected CommandExecutor commandExecutor;
+    protected Collection&lt;? extends CommandInterceptor&gt; defaultCommandInterceptors;
+    protected CommandConfig defaultCommandConfig;
+    protected CommandConfig schemaCommandConfig;
+    protected CommandContextFactory commandContextFactory;
+    protected CommandInterceptor commandInvoker;
+
+<span class="nc" id="L196">    protected AgendaOperationRunner agendaOperationRunner = (commandContext, runnable) -&gt; runnable.run();</span>
+    protected Collection&lt;AgendaOperationExecutionListener&gt; agendaOperationExecutionListeners;
+
+    protected List&lt;CommandInterceptor&gt; customPreCommandInterceptors;
+    protected List&lt;CommandInterceptor&gt; customPostCommandInterceptors;
+    protected List&lt;CommandInterceptor&gt; commandInterceptors;
+
+<span class="nc" id="L203">    protected Map&lt;String, AbstractEngineConfiguration&gt; engineConfigurations = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L204">    protected Map&lt;String, AbstractServiceConfiguration&gt; serviceConfigurations = new HashMap&lt;&gt;();</span>
+
+    protected ClassLoader classLoader;
+    /**
+     * Either use Class.forName or ClassLoader.loadClass for class loading. See http://forums.activiti.org/content/reflectutilloadclass-and-custom- classloader
+     */
+<span class="nc" id="L210">    protected boolean useClassForNameClassLoading = true;</span>
+
+    protected List&lt;EngineLifecycleListener&gt; engineLifecycleListeners;
+
+    // Event Registry //////////////////////////////////////////////////
+<span class="nc" id="L215">    protected Map&lt;String, EventRegistryEventConsumer&gt; eventRegistryEventConsumers = new HashMap&lt;&gt;();</span>
+
+    // MYBATIS SQL SESSION FACTORY /////////////////////////////////////
+
+<span class="nc" id="L219">    protected boolean isDbHistoryUsed = true;</span>
+    protected DbSqlSessionFactory dbSqlSessionFactory;
+    protected SqlSessionFactory sqlSessionFactory;
+    protected TransactionFactory transactionFactory;
+    protected TransactionContextFactory transactionContextFactory;
+
+    /**
+     * If set to true, enables bulk insert (grouping sql inserts together). Default true.
+     * For some databases (eg DB2+z/OS) needs to be set to false.
+     */
+<span class="nc" id="L229">    protected boolean isBulkInsertEnabled = true;</span>
+
+    /**
+     * Some databases have a limit of how many parameters one sql insert can have (eg SQL Server, 2000 params (!= insert statements) ). Tweak this parameter in case of exceptions indicating too much
+     * is being put into one bulk insert, or make it higher if your database can cope with it and there are inserts with a huge amount of data.
+     * &lt;p&gt;
+     * By default: 100 (55 for mssql server as it has a hard limit of 2000 parameters in a statement)
+     */
+<span class="nc" id="L237">    protected int maxNrOfStatementsInBulkInsert = 100;</span>
+
+<span class="nc" id="L239">    public int DEFAULT_MAX_NR_OF_STATEMENTS_BULK_INSERT_SQL_SERVER = 55; // currently Execution has most params (35). 2000 / 35 = 57.</span>
+
+    protected String mybatisMappingFile;
+    protected Set&lt;Class&lt;?&gt;&gt; customMybatisMappers;
+    protected Set&lt;String&gt; customMybatisXMLMappers;
+    protected List&lt;Interceptor&gt; customMybatisInterceptors;
+
+    protected Set&lt;String&gt; dependentEngineMyBatisXmlMappers;
+    protected List&lt;MybatisTypeAliasConfigurator&gt; dependentEngineMybatisTypeAliasConfigs;
+    protected List&lt;MybatisTypeHandlerConfigurator&gt; dependentEngineMybatisTypeHandlerConfigs;
+
+    // SESSION FACTORIES ///////////////////////////////////////////////
+    protected List&lt;SessionFactory&gt; customSessionFactories;
+    protected Map&lt;Class&lt;?&gt;, SessionFactory&gt; sessionFactories;
+
+<span class="nc" id="L254">    protected boolean enableEventDispatcher = true;</span>
+    protected FlowableEventDispatcher eventDispatcher;
+    protected List&lt;FlowableEventListener&gt; eventListeners;
+    protected Map&lt;String, List&lt;FlowableEventListener&gt;&gt; typedEventListeners;
+    protected List&lt;EventDispatchAction&gt; additionalEventDispatchActions;
+
+    protected LoggingListener loggingListener;
+
+    protected boolean transactionsExternallyManaged;
+
+    /**
+     * Flag that can be set to configure or not a relational database is used. This is useful for custom implementations that do not use relational databases at all.
+     *
+     * If true (default), the {@link AbstractEngineConfiguration#getDatabaseSchemaUpdate()} value will be used to determine what needs to happen wrt the database schema.
+     *
+     * If false, no validation or schema creation will be done. That means that the database schema must have been created 'manually' before but the engine does not validate whether the schema is
+     * correct. The {@link AbstractEngineConfiguration#getDatabaseSchemaUpdate()} value will not be used.
+     */
+<span class="nc" id="L272">    protected boolean usingRelationalDatabase = true;</span>
+    
+    /**
+     * Flag that can be set to configure whether or not a schema is used. This is useful for custom implementations that do not use relational databases at all.
+     * Setting {@link #usingRelationalDatabase} to true will automatically imply using a schema.
+     */
+<span class="nc" id="L278">    protected boolean usingSchemaMgmt = true;</span>
+
+    /**
+     * Allows configuring a database table prefix which is used for all runtime operations of the process engine. For example, if you specify a prefix named 'PRE1.', Flowable will query for executions
+     * in a table named 'PRE1.ACT_RU_EXECUTION_'.
+     *
+     * &lt;p&gt;
+     * &lt;strong&gt;NOTE: the prefix is not respected by automatic database schema management. If you use {@link AbstractEngineConfiguration#DB_SCHEMA_UPDATE_CREATE_DROP} or
+     * {@link AbstractEngineConfiguration#DB_SCHEMA_UPDATE_TRUE}, Flowable will create the database tables using the default names, regardless of the prefix configured here.&lt;/strong&gt;
+     */
+<span class="nc" id="L288">    protected String databaseTablePrefix = &quot;&quot;;</span>
+
+    /**
+     * Escape character for doing wildcard searches.
+     *
+     * This will be added at then end of queries that include for example a LIKE clause. For example: SELECT * FROM table WHERE column LIKE '%\%%' ESCAPE '\';
+     */
+    protected String databaseWildcardEscapeCharacter;
+
+    /**
+     * database catalog to use
+     */
+<span class="nc" id="L300">    protected String databaseCatalog = &quot;&quot;;</span>
+
+    /**
+     * In some situations you want to set the schema to use for table checks / generation if the database metadata doesn't return that correctly, see https://jira.codehaus.org/browse/ACT-1220,
+     * https://jira.codehaus.org/browse/ACT-1062
+     */
+    protected String databaseSchema;
+
+    /**
+     * Set to true in case the defined databaseTablePrefix is a schema-name, instead of an actual table name prefix. This is relevant for checking if Flowable-tables exist, the databaseTablePrefix
+     * will not be used here - since the schema is taken into account already, adding a prefix for the table-check will result in wrong table-names.
+     */
+    protected boolean tablePrefixIsSchema;
+    
+    /**
+     * Set to true if the latest version of a definition should be retrieved, ignoring a possible parent deployment id value
+     */
+    protected boolean alwaysLookupLatestDefinitionVersion;
+    
+    /**
+     * Set to true if by default lookups should fallback to the default tenant (an empty string by default or a defined tenant value)
+     */
+    protected boolean fallbackToDefaultTenant;
+
+    /**
+     * Default tenant provider that is executed when looking up definitions, in case the global or local fallback to default tenant value is true
+     */
+<span class="nc" id="L327">    protected DefaultTenantProvider defaultTenantProvider = (tenantId, scope, scopeKey) -&gt; NO_TENANT_ID;</span>
+
+    /**
+     * Enables the MyBatis plugin that logs the execution time of sql statements.
+     */
+    protected boolean enableLogSqlExecutionTime;
+
+<span class="nc" id="L334">    protected Properties databaseTypeMappings = getDefaultDatabaseTypeMappings();</span>
+
+    /**
+     * Duration between the checks when acquiring a lock.
+     */
+<span class="nc" id="L339">    protected Duration lockPollRate = Duration.ofSeconds(10);</span>
+
+    /**
+     * Duration to wait for the DB Schema lock before giving up.
+     */
+<span class="nc" id="L344">    protected Duration schemaLockWaitTime = Duration.ofMinutes(5);</span>
+
+    // DATA MANAGERS //////////////////////////////////////////////////////////////////
+
+    protected PropertyDataManager propertyDataManager;
+    protected ByteArrayDataManager byteArrayDataManager;
+    protected TableDataManager tableDataManager;
+
+    // ENTITY MANAGERS ////////////////////////////////////////////////////////////////
+
+    protected PropertyEntityManager propertyEntityManager;
+    protected ByteArrayEntityManager byteArrayEntityManager;
+
+    protected List&lt;EngineDeployer&gt; customPreDeployers;
+    protected List&lt;EngineDeployer&gt; customPostDeployers;
+    protected List&lt;EngineDeployer&gt; deployers;
+    
+    // CONFIGURATORS ////////////////////////////////////////////////////////////
+
+<span class="nc" id="L363">    protected boolean enableConfiguratorServiceLoader = true; // Enabled by default. In certain environments this should be set to false (eg osgi)</span>
+    protected List&lt;EngineConfigurator&gt; configurators; // The injected configurators
+    protected List&lt;EngineConfigurator&gt; allConfigurators; // Including auto-discovered configurators
+    protected EngineConfigurator idmEngineConfigurator;
+    protected EngineConfigurator eventRegistryConfigurator;
+
+    public static final String PRODUCT_NAME_POSTGRES = &quot;PostgreSQL&quot;;
+    public static final String PRODUCT_NAME_CRDB = &quot;CockroachDB&quot;;
+
+    public static final String DATABASE_TYPE_H2 = &quot;h2&quot;;
+    public static final String DATABASE_TYPE_HSQL = &quot;hsql&quot;;
+    public static final String DATABASE_TYPE_MYSQL = &quot;mysql&quot;;
+    public static final String DATABASE_TYPE_ORACLE = &quot;oracle&quot;;
+    public static final String DATABASE_TYPE_POSTGRES = &quot;postgres&quot;;
+    public static final String DATABASE_TYPE_MSSQL = &quot;mssql&quot;;
+    public static final String DATABASE_TYPE_DB2 = &quot;db2&quot;;
+    public static final String DATABASE_TYPE_COCKROACHDB = &quot;cockroachdb&quot;;
+
+    public static Properties getDefaultDatabaseTypeMappings() {
+<span class="nc" id="L382">        Properties databaseTypeMappings = new Properties();</span>
+<span class="nc" id="L383">        databaseTypeMappings.setProperty(&quot;H2&quot;, DATABASE_TYPE_H2);</span>
+<span class="nc" id="L384">        databaseTypeMappings.setProperty(&quot;HSQL Database Engine&quot;, DATABASE_TYPE_HSQL);</span>
+<span class="nc" id="L385">        databaseTypeMappings.setProperty(&quot;MySQL&quot;, DATABASE_TYPE_MYSQL);</span>
+<span class="nc" id="L386">        databaseTypeMappings.setProperty(&quot;MariaDB&quot;, DATABASE_TYPE_MYSQL);</span>
+<span class="nc" id="L387">        databaseTypeMappings.setProperty(&quot;Oracle&quot;, DATABASE_TYPE_ORACLE);</span>
+<span class="nc" id="L388">        databaseTypeMappings.setProperty(PRODUCT_NAME_POSTGRES, DATABASE_TYPE_POSTGRES);</span>
+<span class="nc" id="L389">        databaseTypeMappings.setProperty(&quot;Microsoft SQL Server&quot;, DATABASE_TYPE_MSSQL);</span>
+<span class="nc" id="L390">        databaseTypeMappings.setProperty(DATABASE_TYPE_DB2, DATABASE_TYPE_DB2);</span>
+<span class="nc" id="L391">        databaseTypeMappings.setProperty(&quot;DB2&quot;, DATABASE_TYPE_DB2);</span>
+<span class="nc" id="L392">        databaseTypeMappings.setProperty(&quot;DB2/NT&quot;, DATABASE_TYPE_DB2);</span>
+<span class="nc" id="L393">        databaseTypeMappings.setProperty(&quot;DB2/NT64&quot;, DATABASE_TYPE_DB2);</span>
+<span class="nc" id="L394">        databaseTypeMappings.setProperty(&quot;DB2 UDP&quot;, DATABASE_TYPE_DB2);</span>
+<span class="nc" id="L395">        databaseTypeMappings.setProperty(&quot;DB2/LINUX&quot;, DATABASE_TYPE_DB2);</span>
+<span class="nc" id="L396">        databaseTypeMappings.setProperty(&quot;DB2/LINUX390&quot;, DATABASE_TYPE_DB2);</span>
+<span class="nc" id="L397">        databaseTypeMappings.setProperty(&quot;DB2/LINUXX8664&quot;, DATABASE_TYPE_DB2);</span>
+<span class="nc" id="L398">        databaseTypeMappings.setProperty(&quot;DB2/LINUXZ64&quot;, DATABASE_TYPE_DB2);</span>
+<span class="nc" id="L399">        databaseTypeMappings.setProperty(&quot;DB2/LINUXPPC64&quot;, DATABASE_TYPE_DB2);</span>
+<span class="nc" id="L400">        databaseTypeMappings.setProperty(&quot;DB2/LINUXPPC64LE&quot;, DATABASE_TYPE_DB2);</span>
+<span class="nc" id="L401">        databaseTypeMappings.setProperty(&quot;DB2/400 SQL&quot;, DATABASE_TYPE_DB2);</span>
+<span class="nc" id="L402">        databaseTypeMappings.setProperty(&quot;DB2/6000&quot;, DATABASE_TYPE_DB2);</span>
+<span class="nc" id="L403">        databaseTypeMappings.setProperty(&quot;DB2 UDB iSeries&quot;, DATABASE_TYPE_DB2);</span>
+<span class="nc" id="L404">        databaseTypeMappings.setProperty(&quot;DB2/AIX64&quot;, DATABASE_TYPE_DB2);</span>
+<span class="nc" id="L405">        databaseTypeMappings.setProperty(&quot;DB2/HPUX&quot;, DATABASE_TYPE_DB2);</span>
+<span class="nc" id="L406">        databaseTypeMappings.setProperty(&quot;DB2/HP64&quot;, DATABASE_TYPE_DB2);</span>
+<span class="nc" id="L407">        databaseTypeMappings.setProperty(&quot;DB2/SUN&quot;, DATABASE_TYPE_DB2);</span>
+<span class="nc" id="L408">        databaseTypeMappings.setProperty(&quot;DB2/SUN64&quot;, DATABASE_TYPE_DB2);</span>
+<span class="nc" id="L409">        databaseTypeMappings.setProperty(&quot;DB2/PTX&quot;, DATABASE_TYPE_DB2);</span>
+<span class="nc" id="L410">        databaseTypeMappings.setProperty(&quot;DB2/2&quot;, DATABASE_TYPE_DB2);</span>
+<span class="nc" id="L411">        databaseTypeMappings.setProperty(&quot;DB2 UDB AS400&quot;, DATABASE_TYPE_DB2);</span>
+<span class="nc" id="L412">        databaseTypeMappings.setProperty(PRODUCT_NAME_CRDB, DATABASE_TYPE_COCKROACHDB);</span>
+<span class="nc" id="L413">        return databaseTypeMappings;</span>
+    }
+
+    protected Map&lt;Object, Object&gt; beans;
+
+    protected IdGenerator idGenerator;
+    protected boolean usePrefixId;
+
+    protected Clock clock;
+    protected ObjectMapper objectMapper;
+
+    // Variables
+
+    public static final int DEFAULT_GENERIC_MAX_LENGTH_STRING = 4000;
+    public static final int DEFAULT_ORACLE_MAX_LENGTH_STRING = 2000;
+
+    /**
+     * Define a max length for storing String variable types in the database. Mainly used for the Oracle NVARCHAR2 limit of 2000 characters
+     */
+<span class="nc" id="L432">    protected int maxLengthStringVariableType = -1;</span>
+    
+    protected void initEngineConfigurations() {
+<span class="nc" id="L435">        addEngineConfiguration(getEngineCfgKey(), getEngineScopeType(), this);</span>
+<span class="nc" id="L436">    }</span>
+
+    // DataSource
+    // ///////////////////////////////////////////////////////////////
+
+    protected void initDataSource() {
+<span class="nc bnc" id="L442" title="All 2 branches missed.">        if (dataSource == null) {</span>
+<span class="nc bnc" id="L443" title="All 2 branches missed.">            if (dataSourceJndiName != null) {</span>
+                try {
+<span class="nc" id="L445">                    dataSource = (DataSource) new InitialContext().lookup(dataSourceJndiName);</span>
+<span class="nc" id="L446">                } catch (Exception e) {</span>
+<span class="nc" id="L447">                    throw new FlowableException(&quot;couldn't lookup datasource from &quot; + dataSourceJndiName + &quot;: &quot; + e.getMessage(), e);</span>
+<span class="nc" id="L448">                }</span>
+
+<span class="nc bnc" id="L450" title="All 2 branches missed.">            } else if (jdbcUrl != null) {</span>
+<span class="nc bnc" id="L451" title="All 4 branches missed.">                if ((jdbcDriver == null) || (jdbcUsername == null)) {</span>
+<span class="nc" id="L452">                    throw new FlowableException(&quot;DataSource or JDBC properties have to be specified in a process engine configuration&quot;);</span>
+                }
+
+<span class="nc" id="L455">                logger.debug(&quot;initializing datasource to db: {}&quot;, jdbcUrl);</span>
+
+<span class="nc bnc" id="L457" title="All 2 branches missed.">                if (logger.isInfoEnabled()) {</span>
+<span class="nc" id="L458">                    logger.info(&quot;Configuring Datasource with following properties (omitted password for security)&quot;);</span>
+<span class="nc" id="L459">                    logger.info(&quot;datasource driver : {}&quot;, jdbcDriver);</span>
+<span class="nc" id="L460">                    logger.info(&quot;datasource url : {}&quot;, jdbcUrl);</span>
+<span class="nc" id="L461">                    logger.info(&quot;datasource user name : {}&quot;, jdbcUsername);</span>
+                }
+
+<span class="nc" id="L464">                PooledDataSource pooledDataSource = new PooledDataSource(this.getClass().getClassLoader(), jdbcDriver, jdbcUrl, jdbcUsername, jdbcPassword);</span>
+
+<span class="nc bnc" id="L466" title="All 2 branches missed.">                if (jdbcMaxActiveConnections &gt; 0) {</span>
+<span class="nc" id="L467">                    pooledDataSource.setPoolMaximumActiveConnections(jdbcMaxActiveConnections);</span>
+                }
+<span class="nc bnc" id="L469" title="All 2 branches missed.">                if (jdbcMaxIdleConnections &gt; 0) {</span>
+<span class="nc" id="L470">                    pooledDataSource.setPoolMaximumIdleConnections(jdbcMaxIdleConnections);</span>
+                }
+<span class="nc bnc" id="L472" title="All 2 branches missed.">                if (jdbcMaxCheckoutTime &gt; 0) {</span>
+<span class="nc" id="L473">                    pooledDataSource.setPoolMaximumCheckoutTime(jdbcMaxCheckoutTime);</span>
+                }
+<span class="nc bnc" id="L475" title="All 2 branches missed.">                if (jdbcMaxWaitTime &gt; 0) {</span>
+<span class="nc" id="L476">                    pooledDataSource.setPoolTimeToWait(jdbcMaxWaitTime);</span>
+                }
+<span class="nc bnc" id="L478" title="All 2 branches missed.">                if (jdbcPingEnabled) {</span>
+<span class="nc" id="L479">                    pooledDataSource.setPoolPingEnabled(true);</span>
+<span class="nc bnc" id="L480" title="All 2 branches missed.">                    if (jdbcPingQuery != null) {</span>
+<span class="nc" id="L481">                        pooledDataSource.setPoolPingQuery(jdbcPingQuery);</span>
+                    }
+<span class="nc" id="L483">                    pooledDataSource.setPoolPingConnectionsNotUsedFor(jdbcPingConnectionNotUsedFor);</span>
+                }
+<span class="nc bnc" id="L485" title="All 2 branches missed.">                if (jdbcDefaultTransactionIsolationLevel &gt; 0) {</span>
+<span class="nc" id="L486">                    pooledDataSource.setDefaultTransactionIsolationLevel(jdbcDefaultTransactionIsolationLevel);</span>
+                }
+<span class="nc" id="L488">                dataSource = pooledDataSource;</span>
+            }
+        }
+
+<span class="nc bnc" id="L492" title="All 2 branches missed.">        if (databaseType == null) {</span>
+<span class="nc" id="L493">            initDatabaseType();</span>
+        }
+<span class="nc" id="L495">    }</span>
+
+    public void initDatabaseType() {
+<span class="nc" id="L498">        Connection connection = null;</span>
+        try {
+<span class="nc" id="L500">            connection = dataSource.getConnection();</span>
+<span class="nc" id="L501">            DatabaseMetaData databaseMetaData = connection.getMetaData();</span>
+<span class="nc" id="L502">            String databaseProductName = databaseMetaData.getDatabaseProductName();</span>
+<span class="nc" id="L503">            logger.debug(&quot;database product name: '{}'&quot;, databaseProductName);</span>
+
+            // CRDB does not expose the version through the jdbc driver, so we need to fetch it through version().
+<span class="nc bnc" id="L506" title="All 2 branches missed.">            if (PRODUCT_NAME_POSTGRES.equalsIgnoreCase(databaseProductName)) {</span>
+<span class="nc" id="L507">                try (PreparedStatement preparedStatement = connection.prepareStatement(&quot;select version() as version;&quot;);</span>
+<span class="nc" id="L508">                        ResultSet resultSet = preparedStatement.executeQuery()) {</span>
+<span class="nc" id="L509">                    String version = null;</span>
+<span class="nc bnc" id="L510" title="All 2 branches missed.">                    if (resultSet.next()) {</span>
+<span class="nc" id="L511">                        version = resultSet.getString(&quot;version&quot;);</span>
+                    }
+
+<span class="nc bnc" id="L514" title="All 4 branches missed.">                    if (StringUtils.isNotEmpty(version) &amp;&amp; version.toLowerCase().startsWith(PRODUCT_NAME_CRDB.toLowerCase())) {</span>
+<span class="nc" id="L515">                        databaseProductName = PRODUCT_NAME_CRDB;</span>
+<span class="nc" id="L516">                        logger.info(&quot;CockroachDB version '{}' detected&quot;, version);</span>
+                    }
+                }
+            }
+
+<span class="nc" id="L521">            databaseType = databaseTypeMappings.getProperty(databaseProductName);</span>
+<span class="nc bnc" id="L522" title="All 2 branches missed.">            if (databaseType == null) {</span>
+<span class="nc" id="L523">                throw new FlowableException(&quot;couldn't deduct database type from database product name '&quot; + databaseProductName + &quot;'&quot;);</span>
+            }
+<span class="nc" id="L525">            logger.debug(&quot;using database type: {}&quot;, databaseType);</span>
+
+<span class="nc" id="L527">        } catch (SQLException e) {</span>
+<span class="nc" id="L528">            throw new RuntimeException(&quot;Exception while initializing Database connection&quot;, e);</span>
+        } finally {
+            try {
+<span class="nc bnc" id="L531" title="All 2 branches missed.">                if (connection != null) {</span>
+<span class="nc" id="L532">                    connection.close();</span>
+                }
+<span class="nc" id="L534">            } catch (SQLException e) {</span>
+<span class="nc" id="L535">                logger.error(&quot;Exception while closing the Database connection&quot;, e);</span>
+<span class="nc" id="L536">            }</span>
+        }
+
+        // Special care for MSSQL, as it has a hard limit of 2000 params per statement (incl bulk statement).
+        // Especially with executions, with 100 as default, this limit is passed.
+<span class="nc bnc" id="L541" title="All 2 branches missed.">        if (DATABASE_TYPE_MSSQL.equals(databaseType)) {</span>
+<span class="nc" id="L542">            maxNrOfStatementsInBulkInsert = DEFAULT_MAX_NR_OF_STATEMENTS_BULK_INSERT_SQL_SERVER;</span>
+        }
+<span class="nc" id="L544">    }</span>
+
+    public void initSchemaManager() {
+<span class="nc bnc" id="L547" title="All 2 branches missed.">        if (this.commonSchemaManager == null) {</span>
+<span class="nc" id="L548">            this.commonSchemaManager = new CommonDbSchemaManager();</span>
+        }
+<span class="nc" id="L550">    }</span>
+
+    // session factories ////////////////////////////////////////////////////////
+
+    public void addSessionFactory(SessionFactory sessionFactory) {
+<span class="nc" id="L555">        sessionFactories.put(sessionFactory.getSessionType(), sessionFactory);</span>
+<span class="nc" id="L556">    }</span>
+
+    public void initCommandContextFactory() {
+<span class="nc bnc" id="L559" title="All 2 branches missed.">        if (commandContextFactory == null) {</span>
+<span class="nc" id="L560">            commandContextFactory = new CommandContextFactory();</span>
+        }
+<span class="nc" id="L562">    }</span>
+
+    public void initTransactionContextFactory() {
+<span class="nc bnc" id="L565" title="All 2 branches missed.">        if (transactionContextFactory == null) {</span>
+<span class="nc" id="L566">            transactionContextFactory = new StandaloneMybatisTransactionContextFactory();</span>
+        }
+<span class="nc" id="L568">    }</span>
+
+    public void initCommandExecutors() {
+<span class="nc" id="L571">        initDefaultCommandConfig();</span>
+<span class="nc" id="L572">        initSchemaCommandConfig();</span>
+<span class="nc" id="L573">        initCommandInvoker();</span>
+<span class="nc" id="L574">        initCommandInterceptors();</span>
+<span class="nc" id="L575">        initCommandExecutor();</span>
+<span class="nc" id="L576">    }</span>
+
+
+    public void initDefaultCommandConfig() {
+<span class="nc bnc" id="L580" title="All 2 branches missed.">        if (defaultCommandConfig == null) {</span>
+<span class="nc" id="L581">            defaultCommandConfig = new CommandConfig();</span>
+        }
+<span class="nc" id="L583">    }</span>
+
+    public void initSchemaCommandConfig() {
+<span class="nc bnc" id="L586" title="All 2 branches missed.">        if (schemaCommandConfig == null) {</span>
+<span class="nc" id="L587">            schemaCommandConfig = new CommandConfig();</span>
+        }
+<span class="nc" id="L589">    }</span>
+
+    public void initCommandInvoker() {
+<span class="nc bnc" id="L592" title="All 2 branches missed.">        if (commandInvoker == null) {</span>
+<span class="nc" id="L593">            commandInvoker = new DefaultCommandInvoker();</span>
+        }
+<span class="nc" id="L595">    }</span>
+
+    public void initCommandInterceptors() {
+<span class="nc bnc" id="L598" title="All 2 branches missed.">        if (commandInterceptors == null) {</span>
+<span class="nc" id="L599">            commandInterceptors = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L600" title="All 2 branches missed.">            if (customPreCommandInterceptors != null) {</span>
+<span class="nc" id="L601">                commandInterceptors.addAll(customPreCommandInterceptors);</span>
+            }
+<span class="nc" id="L603">            commandInterceptors.addAll(getDefaultCommandInterceptors());</span>
+<span class="nc bnc" id="L604" title="All 2 branches missed.">            if (customPostCommandInterceptors != null) {</span>
+<span class="nc" id="L605">                commandInterceptors.addAll(customPostCommandInterceptors);</span>
+            }
+<span class="nc" id="L607">            commandInterceptors.add(commandInvoker);</span>
+        }
+<span class="nc" id="L609">    }</span>
+
+    public Collection&lt;? extends CommandInterceptor&gt; getDefaultCommandInterceptors() {
+<span class="nc bnc" id="L612" title="All 2 branches missed.">        if (defaultCommandInterceptors == null) {</span>
+<span class="nc" id="L613">            List&lt;CommandInterceptor&gt; interceptors = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L614">            interceptors.add(new LogInterceptor());</span>
+
+<span class="nc bnc" id="L616" title="All 2 branches missed.">            if (DATABASE_TYPE_COCKROACHDB.equals(databaseType)) {</span>
+<span class="nc" id="L617">                interceptors.add(new CrDbRetryInterceptor());</span>
+            }
+
+<span class="nc" id="L620">            CommandInterceptor transactionInterceptor = createTransactionInterceptor();</span>
+<span class="nc bnc" id="L621" title="All 2 branches missed.">            if (transactionInterceptor != null) {</span>
+<span class="nc" id="L622">                interceptors.add(transactionInterceptor);</span>
+            }
+
+<span class="nc bnc" id="L625" title="All 2 branches missed.">            if (commandContextFactory != null) {</span>
+<span class="nc" id="L626">                String engineCfgKey = getEngineCfgKey();</span>
+<span class="nc" id="L627">                CommandContextInterceptor commandContextInterceptor = new CommandContextInterceptor(commandContextFactory, </span>
+                        classLoader, useClassForNameClassLoading, clock, objectMapper);
+<span class="nc" id="L629">                engineConfigurations.put(engineCfgKey, this);</span>
+<span class="nc" id="L630">                commandContextInterceptor.setEngineCfgKey(engineCfgKey);</span>
+<span class="nc" id="L631">                commandContextInterceptor.setEngineConfigurations(engineConfigurations);</span>
+<span class="nc" id="L632">                interceptors.add(commandContextInterceptor);</span>
+            }
+
+<span class="nc bnc" id="L635" title="All 2 branches missed.">            if (transactionContextFactory != null) {</span>
+<span class="nc" id="L636">                interceptors.add(new TransactionContextInterceptor(transactionContextFactory));</span>
+            }
+
+<span class="nc" id="L639">            List&lt;CommandInterceptor&gt; additionalCommandInterceptors = getAdditionalDefaultCommandInterceptors();</span>
+<span class="nc bnc" id="L640" title="All 2 branches missed.">            if (additionalCommandInterceptors != null) {</span>
+<span class="nc" id="L641">                interceptors.addAll(additionalCommandInterceptors);</span>
+            }
+
+<span class="nc" id="L644">            defaultCommandInterceptors = interceptors;</span>
+        }
+<span class="nc" id="L646">        return defaultCommandInterceptors;</span>
+    }
+
+    public abstract String getEngineCfgKey();
+    
+    public abstract String getEngineScopeType();
+
+    public List&lt;CommandInterceptor&gt; getAdditionalDefaultCommandInterceptors() {
+<span class="nc" id="L654">        return null;</span>
+    }
+
+    public void initCommandExecutor() {
+<span class="nc bnc" id="L658" title="All 2 branches missed.">        if (commandExecutor == null) {</span>
+<span class="nc" id="L659">            CommandInterceptor first = initInterceptorChain(commandInterceptors);</span>
+<span class="nc" id="L660">            commandExecutor = new CommandExecutorImpl(getDefaultCommandConfig(), first);</span>
+        }
+<span class="nc" id="L662">    }</span>
+
+    public CommandInterceptor initInterceptorChain(List&lt;CommandInterceptor&gt; chain) {
+<span class="nc bnc" id="L665" title="All 4 branches missed.">        if (chain == null || chain.isEmpty()) {</span>
+<span class="nc" id="L666">            throw new FlowableException(&quot;invalid command interceptor chain configuration: &quot; + chain);</span>
+        }
+<span class="nc bnc" id="L668" title="All 2 branches missed.">        for (int i = 0; i &lt; chain.size() - 1; i++) {</span>
+<span class="nc" id="L669">            chain.get(i).setNext(chain.get(i + 1));</span>
+        }
+<span class="nc" id="L671">        return chain.get(0);</span>
+    }
+
+    public abstract CommandInterceptor createTransactionInterceptor();
+
+
+    public void initBeans() {
+<span class="nc bnc" id="L678" title="All 2 branches missed.">        if (beans == null) {</span>
+<span class="nc" id="L679">            beans = new HashMap&lt;&gt;();</span>
+        }
+<span class="nc" id="L681">    }</span>
+
+    // id generator
+    // /////////////////////////////////////////////////////////////
+
+    public void initIdGenerator() {
+<span class="nc bnc" id="L687" title="All 2 branches missed.">        if (idGenerator == null) {</span>
+<span class="nc" id="L688">            idGenerator = new StrongUuidGenerator();</span>
+        }
+<span class="nc" id="L690">    }</span>
+
+    public void initObjectMapper() {
+<span class="nc bnc" id="L693" title="All 2 branches missed.">        if (objectMapper == null) {</span>
+<span class="nc" id="L694">            objectMapper = new ObjectMapper();</span>
+<span class="nc" id="L695">            objectMapper.configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);</span>
+        }
+<span class="nc" id="L697">    }</span>
+
+    public void initClock() {
+<span class="nc bnc" id="L700" title="All 2 branches missed.">        if (clock == null) {</span>
+<span class="nc" id="L701">            clock = new DefaultClockImpl();</span>
+        }
+<span class="nc" id="L703">    }</span>
+
+    // Data managers ///////////////////////////////////////////////////////////
+
+    public void initDataManagers() {
+<span class="nc bnc" id="L708" title="All 2 branches missed.">        if (propertyDataManager == null) {</span>
+<span class="nc" id="L709">            propertyDataManager = new MybatisPropertyDataManager(idGenerator);</span>
+        }
+
+<span class="nc bnc" id="L712" title="All 2 branches missed.">        if (byteArrayDataManager == null) {</span>
+<span class="nc" id="L713">            byteArrayDataManager = new MybatisByteArrayDataManager(idGenerator);</span>
+        }
+<span class="nc" id="L715">    }</span>
+
+    // Entity managers //////////////////////////////////////////////////////////
+
+    public void initEntityManagers() {
+<span class="nc bnc" id="L720" title="All 2 branches missed.">        if (propertyEntityManager == null) {</span>
+<span class="nc" id="L721">            propertyEntityManager = new PropertyEntityManagerImpl(this, propertyDataManager);</span>
+        }
+
+<span class="nc bnc" id="L724" title="All 2 branches missed.">        if (byteArrayEntityManager == null) {</span>
+<span class="nc" id="L725">            byteArrayEntityManager = new ByteArrayEntityManagerImpl(byteArrayDataManager, getEngineCfgKey(), this::getEventDispatcher);</span>
+        }
+
+<span class="nc bnc" id="L728" title="All 2 branches missed.">        if (tableDataManager == null) {</span>
+<span class="nc" id="L729">            tableDataManager = new TableDataManagerImpl(this);</span>
+        }
+<span class="nc" id="L731">    }</span>
+
+    // services
+    // /////////////////////////////////////////////////////////////////
+
+    protected void initService(Object service) {
+<span class="nc bnc" id="L737" title="All 2 branches missed.">        if (service instanceof CommonEngineServiceImpl) {</span>
+<span class="nc" id="L738">            ((CommonEngineServiceImpl) service).setCommandExecutor(commandExecutor);</span>
+        }
+<span class="nc" id="L740">    }</span>
+
+    // myBatis SqlSessionFactory
+    // ////////////////////////////////////////////////
+
+    public void initSessionFactories() {
+<span class="nc bnc" id="L746" title="All 2 branches missed.">        if (sessionFactories == null) {</span>
+<span class="nc" id="L747">            sessionFactories = new HashMap&lt;&gt;();</span>
+
+<span class="nc bnc" id="L749" title="All 2 branches missed.">            if (usingRelationalDatabase) {</span>
+<span class="nc" id="L750">                initDbSqlSessionFactory();</span>
+            }
+
+<span class="nc" id="L753">            addSessionFactory(new GenericManagerFactory(EntityCache.class, EntityCacheImpl::new));</span>
+            
+<span class="nc bnc" id="L755" title="All 2 branches missed.">            if (isLoggingSessionEnabled()) {</span>
+<span class="nc bnc" id="L756" title="All 2 branches missed.">                if (!sessionFactories.containsKey(LoggingSession.class)) {</span>
+<span class="nc" id="L757">                    LoggingSessionFactory loggingSessionFactory = new LoggingSessionFactory();</span>
+<span class="nc" id="L758">                    loggingSessionFactory.setLoggingListener(loggingListener);</span>
+<span class="nc" id="L759">                    loggingSessionFactory.setObjectMapper(objectMapper);</span>
+<span class="nc" id="L760">                    sessionFactories.put(LoggingSession.class, loggingSessionFactory);</span>
+                }
+            }
+            
+<span class="nc" id="L764">            commandContextFactory.setSessionFactories(sessionFactories);</span>
+            
+        } else {
+<span class="nc bnc" id="L767" title="All 2 branches missed.">            if (usingRelationalDatabase) {</span>
+<span class="nc" id="L768">                initDbSqlSessionFactoryEntitySettings();</span>
+            }
+        }
+
+<span class="nc bnc" id="L772" title="All 2 branches missed.">        if (customSessionFactories != null) {</span>
+<span class="nc bnc" id="L773" title="All 2 branches missed.">            for (SessionFactory sessionFactory : customSessionFactories) {</span>
+<span class="nc" id="L774">                addSessionFactory(sessionFactory);</span>
+<span class="nc" id="L775">            }</span>
+        }
+<span class="nc" id="L777">    }</span>
+
+    public void initDbSqlSessionFactory() {
+<span class="nc bnc" id="L780" title="All 2 branches missed.">        if (dbSqlSessionFactory == null) {</span>
+<span class="nc" id="L781">            dbSqlSessionFactory = createDbSqlSessionFactory();</span>
+        }
+<span class="nc" id="L783">        dbSqlSessionFactory.setDatabaseType(databaseType);</span>
+<span class="nc" id="L784">        dbSqlSessionFactory.setSqlSessionFactory(sqlSessionFactory);</span>
+<span class="nc" id="L785">        dbSqlSessionFactory.setDbHistoryUsed(isDbHistoryUsed);</span>
+<span class="nc" id="L786">        dbSqlSessionFactory.setDatabaseTablePrefix(databaseTablePrefix);</span>
+<span class="nc" id="L787">        dbSqlSessionFactory.setTablePrefixIsSchema(tablePrefixIsSchema);</span>
+<span class="nc" id="L788">        dbSqlSessionFactory.setDatabaseCatalog(databaseCatalog);</span>
+<span class="nc" id="L789">        dbSqlSessionFactory.setDatabaseSchema(databaseSchema);</span>
+<span class="nc" id="L790">        dbSqlSessionFactory.setMaxNrOfStatementsInBulkInsert(maxNrOfStatementsInBulkInsert);</span>
+
+<span class="nc" id="L792">        initDbSqlSessionFactoryEntitySettings();</span>
+
+<span class="nc" id="L794">        addSessionFactory(dbSqlSessionFactory);</span>
+<span class="nc" id="L795">    }</span>
+
+    public DbSqlSessionFactory createDbSqlSessionFactory() {
+<span class="nc" id="L798">        return new DbSqlSessionFactory(usePrefixId);</span>
+    }
+
+    protected abstract void initDbSqlSessionFactoryEntitySettings();
+
+    protected void defaultInitDbSqlSessionFactoryEntitySettings(List&lt;Class&lt;? extends Entity&gt;&gt; insertOrder, List&lt;Class&lt;? extends Entity&gt;&gt; deleteOrder) {
+<span class="nc bnc" id="L804" title="All 2 branches missed.">        if (insertOrder != null) {</span>
+<span class="nc bnc" id="L805" title="All 2 branches missed.">            for (Class&lt;? extends Entity&gt; clazz : insertOrder) {</span>
+<span class="nc" id="L806">                dbSqlSessionFactory.getInsertionOrder().add(clazz);</span>
+    
+<span class="nc bnc" id="L808" title="All 2 branches missed.">                if (isBulkInsertEnabled) {</span>
+<span class="nc" id="L809">                    dbSqlSessionFactory.getBulkInserteableEntityClasses().add(clazz);</span>
+                }
+<span class="nc" id="L811">            }</span>
+        }
+
+<span class="nc bnc" id="L814" title="All 2 branches missed.">        if (deleteOrder != null) {</span>
+<span class="nc bnc" id="L815" title="All 2 branches missed.">            for (Class&lt;? extends Entity&gt; clazz : deleteOrder) {</span>
+<span class="nc" id="L816">                dbSqlSessionFactory.getDeletionOrder().add(clazz);</span>
+<span class="nc" id="L817">            }</span>
+        }
+<span class="nc" id="L819">    }</span>
+
+    public void initTransactionFactory() {
+<span class="nc bnc" id="L822" title="All 2 branches missed.">        if (transactionFactory == null) {</span>
+<span class="nc bnc" id="L823" title="All 2 branches missed.">            if (transactionsExternallyManaged) {</span>
+<span class="nc" id="L824">                transactionFactory = new ManagedTransactionFactory();</span>
+<span class="nc" id="L825">                Properties properties = new Properties();</span>
+<span class="nc" id="L826">                properties.put(&quot;closeConnection&quot;, &quot;false&quot;);</span>
+<span class="nc" id="L827">                this.transactionFactory.setProperties(properties);</span>
+<span class="nc" id="L828">            } else {</span>
+<span class="nc" id="L829">                transactionFactory = new JdbcTransactionFactory();</span>
+            }
+        }
+<span class="nc" id="L832">    }</span>
+
+    public void initSqlSessionFactory() {
+<span class="nc bnc" id="L835" title="All 2 branches missed.">        if (sqlSessionFactory == null) {</span>
+<span class="nc" id="L836">            InputStream inputStream = null;</span>
+            try {
+<span class="nc" id="L838">                inputStream = getMyBatisXmlConfigurationStream();</span>
+
+<span class="nc" id="L840">                Environment environment = new Environment(&quot;default&quot;, transactionFactory, dataSource);</span>
+<span class="nc" id="L841">                Reader reader = new InputStreamReader(inputStream);</span>
+<span class="nc" id="L842">                Properties properties = new Properties();</span>
+<span class="nc" id="L843">                properties.put(&quot;prefix&quot;, databaseTablePrefix);</span>
+
+<span class="nc" id="L845">                String wildcardEscapeClause = &quot;&quot;;</span>
+<span class="nc bnc" id="L846" title="All 4 branches missed.">                if ((databaseWildcardEscapeCharacter != null) &amp;&amp; (databaseWildcardEscapeCharacter.length() != 0)) {</span>
+<span class="nc" id="L847">                    wildcardEscapeClause = &quot; escape '&quot; + databaseWildcardEscapeCharacter + &quot;'&quot;;</span>
+                }
+<span class="nc" id="L849">                properties.put(&quot;wildcardEscapeClause&quot;, wildcardEscapeClause);</span>
+
+                // set default properties
+<span class="nc" id="L852">                properties.put(&quot;limitBefore&quot;, &quot;&quot;);</span>
+<span class="nc" id="L853">                properties.put(&quot;limitAfter&quot;, &quot;&quot;);</span>
+<span class="nc" id="L854">                properties.put(&quot;limitBetween&quot;, &quot;&quot;);</span>
+<span class="nc" id="L855">                properties.put(&quot;limitBeforeNativeQuery&quot;, &quot;&quot;);</span>
+<span class="nc" id="L856">                properties.put(&quot;limitAfterNativeQuery&quot;, &quot;&quot;);</span>
+<span class="nc" id="L857">                properties.put(&quot;blobType&quot;, &quot;BLOB&quot;);</span>
+<span class="nc" id="L858">                properties.put(&quot;boolValue&quot;, &quot;TRUE&quot;);</span>
+
+<span class="nc bnc" id="L860" title="All 2 branches missed.">                if (databaseType != null) {</span>
+<span class="nc" id="L861">                    properties.load(getResourceAsStream(pathToEngineDbProperties()));</span>
+                }
+
+<span class="nc" id="L864">                Configuration configuration = initMybatisConfiguration(environment, reader, properties);</span>
+<span class="nc" id="L865">                sqlSessionFactory = new DefaultSqlSessionFactory(configuration);</span>
+
+<span class="nc" id="L867">            } catch (Exception e) {</span>
+<span class="nc" id="L868">                throw new FlowableException(&quot;Error while building ibatis SqlSessionFactory: &quot; + e.getMessage(), e);</span>
+            } finally {
+<span class="nc" id="L870">                IoUtil.closeSilently(inputStream);</span>
+            }
+<span class="nc" id="L872">        } else {</span>
+            // This is needed when the SQL Session Factory is created by another engine.
+            // When custom XML Mappers are registered with this engine they need to be loaded in the configuration as well
+<span class="nc" id="L875">            applyCustomMybatisCustomizations(sqlSessionFactory.getConfiguration());</span>
+        }
+<span class="nc" id="L877">    }</span>
+
+    public String pathToEngineDbProperties() {
+<span class="nc" id="L880">        return &quot;org/flowable/common/db/properties/&quot; + databaseType + &quot;.properties&quot;;</span>
+    }
+
+    public Configuration initMybatisConfiguration(Environment environment, Reader reader, Properties properties) {
+<span class="nc" id="L884">        XMLConfigBuilder parser = new XMLConfigBuilder(reader, &quot;&quot;, properties);</span>
+<span class="nc" id="L885">        Configuration configuration = parser.getConfiguration();</span>
+
+<span class="nc bnc" id="L887" title="All 2 branches missed.">        if (databaseType != null) {</span>
+<span class="nc" id="L888">            configuration.setDatabaseId(databaseType);</span>
+        }
+
+<span class="nc" id="L891">        configuration.setEnvironment(environment);</span>
+
+<span class="nc" id="L893">        initMybatisTypeHandlers(configuration);</span>
+<span class="nc" id="L894">        initCustomMybatisInterceptors(configuration);</span>
+<span class="nc bnc" id="L895" title="All 2 branches missed.">        if (isEnableLogSqlExecutionTime()) {</span>
+<span class="nc" id="L896">            initMyBatisLogSqlExecutionTimePlugin(configuration);</span>
+        }
+
+<span class="nc" id="L899">        configuration = parseMybatisConfiguration(parser);</span>
+<span class="nc" id="L900">        return configuration;</span>
+    }
+
+    public void initCustomMybatisMappers(Configuration configuration) {
+<span class="nc bnc" id="L904" title="All 2 branches missed.">        if (getCustomMybatisMappers() != null) {</span>
+<span class="nc bnc" id="L905" title="All 2 branches missed.">            for (Class&lt;?&gt; clazz : getCustomMybatisMappers()) {</span>
+<span class="nc bnc" id="L906" title="All 2 branches missed.">                if (!configuration.hasMapper(clazz)) {</span>
+<span class="nc" id="L907">                    configuration.addMapper(clazz);</span>
+                }
+<span class="nc" id="L909">            }</span>
+        }
+<span class="nc" id="L911">    }</span>
+
+    public void initMybatisTypeHandlers(Configuration configuration) {
+        // When mapping into Map&lt;String, Object&gt; there is currently a problem with MyBatis.
+        // It will return objects which are driver specific.
+        // Therefore we are registering the mappings between Object.class and the specific jdbc type here.
+        // see https://github.com/mybatis/mybatis-3/issues/2216 for more info
+<span class="nc" id="L918">        TypeHandlerRegistry handlerRegistry = configuration.getTypeHandlerRegistry();</span>
+
+<span class="nc" id="L920">        handlerRegistry.register(Object.class, JdbcType.BOOLEAN, new BooleanTypeHandler());</span>
+<span class="nc" id="L921">        handlerRegistry.register(Object.class, JdbcType.BIT, new BooleanTypeHandler());</span>
+
+<span class="nc" id="L923">        handlerRegistry.register(Object.class, JdbcType.TINYINT, new ByteTypeHandler());</span>
+
+<span class="nc" id="L925">        handlerRegistry.register(Object.class, JdbcType.SMALLINT, new ShortTypeHandler());</span>
+
+<span class="nc" id="L927">        handlerRegistry.register(Object.class, JdbcType.INTEGER, new IntegerTypeHandler());</span>
+
+<span class="nc" id="L929">        handlerRegistry.register(Object.class, JdbcType.FLOAT, new FloatTypeHandler());</span>
+
+<span class="nc" id="L931">        handlerRegistry.register(Object.class, JdbcType.DOUBLE, new DoubleTypeHandler());</span>
+
+<span class="nc" id="L933">        handlerRegistry.register(Object.class, JdbcType.CHAR, new StringTypeHandler());</span>
+<span class="nc" id="L934">        handlerRegistry.register(Object.class, JdbcType.CLOB, new ClobTypeHandler());</span>
+<span class="nc" id="L935">        handlerRegistry.register(Object.class, JdbcType.VARCHAR, new StringTypeHandler());</span>
+<span class="nc" id="L936">        handlerRegistry.register(Object.class, JdbcType.LONGVARCHAR, new StringTypeHandler());</span>
+<span class="nc" id="L937">        handlerRegistry.register(Object.class, JdbcType.NVARCHAR, new NStringTypeHandler());</span>
+<span class="nc" id="L938">        handlerRegistry.register(Object.class, JdbcType.NCHAR, new NStringTypeHandler());</span>
+<span class="nc" id="L939">        handlerRegistry.register(Object.class, JdbcType.NCLOB, new NClobTypeHandler());</span>
+
+<span class="nc" id="L941">        handlerRegistry.register(Object.class, JdbcType.ARRAY, new ArrayTypeHandler());</span>
+
+<span class="nc" id="L943">        handlerRegistry.register(Object.class, JdbcType.BIGINT, new LongTypeHandler());</span>
+
+<span class="nc" id="L945">        handlerRegistry.register(Object.class, JdbcType.REAL, new BigDecimalTypeHandler());</span>
+<span class="nc" id="L946">        handlerRegistry.register(Object.class, JdbcType.DECIMAL, new BigDecimalTypeHandler());</span>
+<span class="nc" id="L947">        handlerRegistry.register(Object.class, JdbcType.NUMERIC, new BigDecimalTypeHandler());</span>
+
+<span class="nc" id="L949">        handlerRegistry.register(Object.class, JdbcType.BLOB, new BlobInputStreamTypeHandler());</span>
+<span class="nc" id="L950">        handlerRegistry.register(Object.class, JdbcType.LONGVARBINARY, new BlobTypeHandler());</span>
+
+<span class="nc" id="L952">        handlerRegistry.register(Object.class, JdbcType.DATE, new DateOnlyTypeHandler());</span>
+<span class="nc" id="L953">        handlerRegistry.register(Object.class, JdbcType.TIME, new TimeOnlyTypeHandler());</span>
+<span class="nc" id="L954">        handlerRegistry.register(Object.class, JdbcType.TIMESTAMP, new DateTypeHandler());</span>
+
+<span class="nc" id="L956">        handlerRegistry.register(Object.class, JdbcType.SQLXML, new SqlxmlTypeHandler());</span>
+<span class="nc" id="L957">    }</span>
+
+    public void initCustomMybatisInterceptors(Configuration configuration) {
+<span class="nc bnc" id="L960" title="All 2 branches missed.">      if (customMybatisInterceptors!=null){</span>
+<span class="nc bnc" id="L961" title="All 2 branches missed.">        for (Interceptor interceptor :customMybatisInterceptors){</span>
+<span class="nc" id="L962">            configuration.addInterceptor(interceptor);</span>
+<span class="nc" id="L963">        }</span>
+      }
+<span class="nc" id="L965">    }</span>
+
+    public void initMyBatisLogSqlExecutionTimePlugin(Configuration configuration) {
+<span class="nc" id="L968">        configuration.addInterceptor(new LogSqlExecutionTimePlugin());</span>
+<span class="nc" id="L969">    }</span>
+
+    public Configuration parseMybatisConfiguration(XMLConfigBuilder parser) {
+<span class="nc" id="L972">        Configuration configuration = parser.parse();</span>
+
+<span class="nc" id="L974">        applyCustomMybatisCustomizations(configuration);</span>
+<span class="nc" id="L975">        return configuration;</span>
+    }
+
+    protected void applyCustomMybatisCustomizations(Configuration configuration) {
+<span class="nc" id="L979">        initCustomMybatisMappers(configuration);</span>
+
+<span class="nc bnc" id="L981" title="All 2 branches missed.">        if (dependentEngineMybatisTypeAliasConfigs != null) {</span>
+<span class="nc bnc" id="L982" title="All 2 branches missed.">            for (MybatisTypeAliasConfigurator typeAliasConfig : dependentEngineMybatisTypeAliasConfigs) {</span>
+<span class="nc" id="L983">                typeAliasConfig.configure(configuration.getTypeAliasRegistry());</span>
+<span class="nc" id="L984">            }</span>
+        }
+<span class="nc bnc" id="L986" title="All 2 branches missed.">        if (dependentEngineMybatisTypeHandlerConfigs != null) {</span>
+<span class="nc bnc" id="L987" title="All 2 branches missed.">            for (MybatisTypeHandlerConfigurator typeHandlerConfig : dependentEngineMybatisTypeHandlerConfigs) {</span>
+<span class="nc" id="L988">                typeHandlerConfig.configure(configuration.getTypeHandlerRegistry());</span>
+<span class="nc" id="L989">            }</span>
+        }
+
+<span class="nc" id="L992">        parseDependentEngineMybatisXMLMappers(configuration);</span>
+<span class="nc" id="L993">        parseCustomMybatisXMLMappers(configuration);</span>
+<span class="nc" id="L994">    }</span>
+
+    public void parseCustomMybatisXMLMappers(Configuration configuration) {
+<span class="nc bnc" id="L997" title="All 2 branches missed.">        if (getCustomMybatisXMLMappers() != null) {</span>
+<span class="nc bnc" id="L998" title="All 2 branches missed.">            for (String resource : getCustomMybatisXMLMappers()) {</span>
+<span class="nc" id="L999">                parseMybatisXmlMapping(configuration, resource);</span>
+<span class="nc" id="L1000">            }</span>
+        }
+<span class="nc" id="L1002">    }</span>
+
+    public void parseDependentEngineMybatisXMLMappers(Configuration configuration) {
+<span class="nc bnc" id="L1005" title="All 2 branches missed.">        if (getDependentEngineMyBatisXmlMappers() != null) {</span>
+<span class="nc bnc" id="L1006" title="All 2 branches missed.">            for (String resource : getDependentEngineMyBatisXmlMappers()) {</span>
+<span class="nc" id="L1007">                parseMybatisXmlMapping(configuration, resource);</span>
+<span class="nc" id="L1008">            }</span>
+        }
+<span class="nc" id="L1010">    }</span>
+
+    protected void parseMybatisXmlMapping(Configuration configuration, String resource) {
+        // see XMLConfigBuilder.mapperElement()
+<span class="nc" id="L1014">        XMLMapperBuilder mapperParser = new XMLMapperBuilder(getResourceAsStream(resource), configuration, resource, configuration.getSqlFragments());</span>
+<span class="nc" id="L1015">        mapperParser.parse();</span>
+<span class="nc" id="L1016">    }</span>
+
+    protected InputStream getResourceAsStream(String resource) {
+<span class="nc" id="L1019">        ClassLoader classLoader = getClassLoader();</span>
+<span class="nc bnc" id="L1020" title="All 2 branches missed.">        if (classLoader != null) {</span>
+<span class="nc" id="L1021">            return getClassLoader().getResourceAsStream(resource);</span>
+        } else {
+<span class="nc" id="L1023">            return this.getClass().getClassLoader().getResourceAsStream(resource);</span>
+        }
+    }
+
+    public void setMybatisMappingFile(String file) {
+<span class="nc" id="L1028">        this.mybatisMappingFile = file;</span>
+<span class="nc" id="L1029">    }</span>
+
+    public String getMybatisMappingFile() {
+<span class="nc" id="L1032">        return mybatisMappingFile;</span>
+    }
+
+    public abstract InputStream getMyBatisXmlConfigurationStream();
+    
+    public void initConfigurators() {
+
+<span class="nc" id="L1039">        allConfigurators = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L1040">        allConfigurators.addAll(getEngineSpecificEngineConfigurators());</span>
+
+        // Configurators that are explicitly added to the config
+<span class="nc bnc" id="L1043" title="All 2 branches missed.">        if (configurators != null) {</span>
+<span class="nc" id="L1044">            allConfigurators.addAll(configurators);</span>
+        }
+
+        // Auto discovery through ServiceLoader
+<span class="nc bnc" id="L1048" title="All 2 branches missed.">        if (enableConfiguratorServiceLoader) {</span>
+<span class="nc" id="L1049">            ClassLoader classLoader = getClassLoader();</span>
+<span class="nc bnc" id="L1050" title="All 2 branches missed.">            if (classLoader == null) {</span>
+<span class="nc" id="L1051">                classLoader = ReflectUtil.getClassLoader();</span>
+            }
+
+<span class="nc" id="L1054">            ServiceLoader&lt;EngineConfigurator&gt; configuratorServiceLoader = ServiceLoader.load(EngineConfigurator.class, classLoader);</span>
+<span class="nc" id="L1055">            int nrOfServiceLoadedConfigurators = 0;</span>
+<span class="nc bnc" id="L1056" title="All 2 branches missed.">            for (EngineConfigurator configurator : configuratorServiceLoader) {</span>
+<span class="nc" id="L1057">                allConfigurators.add(configurator);</span>
+<span class="nc" id="L1058">                nrOfServiceLoadedConfigurators++;</span>
+<span class="nc" id="L1059">            }</span>
+
+<span class="nc bnc" id="L1061" title="All 2 branches missed.">            if (nrOfServiceLoadedConfigurators &gt; 0) {</span>
+<span class="nc bnc" id="L1062" title="All 2 branches missed.">                logger.info(&quot;Found {} auto-discoverable Process Engine Configurator{}&quot;, nrOfServiceLoadedConfigurators, nrOfServiceLoadedConfigurators &gt; 1 ? &quot;s&quot; : &quot;&quot;);</span>
+            }
+
+<span class="nc bnc" id="L1065" title="All 2 branches missed.">            if (!allConfigurators.isEmpty()) {</span>
+
+                // Order them according to the priorities (useful for dependent
+                // configurator)
+<span class="nc" id="L1069">                allConfigurators.sort(new Comparator&lt;&gt;() {</span>
+
+                    @Override
+                    public int compare(EngineConfigurator configurator1, EngineConfigurator configurator2) {
+<span class="nc" id="L1073">                        int priority1 = configurator1.getPriority();</span>
+<span class="nc" id="L1074">                        int priority2 = configurator2.getPriority();</span>
+
+<span class="nc bnc" id="L1076" title="All 2 branches missed.">                        if (priority1 &lt; priority2) {</span>
+<span class="nc" id="L1077">                            return -1;</span>
+<span class="nc bnc" id="L1078" title="All 2 branches missed.">                        } else if (priority1 &gt; priority2) {</span>
+<span class="nc" id="L1079">                            return 1;</span>
+                        }
+<span class="nc" id="L1081">                        return 0;</span>
+                    }
+                });
+
+                // Execute the configurators
+<span class="nc" id="L1086">                logger.info(&quot;Found {} Engine Configurators in total:&quot;, allConfigurators.size());</span>
+<span class="nc bnc" id="L1087" title="All 2 branches missed.">                for (EngineConfigurator configurator : allConfigurators) {</span>
+<span class="nc" id="L1088">                    logger.info(&quot;{} (priority:{})&quot;, configurator.getClass(), configurator.getPriority());</span>
+<span class="nc" id="L1089">                }</span>
+
+            }
+
+        }
+<span class="nc" id="L1094">    }</span>
+
+    public void close() {
+<span class="nc bnc" id="L1097" title="All 4 branches missed.">        if (forceCloseMybatisConnectionPool &amp;&amp; dataSource instanceof PooledDataSource) {</span>
+            /*
+             * When the datasource is created by a Flowable engine (i.e. it's an instance of PooledDataSource),
+             * the connection pool needs to be closed when closing the engine.
+             * Note that calling forceCloseAll() multiple times (as is the case when running with multiple engine) is ok.
+             */
+<span class="nc" id="L1103">            ((PooledDataSource) dataSource).forceCloseAll();</span>
+        }
+<span class="nc" id="L1105">    }</span>
+
+    protected List&lt;EngineConfigurator&gt; getEngineSpecificEngineConfigurators() {
+        // meant to be overridden if needed
+<span class="nc" id="L1109">        return Collections.emptyList();</span>
+    }
+
+    public void configuratorsBeforeInit() {
+<span class="nc bnc" id="L1113" title="All 2 branches missed.">        for (EngineConfigurator configurator : allConfigurators) {</span>
+<span class="nc" id="L1114">            logger.info(&quot;Executing beforeInit() of {} (priority:{})&quot;, configurator.getClass(), configurator.getPriority());</span>
+<span class="nc" id="L1115">            configurator.beforeInit(this);</span>
+<span class="nc" id="L1116">        }</span>
+<span class="nc" id="L1117">    }</span>
+    
+    public void configuratorsAfterInit() {
+<span class="nc bnc" id="L1120" title="All 2 branches missed.">        for (EngineConfigurator configurator : allConfigurators) {</span>
+<span class="nc" id="L1121">            logger.info(&quot;Executing configure() of {} (priority:{})&quot;, configurator.getClass(), configurator.getPriority());</span>
+<span class="nc" id="L1122">            configurator.configure(this);</span>
+<span class="nc" id="L1123">        }</span>
+<span class="nc" id="L1124">    }</span>
+
+    public LockManager getLockManager(String lockName) {
+<span class="nc" id="L1127">        return new LockManagerImpl(commandExecutor, lockName, getLockPollRate(), getEngineCfgKey());</span>
+    }
+
+    // getters and setters
+    // //////////////////////////////////////////////////////
+
+    public abstract String getEngineName();
+
+    public ClassLoader getClassLoader() {
+<span class="nc" id="L1136">        return classLoader;</span>
+    }
+
+    public AbstractEngineConfiguration setClassLoader(ClassLoader classLoader) {
+<span class="nc" id="L1140">        this.classLoader = classLoader;</span>
+<span class="nc" id="L1141">        return this;</span>
+    }
+
+    public boolean isUseClassForNameClassLoading() {
+<span class="nc" id="L1145">        return useClassForNameClassLoading;</span>
+    }
+
+    public AbstractEngineConfiguration setUseClassForNameClassLoading(boolean useClassForNameClassLoading) {
+<span class="nc" id="L1149">        this.useClassForNameClassLoading = useClassForNameClassLoading;</span>
+<span class="nc" id="L1150">        return this;</span>
+    }
+
+    public void addEngineLifecycleListener(EngineLifecycleListener engineLifecycleListener) {
+<span class="nc bnc" id="L1154" title="All 2 branches missed.">        if (this.engineLifecycleListeners == null) {</span>
+<span class="nc" id="L1155">            this.engineLifecycleListeners = new ArrayList&lt;&gt;();</span>
+        }
+<span class="nc" id="L1157">        this.engineLifecycleListeners.add(engineLifecycleListener);</span>
+<span class="nc" id="L1158">    }</span>
+
+    public List&lt;EngineLifecycleListener&gt; getEngineLifecycleListeners() {
+<span class="nc" id="L1161">        return engineLifecycleListeners;</span>
+    }
+
+    public AbstractEngineConfiguration setEngineLifecycleListeners(List&lt;EngineLifecycleListener&gt; engineLifecycleListeners) {
+<span class="nc" id="L1165">        this.engineLifecycleListeners = engineLifecycleListeners;</span>
+<span class="nc" id="L1166">        return this;</span>
+    }
+
+    public String getDatabaseType() {
+<span class="nc" id="L1170">        return databaseType;</span>
+    }
+
+    public AbstractEngineConfiguration setDatabaseType(String databaseType) {
+<span class="nc" id="L1174">        this.databaseType = databaseType;</span>
+<span class="nc" id="L1175">        return this;</span>
+    }
+
+    public DataSource getDataSource() {
+<span class="nc" id="L1179">        return dataSource;</span>
+    }
+
+    public AbstractEngineConfiguration setDataSource(DataSource dataSource) {
+<span class="nc" id="L1183">        this.dataSource = dataSource;</span>
+<span class="nc" id="L1184">        return this;</span>
+    }
+
+    public SchemaManager getSchemaManager() {
+<span class="nc" id="L1188">        return schemaManager;</span>
+    }
+
+    public AbstractEngineConfiguration setSchemaManager(SchemaManager schemaManager) {
+<span class="nc" id="L1192">        this.schemaManager = schemaManager;</span>
+<span class="nc" id="L1193">        return this;</span>
+    }
+
+    public SchemaManager getCommonSchemaManager() {
+<span class="nc" id="L1197">        return commonSchemaManager;</span>
+    }
+
+    public AbstractEngineConfiguration setCommonSchemaManager(SchemaManager commonSchemaManager) {
+<span class="nc" id="L1201">        this.commonSchemaManager = commonSchemaManager;</span>
+<span class="nc" id="L1202">        return this;</span>
+    }
+    
+    public Command&lt;Void&gt; getSchemaManagementCmd() {
+<span class="nc" id="L1206">        return schemaManagementCmd;</span>
+    }
+
+    public AbstractEngineConfiguration setSchemaManagementCmd(Command&lt;Void&gt; schemaManagementCmd) {
+<span class="nc" id="L1210">        this.schemaManagementCmd = schemaManagementCmd;</span>
+<span class="nc" id="L1211">        return this;</span>
+    }
+
+    public String getJdbcDriver() {
+<span class="nc" id="L1215">        return jdbcDriver;</span>
+    }
+
+    public AbstractEngineConfiguration setJdbcDriver(String jdbcDriver) {
+<span class="nc" id="L1219">        this.jdbcDriver = jdbcDriver;</span>
+<span class="nc" id="L1220">        return this;</span>
+    }
+
+    public String getJdbcUrl() {
+<span class="nc" id="L1224">        return jdbcUrl;</span>
+    }
+
+    public AbstractEngineConfiguration setJdbcUrl(String jdbcUrl) {
+<span class="nc" id="L1228">        this.jdbcUrl = jdbcUrl;</span>
+<span class="nc" id="L1229">        return this;</span>
+    }
+
+    public String getJdbcUsername() {
+<span class="nc" id="L1233">        return jdbcUsername;</span>
+    }
+
+    public AbstractEngineConfiguration setJdbcUsername(String jdbcUsername) {
+<span class="nc" id="L1237">        this.jdbcUsername = jdbcUsername;</span>
+<span class="nc" id="L1238">        return this;</span>
+    }
+
+    public String getJdbcPassword() {
+<span class="nc" id="L1242">        return jdbcPassword;</span>
+    }
+
+    public AbstractEngineConfiguration setJdbcPassword(String jdbcPassword) {
+<span class="nc" id="L1246">        this.jdbcPassword = jdbcPassword;</span>
+<span class="nc" id="L1247">        return this;</span>
+    }
+
+    public int getJdbcMaxActiveConnections() {
+<span class="nc" id="L1251">        return jdbcMaxActiveConnections;</span>
+    }
+
+    public AbstractEngineConfiguration setJdbcMaxActiveConnections(int jdbcMaxActiveConnections) {
+<span class="nc" id="L1255">        this.jdbcMaxActiveConnections = jdbcMaxActiveConnections;</span>
+<span class="nc" id="L1256">        return this;</span>
+    }
+
+    public int getJdbcMaxIdleConnections() {
+<span class="nc" id="L1260">        return jdbcMaxIdleConnections;</span>
+    }
+
+    public AbstractEngineConfiguration setJdbcMaxIdleConnections(int jdbcMaxIdleConnections) {
+<span class="nc" id="L1264">        this.jdbcMaxIdleConnections = jdbcMaxIdleConnections;</span>
+<span class="nc" id="L1265">        return this;</span>
+    }
+
+    public int getJdbcMaxCheckoutTime() {
+<span class="nc" id="L1269">        return jdbcMaxCheckoutTime;</span>
+    }
+
+    public AbstractEngineConfiguration setJdbcMaxCheckoutTime(int jdbcMaxCheckoutTime) {
+<span class="nc" id="L1273">        this.jdbcMaxCheckoutTime = jdbcMaxCheckoutTime;</span>
+<span class="nc" id="L1274">        return this;</span>
+    }
+
+    public int getJdbcMaxWaitTime() {
+<span class="nc" id="L1278">        return jdbcMaxWaitTime;</span>
+    }
+
+    public AbstractEngineConfiguration setJdbcMaxWaitTime(int jdbcMaxWaitTime) {
+<span class="nc" id="L1282">        this.jdbcMaxWaitTime = jdbcMaxWaitTime;</span>
+<span class="nc" id="L1283">        return this;</span>
+    }
+
+    public boolean isJdbcPingEnabled() {
+<span class="nc" id="L1287">        return jdbcPingEnabled;</span>
+    }
+
+    public AbstractEngineConfiguration setJdbcPingEnabled(boolean jdbcPingEnabled) {
+<span class="nc" id="L1291">        this.jdbcPingEnabled = jdbcPingEnabled;</span>
+<span class="nc" id="L1292">        return this;</span>
+    }
+
+    public int getJdbcPingConnectionNotUsedFor() {
+<span class="nc" id="L1296">        return jdbcPingConnectionNotUsedFor;</span>
+    }
+
+    public AbstractEngineConfiguration setJdbcPingConnectionNotUsedFor(int jdbcPingConnectionNotUsedFor) {
+<span class="nc" id="L1300">        this.jdbcPingConnectionNotUsedFor = jdbcPingConnectionNotUsedFor;</span>
+<span class="nc" id="L1301">        return this;</span>
+    }
+
+    public int getJdbcDefaultTransactionIsolationLevel() {
+<span class="nc" id="L1305">        return jdbcDefaultTransactionIsolationLevel;</span>
+    }
+
+    public AbstractEngineConfiguration setJdbcDefaultTransactionIsolationLevel(int jdbcDefaultTransactionIsolationLevel) {
+<span class="nc" id="L1309">        this.jdbcDefaultTransactionIsolationLevel = jdbcDefaultTransactionIsolationLevel;</span>
+<span class="nc" id="L1310">        return this;</span>
+    }
+
+    public String getJdbcPingQuery() {
+<span class="nc" id="L1314">        return jdbcPingQuery;</span>
+    }
+
+    public AbstractEngineConfiguration setJdbcPingQuery(String jdbcPingQuery) {
+<span class="nc" id="L1318">        this.jdbcPingQuery = jdbcPingQuery;</span>
+<span class="nc" id="L1319">        return this;</span>
+    }
+
+    public String getDataSourceJndiName() {
+<span class="nc" id="L1323">        return dataSourceJndiName;</span>
+    }
+
+    public AbstractEngineConfiguration setDataSourceJndiName(String dataSourceJndiName) {
+<span class="nc" id="L1327">        this.dataSourceJndiName = dataSourceJndiName;</span>
+<span class="nc" id="L1328">        return this;</span>
+    }
+
+    public CommandConfig getSchemaCommandConfig() {
+<span class="nc" id="L1332">        return schemaCommandConfig;</span>
+    }
+
+    public AbstractEngineConfiguration setSchemaCommandConfig(CommandConfig schemaCommandConfig) {
+<span class="nc" id="L1336">        this.schemaCommandConfig = schemaCommandConfig;</span>
+<span class="nc" id="L1337">        return this;</span>
+    }
+
+    public boolean isTransactionsExternallyManaged() {
+<span class="nc" id="L1341">        return transactionsExternallyManaged;</span>
+    }
+
+    public AbstractEngineConfiguration setTransactionsExternallyManaged(boolean transactionsExternallyManaged) {
+<span class="nc" id="L1345">        this.transactionsExternallyManaged = transactionsExternallyManaged;</span>
+<span class="nc" id="L1346">        return this;</span>
+    }
+
+    public Map&lt;Object, Object&gt; getBeans() {
+<span class="nc" id="L1350">        return beans;</span>
+    }
+
+    public AbstractEngineConfiguration setBeans(Map&lt;Object, Object&gt; beans) {
+<span class="nc" id="L1354">        this.beans = beans;</span>
+<span class="nc" id="L1355">        return this;</span>
+    }
+
+    public IdGenerator getIdGenerator() {
+<span class="nc" id="L1359">        return idGenerator;</span>
+    }
+
+    public AbstractEngineConfiguration setIdGenerator(IdGenerator idGenerator) {
+<span class="nc" id="L1363">        this.idGenerator = idGenerator;</span>
+<span class="nc" id="L1364">        return this;</span>
+    }
+
+    public boolean isUsePrefixId() {
+<span class="nc" id="L1368">        return usePrefixId;</span>
+    }
+
+    public AbstractEngineConfiguration setUsePrefixId(boolean usePrefixId) {
+<span class="nc" id="L1372">        this.usePrefixId = usePrefixId;</span>
+<span class="nc" id="L1373">        return this;</span>
+    }
+
+    public String getXmlEncoding() {
+<span class="nc" id="L1377">        return xmlEncoding;</span>
+    }
+
+    public AbstractEngineConfiguration setXmlEncoding(String xmlEncoding) {
+<span class="nc" id="L1381">        this.xmlEncoding = xmlEncoding;</span>
+<span class="nc" id="L1382">        return this;</span>
+    }
+
+    public CommandConfig getDefaultCommandConfig() {
+<span class="nc" id="L1386">        return defaultCommandConfig;</span>
+    }
+
+    public AbstractEngineConfiguration setDefaultCommandConfig(CommandConfig defaultCommandConfig) {
+<span class="nc" id="L1390">        this.defaultCommandConfig = defaultCommandConfig;</span>
+<span class="nc" id="L1391">        return this;</span>
+    }
+
+    public CommandExecutor getCommandExecutor() {
+<span class="nc" id="L1395">        return commandExecutor;</span>
+    }
+
+    public AbstractEngineConfiguration setCommandExecutor(CommandExecutor commandExecutor) {
+<span class="nc" id="L1399">        this.commandExecutor = commandExecutor;</span>
+<span class="nc" id="L1400">        return this;</span>
+    }
+
+    public CommandContextFactory getCommandContextFactory() {
+<span class="nc" id="L1404">        return commandContextFactory;</span>
+    }
+
+    public AbstractEngineConfiguration setCommandContextFactory(CommandContextFactory commandContextFactory) {
+<span class="nc" id="L1408">        this.commandContextFactory = commandContextFactory;</span>
+<span class="nc" id="L1409">        return this;</span>
+    }
+
+    public CommandInterceptor getCommandInvoker() {
+<span class="nc" id="L1413">        return commandInvoker;</span>
+    }
+
+    public AbstractEngineConfiguration setCommandInvoker(CommandInterceptor commandInvoker) {
+<span class="nc" id="L1417">        this.commandInvoker = commandInvoker;</span>
+<span class="nc" id="L1418">        return this;</span>
+    }
+
+    public AgendaOperationRunner getAgendaOperationRunner() {
+<span class="nc" id="L1422">        return agendaOperationRunner;</span>
+    }
+
+    public AbstractEngineConfiguration setAgendaOperationRunner(AgendaOperationRunner agendaOperationRunner) {
+<span class="nc" id="L1426">        this.agendaOperationRunner = agendaOperationRunner;</span>
+<span class="nc" id="L1427">        return this;</span>
+    }
+
+    public Collection&lt;AgendaOperationExecutionListener&gt; getAgendaOperationExecutionListeners() {
+<span class="nc" id="L1431">        return agendaOperationExecutionListeners;</span>
+    }
+
+    public AbstractEngineConfiguration addAgendaOperationExecutionListener(AgendaOperationExecutionListener listener) {
+<span class="nc bnc" id="L1435" title="All 2 branches missed.">        if (this.agendaOperationExecutionListeners == null) {</span>
+<span class="nc" id="L1436">            this.agendaOperationExecutionListeners = new ArrayList&lt;&gt;();</span>
+        }
+<span class="nc" id="L1438">        this.agendaOperationExecutionListeners.add(listener);</span>
+<span class="nc" id="L1439">        return this;</span>
+    }
+
+    public AbstractEngineConfiguration setAgendaOperationExecutionListeners(Collection&lt;AgendaOperationExecutionListener&gt; agendaOperationExecutionListeners) {
+<span class="nc" id="L1443">        this.agendaOperationExecutionListeners = agendaOperationExecutionListeners;</span>
+<span class="nc" id="L1444">        return this;</span>
+    }
+
+    public List&lt;CommandInterceptor&gt; getCustomPreCommandInterceptors() {
+<span class="nc" id="L1448">        return customPreCommandInterceptors;</span>
+    }
+
+    public AbstractEngineConfiguration addCustomPreCommandInterceptor(CommandInterceptor commandInterceptor) {
+<span class="nc bnc" id="L1452" title="All 2 branches missed.">        if (this.customPreCommandInterceptors == null) {</span>
+<span class="nc" id="L1453">            this.customPreCommandInterceptors = new ArrayList&lt;&gt;();</span>
+        }
+<span class="nc" id="L1455">        this.customPreCommandInterceptors.add(commandInterceptor);</span>
+<span class="nc" id="L1456">        return this;</span>
+    }
+
+    public AbstractEngineConfiguration setCustomPreCommandInterceptors(List&lt;CommandInterceptor&gt; customPreCommandInterceptors) {
+<span class="nc" id="L1460">        this.customPreCommandInterceptors = customPreCommandInterceptors;</span>
+<span class="nc" id="L1461">        return this;</span>
+    }
+
+    public List&lt;CommandInterceptor&gt; getCustomPostCommandInterceptors() {
+<span class="nc" id="L1465">        return customPostCommandInterceptors;</span>
+    }
+
+    public AbstractEngineConfiguration addCustomPostCommandInterceptor(CommandInterceptor commandInterceptor) {
+<span class="nc bnc" id="L1469" title="All 2 branches missed.">        if (this.customPostCommandInterceptors == null) {</span>
+<span class="nc" id="L1470">            this.customPostCommandInterceptors = new ArrayList&lt;&gt;();</span>
+        }
+<span class="nc" id="L1472">        this.customPostCommandInterceptors.add(commandInterceptor);</span>
+<span class="nc" id="L1473">        return this;</span>
+    }
+
+    public AbstractEngineConfiguration setCustomPostCommandInterceptors(List&lt;CommandInterceptor&gt; customPostCommandInterceptors) {
+<span class="nc" id="L1477">        this.customPostCommandInterceptors = customPostCommandInterceptors;</span>
+<span class="nc" id="L1478">        return this;</span>
+    }
+
+    public List&lt;CommandInterceptor&gt; getCommandInterceptors() {
+<span class="nc" id="L1482">        return commandInterceptors;</span>
+    }
+
+    public AbstractEngineConfiguration setCommandInterceptors(List&lt;CommandInterceptor&gt; commandInterceptors) {
+<span class="nc" id="L1486">        this.commandInterceptors = commandInterceptors;</span>
+<span class="nc" id="L1487">        return this;</span>
+    }
+
+    public Map&lt;String, AbstractEngineConfiguration&gt; getEngineConfigurations() {
+<span class="nc" id="L1491">        return engineConfigurations;</span>
+    }
+
+    public AbstractEngineConfiguration setEngineConfigurations(Map&lt;String, AbstractEngineConfiguration&gt; engineConfigurations) {
+<span class="nc" id="L1495">        this.engineConfigurations = engineConfigurations;</span>
+<span class="nc" id="L1496">        return this;</span>
+    }
+
+    public void addEngineConfiguration(String key, String scopeType, AbstractEngineConfiguration engineConfiguration) {
+<span class="nc bnc" id="L1500" title="All 2 branches missed.">        if (engineConfigurations == null) {</span>
+<span class="nc" id="L1501">            engineConfigurations = new HashMap&lt;&gt;();</span>
+        }
+<span class="nc" id="L1503">        engineConfigurations.put(key, engineConfiguration);</span>
+<span class="nc" id="L1504">        engineConfigurations.put(scopeType, engineConfiguration);</span>
+<span class="nc" id="L1505">    }</span>
+
+    public Map&lt;String, AbstractServiceConfiguration&gt; getServiceConfigurations() {
+<span class="nc" id="L1508">        return serviceConfigurations;</span>
+    }
+
+    public AbstractEngineConfiguration setServiceConfigurations(Map&lt;String, AbstractServiceConfiguration&gt; serviceConfigurations) {
+<span class="nc" id="L1512">        this.serviceConfigurations = serviceConfigurations;</span>
+<span class="nc" id="L1513">        return this;</span>
+    }
+
+    public void addServiceConfiguration(String key, AbstractServiceConfiguration serviceConfiguration) {
+<span class="nc bnc" id="L1517" title="All 2 branches missed.">        if (serviceConfigurations == null) {</span>
+<span class="nc" id="L1518">            serviceConfigurations = new HashMap&lt;&gt;();</span>
+        }
+<span class="nc" id="L1520">        serviceConfigurations.put(key, serviceConfiguration);</span>
+<span class="nc" id="L1521">    }</span>
+
+    public Map&lt;String, EventRegistryEventConsumer&gt; getEventRegistryEventConsumers() {
+<span class="nc" id="L1524">        return eventRegistryEventConsumers;</span>
+    }
+
+    public AbstractEngineConfiguration setEventRegistryEventConsumers(Map&lt;String, EventRegistryEventConsumer&gt; eventRegistryEventConsumers) {
+<span class="nc" id="L1528">        this.eventRegistryEventConsumers = eventRegistryEventConsumers;</span>
+<span class="nc" id="L1529">        return this;</span>
+    }
+    
+    public void addEventRegistryEventConsumer(String key, EventRegistryEventConsumer eventRegistryEventConsumer) {
+<span class="nc bnc" id="L1533" title="All 2 branches missed.">        if (eventRegistryEventConsumers == null) {</span>
+<span class="nc" id="L1534">            eventRegistryEventConsumers = new HashMap&lt;&gt;();</span>
+        }
+<span class="nc" id="L1536">        eventRegistryEventConsumers.put(key, eventRegistryEventConsumer);</span>
+<span class="nc" id="L1537">    }</span>
+
+    public AbstractEngineConfiguration setDefaultCommandInterceptors(Collection&lt;? extends CommandInterceptor&gt; defaultCommandInterceptors) {
+<span class="nc" id="L1540">        this.defaultCommandInterceptors = defaultCommandInterceptors;</span>
+<span class="nc" id="L1541">        return this;</span>
+    }
+
+    public SqlSessionFactory getSqlSessionFactory() {
+<span class="nc" id="L1545">        return sqlSessionFactory;</span>
+    }
+
+    public AbstractEngineConfiguration setSqlSessionFactory(SqlSessionFactory sqlSessionFactory) {
+<span class="nc" id="L1549">        this.sqlSessionFactory = sqlSessionFactory;</span>
+<span class="nc" id="L1550">        return this;</span>
+    }
+
+    public boolean isDbHistoryUsed() {
+<span class="nc" id="L1554">        return isDbHistoryUsed;</span>
+    }
+
+    public AbstractEngineConfiguration setDbHistoryUsed(boolean isDbHistoryUsed) {
+<span class="nc" id="L1558">        this.isDbHistoryUsed = isDbHistoryUsed;</span>
+<span class="nc" id="L1559">        return this;</span>
+    }
+
+    public DbSqlSessionFactory getDbSqlSessionFactory() {
+<span class="nc" id="L1563">        return dbSqlSessionFactory;</span>
+    }
+
+    public AbstractEngineConfiguration setDbSqlSessionFactory(DbSqlSessionFactory dbSqlSessionFactory) {
+<span class="nc" id="L1567">        this.dbSqlSessionFactory = dbSqlSessionFactory;</span>
+<span class="nc" id="L1568">        return this;</span>
+    }
+
+    public TransactionFactory getTransactionFactory() {
+<span class="nc" id="L1572">        return transactionFactory;</span>
+    }
+
+    public AbstractEngineConfiguration setTransactionFactory(TransactionFactory transactionFactory) {
+<span class="nc" id="L1576">        this.transactionFactory = transactionFactory;</span>
+<span class="nc" id="L1577">        return this;</span>
+    }
+
+    public TransactionContextFactory getTransactionContextFactory() {
+<span class="nc" id="L1581">        return transactionContextFactory;</span>
+    }
+
+    public AbstractEngineConfiguration setTransactionContextFactory(TransactionContextFactory transactionContextFactory) {
+<span class="nc" id="L1585">        this.transactionContextFactory = transactionContextFactory;</span>
+<span class="nc" id="L1586">        return this;</span>
+    }
+
+    public int getMaxNrOfStatementsInBulkInsert() {
+<span class="nc" id="L1590">        return maxNrOfStatementsInBulkInsert;</span>
+    }
+
+    public AbstractEngineConfiguration setMaxNrOfStatementsInBulkInsert(int maxNrOfStatementsInBulkInsert) {
+<span class="nc" id="L1594">        this.maxNrOfStatementsInBulkInsert = maxNrOfStatementsInBulkInsert;</span>
+<span class="nc" id="L1595">        return this;</span>
+    }
+
+    public boolean isBulkInsertEnabled() {
+<span class="nc" id="L1599">        return isBulkInsertEnabled;</span>
+    }
+
+    public AbstractEngineConfiguration setBulkInsertEnabled(boolean isBulkInsertEnabled) {
+<span class="nc" id="L1603">        this.isBulkInsertEnabled = isBulkInsertEnabled;</span>
+<span class="nc" id="L1604">        return this;</span>
+    }
+
+    public Set&lt;Class&lt;?&gt;&gt; getCustomMybatisMappers() {
+<span class="nc" id="L1608">        return customMybatisMappers;</span>
+    }
+
+    public AbstractEngineConfiguration setCustomMybatisMappers(Set&lt;Class&lt;?&gt;&gt; customMybatisMappers) {
+<span class="nc" id="L1612">        this.customMybatisMappers = customMybatisMappers;</span>
+<span class="nc" id="L1613">        return this;</span>
+    }
+
+    public Set&lt;String&gt; getCustomMybatisXMLMappers() {
+<span class="nc" id="L1617">        return customMybatisXMLMappers;</span>
+    }
+
+    public AbstractEngineConfiguration setCustomMybatisXMLMappers(Set&lt;String&gt; customMybatisXMLMappers) {
+<span class="nc" id="L1621">        this.customMybatisXMLMappers = customMybatisXMLMappers;</span>
+<span class="nc" id="L1622">        return this;</span>
+    }
+
+    public Set&lt;String&gt; getDependentEngineMyBatisXmlMappers() {
+<span class="nc" id="L1626">        return dependentEngineMyBatisXmlMappers;</span>
+    }
+
+    public AbstractEngineConfiguration setCustomMybatisInterceptors(List&lt;Interceptor&gt; customMybatisInterceptors) {
+<span class="nc" id="L1630">        this.customMybatisInterceptors = customMybatisInterceptors;</span>
+<span class="nc" id="L1631">        return  this;</span>
+    }
+
+    public List&lt;Interceptor&gt; getCustomMybatisInterceptors() {
+<span class="nc" id="L1635">        return customMybatisInterceptors;</span>
+    }
+
+    public AbstractEngineConfiguration setDependentEngineMyBatisXmlMappers(Set&lt;String&gt; dependentEngineMyBatisXmlMappers) {
+<span class="nc" id="L1639">        this.dependentEngineMyBatisXmlMappers = dependentEngineMyBatisXmlMappers;</span>
+<span class="nc" id="L1640">        return this;</span>
+    }
+
+    public List&lt;MybatisTypeAliasConfigurator&gt; getDependentEngineMybatisTypeAliasConfigs() {
+<span class="nc" id="L1644">        return dependentEngineMybatisTypeAliasConfigs;</span>
+    }
+
+    public AbstractEngineConfiguration setDependentEngineMybatisTypeAliasConfigs(List&lt;MybatisTypeAliasConfigurator&gt; dependentEngineMybatisTypeAliasConfigs) {
+<span class="nc" id="L1648">        this.dependentEngineMybatisTypeAliasConfigs = dependentEngineMybatisTypeAliasConfigs;</span>
+<span class="nc" id="L1649">        return this;</span>
+    }
+
+    public List&lt;MybatisTypeHandlerConfigurator&gt; getDependentEngineMybatisTypeHandlerConfigs() {
+<span class="nc" id="L1653">        return dependentEngineMybatisTypeHandlerConfigs;</span>
+    }
+
+    public AbstractEngineConfiguration setDependentEngineMybatisTypeHandlerConfigs(List&lt;MybatisTypeHandlerConfigurator&gt; dependentEngineMybatisTypeHandlerConfigs) {
+<span class="nc" id="L1657">        this.dependentEngineMybatisTypeHandlerConfigs = dependentEngineMybatisTypeHandlerConfigs;</span>
+<span class="nc" id="L1658">        return this;</span>
+    }
+
+    public List&lt;SessionFactory&gt; getCustomSessionFactories() {
+<span class="nc" id="L1662">        return customSessionFactories;</span>
+    }
+
+    public AbstractEngineConfiguration addCustomSessionFactory(SessionFactory sessionFactory) {
+<span class="nc bnc" id="L1666" title="All 2 branches missed.">        if (customSessionFactories == null) {</span>
+<span class="nc" id="L1667">            customSessionFactories = new ArrayList&lt;&gt;();</span>
+        }
+<span class="nc" id="L1669">        customSessionFactories.add(sessionFactory);</span>
+<span class="nc" id="L1670">        return this;</span>
+    }
+
+    public AbstractEngineConfiguration setCustomSessionFactories(List&lt;SessionFactory&gt; customSessionFactories) {
+<span class="nc" id="L1674">        this.customSessionFactories = customSessionFactories;</span>
+<span class="nc" id="L1675">        return this;</span>
+    }
+
+    public boolean isUsingRelationalDatabase() {
+<span class="nc" id="L1679">        return usingRelationalDatabase;</span>
+    }
+
+    public AbstractEngineConfiguration setUsingRelationalDatabase(boolean usingRelationalDatabase) {
+<span class="nc" id="L1683">        this.usingRelationalDatabase = usingRelationalDatabase;</span>
+<span class="nc" id="L1684">        return this;</span>
+    }
+    
+    public boolean isUsingSchemaMgmt() {
+<span class="nc" id="L1688">        return usingSchemaMgmt;</span>
+    }
+
+    public AbstractEngineConfiguration setUsingSchemaMgmt(boolean usingSchema) {
+<span class="nc" id="L1692">        this.usingSchemaMgmt = usingSchema;</span>
+<span class="nc" id="L1693">        return this;</span>
+    }
+
+    public String getDatabaseTablePrefix() {
+<span class="nc" id="L1697">        return databaseTablePrefix;</span>
+    }
+
+    public AbstractEngineConfiguration setDatabaseTablePrefix(String databaseTablePrefix) {
+<span class="nc" id="L1701">        this.databaseTablePrefix = databaseTablePrefix;</span>
+<span class="nc" id="L1702">        return this;</span>
+    }
+
+    public String getDatabaseWildcardEscapeCharacter() {
+<span class="nc" id="L1706">        return databaseWildcardEscapeCharacter;</span>
+    }
+
+    public AbstractEngineConfiguration setDatabaseWildcardEscapeCharacter(String databaseWildcardEscapeCharacter) {
+<span class="nc" id="L1710">        this.databaseWildcardEscapeCharacter = databaseWildcardEscapeCharacter;</span>
+<span class="nc" id="L1711">        return this;</span>
+    }
+
+    public String getDatabaseCatalog() {
+<span class="nc" id="L1715">        return databaseCatalog;</span>
+    }
+
+    public AbstractEngineConfiguration setDatabaseCatalog(String databaseCatalog) {
+<span class="nc" id="L1719">        this.databaseCatalog = databaseCatalog;</span>
+<span class="nc" id="L1720">        return this;</span>
+    }
+
+    public String getDatabaseSchema() {
+<span class="nc" id="L1724">        return databaseSchema;</span>
+    }
+
+    public AbstractEngineConfiguration setDatabaseSchema(String databaseSchema) {
+<span class="nc" id="L1728">        this.databaseSchema = databaseSchema;</span>
+<span class="nc" id="L1729">        return this;</span>
+    }
+
+    public boolean isTablePrefixIsSchema() {
+<span class="nc" id="L1733">        return tablePrefixIsSchema;</span>
+    }
+
+    public AbstractEngineConfiguration setTablePrefixIsSchema(boolean tablePrefixIsSchema) {
+<span class="nc" id="L1737">        this.tablePrefixIsSchema = tablePrefixIsSchema;</span>
+<span class="nc" id="L1738">        return this;</span>
+    }
+
+    public boolean isAlwaysLookupLatestDefinitionVersion() {
+<span class="nc" id="L1742">        return alwaysLookupLatestDefinitionVersion;</span>
+    }
+
+    public AbstractEngineConfiguration setAlwaysLookupLatestDefinitionVersion(boolean alwaysLookupLatestDefinitionVersion) {
+<span class="nc" id="L1746">        this.alwaysLookupLatestDefinitionVersion = alwaysLookupLatestDefinitionVersion;</span>
+<span class="nc" id="L1747">        return this;</span>
+    }
+
+    public boolean isFallbackToDefaultTenant() {
+<span class="nc" id="L1751">        return fallbackToDefaultTenant;</span>
+    }
+
+    public AbstractEngineConfiguration setFallbackToDefaultTenant(boolean fallbackToDefaultTenant) {
+<span class="nc" id="L1755">        this.fallbackToDefaultTenant = fallbackToDefaultTenant;</span>
+<span class="nc" id="L1756">        return this;</span>
+    }
+
+    public AbstractEngineConfiguration setDefaultTenantValue(String defaultTenantValue) {
+<span class="nc" id="L1760">        this.defaultTenantProvider = (tenantId, scope, scopeKey) -&gt; defaultTenantValue;</span>
+<span class="nc" id="L1761">        return this;</span>
+    }
+
+    public DefaultTenantProvider getDefaultTenantProvider() {
+<span class="nc" id="L1765">        return defaultTenantProvider;</span>
+    }
+
+    public AbstractEngineConfiguration setDefaultTenantProvider(DefaultTenantProvider defaultTenantProvider) {
+<span class="nc" id="L1769">        this.defaultTenantProvider = defaultTenantProvider;</span>
+<span class="nc" id="L1770">        return this;</span>
+    }
+
+    public boolean isEnableLogSqlExecutionTime() {
+<span class="nc" id="L1774">        return enableLogSqlExecutionTime;</span>
+    }
+
+    public void setEnableLogSqlExecutionTime(boolean enableLogSqlExecutionTime) {
+<span class="nc" id="L1778">        this.enableLogSqlExecutionTime = enableLogSqlExecutionTime;</span>
+<span class="nc" id="L1779">    }</span>
+
+    public Map&lt;Class&lt;?&gt;, SessionFactory&gt; getSessionFactories() {
+<span class="nc" id="L1782">        return sessionFactories;</span>
+    }
+
+    public AbstractEngineConfiguration setSessionFactories(Map&lt;Class&lt;?&gt;, SessionFactory&gt; sessionFactories) {
+<span class="nc" id="L1786">        this.sessionFactories = sessionFactories;</span>
+<span class="nc" id="L1787">        return this;</span>
+    }
+
+    public String getDatabaseSchemaUpdate() {
+<span class="nc" id="L1791">        return databaseSchemaUpdate;</span>
+    }
+
+    public AbstractEngineConfiguration setDatabaseSchemaUpdate(String databaseSchemaUpdate) {
+<span class="nc" id="L1795">        this.databaseSchemaUpdate = databaseSchemaUpdate;</span>
+<span class="nc" id="L1796">        return this;</span>
+    }
+
+    public boolean isUseLockForDatabaseSchemaUpdate() {
+<span class="nc" id="L1800">        return useLockForDatabaseSchemaUpdate;</span>
+    }
+
+    public AbstractEngineConfiguration setUseLockForDatabaseSchemaUpdate(boolean useLockForDatabaseSchemaUpdate) {
+<span class="nc" id="L1804">        this.useLockForDatabaseSchemaUpdate = useLockForDatabaseSchemaUpdate;</span>
+<span class="nc" id="L1805">        return this;</span>
+    }
+
+    public boolean isEnableEventDispatcher() {
+<span class="nc" id="L1809">        return enableEventDispatcher;</span>
+    }
+
+    public AbstractEngineConfiguration setEnableEventDispatcher(boolean enableEventDispatcher) {
+<span class="nc" id="L1813">        this.enableEventDispatcher = enableEventDispatcher;</span>
+<span class="nc" id="L1814">        return this;</span>
+    }
+
+    public FlowableEventDispatcher getEventDispatcher() {
+<span class="nc" id="L1818">        return eventDispatcher;</span>
+    }
+
+    public AbstractEngineConfiguration setEventDispatcher(FlowableEventDispatcher eventDispatcher) {
+<span class="nc" id="L1822">        this.eventDispatcher = eventDispatcher;</span>
+<span class="nc" id="L1823">        return this;</span>
+    }
+
+    public List&lt;FlowableEventListener&gt; getEventListeners() {
+<span class="nc" id="L1827">        return eventListeners;</span>
+    }
+
+    public AbstractEngineConfiguration setEventListeners(List&lt;FlowableEventListener&gt; eventListeners) {
+<span class="nc" id="L1831">        this.eventListeners = eventListeners;</span>
+<span class="nc" id="L1832">        return this;</span>
+    }
+
+    public Map&lt;String, List&lt;FlowableEventListener&gt;&gt; getTypedEventListeners() {
+<span class="nc" id="L1836">        return typedEventListeners;</span>
+    }
+
+    public AbstractEngineConfiguration setTypedEventListeners(Map&lt;String, List&lt;FlowableEventListener&gt;&gt; typedEventListeners) {
+<span class="nc" id="L1840">        this.typedEventListeners = typedEventListeners;</span>
+<span class="nc" id="L1841">        return this;</span>
+    }
+
+    public List&lt;EventDispatchAction&gt; getAdditionalEventDispatchActions() {
+<span class="nc" id="L1845">        return additionalEventDispatchActions;</span>
+    }
+
+    public AbstractEngineConfiguration setAdditionalEventDispatchActions(List&lt;EventDispatchAction&gt; additionalEventDispatchActions) {
+<span class="nc" id="L1849">        this.additionalEventDispatchActions = additionalEventDispatchActions;</span>
+<span class="nc" id="L1850">        return this;</span>
+    }
+
+    public void initEventDispatcher() {
+<span class="nc bnc" id="L1854" title="All 2 branches missed.">        if (this.eventDispatcher == null) {</span>
+<span class="nc" id="L1855">            this.eventDispatcher = new FlowableEventDispatcherImpl();</span>
+        }
+
+<span class="nc" id="L1858">        initAdditionalEventDispatchActions();</span>
+
+<span class="nc" id="L1860">        this.eventDispatcher.setEnabled(enableEventDispatcher);</span>
+
+<span class="nc" id="L1862">        initEventListeners();</span>
+<span class="nc" id="L1863">        initTypedEventListeners();</span>
+<span class="nc" id="L1864">    }</span>
+
+    protected void initEventListeners() {
+<span class="nc bnc" id="L1867" title="All 2 branches missed.">        if (eventListeners != null) {</span>
+<span class="nc bnc" id="L1868" title="All 2 branches missed.">            for (FlowableEventListener listenerToAdd : eventListeners) {</span>
+<span class="nc" id="L1869">                this.eventDispatcher.addEventListener(listenerToAdd);</span>
+<span class="nc" id="L1870">            }</span>
+        }
+<span class="nc" id="L1872">    }</span>
+
+    protected void initAdditionalEventDispatchActions() {
+<span class="nc bnc" id="L1875" title="All 2 branches missed.">        if (this.additionalEventDispatchActions == null) {</span>
+<span class="nc" id="L1876">            this.additionalEventDispatchActions = new ArrayList&lt;&gt;();</span>
+        }
+<span class="nc" id="L1878">    }</span>
+
+    protected void initTypedEventListeners() {
+<span class="nc bnc" id="L1881" title="All 2 branches missed.">        if (typedEventListeners != null) {</span>
+<span class="nc bnc" id="L1882" title="All 2 branches missed.">            for (Map.Entry&lt;String, List&lt;FlowableEventListener&gt;&gt; listenersToAdd : typedEventListeners.entrySet()) {</span>
+                // Extract types from the given string
+<span class="nc" id="L1884">                FlowableEngineEventType[] types = FlowableEngineEventType.getTypesFromString(listenersToAdd.getKey());</span>
+
+<span class="nc bnc" id="L1886" title="All 2 branches missed.">                for (FlowableEventListener listenerToAdd : listenersToAdd.getValue()) {</span>
+<span class="nc" id="L1887">                    this.eventDispatcher.addEventListener(listenerToAdd, types);</span>
+<span class="nc" id="L1888">                }</span>
+<span class="nc" id="L1889">            }</span>
+        }
+<span class="nc" id="L1891">    }</span>
+
+    public boolean isLoggingSessionEnabled() {
+<span class="nc bnc" id="L1894" title="All 2 branches missed.">        return loggingListener != null;</span>
+    }
+    
+    public LoggingListener getLoggingListener() {
+<span class="nc" id="L1898">        return loggingListener;</span>
+    }
+
+    public void setLoggingListener(LoggingListener loggingListener) {
+<span class="nc" id="L1902">        this.loggingListener = loggingListener;</span>
+<span class="nc" id="L1903">    }</span>
+
+    public Clock getClock() {
+<span class="nc" id="L1906">        return clock;</span>
+    }
+
+    public AbstractEngineConfiguration setClock(Clock clock) {
+<span class="nc" id="L1910">        this.clock = clock;</span>
+<span class="nc" id="L1911">        return this;</span>
+    }
+
+    public ObjectMapper getObjectMapper() {
+<span class="nc" id="L1915">        return objectMapper;</span>
+    }
+
+    public AbstractEngineConfiguration setObjectMapper(ObjectMapper objectMapper) {
+<span class="nc" id="L1919">        this.objectMapper = objectMapper;</span>
+<span class="nc" id="L1920">        return this;</span>
+    }
+
+    public int getMaxLengthString() {
+<span class="nc bnc" id="L1924" title="All 2 branches missed.">        if (maxLengthStringVariableType == -1) {</span>
+<span class="nc bnc" id="L1925" title="All 2 branches missed.">            if (&quot;oracle&quot;.equalsIgnoreCase(databaseType)) {</span>
+<span class="nc" id="L1926">                return DEFAULT_ORACLE_MAX_LENGTH_STRING;</span>
+            } else {
+<span class="nc" id="L1928">                return DEFAULT_GENERIC_MAX_LENGTH_STRING;</span>
+            }
+        } else {
+<span class="nc" id="L1931">            return maxLengthStringVariableType;</span>
+        }
+    }
+
+    public int getMaxLengthStringVariableType() {
+<span class="nc" id="L1936">        return maxLengthStringVariableType;</span>
+    }
+
+    public AbstractEngineConfiguration setMaxLengthStringVariableType(int maxLengthStringVariableType) {
+<span class="nc" id="L1940">        this.maxLengthStringVariableType = maxLengthStringVariableType;</span>
+<span class="nc" id="L1941">        return this;</span>
+    }
+
+    public PropertyDataManager getPropertyDataManager() {
+<span class="nc" id="L1945">        return propertyDataManager;</span>
+    }
+
+    public Duration getLockPollRate() {
+<span class="nc" id="L1949">        return lockPollRate;</span>
+    }
+
+    public AbstractEngineConfiguration setLockPollRate(Duration lockPollRate) {
+<span class="nc" id="L1953">        this.lockPollRate = lockPollRate;</span>
+<span class="nc" id="L1954">        return this;</span>
+    }
+
+    public Duration getSchemaLockWaitTime() {
+<span class="nc" id="L1958">        return schemaLockWaitTime;</span>
+    }
+
+    public void setSchemaLockWaitTime(Duration schemaLockWaitTime) {
+<span class="nc" id="L1962">        this.schemaLockWaitTime = schemaLockWaitTime;</span>
+<span class="nc" id="L1963">    }</span>
+
+    public AbstractEngineConfiguration setPropertyDataManager(PropertyDataManager propertyDataManager) {
+<span class="nc" id="L1966">        this.propertyDataManager = propertyDataManager;</span>
+<span class="nc" id="L1967">        return this;</span>
+    }
+
+    public PropertyEntityManager getPropertyEntityManager() {
+<span class="nc" id="L1971">        return propertyEntityManager;</span>
+    }
+
+    public AbstractEngineConfiguration setPropertyEntityManager(PropertyEntityManager propertyEntityManager) {
+<span class="nc" id="L1975">        this.propertyEntityManager = propertyEntityManager;</span>
+<span class="nc" id="L1976">        return this;</span>
+    }
+
+    public ByteArrayDataManager getByteArrayDataManager() {
+<span class="nc" id="L1980">        return byteArrayDataManager;</span>
+    }
+
+    public AbstractEngineConfiguration setByteArrayDataManager(ByteArrayDataManager byteArrayDataManager) {
+<span class="nc" id="L1984">        this.byteArrayDataManager = byteArrayDataManager;</span>
+<span class="nc" id="L1985">        return this;</span>
+    }
+
+    public ByteArrayEntityManager getByteArrayEntityManager() {
+<span class="nc" id="L1989">        return byteArrayEntityManager;</span>
+    }
+
+    public AbstractEngineConfiguration setByteArrayEntityManager(ByteArrayEntityManager byteArrayEntityManager) {
+<span class="nc" id="L1993">        this.byteArrayEntityManager = byteArrayEntityManager;</span>
+<span class="nc" id="L1994">        return this;</span>
+    }
+
+    public TableDataManager getTableDataManager() {
+<span class="nc" id="L1998">        return tableDataManager;</span>
+    }
+
+    public AbstractEngineConfiguration setTableDataManager(TableDataManager tableDataManager) {
+<span class="nc" id="L2002">        this.tableDataManager = tableDataManager;</span>
+<span class="nc" id="L2003">        return this;</span>
+    }
+
+    public List&lt;EngineDeployer&gt; getDeployers() {
+<span class="nc" id="L2007">        return deployers;</span>
+    }
+
+    public AbstractEngineConfiguration setDeployers(List&lt;EngineDeployer&gt; deployers) {
+<span class="nc" id="L2011">        this.deployers = deployers;</span>
+<span class="nc" id="L2012">        return this;</span>
+    }
+
+    public List&lt;EngineDeployer&gt; getCustomPreDeployers() {
+<span class="nc" id="L2016">        return customPreDeployers;</span>
+    }
+
+    public AbstractEngineConfiguration setCustomPreDeployers(List&lt;EngineDeployer&gt; customPreDeployers) {
+<span class="nc" id="L2020">        this.customPreDeployers = customPreDeployers;</span>
+<span class="nc" id="L2021">        return this;</span>
+    }
+
+    public List&lt;EngineDeployer&gt; getCustomPostDeployers() {
+<span class="nc" id="L2025">        return customPostDeployers;</span>
+    }
+
+    public AbstractEngineConfiguration setCustomPostDeployers(List&lt;EngineDeployer&gt; customPostDeployers) {
+<span class="nc" id="L2029">        this.customPostDeployers = customPostDeployers;</span>
+<span class="nc" id="L2030">        return this;</span>
+    }
+    
+    public boolean isEnableConfiguratorServiceLoader() {
+<span class="nc" id="L2034">        return enableConfiguratorServiceLoader;</span>
+    }
+    
+    public AbstractEngineConfiguration setEnableConfiguratorServiceLoader(boolean enableConfiguratorServiceLoader) {
+<span class="nc" id="L2038">        this.enableConfiguratorServiceLoader = enableConfiguratorServiceLoader;</span>
+<span class="nc" id="L2039">        return this;</span>
+    }
+
+    public List&lt;EngineConfigurator&gt; getConfigurators() {
+<span class="nc" id="L2043">        return configurators;</span>
+    }
+
+    public AbstractEngineConfiguration addConfigurator(EngineConfigurator configurator) {
+<span class="nc bnc" id="L2047" title="All 2 branches missed.">        if (configurators == null) {</span>
+<span class="nc" id="L2048">            configurators = new ArrayList&lt;&gt;();</span>
+        }
+<span class="nc" id="L2050">        configurators.add(configurator);</span>
+<span class="nc" id="L2051">        return this;</span>
+    }
+
+    /**
+     * @return All {@link EngineConfigurator} instances. Will only contain values after init of the engine.
+     * Use the {@link #getConfigurators()} or {@link #addConfigurator(EngineConfigurator)} methods otherwise.
+     */
+    public List&lt;EngineConfigurator&gt; getAllConfigurators() {
+<span class="nc" id="L2059">        return allConfigurators;</span>
+    }
+
+    public AbstractEngineConfiguration setConfigurators(List&lt;EngineConfigurator&gt; configurators) {
+<span class="nc" id="L2063">        this.configurators = configurators;</span>
+<span class="nc" id="L2064">        return this;</span>
+    }
+
+    public EngineConfigurator getIdmEngineConfigurator() {
+<span class="nc" id="L2068">        return idmEngineConfigurator;</span>
+    }
+
+    public AbstractEngineConfiguration setIdmEngineConfigurator(EngineConfigurator idmEngineConfigurator) {
+<span class="nc" id="L2072">        this.idmEngineConfigurator = idmEngineConfigurator;</span>
+<span class="nc" id="L2073">        return this;</span>
+    }
+
+    public EngineConfigurator getEventRegistryConfigurator() {
+<span class="nc" id="L2077">        return eventRegistryConfigurator;</span>
+    }
+
+    public AbstractEngineConfiguration setEventRegistryConfigurator(EngineConfigurator eventRegistryConfigurator) {
+<span class="nc" id="L2081">        this.eventRegistryConfigurator = eventRegistryConfigurator;</span>
+<span class="nc" id="L2082">        return this;</span>
+    }
+
+    public AbstractEngineConfiguration setForceCloseMybatisConnectionPool(boolean forceCloseMybatisConnectionPool) {
+<span class="nc" id="L2086">        this.forceCloseMybatisConnectionPool = forceCloseMybatisConnectionPool;</span>
+<span class="nc" id="L2087">        return this;</span>
+    }
+
+    public boolean isForceCloseMybatisConnectionPool() {
+<span class="nc" id="L2091">        return forceCloseMybatisConnectionPool;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

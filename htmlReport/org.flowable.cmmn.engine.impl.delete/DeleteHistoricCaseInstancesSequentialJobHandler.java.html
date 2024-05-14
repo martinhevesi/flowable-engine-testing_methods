@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DeleteHistoricCaseInstancesSequentialJobHandler.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.cmmn.engine.impl.delete</a> &gt; <span class="el_source">DeleteHistoricCaseInstancesSequentialJobHandler.java</span></div><h1>DeleteHistoricCaseInstancesSequentialJobHandler.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.cmmn.engine.impl.delete;
+
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
+import org.apache.commons.lang3.exception.ExceptionUtils;
+import org.flowable.batch.api.Batch;
+import org.flowable.batch.api.BatchPart;
+import org.flowable.batch.api.BatchService;
+import org.flowable.cmmn.api.CmmnHistoryService;
+import org.flowable.cmmn.api.history.HistoricCaseInstance;
+import org.flowable.cmmn.api.history.HistoricCaseInstanceQuery;
+import org.flowable.cmmn.engine.CmmnEngineConfiguration;
+import org.flowable.cmmn.engine.impl.util.CommandContextUtil;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.job.service.JobHandler;
+import org.flowable.job.service.JobService;
+import org.flowable.job.service.impl.persistence.entity.JobEntity;
+import org.flowable.variable.api.delegate.VariableScope;
+
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+/**
+ * @author Filip Hrisafov
+ */
+<span class="nc" id="L41">public class DeleteHistoricCaseInstancesSequentialJobHandler implements JobHandler {</span>
+
+    public static final String TYPE = &quot;delete-historic-cases-sequential&quot;;
+
+    @Override
+    public String getType() {
+<span class="nc" id="L47">        return TYPE;</span>
+    }
+
+    @Override
+    public void execute(JobEntity job, String configuration, VariableScope variableScope, CommandContext commandContext) {
+<span class="nc" id="L52">        CmmnEngineConfiguration engineConfiguration = CommandContextUtil.getCmmnEngineConfiguration(commandContext);</span>
+<span class="nc" id="L53">        BatchService batchService = engineConfiguration.getBatchServiceConfiguration().getBatchService();</span>
+
+<span class="nc" id="L55">        BatchDeleteCaseConfig config = BatchDeleteCaseConfig.create(configuration, engineConfiguration);</span>
+<span class="nc" id="L56">        BatchPart batchPart = config.getBatchPart();</span>
+<span class="nc" id="L57">        Batch batch = config.getBatch();</span>
+<span class="nc bnc" id="L58" title="All 2 branches missed.">        if (config.hasError()) {</span>
+<span class="nc" id="L59">            failBatchPart(engineConfiguration, batchService, batchPart, batch, config.getError());</span>
+<span class="nc" id="L60">            return;</span>
+        }
+
+<span class="nc bnc" id="L63" title="All 2 branches missed.">        if (DeleteCaseInstanceBatchConstants.STATUS_STOPPED.equals(batch.getStatus())) {</span>
+<span class="nc" id="L64">            batchService.completeBatchPart(batchPart.getId(), DeleteCaseInstanceBatchConstants.STATUS_STOPPED, null);</span>
+<span class="nc" id="L65">            return;</span>
+        }
+
+<span class="nc" id="L68">        int batchSize = config.getBatchSize();</span>
+
+<span class="nc" id="L70">        HistoricCaseInstanceQuery query = config.getQuery();</span>
+        // In the synchronous deletion, we are always deleting the first elements
+<span class="nc" id="L72">        List&lt;HistoricCaseInstance&gt; historicCaseInstances = query.listPage(0, batchSize);</span>
+<span class="nc" id="L73">        ObjectNode resultNode = engineConfiguration.getObjectMapper().createObjectNode();</span>
+<span class="nc" id="L74">        Set&lt;String&gt; caseInstanceIdsToDelete = new HashSet&lt;&gt;();</span>
+<span class="nc bnc" id="L75" title="All 2 branches missed.">        for (HistoricCaseInstance historicCaseInstance : historicCaseInstances) {</span>
+<span class="nc" id="L76">            caseInstanceIdsToDelete.add(historicCaseInstance.getId());</span>
+<span class="nc" id="L77">        }</span>
+
+<span class="nc bnc" id="L79" title="All 2 branches missed.">        if (caseInstanceIdsToDelete.isEmpty()) {</span>
+<span class="nc" id="L80">            batchService.completeBatchPart(batchPart.getId(), DeleteCaseInstanceBatchConstants.STATUS_COMPLETED, resultNode.toString());</span>
+<span class="nc" id="L81">            completeBatch(batch, DeleteCaseInstanceBatchConstants.STATUS_COMPLETED, engineConfiguration);</span>
+<span class="nc" id="L82">            return;</span>
+        }
+
+<span class="nc" id="L85">        String status = DeleteCaseInstanceBatchConstants.STATUS_COMPLETED;</span>
+
+<span class="nc" id="L87">        CmmnHistoryService historyService = engineConfiguration.getCmmnHistoryService();</span>
+
+        try {
+<span class="nc" id="L90">            historyService.bulkDeleteHistoricCaseInstances(caseInstanceIdsToDelete);</span>
+<span class="nc" id="L91">            ArrayNode deletedCaseInstanceIdsNode = resultNode.withArray(&quot;caseInstanceIdsDeleted&quot;);</span>
+<span class="nc" id="L92">            caseInstanceIdsToDelete.forEach(deletedCaseInstanceIdsNode::add);</span>
+
+<span class="nc" id="L94">        } catch (FlowableException ex) {</span>
+<span class="nc" id="L95">            status = DeleteCaseInstanceBatchConstants.STATUS_FAILED;</span>
+<span class="nc" id="L96">            ArrayNode caseInstanceIdsFailedToDelete = resultNode.withArray(&quot;caseInstanceIdsFailedToDelete&quot;);</span>
+<span class="nc" id="L97">            caseInstanceIdsToDelete.forEach(caseInstanceIdsFailedToDelete::add);</span>
+<span class="nc" id="L98">            resultNode.put(&quot;error&quot;, ex.getMessage());</span>
+<span class="nc" id="L99">            resultNode.put(&quot;stacktrace&quot;, ExceptionUtils.getStackTrace(ex));</span>
+<span class="nc" id="L100">        }</span>
+
+<span class="nc" id="L102">        batchService.completeBatchPart(batchPart.getId(), status, resultNode.toString());</span>
+
+<span class="nc bnc" id="L104" title="All 2 branches missed.">        if (DeleteCaseInstanceBatchConstants.STATUS_FAILED.equals(status)) {</span>
+<span class="nc" id="L105">            completeBatch(batch, DeleteCaseInstanceBatchConstants.STATUS_FAILED, engineConfiguration);</span>
+        } else {
+            // Create the next batch part and schedule a job for it
+<span class="nc" id="L108">            BatchPart nextBatchPart = engineConfiguration.getCmmnManagementService()</span>
+<span class="nc" id="L109">                    .createBatchPartBuilder(batch)</span>
+<span class="nc" id="L110">                    .type(DeleteCaseInstanceBatchConstants.BATCH_PART_DELETE_CASE_INSTANCES_TYPE)</span>
+<span class="nc" id="L111">                    .searchKey(String.valueOf(Integer.parseInt(batchPart.getSearchKey()) + 1))</span>
+<span class="nc" id="L112">                    .status(DeleteCaseInstanceBatchConstants.STATUS_WAITING)</span>
+<span class="nc" id="L113">                    .create();</span>
+
+<span class="nc" id="L115">            JobService jobService = engineConfiguration.getJobServiceConfiguration().getJobService();</span>
+
+<span class="nc" id="L117">            JobEntity nextJob = jobService.createJob();</span>
+<span class="nc" id="L118">            nextJob.setJobHandlerType(DeleteHistoricCaseInstancesSequentialJobHandler.TYPE);</span>
+<span class="nc" id="L119">            nextJob.setJobHandlerConfiguration(nextBatchPart.getId());</span>
+<span class="nc" id="L120">            jobService.createAsyncJob(nextJob, false);</span>
+<span class="nc" id="L121">            jobService.scheduleAsyncJob(nextJob);</span>
+        }
+<span class="nc" id="L123">    }</span>
+
+    protected void failBatchPart(CmmnEngineConfiguration engineConfiguration, BatchService batchService, BatchPart batchPart, Batch batch,
+            String resultJson) {
+<span class="nc" id="L127">        batchService.completeBatchPart(batchPart.getId(), DeleteCaseInstanceBatchConstants.STATUS_FAILED, resultJson);</span>
+<span class="nc" id="L128">        completeBatch(batch, DeleteCaseInstanceBatchConstants.STATUS_FAILED, engineConfiguration);</span>
+<span class="nc" id="L129">    }</span>
+
+    protected void completeBatch(Batch batch, String status, CmmnEngineConfiguration engineConfiguration) {
+<span class="nc" id="L132">        engineConfiguration.getBatchServiceConfiguration()</span>
+<span class="nc" id="L133">                .getBatchService()</span>
+<span class="nc" id="L134">                .completeBatch(batch.getId(), status);</span>
+<span class="nc" id="L135">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

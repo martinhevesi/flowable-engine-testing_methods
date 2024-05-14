@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>IntermediateTimerEventRepeatCompatibilityTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.bpmn.event.timer.compatibility</a> &gt; <span class="el_source">IntermediateTimerEventRepeatCompatibilityTest.java</span></div><h1>IntermediateTimerEventRepeatCompatibilityTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.test.bpmn.event.timer.compatibility;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Date;
+import java.util.List;
+
+import org.flowable.common.engine.impl.history.HistoryLevel;
+import org.flowable.engine.history.HistoricProcessInstance;
+import org.flowable.engine.impl.test.HistoryTestHelper;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.test.Deployment;
+import org.flowable.job.api.Job;
+import org.flowable.task.api.Task;
+import org.joda.time.DateTime;
+import org.joda.time.format.DateTimeFormatter;
+import org.joda.time.format.ISODateTimeFormat;
+import org.junit.jupiter.api.Test;
+
+<span class="nc" id="L34">public class IntermediateTimerEventRepeatCompatibilityTest extends TimerEventCompatibilityTest {</span>
+
+    @Test
+    @Deployment
+    public void testRepeatWithEnd() throws Throwable {
+
+        // We need to make sure the time ends on .000, .003 or .007 due to SQL Server rounding to that
+<span class="nc" id="L41">        Instant baseInstant = Instant.now().truncatedTo(ChronoUnit.SECONDS).plusMillis(337);</span>
+
+        // expect to stop boundary jobs after 20 minutes
+<span class="nc" id="L44">        DateTimeFormatter fmt = ISODateTimeFormat.dateTime();</span>
+
+        // expect to wait after completing task A for 1 hour even I set the end
+        // date for 2 hours (the expression will trigger the execution)
+<span class="nc" id="L48">        String endDateForIntermediate1 = fmt.print(new DateTime(baseInstant.plus(2, ChronoUnit.HOURS).getEpochSecond()));</span>
+
+        // expect to wait after completing task B for 1 hour and 30 minutes (the
+        // end date will be reached, the expression will not be considered)
+<span class="nc" id="L52">        String endDateForIntermediate2 = fmt.print(new DateTime(baseInstant.plus(1, ChronoUnit.HOURS).plus(30, ChronoUnit.MINUTES).getEpochSecond()));</span>
+
+        // reset the timer
+<span class="nc" id="L55">        Instant nextTimeInstant = baseInstant;</span>
+<span class="nc" id="L56">        processEngineConfiguration.getClock().setCurrentTime(Date.from(nextTimeInstant));</span>
+
+<span class="nc" id="L58">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;repeatWithEnd&quot;);</span>
+
+<span class="nc" id="L60">        runtimeService.setVariable(processInstance.getId(), &quot;EndDateForCatch1&quot;, endDateForIntermediate1);</span>
+<span class="nc" id="L61">        runtimeService.setVariable(processInstance.getId(), &quot;EndDateForCatch2&quot;, endDateForIntermediate2);</span>
+
+<span class="nc" id="L63">        List&lt;org.flowable.task.api.Task&gt; tasks = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L64">        assertThat(tasks).hasSize(1);</span>
+
+<span class="nc" id="L66">        tasks = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L67">        assertThat(tasks)</span>
+<span class="nc" id="L68">                .extracting(Task::getName)</span>
+<span class="nc" id="L69">                .containsOnly(&quot;Task A&quot;);</span>
+
+        // Test Timer Catch Intermediate Events after completing org.flowable.task.service.Task B (endDate
+        // not reached but it will be executed according to the expression)
+<span class="nc" id="L73">        taskService.complete(tasks.get(0).getId());</span>
+
+<span class="nc" id="L75">        waitForJobExecutorToProcessAllJobs(2000, 500);</span>
+        // Expected that job isn't executed because the timer is in t0
+<span class="nc" id="L77">        assertThat(managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).singleResult()).isNotNull();</span>
+
+<span class="nc" id="L79">        nextTimeInstant = nextTimeInstant.plus(1, ChronoUnit.HOURS); // after 1 hour the event must be triggered and the flow will go to the next step</span>
+<span class="nc" id="L80">        processEngineConfiguration.getClock().setCurrentTime(Date.from(nextTimeInstant));</span>
+
+<span class="nc" id="L82">        waitForJobExecutorToProcessAllJobs(2000, 500);</span>
+        // expect to execute because the time is reached.
+
+<span class="nc" id="L85">        List&lt;Job&gt; jobs = managementService.createJobQuery().list();</span>
+<span class="nc" id="L86">        assertThat(jobs).isEmpty();</span>
+
+<span class="nc" id="L88">        tasks = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L89">        assertThat(tasks)</span>
+<span class="nc" id="L90">                .extracting(Task::getName)</span>
+<span class="nc" id="L91">                .containsOnly(&quot;Task C&quot;);</span>
+
+        // Test Timer Catch Intermediate Events after completing org.flowable.task.service.Task C
+<span class="nc" id="L94">        taskService.complete(tasks.get(0).getId());</span>
+<span class="nc" id="L95">        nextTimeInstant = nextTimeInstant.plus(1, ChronoUnit.HOURS); // after 1H 40 minutes from process start, the timer will trigger because of the endDate</span>
+<span class="nc" id="L96">        processEngineConfiguration.getClock().setCurrentTime(Date.from(nextTimeInstant));</span>
+
+<span class="nc" id="L98">        waitForJobExecutorToProcessAllJobs(2000, 500);</span>
+        // expect to execute because the end time is reached.
+
+<span class="nc bnc" id="L101" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L102">            HistoricProcessInstance historicInstance = historyService.createHistoricProcessInstanceQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L103">            assertThat(historicInstance.getEndTime()).isNotNull();</span>
+        }
+
+        // now All the process instances should be completed
+<span class="nc" id="L107">        List&lt;ProcessInstance&gt; processInstances = runtimeService.createProcessInstanceQuery().list();</span>
+<span class="nc" id="L108">        assertThat(processInstances).isEmpty();</span>
+
+        // no jobs
+<span class="nc" id="L111">        jobs = managementService.createJobQuery().list();</span>
+<span class="nc" id="L112">        assertThat(jobs).isEmpty();</span>
+
+<span class="nc" id="L114">        jobs = managementService.createTimerJobQuery().list();</span>
+<span class="nc" id="L115">        assertThat(jobs).isEmpty();</span>
+
+        // no tasks
+<span class="nc" id="L118">        tasks = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L119">        assertThat(tasks).isEmpty();</span>
+
+<span class="nc" id="L121">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

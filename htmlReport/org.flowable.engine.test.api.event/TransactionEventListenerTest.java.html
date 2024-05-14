@@ -1,0 +1,209 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TransactionEventListenerTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.api.event</a> &gt; <span class="el_source">TransactionEventListenerTest.java</span></div><h1>TransactionEventListenerTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.test.api.event;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.flowable.common.engine.api.delegate.event.FlowableEngineEventType;
+import org.flowable.common.engine.api.delegate.event.FlowableEvent;
+import org.flowable.common.engine.api.delegate.event.FlowableEventListener;
+import org.flowable.common.engine.impl.cfg.TransactionState;
+import org.flowable.common.engine.impl.util.CollectionUtil;
+import org.flowable.engine.delegate.DelegateExecution;
+import org.flowable.engine.delegate.JavaDelegate;
+import org.flowable.engine.impl.test.PluggableFlowableTestCase;
+import org.flowable.engine.test.Deployment;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+<span class="nc" id="L36">public class TransactionEventListenerTest extends PluggableFlowableTestCase {</span>
+
+    protected TestTransactionEventListener onCommitListener;
+
+    @BeforeEach
+    protected void setUp() throws Exception {
+
+<span class="nc" id="L43">        onCommitListener = new TestTransactionEventListener(TransactionState.COMMITTED.name());</span>
+<span class="nc" id="L44">        processEngineConfiguration.getEventDispatcher().addEventListener(onCommitListener);</span>
+<span class="nc" id="L45">    }</span>
+
+    @AfterEach
+    protected void tearDown() throws Exception {
+<span class="nc" id="L49">        TestTransactionEventListener.eventsReceived.clear();</span>
+<span class="nc bnc" id="L50" title="All 2 branches missed.">        if (onCommitListener != null) {</span>
+<span class="nc" id="L51">            processEngineConfiguration.getEventDispatcher().removeEventListener(onCommitListener);</span>
+<span class="nc" id="L52">            onCommitListener = null;</span>
+        }
+
+<span class="nc" id="L55">    }</span>
+
+    @Test
+    public void testRegularProcessExecution() {
+
+<span class="nc" id="L60">        assertThat(TestTransactionEventListener.eventsReceived).isEmpty();</span>
+
+        // In a 'normal' process execution, the transaction dependent event listener should
+        // be similar to the normal event listener dispatching.
+
+<span class="nc" id="L65">        deployOneTaskTestProcess();</span>
+<span class="nc" id="L66">        runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+
+        // Deployment:
+        //  1 Resource, 1 Deployment, 1 ProcessDefinition
+        // Start Process Instance
+        //  1 ProcessInstance, 1 Execution,
+        //  3 ActivityInstance (start, sequenceFlow, task)
+        //  1 Task, 1 EntityLink, 1 IdentityLink
+<span class="nc" id="L74">        int runtimeCreatedEvents = 11;</span>
+<span class="nc" id="L75">        int historyCreatedEvents = 0;</span>
+<span class="nc bnc" id="L76" title="All 2 branches missed.">        if (processEngineConfiguration.getHistoryManager().isHistoryEnabled()) {</span>
+            // Start Process Instance
+            //  3 HistoricActivityInstance (start, sequenceFlow, task)
+            //  1 HistoricTaskInstance,
+<span class="nc" id="L80">            historyCreatedEvents = 4;</span>
+        }
+<span class="nc" id="L82">        int expectedCreatedEvents = runtimeCreatedEvents + historyCreatedEvents;</span>
+
+<span class="nc bnc" id="L84" title="All 2 branches missed.">        if (processEngineConfiguration.isAsyncHistoryEnabled()) {</span>
+
+<span class="nc" id="L86">            assertThat(TestTransactionEventListener.eventsReceived.get(FlowableEngineEventType.ENTITY_CREATED.name())).hasSize(runtimeCreatedEvents);</span>
+<span class="nc" id="L87">            assertThat(TestTransactionEventListener.eventsReceived.get(FlowableEngineEventType.ENTITY_INITIALIZED.name())).hasSize(runtimeCreatedEvents);</span>
+<span class="nc" id="L88">            assertThat(TestTransactionEventListener.eventsReceived.get(FlowableEngineEventType.PROCESS_STARTED.name())).hasSize(1);</span>
+<span class="nc" id="L89">            assertThat(TestTransactionEventListener.eventsReceived.get(FlowableEngineEventType.TASK_CREATED.name())).hasSize(1);</span>
+
+<span class="nc" id="L91">            TestTransactionEventListener.eventsReceived.clear();</span>
+
+<span class="nc" id="L93">            waitForHistoryJobExecutorToProcessAllJobs(7000L, 200L);</span>
+
+            // During the async history execution it is possible that some historic jobs are inserted again (to be retried) therefore using hasSizeGreaterThan
+<span class="nc" id="L96">            assertThat(TestTransactionEventListener.eventsReceived.get(FlowableEngineEventType.ENTITY_CREATED.name())).hasSizeGreaterThanOrEqualTo(historyCreatedEvents);</span>
+<span class="nc" id="L97">            assertThat(TestTransactionEventListener.eventsReceived.get(FlowableEngineEventType.ENTITY_INITIALIZED.name())).hasSizeGreaterThanOrEqualTo(historyCreatedEvents);</span>
+<span class="nc" id="L98">            assertThat(TestTransactionEventListener.eventsReceived)</span>
+<span class="nc" id="L99">                    .doesNotContainKeys(</span>
+<span class="nc" id="L100">                            FlowableEngineEventType.PROCESS_STARTED.name(),</span>
+<span class="nc" id="L101">                            FlowableEngineEventType.TASK_CREATED.name()</span>
+            );
+
+        } else {
+<span class="nc" id="L105">            assertThat(TestTransactionEventListener.eventsReceived.get(FlowableEngineEventType.ENTITY_CREATED.name())).hasSize(expectedCreatedEvents);</span>
+<span class="nc" id="L106">            assertThat(TestTransactionEventListener.eventsReceived.get(FlowableEngineEventType.ENTITY_INITIALIZED.name())).hasSize(expectedCreatedEvents);</span>
+<span class="nc" id="L107">            assertThat(TestTransactionEventListener.eventsReceived.get(FlowableEngineEventType.PROCESS_STARTED.name())).hasSize(1);</span>
+<span class="nc" id="L108">            assertThat(TestTransactionEventListener.eventsReceived.get(FlowableEngineEventType.TASK_CREATED.name())).hasSize(1);</span>
+        }
+
+<span class="nc" id="L111">        TestTransactionEventListener.eventsReceived.clear();</span>
+
+<span class="nc" id="L113">        taskService.complete(taskService.createTaskQuery().singleResult().getId());</span>
+<span class="nc" id="L114">        assertThat(TestTransactionEventListener.eventsReceived.get(FlowableEngineEventType.TASK_COMPLETED.name())).hasSize(1);</span>
+<span class="nc" id="L115">        assertThat(TestTransactionEventListener.eventsReceived.get(FlowableEngineEventType.PROCESS_COMPLETED.name())).hasSize(1);</span>
+
+<span class="nc bnc" id="L117" title="All 2 branches missed.">        if (processEngineConfiguration.isAsyncHistoryEnabled()) {</span>
+<span class="nc" id="L118">            waitForHistoryJobExecutorToProcessAllJobs(7000L, 200L);</span>
+        }
+<span class="nc" id="L120">    }</span>
+
+    @Test
+    @Deployment
+    public void testProcessExecutionWithRollback() {
+
+<span class="nc" id="L126">        assertThat(TestTransactionEventListener.eventsReceived).isEmpty();</span>
+<span class="nc" id="L127">        assertThat(runtimeService.createProcessInstanceQuery().count()).isZero();</span>
+
+        // Regular execution, no exception
+<span class="nc" id="L130">        runtimeService.startProcessInstanceByKey(&quot;testProcessExecutionWithRollback&quot;, CollectionUtil.singletonMap(&quot;throwException&quot;, false));</span>
+<span class="nc" id="L131">        assertThat(TestTransactionEventListener.eventsReceived.size()).isPositive();</span>
+<span class="nc" id="L132">        assertThat(runtimeService.createProcessInstanceQuery().count()).isEqualTo(1);</span>
+
+<span class="nc" id="L134">        TestTransactionEventListener.eventsReceived.clear();</span>
+
+        // When process execution rolls back, the events should not be thrown, as they are only thrown on commit.
+<span class="nc" id="L137">        assertThatThrownBy(</span>
+<span class="nc" id="L138">                () -&gt; runtimeService.startProcessInstanceByKey(&quot;testProcessExecutionWithRollback&quot;, CollectionUtil.singletonMap(&quot;throwException&quot;, true)))</span>
+<span class="nc" id="L139">                .isInstanceOf(RuntimeException.class);</span>
+<span class="nc" id="L140">        assertThat(TestTransactionEventListener.eventsReceived).isEmpty();</span>
+<span class="nc" id="L141">        assertThat(runtimeService.createProcessInstanceQuery().count()).isEqualTo(1);</span>
+<span class="nc" id="L142">    }</span>
+
+    @Test
+    @Deployment
+    public void testProcessDefinitionDefinedEventListener() {
+
+        // Only let the event listener of the process definition listen
+<span class="nc" id="L149">        processEngineConfiguration.getEventDispatcher().removeEventListener(onCommitListener);</span>
+<span class="nc" id="L150">        TestTransactionEventListener.eventsReceived.clear();</span>
+
+<span class="nc" id="L152">        assertThat(TestTransactionEventListener.eventsReceived).isEmpty();</span>
+<span class="nc" id="L153">        runtimeService.startProcessInstanceByKey(&quot;testProcessExecutionWithRollback&quot;, CollectionUtil.singletonMap(&quot;throwException&quot;, false));</span>
+<span class="nc" id="L154">        assertThat(TestTransactionEventListener.eventsReceived.size()).isPositive();</span>
+<span class="nc" id="L155">    }</span>
+
+    public static class TestTransactionEventListener implements FlowableEventListener {
+
+        protected String onTransaction;
+<span class="nc" id="L160">        public static Map&lt;String, List&lt;FlowableEvent&gt;&gt; eventsReceived = new HashMap&lt;&gt;();</span>
+
+<span class="nc" id="L162">        public TestTransactionEventListener() {</span>
+<span class="nc" id="L163">            this.onTransaction = TransactionState.COMMITTED.name();</span>
+<span class="nc" id="L164">        }</span>
+
+<span class="nc" id="L166">        public TestTransactionEventListener(String onTransaction) {</span>
+<span class="nc" id="L167">            this.onTransaction = onTransaction;</span>
+<span class="nc" id="L168">        }</span>
+
+        @Override
+        public void onEvent(FlowableEvent event) {
+<span class="nc" id="L172">            String eventType = event.getType().name();</span>
+<span class="nc bnc" id="L173" title="All 2 branches missed.">            if (!eventsReceived.containsKey(eventType)) {</span>
+<span class="nc" id="L174">                eventsReceived.put(eventType, new ArrayList&lt;&gt;());</span>
+            }
+<span class="nc" id="L176">            eventsReceived.get(eventType).add(event);</span>
+<span class="nc" id="L177">        }</span>
+
+        @Override
+        public boolean isFailOnException() {
+<span class="nc" id="L181">            return false;</span>
+        }
+
+        @Override
+        public boolean isFireOnTransactionLifecycleEvent() {
+<span class="nc" id="L186">            return true;</span>
+        }
+
+        @Override
+        public String getOnTransaction() {
+<span class="nc" id="L191">            return onTransaction;</span>
+        }
+
+    }
+
+<span class="nc" id="L196">    public static class ThrowExceptionDelegate implements JavaDelegate {</span>
+
+        @Override
+        public void execute(DelegateExecution execution) {
+<span class="nc" id="L200">            boolean throwException = (Boolean) execution.getVariable(&quot;throwException&quot;);</span>
+<span class="nc bnc" id="L201" title="All 2 branches missed.">            if (throwException) {</span>
+<span class="nc" id="L202">                throw new RuntimeException();</span>
+            }
+<span class="nc" id="L204">        }</span>
+
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

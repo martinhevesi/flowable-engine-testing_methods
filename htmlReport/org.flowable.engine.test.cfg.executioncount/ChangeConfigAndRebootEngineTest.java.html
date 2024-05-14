@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ChangeConfigAndRebootEngineTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.cfg.executioncount</a> &gt; <span class="el_source">ChangeConfigAndRebootEngineTest.java</span></div><h1>ChangeConfigAndRebootEngineTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.test.cfg.executioncount;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.util.List;
+
+import org.flowable.common.engine.impl.interceptor.Command;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.common.engine.impl.persistence.entity.PropertyEntity;
+import org.flowable.engine.ProcessEngineConfiguration;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.cmd.ValidateExecutionRelatedEntityCountCfgCmd;
+import org.flowable.engine.impl.persistence.CountingExecutionEntity;
+import org.flowable.engine.impl.test.ResourceFlowableTestCase;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.engine.runtime.Execution;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.test.Deployment;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledIfSystemProperty;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * @author Joram Barrez
+ */
+@DisabledIfSystemProperty(named = &quot;disableWhen&quot;, matches = &quot;cockroachdb&quot;)
+public class ChangeConfigAndRebootEngineTest extends ResourceFlowableTestCase {
+
+<span class="nc" id="L42">    private static final Logger LOGGER = LoggerFactory.getLogger(ChangeConfigAndRebootEngineTest.class);</span>
+
+    protected boolean newExecutionRelationshipCountValue;
+
+    public ChangeConfigAndRebootEngineTest() {
+        // Simply boot up the same engine with the usual config file
+        // This way, database tests work. the only thing we have to make
+        // sure is to give the process engine a name so it is
+        // registered and unregistered separately.
+<span class="nc" id="L51">        super(&quot;flowable.cfg.xml&quot;, ChangeConfigAndRebootEngineTest.class.getName());</span>
+<span class="nc" id="L52">    }</span>
+
+    @Override
+    protected void additionalConfiguration(ProcessEngineConfiguration processEngineConfiguration) {
+<span class="nc" id="L56">        LOGGER.info(&quot;Applying additional config: setting schema update to true and enabling execution relationship count&quot;);</span>
+<span class="nc" id="L57">        processEngineConfiguration.setDatabaseSchemaUpdate(&quot;true&quot;);</span>
+<span class="nc" id="L58">        ((ProcessEngineConfigurationImpl) processEngineConfiguration).setEnableExecutionRelationshipCounts(newExecutionRelationshipCountValue);</span>
+<span class="nc" id="L59">    }</span>
+
+    protected void rebootEngine(boolean newExecutionRelationshipCountValue) {
+<span class="nc" id="L62">        LOGGER.info(&quot;Rebooting engine&quot;);</span>
+<span class="nc" id="L63">        this.newExecutionRelationshipCountValue = newExecutionRelationshipCountValue;</span>
+<span class="nc" id="L64">        rebootEngine();</span>
+<span class="nc" id="L65">    }</span>
+
+    @Test
+    @Deployment
+    public void testChangeExecutionCountSettingAndRebootengine() {
+
+        // Reboot, making sure the setting is applied
+<span class="nc" id="L72">        rebootEngine(true);</span>
+<span class="nc" id="L73">        assertConfigProperty(true);</span>
+
+        // Start a process instance. All executions should have a count enabled flag set
+        // and a task count of 1 for the child execution
+<span class="nc" id="L77">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;twoTasksProcess&quot;);</span>
+<span class="nc" id="L78">        assertExecutions(processInstance, true);</span>
+
+        // Reboot with same settings. Nothing should have changed
+<span class="nc" id="L81">        rebootEngine(true);</span>
+<span class="nc" id="L82">        assertConfigProperty(true);</span>
+<span class="nc" id="L83">        assertExecutions(processInstance, true);</span>
+
+        // Reboot by disabling the property now. All the executions their flag should have been removed
+<span class="nc" id="L86">        rebootEngine(false);</span>
+<span class="nc" id="L87">        assertConfigProperty(false);</span>
+<span class="nc" id="L88">        assertExecutions(processInstance, false);</span>
+
+        // See if we can finish the process
+<span class="nc" id="L91">        finishProcessInstance(processInstance);</span>
+
+        // False to false should do nothing
+<span class="nc" id="L94">        rebootEngine(false);</span>
+<span class="nc" id="L95">        assertConfigProperty(false);</span>
+
+        // Start a new process
+<span class="nc" id="L98">        processInstance = runtimeService.startProcessInstanceByKey(&quot;twoTasksProcess&quot;);</span>
+<span class="nc" id="L99">        assertExecutions(processInstance, false);</span>
+
+        // Reboot, enabling the config property. however, the executions won't get the flag now
+<span class="nc" id="L102">        rebootEngine(true);</span>
+<span class="nc" id="L103">        assertConfigProperty(true);</span>
+<span class="nc" id="L104">        assertExecutions(processInstance, false);</span>
+
+        // But the process can be finished
+<span class="nc" id="L107">        finishProcessInstance(processInstance);</span>
+<span class="nc" id="L108">        processInstance = runtimeService.startProcessInstanceByKey(&quot;twoTasksProcess&quot;);</span>
+<span class="nc" id="L109">        assertExecutions(processInstance, true);</span>
+<span class="nc" id="L110">        finishProcessInstance(processInstance);</span>
+<span class="nc" id="L111">    }</span>
+
+    protected void assertConfigProperty(boolean expectedValue) {
+<span class="nc" id="L114">        PropertyEntity propertyEntity = managementService.executeCommand(new Command&lt;&gt;() {</span>
+            @Override
+            public PropertyEntity execute(CommandContext commandContext) {
+<span class="nc" id="L117">                return CommandContextUtil.getPropertyEntityManager(commandContext).findById(</span>
+                        ValidateExecutionRelatedEntityCountCfgCmd.PROPERTY_EXECUTION_RELATED_ENTITY_COUNT);
+            }
+        });
+<span class="nc" id="L121">        assertThat(Boolean.parseBoolean(propertyEntity.getValue())).isEqualTo(expectedValue);</span>
+<span class="nc" id="L122">    }</span>
+
+    protected void assertExecutions(ProcessInstance processInstance, boolean expectedCountIsEnabledFlag) {
+<span class="nc" id="L125">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L126">        assertThat(executions).hasSize(2);</span>
+<span class="nc bnc" id="L127" title="All 2 branches missed.">        for (Execution execution : executions) {</span>
+<span class="nc" id="L128">            CountingExecutionEntity countingExecutionEntity = (CountingExecutionEntity) execution;</span>
+<span class="nc" id="L129">            assertThat(countingExecutionEntity.isCountEnabled()).isEqualTo(expectedCountIsEnabledFlag);</span>
+
+<span class="nc bnc" id="L131" title="All 4 branches missed.">            if (expectedCountIsEnabledFlag &amp;&amp; execution.getParentId() != null) {</span>
+<span class="nc" id="L132">                assertThat(countingExecutionEntity.getTaskCount()).isEqualTo(1);</span>
+            }
+<span class="nc" id="L134">        }</span>
+<span class="nc" id="L135">    }</span>
+
+    protected void finishProcessInstance(ProcessInstance processInstance) {
+<span class="nc" id="L138">        org.flowable.task.api.Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L139">        taskService.complete(task.getId());</span>
+<span class="nc" id="L140">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L141">        taskService.complete(task.getId());</span>
+<span class="nc" id="L142">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L143">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

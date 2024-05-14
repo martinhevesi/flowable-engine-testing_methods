@@ -1,0 +1,446 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CmmnDeployer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.cmmn.engine.impl.deployer</a> &gt; <span class="el_source">CmmnDeployer.java</span></div><h1>CmmnDeployer.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.cmmn.engine.impl.deployer;
+
+import java.util.Collection;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.cmmn.converter.CmmnXmlConstants;
+import org.flowable.cmmn.engine.CmmnEngineConfiguration;
+import org.flowable.cmmn.engine.impl.parser.CmmnParseContext;
+import org.flowable.cmmn.engine.impl.parser.CmmnParseResult;
+import org.flowable.cmmn.engine.impl.parser.CmmnParser;
+import org.flowable.cmmn.engine.impl.persistence.entity.CaseDefinitionEntity;
+import org.flowable.cmmn.engine.impl.persistence.entity.CaseDefinitionEntityManager;
+import org.flowable.cmmn.engine.impl.persistence.entity.CmmnDeploymentEntity;
+import org.flowable.cmmn.engine.impl.persistence.entity.CmmnResourceEntity;
+import org.flowable.cmmn.engine.impl.persistence.entity.deploy.CaseDefinitionCacheEntry;
+import org.flowable.cmmn.engine.impl.util.CmmnCorrelationUtil;
+import org.flowable.cmmn.engine.impl.util.CommandContextUtil;
+import org.flowable.cmmn.model.Case;
+import org.flowable.cmmn.model.CmmnModel;
+import org.flowable.cmmn.model.ExtensionElement;
+import org.flowable.cmmn.validation.CaseValidator;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.delegate.Expression;
+import org.flowable.common.engine.api.repository.EngineDeployment;
+import org.flowable.common.engine.api.repository.EngineResource;
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.impl.EngineDeployer;
+import org.flowable.common.engine.impl.assignment.CandidateUtil;
+import org.flowable.common.engine.impl.cfg.IdGenerator;
+import org.flowable.common.engine.impl.el.ExpressionManager;
+import org.flowable.common.engine.impl.persistence.deploy.DeploymentCache;
+import org.flowable.eventsubscription.service.EventSubscriptionService;
+import org.flowable.identitylink.api.IdentityLinkType;
+import org.flowable.identitylink.service.IdentityLinkService;
+import org.flowable.identitylink.service.impl.persistence.entity.IdentityLinkEntity;
+import org.flowable.variable.service.impl.el.NoExecutionVariableScope;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * TODO: many similarities with BpmnDeployer, see if it can be merged to the common module
+ *
+ * @author Joram Barrez
+ */
+public class CmmnDeployer implements EngineDeployer {
+
+<span class="nc" id="L66">    private static final Logger LOGGER = LoggerFactory.getLogger(CmmnDeployer.class);</span>
+
+<span class="nc" id="L68">    public static final String[] CMMN_RESOURCE_SUFFIXES = new String[]{&quot;.cmmn&quot;, &quot;.cmmn11&quot;, &quot;.cmmn.xml&quot;, &quot;.cmmn11.xml&quot;};</span>
+
+    protected CmmnEngineConfiguration cmmnEngineConfiguration;
+    
+    protected IdGenerator idGenerator;
+    protected CmmnParser cmmnParser;
+    protected CaseDefinitionDiagramHelper caseDefinitionDiagramHelper;
+    protected boolean usePrefixId;
+    
+<span class="nc" id="L77">    public CmmnDeployer(CmmnEngineConfiguration cmmnEngineConfiguration) {</span>
+<span class="nc" id="L78">        this.cmmnEngineConfiguration = cmmnEngineConfiguration;</span>
+<span class="nc" id="L79">    }</span>
+
+    @Override
+    public void deploy(EngineDeployment deployment, Map&lt;String, Object&gt; deploymentSettings) {
+<span class="nc" id="L83">        LOGGER.debug(&quot;Processing deployment {}&quot;, deployment.getName());</span>
+
+<span class="nc" id="L85">        CmmnParseResult parseResult = new CmmnParseResult(deployment);</span>
+<span class="nc bnc" id="L86" title="All 2 branches missed.">        for (EngineResource resource : deployment.getResources().values()) {</span>
+<span class="nc bnc" id="L87" title="All 2 branches missed.">            if (isCmmnResource(resource.getName())) {</span>
+<span class="nc" id="L88">                LOGGER.debug(&quot;Processing CMMN resource {}&quot;, resource.getName());</span>
+<span class="nc" id="L89">                parseResult.merge(cmmnParser.parse(new CmmnParseContextImpl(resource)));</span>
+            }
+<span class="nc" id="L91">        }</span>
+
+<span class="nc" id="L93">        verifyCaseDefinitionsDoNotShareKeys(parseResult.getAllCaseDefinitions());</span>
+<span class="nc" id="L94">        copyDeploymentValuesToCaseDefinitions(parseResult.getDeployment(), parseResult.getAllCaseDefinitions());</span>
+<span class="nc" id="L95">        setResourceNamesOnCaseDefinitions(parseResult);</span>
+
+<span class="nc" id="L97">        createAndPersistNewDiagramsIfNeeded(parseResult);</span>
+<span class="nc" id="L98">        setCaseDefinitionDiagramNames(parseResult);</span>
+
+<span class="nc bnc" id="L100" title="All 2 branches missed.">        if (deployment.isNew()) {</span>
+<span class="nc" id="L101">            Map&lt;CaseDefinitionEntity, CaseDefinitionEntity&gt; mapOfNewCaseDefinitionToPreviousVersion = getPreviousVersionsOfCaseDefinitions(parseResult);</span>
+<span class="nc" id="L102">            setCaseDefinitionVersionsAndIds(parseResult, mapOfNewCaseDefinitionToPreviousVersion);</span>
+<span class="nc" id="L103">            persistCaseDefinitions(parseResult);</span>
+<span class="nc" id="L104">            updateEventSubscriptions(parseResult, mapOfNewCaseDefinitionToPreviousVersion);</span>
+
+<span class="nc" id="L106">        } else {</span>
+<span class="nc" id="L107">            makeCaseDefinitionsConsistentWithPersistedVersions(parseResult);</span>
+
+        }
+
+<span class="nc" id="L111">        updateCachingAndArtifacts(parseResult);</span>
+<span class="nc" id="L112">    }</span>
+
+    public static boolean isCmmnResource(String resourceName) {
+<span class="nc bnc" id="L115" title="All 2 branches missed.">        for (String suffix : CMMN_RESOURCE_SUFFIXES) {</span>
+<span class="nc bnc" id="L116" title="All 2 branches missed.">            if (resourceName.endsWith(suffix)) {</span>
+<span class="nc" id="L117">                return true;</span>
+            }
+        }
+<span class="nc" id="L120">        return false;</span>
+    }
+
+    /**
+     * Creates new diagrams for case definitions if the deployment is new, the case definition in question supports it, and the engine is configured to make new diagrams.
+     *
+     * When this method creates a new diagram, it also persists it via the ResourceEntityManager and adds it to the resources of the deployment.
+     */
+    protected void createAndPersistNewDiagramsIfNeeded(CmmnParseResult parseResult) {
+<span class="nc bnc" id="L129" title="All 2 branches missed.">        for (CaseDefinitionEntity caseDefinition : parseResult.getAllCaseDefinitions()) {</span>
+<span class="nc bnc" id="L130" title="All 2 branches missed.">            if (caseDefinitionDiagramHelper.shouldCreateDiagram(caseDefinition, parseResult.getDeployment())) {</span>
+<span class="nc" id="L131">                CmmnResourceEntity resource = caseDefinitionDiagramHelper.createDiagramForCaseDefinition(</span>
+<span class="nc" id="L132">                                caseDefinition, parseResult.getCmmnModelForCaseDefinition(caseDefinition));</span>
+<span class="nc bnc" id="L133" title="All 2 branches missed.">                if (resource != null) {</span>
+<span class="nc" id="L134">                    CommandContextUtil.getCmmnResourceEntityManager().insert(resource, false);</span>
+<span class="nc" id="L135">                    ((CmmnDeploymentEntity) parseResult.getDeployment()).addResource(resource); // now we'll find it if we look for the diagram name later.</span>
+                }
+            }
+<span class="nc" id="L138">        }</span>
+<span class="nc" id="L139">    }</span>
+
+    /**
+     * Updates all the case definition entities to have the correct diagram resource name. Must be called after createAndPersistNewDiagramsAsNeeded to ensure that any newly-created diagrams already
+     * have their resources attached to the deployment.
+     */
+    protected void setCaseDefinitionDiagramNames(CmmnParseResult parseResult) {
+<span class="nc" id="L146">        Map&lt;String, EngineResource&gt; resources = parseResult.getDeployment().getResources();</span>
+
+<span class="nc bnc" id="L148" title="All 2 branches missed.">        for (CaseDefinitionEntity caseDefinition : parseResult.getAllCaseDefinitions()) {</span>
+<span class="nc" id="L149">            String diagramResourceName = ResourceNameUtil.getCaseDiagramResourceNameFromDeployment(caseDefinition, resources);</span>
+<span class="nc" id="L150">            caseDefinition.setDiagramResourceName(diagramResourceName);</span>
+<span class="nc" id="L151">        }</span>
+<span class="nc" id="L152">    }</span>
+
+    protected Map&lt;CaseDefinitionEntity, CaseDefinitionEntity&gt; getPreviousVersionsOfCaseDefinitions(CmmnParseResult parseResult) {
+<span class="nc" id="L155">        Map&lt;CaseDefinitionEntity, CaseDefinitionEntity&gt; result = new LinkedHashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L156" title="All 2 branches missed.">        for (CaseDefinitionEntity newDefinition : parseResult.getAllCaseDefinitions()) {</span>
+<span class="nc" id="L157">            CaseDefinitionEntity existingDefinition = getMostRecentVersionOfCaseDefinition(newDefinition);</span>
+<span class="nc bnc" id="L158" title="All 2 branches missed.">            if (existingDefinition != null) {</span>
+<span class="nc" id="L159">                result.put(newDefinition, existingDefinition);</span>
+            }
+<span class="nc" id="L161">        }</span>
+<span class="nc" id="L162">        return result;</span>
+    }
+
+    protected void setCaseDefinitionVersionsAndIds(CmmnParseResult parseResult, Map&lt;CaseDefinitionEntity, CaseDefinitionEntity&gt; mapNewToOldCaseDefinitions) {
+<span class="nc bnc" id="L166" title="All 2 branches missed.">        for (CaseDefinitionEntity caseDefinition : parseResult.getAllCaseDefinitions()) {</span>
+<span class="nc" id="L167">            int version = 1;</span>
+<span class="nc" id="L168">            CaseDefinitionEntity latest = mapNewToOldCaseDefinitions.get(caseDefinition);</span>
+<span class="nc bnc" id="L169" title="All 2 branches missed.">            if (latest != null) {</span>
+<span class="nc" id="L170">                version = latest.getVersion() + 1;</span>
+            }
+<span class="nc" id="L172">            caseDefinition.setVersion(version);</span>
+<span class="nc bnc" id="L173" title="All 2 branches missed.">            if (usePrefixId) {</span>
+<span class="nc" id="L174">                caseDefinition.setId(caseDefinition.getIdPrefix() + idGenerator.getNextId());</span>
+            } else {
+<span class="nc" id="L176">                caseDefinition.setId(idGenerator.getNextId());</span>
+            }
+
+<span class="nc" id="L179">            Case caseObject = parseResult.getCmmnCaseForCaseDefinition(caseDefinition);</span>
+<span class="nc bnc" id="L180" title="All 2 branches missed.">            if (caseObject.getPlanModel().getFormKey() != null) {</span>
+<span class="nc" id="L181">                caseDefinition.setHasStartFormKey(true);</span>
+            }
+<span class="nc" id="L183">        }</span>
+<span class="nc" id="L184">    }</span>
+
+    protected void persistCaseDefinitions(CmmnParseResult parseResult) {
+<span class="nc" id="L187">        CaseDefinitionEntityManager caseDefinitionManager = cmmnEngineConfiguration.getCaseDefinitionEntityManager();</span>
+<span class="nc bnc" id="L188" title="All 2 branches missed.">        for (CaseDefinitionEntity caseDefinition : parseResult.getAllCaseDefinitions()) {</span>
+<span class="nc" id="L189">            caseDefinitionManager.insert(caseDefinition, false);</span>
+<span class="nc" id="L190">            addAuthorizationsForNewCaseDefinition(parseResult.getCmmnCaseForCaseDefinition(caseDefinition), caseDefinition);</span>
+<span class="nc" id="L191">        }</span>
+<span class="nc" id="L192">    }</span>
+
+    protected void updateEventSubscriptions(CmmnParseResult parseResult, Map&lt;CaseDefinitionEntity, CaseDefinitionEntity&gt; mapOfNewCaseDefinitionToPreviousVersion) {
+<span class="nc" id="L195">        EventSubscriptionService eventSubscriptionService = cmmnEngineConfiguration.getEventSubscriptionServiceConfiguration().getEventSubscriptionService();</span>
+<span class="nc bnc" id="L196" title="All 2 branches missed.">        for (CaseDefinitionEntity caseDefinition : parseResult.getAllCaseDefinitions()) {</span>
+
+<span class="nc" id="L198">            CaseDefinitionEntity previousCaseDefinition = mapOfNewCaseDefinitionToPreviousVersion.get(caseDefinition);</span>
+<span class="nc bnc" id="L199" title="All 2 branches missed.">            if (previousCaseDefinition != null) {</span>
+<span class="nc bnc" id="L200" title="All 2 branches missed.">                if (isManualCorrelationSubscriptionConfiguration(parseResult, previousCaseDefinition)) {</span>
+                    // for a dynamic event registry start event, we don't remove the manually registered subscriptions, but rather update them to the newest
+                    // case definition, if required
+<span class="nc" id="L203">                    String startEventType = getCaseModel(parseResult, previousCaseDefinition).getPrimaryCase().getStartEventType();</span>
+<span class="nc" id="L204">                    updateOldEventSubscriptions(previousCaseDefinition, caseDefinition, startEventType);</span>
+<span class="nc" id="L205">                } else {</span>
+                    // for a static event registry start event, we delete the old subscription and will later create a new one
+<span class="nc" id="L207">                    eventSubscriptionService.deleteEventSubscriptionsForScopeDefinitionIdAndTypeAndNullScopeId(previousCaseDefinition.getId(), ScopeTypes.CMMN);</span>
+                }
+            }
+
+            // create new subscriptions, but only for static event registry start events
+<span class="nc" id="L212">            Case caseModel = parseResult.getCmmnCaseForCaseDefinition(caseDefinition);</span>
+<span class="nc" id="L213">            String startEventType = caseModel.getStartEventType();</span>
+<span class="nc bnc" id="L214" title="All 4 branches missed.">            if (startEventType != null &amp;&amp; !isManualCorrelationSubscriptionConfiguration(parseResult, caseDefinition)) {</span>
+<span class="nc" id="L215">                eventSubscriptionService.createEventSubscriptionBuilder()</span>
+<span class="nc" id="L216">                    .eventType(startEventType)</span>
+<span class="nc" id="L217">                    .configuration(getEventCorrelationKey(caseModel))</span>
+<span class="nc" id="L218">                    .scopeDefinitionId(caseDefinition.getId())</span>
+<span class="nc" id="L219">                    .scopeType(ScopeTypes.CMMN)</span>
+<span class="nc" id="L220">                    .tenantId(caseDefinition.getTenantId())</span>
+<span class="nc" id="L221">                    .create();</span>
+            }
+<span class="nc" id="L223">        }</span>
+<span class="nc" id="L224">    }</span>
+
+    protected void updateOldEventSubscriptions(CaseDefinitionEntity previousCaseDefinition, CaseDefinitionEntity caseDefinition, String eventType) {
+<span class="nc" id="L227">        CommandContextUtil.getCmmnEngineConfiguration().getEventSubscriptionServiceConfiguration().getEventSubscriptionService().updateEventSubscriptionScopeDefinitionId(</span>
+<span class="nc" id="L228">            previousCaseDefinition.getId(), caseDefinition.getId(), eventType, caseDefinition.getKey(), null);</span>
+<span class="nc" id="L229">    }</span>
+
+    protected CmmnModel getCaseModel(CmmnParseResult parseResult, CaseDefinitionEntity caseDefinition) {
+<span class="nc" id="L232">        CmmnModel caseModel = parseResult.getCmmnModelForCaseDefinition(caseDefinition);</span>
+<span class="nc bnc" id="L233" title="All 2 branches missed.">        if (caseModel == null) {</span>
+            // if the case model is not contained in the parse result cache, load it manually
+<span class="nc" id="L235">            caseModel = CommandContextUtil.getCmmnEngineConfiguration().getCmmnRepositoryService().getCmmnModel(caseDefinition.getId());</span>
+        }
+<span class="nc" id="L237">        return caseModel;</span>
+    }
+
+    protected boolean isManualCorrelationSubscriptionConfiguration(CmmnParseResult parseResult, CaseDefinitionEntity caseDefinition) {
+<span class="nc" id="L241">        CmmnModel caseModel = getCaseModel(parseResult, caseDefinition);</span>
+<span class="nc" id="L242">        List&lt;ExtensionElement&gt; correlationCfgExtensions = caseModel.getPrimaryCase().getExtensionElements()</span>
+<span class="nc" id="L243">            .getOrDefault(CmmnXmlConstants.START_EVENT_CORRELATION_CONFIGURATION, Collections.emptyList());</span>
+<span class="nc bnc" id="L244" title="All 2 branches missed.">        if (!correlationCfgExtensions.isEmpty()) {</span>
+<span class="nc" id="L245">            return Objects.equals(correlationCfgExtensions.get(0).getElementText(), CmmnXmlConstants.START_EVENT_CORRELATION_MANUAL);</span>
+        }
+<span class="nc" id="L247">        return false;</span>
+    }
+
+    protected String getEventCorrelationKey(Case caseModel) {
+<span class="nc" id="L251">        return CmmnCorrelationUtil.getCorrelationKey(CmmnXmlConstants.ELEMENT_EVENT_CORRELATION_PARAMETER, CommandContextUtil.getCommandContext(), caseModel);</span>
+    }
+
+    protected void makeCaseDefinitionsConsistentWithPersistedVersions(CmmnParseResult parseResult) {
+<span class="nc bnc" id="L255" title="All 2 branches missed.">        for (CaseDefinitionEntity caseDefinition : parseResult.getAllCaseDefinitions()) {</span>
+<span class="nc" id="L256">            CaseDefinitionEntity persistedCaseDefinition = getPersistedInstanceOfCaseDefinition(caseDefinition);</span>
+<span class="nc bnc" id="L257" title="All 2 branches missed.">            if (persistedCaseDefinition != null) {</span>
+<span class="nc" id="L258">                caseDefinition.setId(persistedCaseDefinition.getId());</span>
+<span class="nc" id="L259">                caseDefinition.setVersion(persistedCaseDefinition.getVersion());</span>
+<span class="nc" id="L260">                caseDefinition.setHasStartFormKey(persistedCaseDefinition.hasStartFormKey());</span>
+<span class="nc" id="L261">                caseDefinition.setHasGraphicalNotation(persistedCaseDefinition.hasGraphicalNotation());</span>
+            }
+<span class="nc" id="L263">        }</span>
+<span class="nc" id="L264">    }</span>
+
+    protected void verifyCaseDefinitionsDoNotShareKeys(Collection&lt;CaseDefinitionEntity&gt; caseDefinitionEntities) {
+<span class="nc" id="L267">        Set&lt;String&gt; keySet = new LinkedHashSet&lt;&gt;();</span>
+<span class="nc bnc" id="L268" title="All 2 branches missed.">        for (CaseDefinitionEntity caseDefinitionEntity : caseDefinitionEntities) {</span>
+<span class="nc bnc" id="L269" title="All 2 branches missed.">            if (keySet.contains(caseDefinitionEntity.getKey())) {</span>
+<span class="nc" id="L270">                throw new FlowableException(&quot;The deployment contains case definitions with the same key (case id attribute), this is not allowed&quot;);</span>
+            }
+<span class="nc" id="L272">            keySet.add(caseDefinitionEntity.getKey());</span>
+<span class="nc" id="L273">        }</span>
+<span class="nc" id="L274">    }</span>
+
+    protected void copyDeploymentValuesToCaseDefinitions(EngineDeployment deployment, List&lt;CaseDefinitionEntity&gt; caseDefinitionEntities) {
+<span class="nc" id="L277">        String tenantId = deployment.getTenantId();</span>
+<span class="nc" id="L278">        String deploymentId = deployment.getId();</span>
+
+<span class="nc bnc" id="L280" title="All 2 branches missed.">        for (CaseDefinitionEntity caseDefinitionEntity : caseDefinitionEntities) {</span>
+<span class="nc bnc" id="L281" title="All 2 branches missed.">            if (tenantId != null) {</span>
+<span class="nc" id="L282">                caseDefinitionEntity.setTenantId(tenantId);</span>
+            }
+<span class="nc" id="L284">            caseDefinitionEntity.setDeploymentId(deploymentId);</span>
+<span class="nc" id="L285">        }</span>
+<span class="nc" id="L286">    }</span>
+
+    protected void setResourceNamesOnCaseDefinitions(CmmnParseResult parseResult) {
+<span class="nc bnc" id="L289" title="All 2 branches missed.">        for (CaseDefinitionEntity caseDefinitionEntity : parseResult.getAllCaseDefinitions()) {</span>
+<span class="nc" id="L290">            String resourceName = parseResult.getResourceForCaseDefinition(caseDefinitionEntity).getName();</span>
+<span class="nc" id="L291">            caseDefinitionEntity.setResourceName(resourceName);</span>
+<span class="nc" id="L292">        }</span>
+<span class="nc" id="L293">    }</span>
+
+    protected CaseDefinitionEntity getMostRecentVersionOfCaseDefinition(CaseDefinitionEntity caseDefinitionEntity) {
+<span class="nc" id="L296">        String key = caseDefinitionEntity.getKey();</span>
+<span class="nc" id="L297">        String tenantId = caseDefinitionEntity.getTenantId();</span>
+<span class="nc" id="L298">        CaseDefinitionEntityManager caseDefinitionEntityManager = CommandContextUtil.getCaseDefinitionEntityManager();</span>
+<span class="nc" id="L299">        CaseDefinitionEntity existingCaseDefinition = null;</span>
+<span class="nc bnc" id="L300" title="All 4 branches missed.">        if (tenantId != null &amp;&amp; !tenantId.equals(CmmnEngineConfiguration.NO_TENANT_ID)) {</span>
+<span class="nc" id="L301">            existingCaseDefinition = caseDefinitionEntityManager.findLatestCaseDefinitionByKeyAndTenantId(key, tenantId);</span>
+        } else {
+<span class="nc" id="L303">            existingCaseDefinition = caseDefinitionEntityManager.findLatestCaseDefinitionByKey(key);</span>
+        }
+
+<span class="nc" id="L306">        return existingCaseDefinition;</span>
+    }
+
+    protected CaseDefinitionEntity getPersistedInstanceOfCaseDefinition(CaseDefinitionEntity caseDefinitionEntity) {
+<span class="nc" id="L310">        String deploymentId = caseDefinitionEntity.getDeploymentId();</span>
+<span class="nc bnc" id="L311" title="All 2 branches missed.">        if (StringUtils.isEmpty(caseDefinitionEntity.getDeploymentId())) {</span>
+<span class="nc" id="L312">            throw new IllegalStateException(&quot;Provided case definition must have a deployment id.&quot;);</span>
+        }
+
+<span class="nc" id="L315">        CaseDefinitionEntityManager caseDefinitionEntityManager = cmmnEngineConfiguration.getCaseDefinitionEntityManager();</span>
+<span class="nc" id="L316">        CaseDefinitionEntity persistedCaseDefinitionEntity = null;</span>
+<span class="nc bnc" id="L317" title="All 4 branches missed.">        if (caseDefinitionEntity.getTenantId() == null || CmmnEngineConfiguration.NO_TENANT_ID.equals(caseDefinitionEntity.getTenantId())) {</span>
+<span class="nc" id="L318">            persistedCaseDefinitionEntity = caseDefinitionEntityManager.findCaseDefinitionByDeploymentAndKey(deploymentId, caseDefinitionEntity.getKey());</span>
+        } else {
+<span class="nc" id="L320">            persistedCaseDefinitionEntity = caseDefinitionEntityManager.findCaseDefinitionByDeploymentAndKeyAndTenantId(deploymentId, caseDefinitionEntity.getKey(), caseDefinitionEntity.getTenantId());</span>
+        }
+<span class="nc" id="L322">        return persistedCaseDefinitionEntity;</span>
+    }
+
+    protected void updateCachingAndArtifacts(CmmnParseResult parseResult) {
+<span class="nc" id="L326">        DeploymentCache&lt;CaseDefinitionCacheEntry&gt; caseDefinitionCache = cmmnEngineConfiguration.getCaseDefinitionCache();</span>
+<span class="nc" id="L327">        CmmnDeploymentEntity deployment = (CmmnDeploymentEntity) parseResult.getDeployment();</span>
+
+<span class="nc bnc" id="L329" title="All 2 branches missed.">        for (CaseDefinitionEntity caseDefinitionEntity : parseResult.getAllCaseDefinitions()) {</span>
+<span class="nc" id="L330">            CmmnModel model = parseResult.getCmmnModelForCaseDefinition(caseDefinitionEntity);</span>
+<span class="nc" id="L331">            Case caze = parseResult.getCmmnCaseForCaseDefinition(caseDefinitionEntity);</span>
+<span class="nc" id="L332">            CaseDefinitionCacheEntry cacheEntry = new CaseDefinitionCacheEntry(caseDefinitionEntity, model, caze);</span>
+<span class="nc" id="L333">            caseDefinitionCache.add(caseDefinitionEntity.getId(), cacheEntry);</span>
+
+<span class="nc" id="L335">            deployment.addDeployedArtifact(caseDefinitionEntity);</span>
+<span class="nc" id="L336">            deployment.addCaseDefinitionCacheEntry(caseDefinitionEntity.getId(), cacheEntry);</span>
+<span class="nc" id="L337">        }</span>
+<span class="nc" id="L338">    }</span>
+    
+    public void addAuthorizationsForNewCaseDefinition(Case caze, CaseDefinitionEntity caseDefinition) {
+<span class="nc" id="L341">        addAuthorizationsFromIterator(caze.getCandidateStarterUsers(), caseDefinition, &quot;user&quot;);</span>
+<span class="nc" id="L342">        addAuthorizationsFromIterator(caze.getCandidateStarterGroups(), caseDefinition, &quot;group&quot;);</span>
+<span class="nc" id="L343">    }</span>
+
+    protected void addAuthorizationsFromIterator(List&lt;String&gt; expressions,
+            CaseDefinitionEntity caseDefinition, String expressionType) {
+
+<span class="nc bnc" id="L348" title="All 2 branches missed.">        if (expressions != null) {</span>
+<span class="nc" id="L349">            IdentityLinkService identityLinkService = cmmnEngineConfiguration.getIdentityLinkServiceConfiguration().getIdentityLinkService();</span>
+<span class="nc" id="L350">            ExpressionManager expressionManager = cmmnEngineConfiguration.getExpressionManager();</span>
+
+<span class="nc bnc" id="L352" title="All 2 branches missed.">            for (String expressionStr : expressions) {</span>
+<span class="nc" id="L353">                Expression expression = expressionManager.createExpression(expressionStr);</span>
+<span class="nc" id="L354">                Object value = expression.getValue(NoExecutionVariableScope.getSharedInstance());</span>
+
+<span class="nc bnc" id="L356" title="All 2 branches missed.">                if (value != null) {</span>
+<span class="nc" id="L357">                    Collection&lt;String&gt; candidates = CandidateUtil.extractCandidates(value);</span>
+<span class="nc bnc" id="L358" title="All 2 branches missed.">                    for (String candidate : candidates) {</span>
+<span class="nc" id="L359">                        IdentityLinkEntity identityLink = identityLinkService.createIdentityLink();</span>
+<span class="nc" id="L360">                        identityLink.setScopeDefinitionId(caseDefinition.getId());</span>
+<span class="nc" id="L361">                        identityLink.setScopeType(ScopeTypes.CMMN);</span>
+<span class="nc bnc" id="L362" title="All 2 branches missed.">                        if (&quot;user&quot;.equals(expressionType)) {</span>
+<span class="nc" id="L363">                            identityLink.setUserId(candidate);</span>
+<span class="nc bnc" id="L364" title="All 2 branches missed.">                        } else if (&quot;group&quot;.equals(expressionType)) {</span>
+<span class="nc" id="L365">                            identityLink.setGroupId(candidate);</span>
+                        }
+<span class="nc" id="L367">                        identityLink.setType(IdentityLinkType.CANDIDATE);</span>
+<span class="nc" id="L368">                        identityLinkService.insertIdentityLink(identityLink);</span>
+<span class="nc" id="L369">                    }</span>
+                }
+<span class="nc" id="L371">            }</span>
+        }
+<span class="nc" id="L373">    }</span>
+
+    public IdGenerator getIdGenerator() {
+<span class="nc" id="L376">        return idGenerator;</span>
+    }
+
+    public void setIdGenerator(IdGenerator idGenerator) {
+<span class="nc" id="L380">        this.idGenerator = idGenerator;</span>
+<span class="nc" id="L381">    }</span>
+
+    public CmmnParser getCmmnParser() {
+<span class="nc" id="L384">        return cmmnParser;</span>
+    }
+
+    public void setCmmnParser(CmmnParser cmmnParser) {
+<span class="nc" id="L388">        this.cmmnParser = cmmnParser;</span>
+<span class="nc" id="L389">    }</span>
+
+    public CaseDefinitionDiagramHelper getCaseDefinitionDiagramHelper() {
+<span class="nc" id="L392">        return caseDefinitionDiagramHelper;</span>
+    }
+
+    public void setCaseDefinitionDiagramHelper(CaseDefinitionDiagramHelper caseDefinitionDiagramHelper) {
+<span class="nc" id="L396">        this.caseDefinitionDiagramHelper = caseDefinitionDiagramHelper;</span>
+<span class="nc" id="L397">    }</span>
+
+    public boolean isUsePrefixId() {
+<span class="nc" id="L400">        return usePrefixId;</span>
+    }
+
+    public void setUsePrefixId(boolean usePrefixId) {
+<span class="nc" id="L404">        this.usePrefixId = usePrefixId;</span>
+<span class="nc" id="L405">    }</span>
+
+    protected class CmmnParseContextImpl implements CmmnParseContext {
+
+        protected final EngineResource resource;
+
+<span class="nc" id="L411">        public CmmnParseContextImpl(EngineResource resource) {</span>
+<span class="nc" id="L412">            this.resource = resource;</span>
+<span class="nc" id="L413">        }</span>
+
+        @Override
+        public EngineResource resource() {
+<span class="nc" id="L417">            return resource;</span>
+        }
+
+        @Override
+        public boolean enableSafeXml() {
+<span class="nc" id="L422">            return cmmnEngineConfiguration.isEnableSafeCmmnXml();</span>
+        }
+
+        @Override
+        public String xmlEncoding() {
+<span class="nc" id="L427">            return cmmnEngineConfiguration.getXmlEncoding();</span>
+        }
+
+        @Override
+        public boolean validateXml() {
+<span class="nc bnc" id="L432" title="All 2 branches missed.">            return !cmmnEngineConfiguration.isDisableCmmnXmlValidation();</span>
+        }
+
+        @Override
+        public boolean validateCmmnModel() {
+<span class="nc" id="L437">            return validateXml();</span>
+        }
+
+        @Override
+        public CaseValidator caseValidator() {
+<span class="nc" id="L442">            return cmmnEngineConfiguration.getCaseValidator();</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

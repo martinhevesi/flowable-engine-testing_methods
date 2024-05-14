@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>JtaTransactionInterceptor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.common.engine.impl.interceptor</a> &gt; <span class="el_source">JtaTransactionInterceptor.java</span></div><h1>JtaTransactionInterceptor.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.flowable.common.engine.impl.interceptor;
+
+import java.lang.reflect.UndeclaredThrowableException;
+
+import jakarta.transaction.HeuristicMixedException;
+import jakarta.transaction.HeuristicRollbackException;
+import jakarta.transaction.InvalidTransactionException;
+import jakarta.transaction.NotSupportedException;
+import jakarta.transaction.RollbackException;
+import jakarta.transaction.Status;
+import jakarta.transaction.SystemException;
+import jakarta.transaction.Transaction;
+import jakarta.transaction.TransactionManager;
+
+import org.flowable.common.engine.impl.cfg.TransactionPropagation;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * @author Guillaume Nodet
+ */
+public class JtaTransactionInterceptor extends AbstractCommandInterceptor {
+
+<span class="nc" id="L37">    private static final Logger LOGGER = LoggerFactory.getLogger(JtaTransactionInterceptor.class);</span>
+
+    private final TransactionManager transactionManager;
+
+<span class="nc" id="L41">    public JtaTransactionInterceptor(TransactionManager transactionManager) {</span>
+<span class="nc" id="L42">        this.transactionManager = transactionManager;</span>
+<span class="nc" id="L43">    }</span>
+
+    @Override
+    public &lt;T&gt; T execute(CommandConfig config, Command&lt;T&gt; command, CommandExecutor commandExecutor) {
+<span class="nc" id="L47">        LOGGER.debug(&quot;Running command with propagation {}&quot;, config.getTransactionPropagation());</span>
+
+<span class="nc bnc" id="L49" title="All 2 branches missed.">        if (config.getTransactionPropagation() == TransactionPropagation.NOT_SUPPORTED) {</span>
+<span class="nc" id="L50">            return next.execute(config, command, commandExecutor);</span>
+        }
+
+<span class="nc bnc" id="L53" title="All 2 branches missed.">        boolean requiresNew = config.getTransactionPropagation() == TransactionPropagation.REQUIRES_NEW;</span>
+<span class="nc" id="L54">        Transaction oldTx = null;</span>
+        try {
+<span class="nc" id="L56">            boolean existing = isExisting();</span>
+<span class="nc bnc" id="L57" title="All 4 branches missed.">            boolean isNew = !existing || requiresNew;</span>
+<span class="nc bnc" id="L58" title="All 4 branches missed.">            if (existing &amp;&amp; requiresNew) {</span>
+<span class="nc" id="L59">                oldTx = doSuspend();</span>
+            }
+<span class="nc bnc" id="L61" title="All 2 branches missed.">            if (isNew) {</span>
+<span class="nc" id="L62">                doBegin();</span>
+            }
+            T result;
+            try {
+<span class="nc" id="L66">                result = next.execute(config, command, commandExecutor);</span>
+<span class="nc" id="L67">            } catch (RuntimeException | Error ex) {</span>
+<span class="nc" id="L68">                doRollback(isNew, ex);</span>
+<span class="nc" id="L69">                throw ex;</span>
+<span class="nc" id="L70">            } catch (Exception ex) {</span>
+<span class="nc" id="L71">                doRollback(isNew, ex);</span>
+<span class="nc" id="L72">                throw new UndeclaredThrowableException(ex, &quot;TransactionCallback threw undeclared checked exception&quot;);</span>
+<span class="nc" id="L73">            }</span>
+<span class="nc bnc" id="L74" title="All 2 branches missed.">            if (isNew) {</span>
+<span class="nc" id="L75">                doCommit();</span>
+            }
+<span class="nc" id="L77">            return result;</span>
+        } finally {
+<span class="nc" id="L79">            doResume(oldTx);</span>
+        }
+    }
+
+    private void doBegin() {
+        try {
+<span class="nc" id="L85">            transactionManager.begin();</span>
+<span class="nc" id="L86">        } catch (NotSupportedException | SystemException e) {</span>
+<span class="nc" id="L87">            throw new TransactionException(&quot;Unable to begin transaction&quot;, e);</span>
+<span class="nc" id="L88">        }</span>
+<span class="nc" id="L89">    }</span>
+
+    private boolean isExisting() {
+        try {
+<span class="nc bnc" id="L93" title="All 2 branches missed.">            return transactionManager.getStatus() != Status.STATUS_NO_TRANSACTION;</span>
+<span class="nc" id="L94">        } catch (SystemException e) {</span>
+<span class="nc" id="L95">            throw new TransactionException(&quot;Unable to retrieve transaction status&quot;, e);</span>
+        }
+    }
+
+    private Transaction doSuspend() {
+        try {
+<span class="nc" id="L101">            return transactionManager.suspend();</span>
+<span class="nc" id="L102">        } catch (SystemException e) {</span>
+<span class="nc" id="L103">            throw new TransactionException(&quot;Unable to suspend transaction&quot;, e);</span>
+        }
+    }
+
+    private void doResume(Transaction tx) {
+<span class="nc bnc" id="L108" title="All 2 branches missed.">        if (tx != null) {</span>
+            try {
+<span class="nc" id="L110">                transactionManager.resume(tx);</span>
+<span class="nc" id="L111">            } catch (SystemException | InvalidTransactionException e) {</span>
+<span class="nc" id="L112">                throw new TransactionException(&quot;Unable to resume transaction&quot;, e);</span>
+<span class="nc" id="L113">            }</span>
+        }
+<span class="nc" id="L115">    }</span>
+
+    private void doCommit() {
+        try {
+<span class="nc" id="L119">            transactionManager.commit();</span>
+<span class="nc" id="L120">        } catch (HeuristicMixedException | SystemException | RollbackException | HeuristicRollbackException e) {</span>
+<span class="nc" id="L121">            throw new TransactionException(&quot;Unable to commit transaction&quot;, e);</span>
+<span class="nc" id="L122">        } catch (RuntimeException | Error e) {</span>
+<span class="nc" id="L123">            doRollback(true, e);</span>
+<span class="nc" id="L124">            throw e;</span>
+<span class="nc" id="L125">        }</span>
+<span class="nc" id="L126">    }</span>
+
+    private void doRollback(boolean isNew, Throwable originalException) {
+<span class="nc" id="L129">        Throwable rollbackEx = null;</span>
+        try {
+<span class="nc bnc" id="L131" title="All 2 branches missed.">            if (isNew) {</span>
+<span class="nc" id="L132">                transactionManager.rollback();</span>
+            } else {
+<span class="nc" id="L134">                transactionManager.setRollbackOnly();</span>
+            }
+<span class="nc" id="L136">        } catch (SystemException e) {</span>
+<span class="nc" id="L137">            LOGGER.debug(&quot;Error when rolling back transaction&quot;, e);</span>
+<span class="nc" id="L138">        } catch (RuntimeException | Error e) {</span>
+<span class="nc" id="L139">            rollbackEx = e;</span>
+<span class="nc" id="L140">            throw e;</span>
+        } finally {
+<span class="nc bnc" id="L142" title="All 4 branches missed.">            if (rollbackEx != null &amp;&amp; originalException != null) {</span>
+<span class="nc" id="L143">                LOGGER.error(&quot;Error when rolling back transaction, original exception was:&quot;, originalException);</span>
+            }
+        }
+<span class="nc" id="L146">    }</span>
+
+    private static class TransactionException extends RuntimeException {
+
+        private static final long serialVersionUID = 1L;
+
+        private TransactionException() {
+        }
+
+        private TransactionException(String s) {
+<span class="nc" id="L156">            super(s);</span>
+<span class="nc" id="L157">        }</span>
+
+        private TransactionException(String s, Throwable throwable) {
+<span class="nc" id="L160">            super(s, throwable);</span>
+<span class="nc" id="L161">        }</span>
+
+        private TransactionException(Throwable throwable) {
+<span class="nc" id="L164">            super(throwable);</span>
+<span class="nc" id="L165">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

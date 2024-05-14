@@ -1,0 +1,2036 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ProcessInstanceMigrationMultiInstanceTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.api.runtime.migration</a> &gt; <span class="el_source">ProcessInstanceMigrationMultiInstanceTest.java</span></div><h1>ProcessInstanceMigrationMultiInstanceTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.flowable.engine.test.api.runtime.migration;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.entry;
+import static org.assertj.core.api.Assertions.tuple;
+
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.function.Consumer;
+import java.util.stream.Collectors;
+
+import org.assertj.core.api.Condition;
+import org.flowable.common.engine.impl.history.HistoryLevel;
+import org.flowable.engine.history.HistoricActivityInstance;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntity;
+import org.flowable.engine.impl.test.HistoryTestHelper;
+import org.flowable.engine.migration.ActivityMigrationMapping;
+import org.flowable.engine.migration.ProcessInstanceMigrationBuilder;
+import org.flowable.engine.migration.ProcessInstanceMigrationValidationResult;
+import org.flowable.engine.repository.ProcessDefinition;
+import org.flowable.engine.runtime.Execution;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.job.api.Job;
+import org.flowable.task.api.Task;
+import org.flowable.task.api.history.HistoricTaskInstance;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+/**
+ * @author Dennis Federico
+ */
+<span class="nc" id="L50">public class ProcessInstanceMigrationMultiInstanceTest extends AbstractProcessInstanceMigrationTest {</span>
+
+    @AfterEach
+    protected void tearDown() {
+<span class="nc" id="L54">        deleteDeployments();</span>
+<span class="nc" id="L55">    }</span>
+
+    @Test
+    public void testMigrateActivityToSequentialMultiInstanceActivity() {
+<span class="nc" id="L59">        ProcessDefinition procSimpleOneTask = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-task-simple-process.bpmn20.xml&quot;);
+<span class="nc" id="L61">        ProcessDefinition procSequentialMultiInst = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/sequential-multi-instance-task.bpmn20.xml&quot;);
+
+        //Start the processInstance
+<span class="nc" id="L65">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procSimpleOneTask.getId());</span>
+
+        //Confirm the state to migrate
+<span class="nc" id="L68">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L69">        assertThat(executions)</span>
+<span class="nc" id="L70">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L71">                .containsExactly(&quot;userTask1Id&quot;);</span>
+<span class="nc" id="L72">        assertThat(executions)</span>
+<span class="nc" id="L73">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L74">                .containsOnly(procSimpleOneTask.getId());</span>
+<span class="nc" id="L75">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L76">        assertThat(task)</span>
+<span class="nc" id="L77">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L78">                .containsExactly(&quot;userTask1Id&quot;, procSimpleOneTask.getId());</span>
+
+        //Prepare and action the migration
+<span class="nc" id="L81">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L82">                .migrateToProcessDefinition(procSequentialMultiInst.getId())</span>
+<span class="nc" id="L83">                .addActivityMigrationMapping(ActivityMigrationMapping.createMappingFor(&quot;userTask1Id&quot;, &quot;seqTasks&quot;))</span>
+<span class="nc" id="L84">                .withProcessInstanceVariable(&quot;nrOfLoops&quot;, 3);</span>
+<span class="nc" id="L85">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L86">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L87">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L88">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+<span class="nc" id="L90">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        //MI root execution and 1 instance
+<span class="nc" id="L92">        assertThat(executions)</span>
+<span class="nc" id="L93">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L94">                .containsExactly(&quot;seqTasks&quot;, &quot;seqTasks&quot;);</span>
+<span class="nc" id="L95">        assertThat(executions)</span>
+<span class="nc" id="L96">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L97">                .containsOnly(procSequentialMultiInst.getId());</span>
+<span class="nc" id="L98">        Execution miRoot = executions.stream().filter(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot()).findFirst().get();</span>
+<span class="nc" id="L99">        Map&lt;String, Object&gt; miRootVars = runtimeService.getVariables(miRoot.getId());</span>
+<span class="nc" id="L100">        assertThat(miRootVars)</span>
+<span class="nc" id="L101">                .extracting(&quot;nrOfActiveInstances&quot;, &quot;nrOfCompletedInstances&quot;, &quot;nrOfLoops&quot;)</span>
+<span class="nc" id="L102">                .containsExactly(1, 0, 3);</span>
+<span class="nc" id="L103">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L104">        assertThat(task)</span>
+<span class="nc" id="L105">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L106">                .containsExactly(&quot;seqTasks&quot;, procSequentialMultiInst.getId());</span>
+<span class="nc" id="L107">        assertThat(taskService.getVariable(task.getId(), &quot;loopCounter&quot;)).isEqualTo(0);</span>
+
+        //Complete one instance...
+<span class="nc" id="L110">        taskService.complete(task.getId());</span>
+
+        //Next instance in the loop
+<span class="nc" id="L113">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L114">        assertThat(executions)</span>
+<span class="nc" id="L115">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L116">                .containsExactly(&quot;seqTasks&quot;, &quot;seqTasks&quot;);</span>
+<span class="nc" id="L117">        assertThat(executions)</span>
+<span class="nc" id="L118">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L119">                .containsOnly(procSequentialMultiInst.getId());</span>
+<span class="nc" id="L120">        miRoot = executions.stream().filter(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot()).findFirst().get();</span>
+<span class="nc" id="L121">        miRootVars = runtimeService.getVariables(miRoot.getId());</span>
+<span class="nc" id="L122">        assertThat(miRootVars)</span>
+<span class="nc" id="L123">                .extracting(&quot;nrOfActiveInstances&quot;, &quot;nrOfCompletedInstances&quot;, &quot;nrOfLoops&quot;)</span>
+<span class="nc" id="L124">                .containsExactly(1, 1, 3);</span>
+<span class="nc" id="L125">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L126">        assertThat(task)</span>
+<span class="nc" id="L127">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L128">                .containsExactly(&quot;seqTasks&quot;, procSequentialMultiInst.getId());</span>
+<span class="nc" id="L129">        assertThat(taskService.getVariable(task.getId(), &quot;loopCounter&quot;)).isEqualTo(1);</span>
+
+        //Complete this and the last
+<span class="nc" id="L132">        taskService.complete(task.getId());</span>
+<span class="nc" id="L133">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L134">        taskService.complete(task.getId());</span>
+
+        //Out of the loop
+<span class="nc" id="L137">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L138">        assertThat(executions)</span>
+<span class="nc" id="L139">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L140">                .containsExactly(&quot;afterMultiInstance&quot;);</span>
+<span class="nc" id="L141">        assertThat(executions)</span>
+<span class="nc" id="L142">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L143">                .containsOnly(procSequentialMultiInst.getId());</span>
+<span class="nc" id="L144">        assertThat(executions.stream().anyMatch(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot())).isFalse();</span>
+<span class="nc" id="L145">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L146">        assertThat(task)</span>
+<span class="nc" id="L147">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L148">                .containsExactly(&quot;afterMultiInstance&quot;, procSequentialMultiInst.getId());</span>
+<span class="nc" id="L149">        assertThat(taskService.getVariable(task.getId(), &quot;loopCounter&quot;)).isNull();</span>
+
+<span class="nc bnc" id="L151" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L152">            checkActivityInstances(procSequentialMultiInst, processInstance, &quot;userTask&quot;, &quot;userTask1Id&quot;, &quot;seqTasks&quot;, &quot;seqTasks&quot;, &quot;seqTasks&quot;,</span>
+                    &quot;afterMultiInstance&quot;);
+
+<span class="nc" id="L155">            checkTaskInstance(procSequentialMultiInst, processInstance, &quot;userTask1Id&quot;, &quot;seqTasks&quot;, &quot;seqTasks&quot;, &quot;seqTasks&quot;, &quot;afterMultiInstance&quot;);</span>
+        }
+
+<span class="nc" id="L158">        completeProcessInstanceTasks(processInstance.getId());</span>
+
+<span class="nc bnc" id="L160" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L161">            checkActivityInstances(procSequentialMultiInst, processInstance, &quot;userTask&quot;, &quot;userTask1Id&quot;, &quot;seqTasks&quot;, &quot;seqTasks&quot;, &quot;seqTasks&quot;,</span>
+                    &quot;afterMultiInstance&quot;);
+
+<span class="nc" id="L164">            checkTaskInstance(procSequentialMultiInst, processInstance, &quot;userTask1Id&quot;, &quot;seqTasks&quot;, &quot;seqTasks&quot;, &quot;seqTasks&quot;, &quot;afterMultiInstance&quot;);</span>
+        }
+
+<span class="nc" id="L167">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L168">    }</span>
+
+    @Test
+    public void testMigrateActivityToParallelMultiInstanceActivity() {
+<span class="nc" id="L172">        ProcessDefinition procSimpleOneTask = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-task-simple-process.bpmn20.xml&quot;);
+<span class="nc" id="L174">        ProcessDefinition procParallelMultiInst = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-multi-instance-task.bpmn20.xml&quot;);
+
+        //Start the processInstance
+<span class="nc" id="L178">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procSimpleOneTask.getId());</span>
+
+        //Confirm the state to migrate
+<span class="nc" id="L181">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L182">        assertThat(executions)</span>
+<span class="nc" id="L183">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L184">                .containsExactly(&quot;userTask1Id&quot;);</span>
+<span class="nc" id="L185">        assertThat(executions)</span>
+<span class="nc" id="L186">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L187">                .containsOnly(procSimpleOneTask.getId());</span>
+<span class="nc" id="L188">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L189">        assertThat(task)</span>
+<span class="nc" id="L190">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L191">                .containsExactly(&quot;userTask1Id&quot;, procSimpleOneTask.getId());</span>
+
+        //Prepare and action the migration
+<span class="nc" id="L194">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L195">                .migrateToProcessDefinition(procParallelMultiInst.getId())</span>
+<span class="nc" id="L196">                .addActivityMigrationMapping(ActivityMigrationMapping.createMappingFor(&quot;userTask1Id&quot;, &quot;parallelTasks&quot;))</span>
+<span class="nc" id="L197">                .withProcessInstanceVariable(&quot;nrOfLoops&quot;, 3);</span>
+<span class="nc" id="L198">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L199">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L200">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L201">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+<span class="nc" id="L203">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        //MI root execution and 3 parallel instances
+<span class="nc" id="L205">        assertThat(executions)</span>
+<span class="nc" id="L206">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L207">                .containsExactly(&quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;);</span>
+<span class="nc" id="L208">        assertThat(executions)</span>
+<span class="nc" id="L209">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L210">                .containsOnly(procParallelMultiInst.getId());</span>
+<span class="nc" id="L211">        Execution miRoot = executions.stream().filter(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot()).findFirst().get();</span>
+<span class="nc" id="L212">        Map&lt;String, Object&gt; miRootVars = runtimeService.getVariables(miRoot.getId());</span>
+<span class="nc" id="L213">        assertThat(miRootVars)</span>
+<span class="nc" id="L214">                .extracting(&quot;nrOfActiveInstances&quot;, &quot;nrOfCompletedInstances&quot;, &quot;nrOfLoops&quot;)</span>
+<span class="nc" id="L215">                .containsExactly(3, 0, 3);</span>
+<span class="nc" id="L216">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L217">        assertThat(task)</span>
+<span class="nc" id="L218">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L219">                .containsExactly(&quot;userTask1Id&quot;, procSimpleOneTask.getId());</span>
+<span class="nc" id="L220">        assertThat(tasks).extracting(aTask -&gt; taskService.getVariable(aTask.getId(), &quot;loopCounter&quot;)).isNotNull();</span>
+
+        //Complete one instance...
+<span class="nc" id="L223">        taskService.complete(tasks.get(1).getId());</span>
+
+        //Next instance in the loop
+<span class="nc" id="L226">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        //MI Root and its 3 parallel instances
+<span class="nc" id="L228">        assertThat(executions)</span>
+<span class="nc" id="L229">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L230">                .containsExactly(&quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;);</span>
+<span class="nc" id="L231">        assertThat(executions)</span>
+<span class="nc" id="L232">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L233">                .containsOnly(procParallelMultiInst.getId());</span>
+<span class="nc" id="L234">        miRoot = executions.stream().filter(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot()).findFirst().get();</span>
+<span class="nc" id="L235">        miRootVars = runtimeService.getVariables(miRoot.getId());</span>
+<span class="nc" id="L236">        assertThat(miRootVars)</span>
+<span class="nc" id="L237">                .extracting(&quot;nrOfActiveInstances&quot;, &quot;nrOfCompletedInstances&quot;, &quot;nrOfLoops&quot;)</span>
+<span class="nc" id="L238">                .containsExactly(2, 1, 3);</span>
+
+        //Two executions are inactive, the completed instance and the MI root
+<span class="nc bnc" id="L241" title="All 2 branches missed.">        assertThat(executions).haveExactly(2, new Condition&lt;&gt;((Execution execution) -&gt; !((ExecutionEntity) execution).isActive(), &quot;inactive&quot;));</span>
+<span class="nc" id="L242">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+        //Two tasks remain for completion
+<span class="nc" id="L244">        assertThat(tasks)</span>
+<span class="nc" id="L245">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L246">                .containsExactly(&quot;parallelTasks&quot;, &quot;parallelTasks&quot;);</span>
+<span class="nc" id="L247">        assertThat(tasks)</span>
+<span class="nc" id="L248">                .extracting(Task::getProcessDefinitionId)</span>
+<span class="nc" id="L249">                .containsOnly(procParallelMultiInst.getId());</span>
+<span class="nc" id="L250">        assertThat(tasks).extracting(aTask -&gt; taskService.getVariable(aTask.getId(), &quot;loopCounter&quot;)).isNotNull();</span>
+
+        //Complete the remaining parallel tasks
+<span class="nc" id="L253">        tasks.forEach(this::completeTask);</span>
+
+        //Out of the loop
+<span class="nc" id="L256">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L257">        assertThat(executions)</span>
+<span class="nc" id="L258">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L259">                .containsExactly(&quot;afterMultiInstance&quot;);</span>
+<span class="nc" id="L260">        assertThat(executions)</span>
+<span class="nc" id="L261">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L262">                .containsOnly(procParallelMultiInst.getId());</span>
+<span class="nc" id="L263">        assertThat(executions.stream().anyMatch(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot())).isFalse();</span>
+<span class="nc" id="L264">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L265">        assertThat(task)</span>
+<span class="nc" id="L266">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L267">                .containsExactly(&quot;afterMultiInstance&quot;, procParallelMultiInst.getId());</span>
+<span class="nc" id="L268">        assertThat(taskService.getVariable(task.getId(), &quot;loopCounter&quot;)).isNull();</span>
+
+<span class="nc bnc" id="L270" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L271">            checkActivityInstances(procParallelMultiInst, processInstance, &quot;userTask&quot;, &quot;userTask1Id&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;,</span>
+                    &quot;afterMultiInstance&quot;);
+
+<span class="nc" id="L274">            checkTaskInstance(procParallelMultiInst, processInstance, &quot;userTask1Id&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;afterMultiInstance&quot;);</span>
+        }
+
+<span class="nc" id="L277">        completeProcessInstanceTasks(processInstance.getId());</span>
+
+<span class="nc bnc" id="L279" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L280">            checkActivityInstances(procParallelMultiInst, processInstance, &quot;userTask&quot;, &quot;userTask1Id&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;,</span>
+                    &quot;afterMultiInstance&quot;);
+
+<span class="nc" id="L283">            checkTaskInstance(procParallelMultiInst, processInstance, &quot;userTask1Id&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;afterMultiInstance&quot;);</span>
+        }
+
+<span class="nc" id="L286">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L287">    }</span>
+
+    @Test
+    public void testMigrateSequentialMultiInstanceActivityToSimpleActivity() {
+<span class="nc" id="L291">        ProcessDefinition procSequentialMultiInst = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/sequential-multi-instance-task.bpmn20.xml&quot;);
+<span class="nc" id="L293">        ProcessDefinition procSimpleOneTask = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-task-simple-process.bpmn20.xml&quot;);
+
+        //Start the processInstance
+<span class="nc" id="L297">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procSequentialMultiInst.getId(), Collections.singletonMap(&quot;nrOfLoops&quot;, 3));</span>
+<span class="nc" id="L298">        completeTask(taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult());</span>
+
+        //Confirm the state to migrate
+<span class="nc" id="L301">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        //MultiInstance parent and one instance of the task
+<span class="nc" id="L303">        assertThat(executions)</span>
+<span class="nc" id="L304">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L305">                .containsExactly(&quot;seqTasks&quot;, &quot;seqTasks&quot;);</span>
+<span class="nc" id="L306">        assertThat(executions)</span>
+<span class="nc" id="L307">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L308">                .containsOnly(procSequentialMultiInst.getId());</span>
+<span class="nc" id="L309">        Execution miRoot = executions.stream().filter(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot()).findFirst().get();</span>
+<span class="nc" id="L310">        Map&lt;String, Object&gt; miRootVars = runtimeService.getVariables(miRoot.getId());</span>
+<span class="nc" id="L311">        assertThat(miRootVars)</span>
+<span class="nc" id="L312">                .extracting(&quot;nrOfActiveInstances&quot;, &quot;nrOfCompletedInstances&quot;, &quot;nrOfLoops&quot;)</span>
+<span class="nc" id="L313">                .containsExactly(1, 0, 3);</span>
+
+<span class="nc" id="L315">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L316">        assertThat(task)</span>
+<span class="nc" id="L317">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L318">                .containsExactly(&quot;seqTasks&quot;, procSequentialMultiInst.getId());</span>
+<span class="nc" id="L319">        Map&lt;String, Object&gt; miTaskVars = taskService.getVariables(task.getId());</span>
+<span class="nc" id="L320">        assertThat(miTaskVars)</span>
+<span class="nc" id="L321">                .contains(entry(&quot;loopCounter&quot;, 0));</span>
+
+        //Complete one...
+<span class="nc" id="L324">        completeTask(task);</span>
+
+<span class="nc" id="L326">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        //MultiInstance parent and one instance of the task
+<span class="nc" id="L328">        assertThat(executions)</span>
+<span class="nc" id="L329">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L330">                .containsExactly(&quot;seqTasks&quot;, &quot;seqTasks&quot;);</span>
+<span class="nc" id="L331">        assertThat(executions)</span>
+<span class="nc" id="L332">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L333">                .containsOnly(procSequentialMultiInst.getId());</span>
+
+<span class="nc" id="L335">        miRoot = executions.stream().filter(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot()).findFirst().get();</span>
+<span class="nc" id="L336">        miRootVars = runtimeService.getVariables(miRoot.getId());</span>
+<span class="nc" id="L337">        assertThat(miRootVars)</span>
+<span class="nc" id="L338">                .extracting(&quot;nrOfActiveInstances&quot;, &quot;nrOfCompletedInstances&quot;, &quot;nrOfLoops&quot;)</span>
+<span class="nc" id="L339">                .containsExactly(1, 1, 3);</span>
+
+<span class="nc" id="L341">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L342">        assertThat(task)</span>
+<span class="nc" id="L343">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L344">                .containsExactly(&quot;seqTasks&quot;, procSequentialMultiInst.getId());</span>
+<span class="nc" id="L345">        miTaskVars = taskService.getVariables(task.getId());</span>
+<span class="nc" id="L346">        assertThat(miTaskVars).extracting(&quot;loopCounter&quot;).isEqualTo(1);</span>
+
+        //Prepare and action the migration
+<span class="nc" id="L349">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L350">                .migrateToProcessDefinition(procSimpleOneTask.getId())</span>
+<span class="nc" id="L351">                .addActivityMigrationMapping(ActivityMigrationMapping.createMappingFor(&quot;seqTasks&quot;, &quot;userTask1Id&quot;));</span>
+<span class="nc" id="L352">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L353">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L354">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L355">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+<span class="nc" id="L357">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L358">        assertThat(executions)</span>
+<span class="nc" id="L359">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L360">                .containsExactly(&quot;userTask1Id&quot;);</span>
+<span class="nc" id="L361">        assertThat(executions)</span>
+<span class="nc" id="L362">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L363">                .containsOnly(procSimpleOneTask.getId());</span>
+<span class="nc" id="L364">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L365">        assertThat(task)</span>
+<span class="nc" id="L366">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L367">                .containsExactly(&quot;userTask1Id&quot;, procSimpleOneTask.getId());</span>
+<span class="nc" id="L368">        assertThat(taskService.getVariable(task.getId(), &quot;loopCounter&quot;)).isNull();</span>
+
+<span class="nc bnc" id="L370" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L371">            checkActivityInstances(procSimpleOneTask, processInstance, &quot;userTask&quot;, &quot;beforeMultiInstance&quot;, &quot;seqTasks&quot;, &quot;seqTasks&quot;, &quot;userTask1Id&quot;);</span>
+
+<span class="nc" id="L373">            checkTaskInstance(procSimpleOneTask, processInstance, &quot;beforeMultiInstance&quot;, &quot;seqTasks&quot;, &quot;seqTasks&quot;, &quot;userTask1Id&quot;);</span>
+        }
+
+<span class="nc" id="L376">        completeProcessInstanceTasks(processInstance.getId());</span>
+
+<span class="nc bnc" id="L378" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L379">            checkActivityInstances(procSimpleOneTask, processInstance, &quot;userTask&quot;, &quot;beforeMultiInstance&quot;, &quot;seqTasks&quot;, &quot;seqTasks&quot;, &quot;userTask1Id&quot;);</span>
+
+<span class="nc" id="L381">            checkTaskInstance(procSimpleOneTask, processInstance, &quot;beforeMultiInstance&quot;, &quot;seqTasks&quot;, &quot;seqTasks&quot;, &quot;userTask1Id&quot;);</span>
+        }
+
+<span class="nc" id="L384">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L385">    }</span>
+
+    @Test
+    public void testMigrateParallelMultiInstanceActivityToSimpleActivity() {
+<span class="nc" id="L389">        ProcessDefinition procParallelMultiInst = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-multi-instance-task.bpmn20.xml&quot;);
+<span class="nc" id="L391">        ProcessDefinition procSimpleOneTask = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-task-simple-process.bpmn20.xml&quot;);
+
+<span class="nc bnc" id="L394" title="All 2 branches missed.">        Condition&lt;Execution&gt; isInactiveExecution = new Condition&lt;&gt;(execution -&gt; !((ExecutionEntity) execution).isActive(), &quot;inactive execution&quot;);</span>
+<span class="nc" id="L395">        Consumer&lt;Task&gt; hasLoopCounter = task -&gt; {</span>
+<span class="nc" id="L396">            Map&lt;String, Object&gt; variables = taskService.getVariables(task.getId());</span>
+<span class="nc" id="L397">            assertThat(variables).extracting(&quot;loopCounter&quot;).isNotNull();</span>
+<span class="nc" id="L398">        };</span>
+
+        //Start the processInstance
+<span class="nc" id="L401">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procParallelMultiInst.getId(), Collections.singletonMap(&quot;nrOfLoops&quot;, 3));</span>
+<span class="nc" id="L402">        completeTask(taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult());</span>
+
+        //Confirm the state to migrate
+<span class="nc" id="L405">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        //MultiInstance parent and its parallel instances
+<span class="nc" id="L407">        assertThat(executions)</span>
+<span class="nc" id="L408">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L409">                .containsExactly(&quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;);</span>
+        //Parallel MI root execution is inactive
+<span class="nc" id="L411">        assertThat(executions).haveExactly(1, isInactiveExecution);</span>
+<span class="nc" id="L412">        assertThat(executions)</span>
+<span class="nc" id="L413">                .extracting(&quot;processDefinitionId&quot;).</span>
+<span class="nc" id="L414">                containsOnly(procParallelMultiInst.getId());</span>
+
+<span class="nc" id="L416">        Execution miRoot = executions.stream().filter(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot()).findFirst().get();</span>
+<span class="nc" id="L417">        Map&lt;String, Object&gt; miRootVars = runtimeService.getVariables(miRoot.getId());</span>
+<span class="nc" id="L418">        assertThat(miRootVars)</span>
+<span class="nc" id="L419">                .extracting(&quot;nrOfActiveInstances&quot;, &quot;nrOfCompletedInstances&quot;, &quot;nrOfLoops&quot;)</span>
+<span class="nc" id="L420">                .containsExactly(3, 0, 3);</span>
+
+<span class="nc" id="L422">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L423">        assertThat(tasks).hasSize(3);</span>
+<span class="nc" id="L424">        assertThat(tasks)</span>
+<span class="nc" id="L425">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L426">                .containsOnly(tuple(&quot;parallelTasks&quot;, procParallelMultiInst.getId()));</span>
+<span class="nc" id="L427">        assertThat(tasks).allSatisfy(hasLoopCounter);</span>
+
+        //Complete one...
+<span class="nc" id="L430">        completeTask(tasks.get(0));</span>
+
+<span class="nc" id="L432">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L433">        assertThat(executions)</span>
+<span class="nc" id="L434">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L435">                .containsExactly(&quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;);</span>
+        //MultiInstance parent and one completed/inactive execution
+<span class="nc" id="L437">        assertThat(executions).haveExactly(2, isInactiveExecution);</span>
+<span class="nc" id="L438">        assertThat(executions)</span>
+<span class="nc" id="L439">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L440">                .containsOnly(procParallelMultiInst.getId());</span>
+
+<span class="nc" id="L442">        miRoot = executions.stream().filter(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot()).findFirst().get();</span>
+<span class="nc" id="L443">        miRootVars = runtimeService.getVariables(miRoot.getId());</span>
+<span class="nc" id="L444">        assertThat(miRootVars)</span>
+<span class="nc" id="L445">                .extracting(&quot;nrOfActiveInstances&quot;, &quot;nrOfCompletedInstances&quot;, &quot;nrOfLoops&quot;)</span>
+<span class="nc" id="L446">                .containsExactly(2, 1, 3);</span>
+
+<span class="nc" id="L448">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L449">        assertThat(tasks).hasSize(2);</span>
+<span class="nc" id="L450">        assertThat(tasks)</span>
+<span class="nc" id="L451">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L452">                .containsOnly(tuple(&quot;parallelTasks&quot;, procParallelMultiInst.getId()));</span>
+<span class="nc" id="L453">        assertThat(tasks).allSatisfy(hasLoopCounter);</span>
+
+        //Prepare and action the migration
+<span class="nc" id="L456">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L457">                .migrateToProcessDefinition(procSimpleOneTask.getId())</span>
+<span class="nc" id="L458">                .addActivityMigrationMapping(ActivityMigrationMapping.createMappingFor(&quot;parallelTasks&quot;, &quot;userTask1Id&quot;));</span>
+<span class="nc" id="L459">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L460">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L461">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L462">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+<span class="nc" id="L464">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L465">        assertThat(executions)</span>
+<span class="nc" id="L466">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L467">                .containsExactly(&quot;userTask1Id&quot;);</span>
+<span class="nc" id="L468">        assertThat(executions)</span>
+<span class="nc" id="L469">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L470">                .containsOnly(procSimpleOneTask.getId());</span>
+<span class="nc" id="L471">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L472">        assertThat(tasks)</span>
+<span class="nc" id="L473">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L474">                .containsExactly(tuple(&quot;userTask1Id&quot;, procSimpleOneTask.getId()));</span>
+<span class="nc" id="L475">        assertThat(taskService.getVariable(tasks.get(0).getId(), &quot;loopCounter&quot;)).isNull();</span>
+
+<span class="nc bnc" id="L477" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L478">            checkActivityInstances(procSimpleOneTask, processInstance, &quot;userTask&quot;, &quot;beforeMultiInstance&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;,</span>
+                    &quot;userTask1Id&quot;);
+
+<span class="nc" id="L481">            checkTaskInstance(procSimpleOneTask, processInstance, &quot;beforeMultiInstance&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;userTask1Id&quot;);</span>
+        }
+
+<span class="nc" id="L484">        completeProcessInstanceTasks(processInstance.getId());</span>
+
+<span class="nc bnc" id="L486" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L487">            checkActivityInstances(procSimpleOneTask, processInstance, &quot;userTask&quot;, &quot;beforeMultiInstance&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;,</span>
+                    &quot;userTask1Id&quot;);
+
+<span class="nc" id="L490">            checkTaskInstance(procSimpleOneTask, processInstance, &quot;beforeMultiInstance&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;userTask1Id&quot;);</span>
+        }
+
+<span class="nc" id="L493">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L494">    }</span>
+
+    @Test
+    public void testMigrateSequentialMultiInstanceActivityToParallelMultiInstanceActivity() {
+<span class="nc" id="L498">        ProcessDefinition procSequentialMultiInst = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/sequential-multi-instance-task.bpmn20.xml&quot;);
+<span class="nc" id="L500">        ProcessDefinition procParallelMultiInst = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-multi-instance-task.bpmn20.xml&quot;);
+
+        //Start the processInstance
+<span class="nc" id="L504">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procSequentialMultiInst.getId(), Collections.singletonMap(&quot;nrOfLoops&quot;, 3));</span>
+<span class="nc" id="L505">        completeTask(taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult());</span>
+
+        //Confirm the state to migrate
+<span class="nc" id="L508">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        //MultiInstance parent and one instance of the task
+<span class="nc" id="L510">        assertThat(executions)</span>
+<span class="nc" id="L511">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L512">                .containsExactlyInAnyOrder(&quot;seqTasks&quot;, &quot;seqTasks&quot;);</span>
+<span class="nc" id="L513">        assertThat(executions)</span>
+<span class="nc" id="L514">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L515">                .containsOnly(procSequentialMultiInst.getId());</span>
+<span class="nc" id="L516">        Execution miRoot = executions.stream().filter(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot()).findFirst().get();</span>
+<span class="nc" id="L517">        Map&lt;String, Object&gt; miRootVars = runtimeService.getVariables(miRoot.getId());</span>
+<span class="nc" id="L518">        assertThat(miRootVars)</span>
+<span class="nc" id="L519">                .extracting(&quot;nrOfActiveInstances&quot;, &quot;nrOfCompletedInstances&quot;, &quot;nrOfLoops&quot;)</span>
+<span class="nc" id="L520">                .containsExactly(1, 0, 3);</span>
+
+<span class="nc" id="L522">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L523">        assertThat(task)</span>
+<span class="nc" id="L524">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L525">                .containsExactly(&quot;seqTasks&quot;, procSequentialMultiInst.getId());</span>
+<span class="nc" id="L526">        Map&lt;String, Object&gt; miTaskVars = taskService.getVariables(task.getId());</span>
+<span class="nc" id="L527">        assertThat(miTaskVars).contains(entry(&quot;loopCounter&quot;, 0));</span>
+
+        //Complete one...
+<span class="nc" id="L530">        completeTask(task);</span>
+
+<span class="nc" id="L532">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        //MultiInstance parent and one instance of the task
+<span class="nc" id="L534">        assertThat(executions)</span>
+<span class="nc" id="L535">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L536">                .containsExactly(&quot;seqTasks&quot;, &quot;seqTasks&quot;);</span>
+<span class="nc" id="L537">        assertThat(executions)</span>
+<span class="nc" id="L538">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L539">                .containsOnly(procSequentialMultiInst.getId());</span>
+
+<span class="nc" id="L541">        miRoot = executions.stream().filter(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot()).findFirst().get();</span>
+<span class="nc" id="L542">        miRootVars = runtimeService.getVariables(miRoot.getId());</span>
+<span class="nc" id="L543">        assertThat(miRootVars)</span>
+<span class="nc" id="L544">                .extracting(&quot;nrOfActiveInstances&quot;, &quot;nrOfCompletedInstances&quot;, &quot;nrOfLoops&quot;)</span>
+<span class="nc" id="L545">                .containsExactly(1, 1, 3);</span>
+
+<span class="nc" id="L547">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L548">        assertThat(task)</span>
+<span class="nc" id="L549">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L550">                .containsExactly(&quot;seqTasks&quot;, procSequentialMultiInst.getId());</span>
+<span class="nc" id="L551">        miTaskVars = taskService.getVariables(task.getId());</span>
+<span class="nc" id="L552">        assertThat(miTaskVars).extracting(&quot;loopCounter&quot;).isEqualTo(1);</span>
+
+        //Prepare and action the migration
+<span class="nc" id="L555">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L556">                .migrateToProcessDefinition(procParallelMultiInst.getId())</span>
+<span class="nc" id="L557">                .addActivityMigrationMapping(ActivityMigrationMapping.createMappingFor(&quot;seqTasks&quot;, &quot;parallelTasks&quot;));</span>
+<span class="nc" id="L558">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L559">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L560">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L561">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+<span class="nc" id="L563">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        //MI root execution and 3 parallel instances
+<span class="nc" id="L565">        assertThat(executions)</span>
+<span class="nc" id="L566">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L567">                .containsExactly(&quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;);</span>
+<span class="nc" id="L568">        assertThat(executions)</span>
+<span class="nc" id="L569">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L570">                .containsOnly(procParallelMultiInst.getId());</span>
+<span class="nc" id="L571">        miRoot = executions.stream().filter(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot()).findFirst().get();</span>
+<span class="nc" id="L572">        miRootVars = runtimeService.getVariables(miRoot.getId());</span>
+<span class="nc" id="L573">        assertThat(miRootVars)</span>
+<span class="nc" id="L574">                .extracting(&quot;nrOfActiveInstances&quot;, &quot;nrOfCompletedInstances&quot;, &quot;nrOfLoops&quot;)</span>
+<span class="nc" id="L575">                .containsExactly(3, 0, 3);</span>
+<span class="nc" id="L576">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L577">        assertThat(tasks)</span>
+<span class="nc" id="L578">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L579">                .containsExactly(&quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;);</span>
+<span class="nc" id="L580">        assertThat(tasks)</span>
+<span class="nc" id="L581">                .extracting(Task::getProcessDefinitionId)</span>
+<span class="nc" id="L582">                .containsOnly(procParallelMultiInst.getId());</span>
+<span class="nc" id="L583">        assertThat(tasks).extracting(aTask -&gt; taskService.getVariable(aTask.getId(), &quot;loopCounter&quot;)).isNotNull();</span>
+
+        //Complete one instance...
+<span class="nc" id="L586">        taskService.complete(tasks.get(1).getId());</span>
+
+        //Next instance in the loop
+<span class="nc" id="L589">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        //MI Root and its 3 parallel instances
+<span class="nc" id="L591">        assertThat(executions)</span>
+<span class="nc" id="L592">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L593">                .containsExactly(&quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;);</span>
+<span class="nc" id="L594">        assertThat(executions)</span>
+<span class="nc" id="L595">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L596">                .containsOnly(procParallelMultiInst.getId());</span>
+<span class="nc" id="L597">        miRoot = executions.stream().filter(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot()).findFirst().get();</span>
+<span class="nc" id="L598">        miRootVars = runtimeService.getVariables(miRoot.getId());</span>
+<span class="nc" id="L599">        assertThat(miRootVars)</span>
+<span class="nc" id="L600">                .extracting(&quot;nrOfActiveInstances&quot;, &quot;nrOfCompletedInstances&quot;, &quot;nrOfLoops&quot;)</span>
+<span class="nc" id="L601">                .containsExactly(2, 1, 3);</span>
+        //Two executions are inactive, the completed instance and the MI root
+<span class="nc bnc" id="L603" title="All 2 branches missed.">        assertThat(executions).haveExactly(2, new Condition&lt;&gt;((Execution execution) -&gt; !((ExecutionEntity) execution).isActive(), &quot;inactive&quot;));</span>
+<span class="nc" id="L604">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+        //Two tasks remain for completion
+<span class="nc" id="L606">        assertThat(tasks)</span>
+<span class="nc" id="L607">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L608">                .containsExactly(&quot;parallelTasks&quot;, &quot;parallelTasks&quot;);</span>
+<span class="nc" id="L609">        assertThat(tasks)</span>
+<span class="nc" id="L610">                .extracting(Task::getProcessDefinitionId)</span>
+<span class="nc" id="L611">                .containsOnly(procParallelMultiInst.getId());</span>
+<span class="nc" id="L612">        assertThat(tasks).extracting(aTask -&gt; taskService.getVariable(aTask.getId(), &quot;loopCounter&quot;)).isNotNull();</span>
+
+        //Complete the remaining parallel tasks
+<span class="nc" id="L615">        tasks.forEach(this::completeTask);</span>
+
+        //Out of the loop
+<span class="nc" id="L618">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L619">        assertThat(executions)</span>
+<span class="nc" id="L620">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L621">                .containsExactly(&quot;afterMultiInstance&quot;);</span>
+<span class="nc" id="L622">        assertThat(executions)</span>
+<span class="nc" id="L623">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L624">                .containsOnly(procParallelMultiInst.getId());</span>
+<span class="nc" id="L625">        assertThat(executions.stream().anyMatch(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot())).isFalse();</span>
+<span class="nc" id="L626">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L627">        assertThat(task)</span>
+<span class="nc" id="L628">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L629">                .containsExactly(&quot;afterMultiInstance&quot;, procParallelMultiInst.getId());</span>
+<span class="nc" id="L630">        assertThat(taskService.getVariable(task.getId(), &quot;loopCounter&quot;)).isNull();</span>
+
+<span class="nc bnc" id="L632" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L633">            checkActivityInstances(procParallelMultiInst, processInstance, &quot;userTask&quot;, &quot;beforeMultiInstance&quot;, &quot;seqTasks&quot;, &quot;seqTasks&quot;, &quot;parallelTasks&quot;,</span>
+                    &quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;afterMultiInstance&quot;);
+
+<span class="nc" id="L636">            checkTaskInstance(procParallelMultiInst, processInstance, &quot;beforeMultiInstance&quot;, &quot;seqTasks&quot;, &quot;seqTasks&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;,</span>
+                    &quot;parallelTasks&quot;, &quot;afterMultiInstance&quot;);
+        }
+
+<span class="nc" id="L640">        completeProcessInstanceTasks(processInstance.getId());</span>
+
+<span class="nc bnc" id="L642" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L643">            checkActivityInstances(procParallelMultiInst, processInstance, &quot;userTask&quot;, &quot;beforeMultiInstance&quot;, &quot;seqTasks&quot;, &quot;seqTasks&quot;, &quot;parallelTasks&quot;,</span>
+                    &quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;afterMultiInstance&quot;);
+
+<span class="nc" id="L646">            checkTaskInstance(procParallelMultiInst, processInstance, &quot;beforeMultiInstance&quot;, &quot;seqTasks&quot;, &quot;seqTasks&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;,</span>
+                    &quot;parallelTasks&quot;, &quot;afterMultiInstance&quot;);
+        }
+
+<span class="nc" id="L650">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L651">    }</span>
+
+    @Test
+    public void testMigrateParallelMultiInstanceActivityToSequentialMultiInstanceActivity() {
+<span class="nc" id="L655">        ProcessDefinition procParallelMultiInst = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-multi-instance-task.bpmn20.xml&quot;);
+<span class="nc" id="L657">        ProcessDefinition procSequentialMultiInst = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/sequential-multi-instance-task.bpmn20.xml&quot;);
+
+<span class="nc bnc" id="L660" title="All 2 branches missed.">        Condition&lt;Execution&gt; isInactiveExecution = new Condition&lt;&gt;(execution -&gt; !((ExecutionEntity) execution).isActive(), &quot;inactive execution&quot;);</span>
+<span class="nc" id="L661">        Consumer&lt;Task&gt; hasLoopCounter = task -&gt; {</span>
+<span class="nc" id="L662">            Map&lt;String, Object&gt; variables = taskService.getVariables(task.getId());</span>
+<span class="nc" id="L663">            assertThat(variables).extracting(&quot;loopCounter&quot;).isNotNull();</span>
+<span class="nc" id="L664">        };</span>
+
+        //Start the processInstance
+<span class="nc" id="L667">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procParallelMultiInst.getId(), Collections.singletonMap(&quot;nrOfLoops&quot;, 3));</span>
+<span class="nc" id="L668">        completeTask(taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult());</span>
+
+        //Confirm the state to migrate
+<span class="nc" id="L671">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        //MultiInstance parent and its parallel instances
+<span class="nc" id="L673">        assertThat(executions)</span>
+<span class="nc" id="L674">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L675">                .containsExactly(&quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;);</span>
+        //Parallel MI root execution is inactive
+<span class="nc" id="L677">        assertThat(executions).haveExactly(1, isInactiveExecution);</span>
+<span class="nc" id="L678">        assertThat(executions)</span>
+<span class="nc" id="L679">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L680">                .containsOnly(procParallelMultiInst.getId());</span>
+
+<span class="nc" id="L682">        Execution miRoot = executions.stream().filter(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot()).findFirst().get();</span>
+<span class="nc" id="L683">        Map&lt;String, Object&gt; miRootVars = runtimeService.getVariables(miRoot.getId());</span>
+<span class="nc" id="L684">        assertThat(miRootVars)</span>
+<span class="nc" id="L685">                .extracting(&quot;nrOfActiveInstances&quot;, &quot;nrOfCompletedInstances&quot;, &quot;nrOfLoops&quot;)</span>
+<span class="nc" id="L686">                .containsExactly(3, 0, 3);</span>
+
+<span class="nc" id="L688">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L689">        assertThat(tasks).hasSize(3);</span>
+<span class="nc" id="L690">        assertThat(tasks)</span>
+<span class="nc" id="L691">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L692">                .containsOnly(tuple(&quot;parallelTasks&quot;, procParallelMultiInst.getId()));</span>
+<span class="nc" id="L693">        assertThat(tasks).allSatisfy(hasLoopCounter);</span>
+
+        //Complete one...
+<span class="nc" id="L696">        completeTask(tasks.get(0));</span>
+
+<span class="nc" id="L698">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L699">        assertThat(executions)</span>
+<span class="nc" id="L700">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L701">                .containsExactly(&quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;);</span>
+        //MultiInstance parent and one completed/inactive execution
+<span class="nc" id="L703">        assertThat(executions).haveExactly(2, isInactiveExecution);</span>
+<span class="nc" id="L704">        assertThat(executions)</span>
+<span class="nc" id="L705">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L706">                .containsOnly(procParallelMultiInst.getId());</span>
+
+<span class="nc" id="L708">        miRoot = executions.stream().filter(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot()).findFirst().get();</span>
+<span class="nc" id="L709">        miRootVars = runtimeService.getVariables(miRoot.getId());</span>
+<span class="nc" id="L710">        assertThat(miRootVars)</span>
+<span class="nc" id="L711">                .extracting(&quot;nrOfActiveInstances&quot;, &quot;nrOfCompletedInstances&quot;, &quot;nrOfLoops&quot;)</span>
+<span class="nc" id="L712">                .containsExactly(2, 1, 3);</span>
+
+<span class="nc" id="L714">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L715">        assertThat(tasks).hasSize(2);</span>
+<span class="nc" id="L716">        assertThat(tasks)</span>
+<span class="nc" id="L717">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L718">                .containsOnly(tuple(&quot;parallelTasks&quot;, procParallelMultiInst.getId()));</span>
+<span class="nc" id="L719">        assertThat(tasks).allSatisfy(hasLoopCounter);</span>
+
+        //Prepare and action the migration
+<span class="nc" id="L722">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L723">                .migrateToProcessDefinition(procSequentialMultiInst.getId())</span>
+<span class="nc" id="L724">                .addActivityMigrationMapping(ActivityMigrationMapping.createMappingFor(&quot;parallelTasks&quot;, &quot;seqTasks&quot;));</span>
+<span class="nc" id="L725">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L726">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L727">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L728">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+<span class="nc" id="L730">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        //MI root execution and 1 instance
+<span class="nc" id="L732">        assertThat(executions)</span>
+<span class="nc" id="L733">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L734">                .containsExactly(&quot;seqTasks&quot;, &quot;seqTasks&quot;);</span>
+<span class="nc" id="L735">        assertThat(executions)</span>
+<span class="nc" id="L736">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L737">                .containsOnly(procSequentialMultiInst.getId());</span>
+<span class="nc" id="L738">        miRoot = executions.stream().filter(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot()).findFirst().get();</span>
+<span class="nc" id="L739">        miRootVars = runtimeService.getVariables(miRoot.getId());</span>
+<span class="nc" id="L740">        assertThat(miRootVars)</span>
+<span class="nc" id="L741">                .extracting(&quot;nrOfActiveInstances&quot;, &quot;nrOfCompletedInstances&quot;, &quot;nrOfLoops&quot;)</span>
+<span class="nc" id="L742">                .containsExactly(1, 0, 3);</span>
+<span class="nc" id="L743">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L744">        assertThat(task)</span>
+<span class="nc" id="L745">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L746">                .containsExactly(&quot;seqTasks&quot;, procSequentialMultiInst.getId());</span>
+<span class="nc" id="L747">        assertThat(taskService.getVariable(task.getId(), &quot;loopCounter&quot;)).isEqualTo(0);</span>
+
+        //Complete one instance...
+<span class="nc" id="L750">        taskService.complete(task.getId());</span>
+
+        //Next instance in the loop
+<span class="nc" id="L753">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L754">        assertThat(executions)</span>
+<span class="nc" id="L755">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L756">                .containsExactly(&quot;seqTasks&quot;, &quot;seqTasks&quot;);</span>
+<span class="nc" id="L757">        assertThat(executions)</span>
+<span class="nc" id="L758">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L759">                .containsOnly(procSequentialMultiInst.getId());</span>
+<span class="nc" id="L760">        miRoot = executions.stream().filter(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot()).findFirst().get();</span>
+<span class="nc" id="L761">        miRootVars = runtimeService.getVariables(miRoot.getId());</span>
+<span class="nc" id="L762">        assertThat(miRootVars)</span>
+<span class="nc" id="L763">                .extracting(&quot;nrOfActiveInstances&quot;, &quot;nrOfCompletedInstances&quot;, &quot;nrOfLoops&quot;)</span>
+<span class="nc" id="L764">                .containsExactly(1, 1, 3);</span>
+<span class="nc" id="L765">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L766">        assertThat(task)</span>
+<span class="nc" id="L767">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L768">                .containsExactly(&quot;seqTasks&quot;, procSequentialMultiInst.getId());</span>
+<span class="nc" id="L769">        assertThat(taskService.getVariable(task.getId(), &quot;loopCounter&quot;)).isEqualTo(1);</span>
+
+        //Complete this and the last
+<span class="nc" id="L772">        taskService.complete(task.getId());</span>
+<span class="nc" id="L773">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L774">        taskService.complete(task.getId());</span>
+
+        //Out of the loop
+<span class="nc" id="L777">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L778">        assertThat(executions)</span>
+<span class="nc" id="L779">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L780">                .containsExactly(&quot;afterMultiInstance&quot;);</span>
+<span class="nc" id="L781">        assertThat(executions)</span>
+<span class="nc" id="L782">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L783">                .containsOnly(procSequentialMultiInst.getId());</span>
+<span class="nc" id="L784">        assertThat(executions.stream().anyMatch(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot())).isFalse();</span>
+<span class="nc" id="L785">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L786">        assertThat(task)</span>
+<span class="nc" id="L787">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L788">                .containsExactly(&quot;afterMultiInstance&quot;, procSequentialMultiInst.getId());</span>
+<span class="nc" id="L789">        assertThat(taskService.getVariable(task.getId(), &quot;loopCounter&quot;)).isNull();</span>
+
+<span class="nc bnc" id="L791" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L792">            checkActivityInstances(procSequentialMultiInst, processInstance, &quot;userTask&quot;, &quot;beforeMultiInstance&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;,</span>
+                    &quot;parallelTasks&quot;, &quot;seqTasks&quot;, &quot;seqTasks&quot;, &quot;seqTasks&quot;, &quot;afterMultiInstance&quot;);
+
+<span class="nc" id="L795">            checkTaskInstance(procSequentialMultiInst, processInstance, &quot;beforeMultiInstance&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;seqTasks&quot;,</span>
+                    &quot;seqTasks&quot;, &quot;seqTasks&quot;, &quot;afterMultiInstance&quot;);
+        }
+
+<span class="nc" id="L799">        completeProcessInstanceTasks(processInstance.getId());</span>
+
+<span class="nc bnc" id="L801" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L802">            checkActivityInstances(procSequentialMultiInst, processInstance, &quot;userTask&quot;, &quot;beforeMultiInstance&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;,</span>
+                    &quot;parallelTasks&quot;, &quot;seqTasks&quot;, &quot;seqTasks&quot;, &quot;seqTasks&quot;, &quot;afterMultiInstance&quot;);
+
+<span class="nc" id="L805">            checkTaskInstance(procSequentialMultiInst, processInstance, &quot;beforeMultiInstance&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;parallelTasks&quot;, &quot;seqTasks&quot;,</span>
+                    &quot;seqTasks&quot;, &quot;seqTasks&quot;, &quot;afterMultiInstance&quot;);
+        }
+
+<span class="nc" id="L809">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L810">    }</span>
+
+    @Test
+    public void testMigrateActivityToSequentialMultiInstanceSubProcess() {
+<span class="nc" id="L814">        ProcessDefinition procSimpleOneTask = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-task-simple-process.bpmn20.xml&quot;);
+<span class="nc" id="L816">        ProcessDefinition procSequentialMultiInst = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/sequential-multi-instance-subprocess.bpmn20.xml&quot;);
+
+        //Start the processInstance
+<span class="nc" id="L820">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procSimpleOneTask.getId());</span>
+
+        //Confirm the state to migrate
+<span class="nc" id="L823">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L824">        assertThat(executions)</span>
+<span class="nc" id="L825">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L826">                .containsExactly(&quot;userTask1Id&quot;);</span>
+<span class="nc" id="L827">        assertThat(executions)</span>
+<span class="nc" id="L828">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L829">                .containsOnly(procSimpleOneTask.getId());</span>
+<span class="nc" id="L830">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L831">        assertThat(task)</span>
+<span class="nc" id="L832">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L833">                .containsExactly(&quot;userTask1Id&quot;, procSimpleOneTask.getId());</span>
+
+        //Prepare and action the migration
+<span class="nc" id="L836">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L837">                .migrateToProcessDefinition(procSequentialMultiInst.getId())</span>
+<span class="nc" id="L838">                .addActivityMigrationMapping(ActivityMigrationMapping.createMappingFor(&quot;userTask1Id&quot;, &quot;sequentialMISubProcess&quot;))</span>
+<span class="nc" id="L839">                .withProcessInstanceVariable(&quot;nrOfLoops&quot;, 3);</span>
+<span class="nc" id="L840">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L841">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L842">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L843">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+<span class="nc" id="L845">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        //MI subProcess root execution, actual subProcess and 1 task
+<span class="nc" id="L847">        assertThat(executions)</span>
+<span class="nc" id="L848">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L849">                .containsExactly(&quot;sequentialMISubProcess&quot;, &quot;sequentialMISubProcess&quot;, &quot;subTask1&quot;);</span>
+<span class="nc" id="L850">        assertThat(executions)</span>
+<span class="nc" id="L851">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L852">                .containsOnly(procSequentialMultiInst.getId());</span>
+<span class="nc" id="L853">        Execution miRoot = executions.stream().filter(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot()).findFirst().get();</span>
+<span class="nc" id="L854">        Map&lt;String, Object&gt; miRootVars = runtimeService.getVariables(miRoot.getId());</span>
+<span class="nc" id="L855">        assertThat(miRootVars)</span>
+<span class="nc" id="L856">                .extracting(&quot;nrOfActiveInstances&quot;, &quot;nrOfCompletedInstances&quot;, &quot;nrOfLoops&quot;)</span>
+<span class="nc" id="L857">                .containsExactly(1, 0, 3);</span>
+<span class="nc" id="L858">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L859">        assertThat(task)</span>
+<span class="nc" id="L860">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L861">                .containsExactly(&quot;subTask1&quot;, procSequentialMultiInst.getId());</span>
+<span class="nc" id="L862">        assertThat(taskService.getVariable(task.getId(), &quot;loopCounter&quot;)).isEqualTo(0);</span>
+
+        //Complete tha task and the next in the subprocess
+<span class="nc" id="L865">        completeTask(task);</span>
+<span class="nc" id="L866">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L867">        assertThat(task).extracting(Task::getTaskDefinitionKey).isEqualTo(&quot;subTask2&quot;);</span>
+<span class="nc" id="L868">        completeTask(task);</span>
+
+        //Should be in the next MI subProcess iteration
+<span class="nc" id="L871">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        //MI subprocess root execution, actual subprocess and 1 task
+<span class="nc" id="L873">        assertThat(executions)</span>
+<span class="nc" id="L874">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L875">                .containsExactly(&quot;sequentialMISubProcess&quot;, &quot;sequentialMISubProcess&quot;, &quot;subTask1&quot;);</span>
+<span class="nc" id="L876">        assertThat(executions)</span>
+<span class="nc" id="L877">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L878">                .containsOnly(procSequentialMultiInst.getId());</span>
+<span class="nc" id="L879">        miRoot = executions.stream().filter(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot()).findFirst().get();</span>
+<span class="nc" id="L880">        miRootVars = runtimeService.getVariables(miRoot.getId());</span>
+<span class="nc" id="L881">        assertThat(miRootVars)</span>
+<span class="nc" id="L882">                .extracting(&quot;nrOfActiveInstances&quot;, &quot;nrOfCompletedInstances&quot;, &quot;nrOfLoops&quot;)</span>
+<span class="nc" id="L883">                .containsExactly(1, 1, 3);</span>
+<span class="nc" id="L884">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L885">        assertThat(task)</span>
+<span class="nc" id="L886">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L887">                .containsExactly(&quot;subTask1&quot;, procSequentialMultiInst.getId());</span>
+<span class="nc" id="L888">        assertThat(taskService.getVariable(task.getId(), &quot;loopCounter&quot;)).isEqualTo(1);</span>
+
+<span class="nc bnc" id="L890" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L891">            checkActivityInstances(procSequentialMultiInst, processInstance, &quot;userTask&quot;, &quot;userTask1Id&quot;, &quot;subTask1&quot;, &quot;subTask2&quot;, &quot;subTask1&quot;);</span>
+
+<span class="nc" id="L893">            checkTaskInstance(procSequentialMultiInst, processInstance, &quot;userTask1Id&quot;, &quot;subTask1&quot;, &quot;subTask2&quot;, &quot;subTask1&quot;);</span>
+        }
+
+        //Complete the process
+<span class="nc" id="L897">        completeProcessInstanceTasks(processInstance.getId());</span>
+
+<span class="nc bnc" id="L899" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L900">            checkActivityInstances(procSequentialMultiInst, processInstance, &quot;userTask&quot;, &quot;userTask1Id&quot;, &quot;subTask1&quot;, &quot;subTask2&quot;, &quot;subTask1&quot;, &quot;subTask2&quot;,</span>
+                    &quot;subTask1&quot;, &quot;subTask2&quot;, &quot;afterMultiInstance&quot;);
+
+<span class="nc" id="L903">            checkTaskInstance(procSequentialMultiInst, processInstance, &quot;userTask1Id&quot;, &quot;subTask1&quot;, &quot;subTask2&quot;, &quot;subTask1&quot;, &quot;subTask2&quot;, &quot;subTask1&quot;, &quot;subTask2&quot;,</span>
+                    &quot;afterMultiInstance&quot;);
+        }
+
+<span class="nc" id="L907">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L908">    }</span>
+
+    @Test
+    public void testMigrateActivityToParallelMultiInstanceSubProcess() {
+<span class="nc" id="L912">        ProcessDefinition procSimpleOneTask = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-task-simple-process.bpmn20.xml&quot;);
+<span class="nc" id="L914">        ProcessDefinition procParallelMultiInst = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-multi-instance-subprocess.bpmn20.xml&quot;);
+
+        //Start the processInstance
+<span class="nc" id="L918">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procSimpleOneTask.getId());</span>
+
+        //Confirm the state to migrate
+<span class="nc" id="L921">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L922">        assertThat(executions)</span>
+<span class="nc" id="L923">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L924">                .containsExactly(&quot;userTask1Id&quot;);</span>
+<span class="nc" id="L925">        assertThat(executions)</span>
+<span class="nc" id="L926">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L927">                .containsOnly(procSimpleOneTask.getId());</span>
+<span class="nc" id="L928">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L929">        assertThat(task)</span>
+<span class="nc" id="L930">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L931">                .containsExactly(&quot;userTask1Id&quot;, procSimpleOneTask.getId());</span>
+
+        //Prepare and action the migration
+<span class="nc" id="L934">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L935">                .migrateToProcessDefinition(procParallelMultiInst.getId())</span>
+<span class="nc" id="L936">                .addActivityMigrationMapping(ActivityMigrationMapping.createMappingFor(&quot;userTask1Id&quot;, &quot;parallelMISubProcess&quot;))</span>
+<span class="nc" id="L937">                .withProcessInstanceVariable(&quot;nrOfLoops&quot;, 3);</span>
+<span class="nc" id="L938">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L939">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L940">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L941">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+<span class="nc" id="L943">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        //MI subProcess root execution, 3 subProcesses and 3 tasks
+<span class="nc" id="L945">        assertThat(executions)</span>
+<span class="nc" id="L946">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L947">                .containsExactly(&quot;parallelMISubProcess&quot;, &quot;parallelMISubProcess&quot;, &quot;parallelMISubProcess&quot;, &quot;parallelMISubProcess&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;,</span>
+                        &quot;subTask1&quot;);
+<span class="nc" id="L949">        assertThat(executions)</span>
+<span class="nc" id="L950">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L951">                .containsOnly(procParallelMultiInst.getId());</span>
+<span class="nc" id="L952">        assertThat(executions)</span>
+<span class="nc" id="L953">                .haveExactly(1, new Condition&lt;&gt;((Execution execution) -&gt; ((ExecutionEntity) execution).isMultiInstanceRoot(), &quot;is Multi Instance root&quot;));</span>
+<span class="nc" id="L954">        Execution miRoot = executions.stream().filter(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot()).findFirst().get();</span>
+<span class="nc" id="L955">        Map&lt;String, Object&gt; miRootVars = runtimeService.getVariables(miRoot.getId());</span>
+<span class="nc" id="L956">        assertThat(miRootVars)</span>
+<span class="nc" id="L957">                .extracting(&quot;nrOfActiveInstances&quot;, &quot;nrOfCompletedInstances&quot;, &quot;nrOfLoops&quot;)</span>
+<span class="nc" id="L958">                .containsExactly(3, 0, 3);</span>
+<span class="nc" id="L959">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L960">        assertThat(tasks)</span>
+<span class="nc" id="L961">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L962">                .containsOnly(tuple(&quot;subTask1&quot;, procParallelMultiInst.getId()));</span>
+<span class="nc" id="L963">        List&lt;Integer&gt; loopCounters = tasks.stream().map(aTask -&gt; taskService.getVariable(aTask.getId(), &quot;loopCounter&quot;, Integer.class))</span>
+<span class="nc" id="L964">                .collect(Collectors.toList());</span>
+<span class="nc" id="L965">        assertThat(loopCounters).containsExactlyInAnyOrder(0, 1, 2);</span>
+
+        //Complete the tasks with loopCounter 1
+<span class="nc bnc" id="L968" title="All 2 branches missed.">        task = tasks.stream().filter(aTask -&gt; taskService.getVariable(aTask.getId(), &quot;loopCounter&quot;, Integer.class) == 1).findFirst().get();</span>
+<span class="nc" id="L969">        completeTask(task);</span>
+<span class="nc" id="L970">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).taskDefinitionKey(&quot;subTask2&quot;).singleResult();</span>
+<span class="nc" id="L971">        completeTask(task);</span>
+
+        //Two subProcess Instances remain
+<span class="nc" id="L974">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L975">        assertThat(executions)</span>
+<span class="nc" id="L976">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L977">                .containsExactly(&quot;parallelMISubProcess&quot;, &quot;parallelMISubProcess&quot;, &quot;parallelMISubProcess&quot;, &quot;parallelMISubProcess&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;);</span>
+<span class="nc" id="L978">        assertThat(executions)</span>
+<span class="nc" id="L979">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L980">                .containsOnly(procParallelMultiInst.getId());</span>
+<span class="nc" id="L981">        assertThat(executions)</span>
+<span class="nc" id="L982">                .haveExactly(1, new Condition&lt;&gt;((Execution execution) -&gt; ((ExecutionEntity) execution).isMultiInstanceRoot(), &quot;is Multi Instance root&quot;));</span>
+<span class="nc" id="L983">        miRoot = executions.stream().filter(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot()).findFirst().get();</span>
+<span class="nc" id="L984">        miRootVars = runtimeService.getVariables(miRoot.getId());</span>
+<span class="nc" id="L985">        assertThat(miRootVars)</span>
+<span class="nc" id="L986">                .extracting(&quot;nrOfActiveInstances&quot;, &quot;nrOfCompletedInstances&quot;, &quot;nrOfLoops&quot;)</span>
+<span class="nc" id="L987">                .containsExactly(2, 1, 3);</span>
+<span class="nc" id="L988">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L989">        assertThat(tasks)</span>
+<span class="nc" id="L990">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L991">                .containsOnly(tuple(&quot;subTask1&quot;, procParallelMultiInst.getId()));</span>
+<span class="nc" id="L992">        loopCounters = tasks.stream().map(aTask -&gt; taskService.getVariable(aTask.getId(), &quot;loopCounter&quot;, Integer.class)).collect(Collectors.toList());</span>
+<span class="nc" id="L993">        assertThat(loopCounters).containsExactlyInAnyOrder(0, 2);</span>
+
+<span class="nc bnc" id="L995" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L996">            checkActivityInstances(procParallelMultiInst, processInstance, &quot;userTask&quot;, &quot;userTask1Id&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;, &quot;subTask2&quot;);</span>
+
+<span class="nc" id="L998">            checkTaskInstance(procParallelMultiInst, processInstance, &quot;userTask1Id&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;, &quot;subTask2&quot;);</span>
+        }
+
+        //Complete the process
+<span class="nc" id="L1002">        completeProcessInstanceTasks(processInstance.getId());</span>
+
+<span class="nc bnc" id="L1004" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1005">            checkActivityInstances(procParallelMultiInst, processInstance, &quot;userTask&quot;, &quot;userTask1Id&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;, &quot;subTask2&quot;,</span>
+                    &quot;subTask2&quot;, &quot;subTask2&quot;, &quot;afterMultiInstance&quot;);
+
+<span class="nc" id="L1008">            checkTaskInstance(procParallelMultiInst, processInstance, &quot;userTask1Id&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;, &quot;subTask2&quot;, &quot;subTask2&quot;, &quot;subTask2&quot;,</span>
+                    &quot;afterMultiInstance&quot;);
+        }
+
+<span class="nc" id="L1012">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L1013">    }</span>
+
+    @Test
+    public void testMigrateSequentialMultiInstanceSubProcessToSimpleActivity() {
+<span class="nc" id="L1017">        ProcessDefinition procSequentialMultiInst = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/sequential-multi-instance-subprocess.bpmn20.xml&quot;);
+<span class="nc" id="L1019">        ProcessDefinition procSimpleOneTask = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-task-simple-process.bpmn20.xml&quot;);
+
+        //Start the processInstance
+<span class="nc" id="L1023">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procSequentialMultiInst.getId(), Collections.singletonMap(&quot;nrOfLoops&quot;, 3));</span>
+
+        //Progress to the MI subProcess
+<span class="nc" id="L1026">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1027">        assertThat(task).extracting(Task::getTaskDefinitionKey).isEqualTo(&quot;beforeMultiInstance&quot;);</span>
+<span class="nc" id="L1028">        completeTask(task);</span>
+
+        //Confirm the state to migrate
+<span class="nc" id="L1031">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        //MI subProcess root execution, actual subProcess and 1 task
+<span class="nc" id="L1033">        assertThat(executions)</span>
+<span class="nc" id="L1034">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1035">                .containsExactly(&quot;sequentialMISubProcess&quot;, &quot;sequentialMISubProcess&quot;, &quot;subTask1&quot;);</span>
+<span class="nc" id="L1036">        assertThat(executions)</span>
+<span class="nc" id="L1037">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1038">                .containsOnly(procSequentialMultiInst.getId());</span>
+<span class="nc" id="L1039">        Execution miRoot = executions.stream().filter(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot()).findFirst().get();</span>
+<span class="nc" id="L1040">        Map&lt;String, Object&gt; miRootVars = runtimeService.getVariables(miRoot.getId());</span>
+<span class="nc" id="L1041">        assertThat(miRootVars)</span>
+<span class="nc" id="L1042">                .extracting(&quot;nrOfActiveInstances&quot;, &quot;nrOfCompletedInstances&quot;, &quot;nrOfLoops&quot;)</span>
+<span class="nc" id="L1043">                .containsExactly(1, 0, 3);</span>
+<span class="nc" id="L1044">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1045">        assertThat(task)</span>
+<span class="nc" id="L1046">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1047">                .containsOnly(&quot;subTask1&quot;, procSequentialMultiInst.getId());</span>
+<span class="nc" id="L1048">        assertThat(taskService.getVariable(task.getId(), &quot;loopCounter&quot;)).isEqualTo(0);</span>
+
+        //Complete iteration...
+<span class="nc" id="L1051">        completeTask(task);</span>
+<span class="nc" id="L1052">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1053">        assertThat(task).extracting(Task::getTaskDefinitionKey).isEqualTo(&quot;subTask2&quot;);</span>
+<span class="nc" id="L1054">        completeTask(task);</span>
+
+        //Confirm Second iteration
+<span class="nc" id="L1057">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1058">        assertThat(task)</span>
+<span class="nc" id="L1059">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1060">                .containsOnly(&quot;subTask1&quot;, procSequentialMultiInst.getId());</span>
+<span class="nc" id="L1061">        assertThat(taskService.getVariable(task.getId(), &quot;loopCounter&quot;)).isEqualTo(1);</span>
+
+        //Prepare and action the migration
+<span class="nc" id="L1064">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L1065">                .migrateToProcessDefinition(procSimpleOneTask.getId())</span>
+<span class="nc" id="L1066">                .addActivityMigrationMapping(ActivityMigrationMapping.createMappingFor(&quot;sequentialMISubProcess&quot;, &quot;userTask1Id&quot;));</span>
+<span class="nc" id="L1067">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L1068">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L1069">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L1070">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+        //Confirm
+<span class="nc" id="L1073">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1074">        assertThat(executions)</span>
+<span class="nc" id="L1075">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1076">                .containsExactly(&quot;userTask1Id&quot;);</span>
+<span class="nc" id="L1077">        assertThat(executions)</span>
+<span class="nc" id="L1078">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1079">                .containsOnly(procSimpleOneTask.getId());</span>
+<span class="nc" id="L1080">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1081">        assertThat(task)</span>
+<span class="nc" id="L1082">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1083">                .containsOnly(&quot;userTask1Id&quot;, procSimpleOneTask.getId());</span>
+<span class="nc" id="L1084">        assertThat(taskService.getVariable(task.getId(), &quot;loopCounter&quot;)).isNull();</span>
+
+<span class="nc bnc" id="L1086" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1087">            checkActivityInstances(procSimpleOneTask, processInstance, &quot;userTask&quot;, &quot;beforeMultiInstance&quot;, &quot;subTask1&quot;, &quot;subTask2&quot;, &quot;subTask1&quot;, &quot;userTask1Id&quot;);</span>
+
+<span class="nc" id="L1089">            checkTaskInstance(procSimpleOneTask, processInstance, &quot;beforeMultiInstance&quot;, &quot;subTask1&quot;, &quot;subTask2&quot;, &quot;subTask1&quot;, &quot;userTask1Id&quot;);</span>
+        }
+
+        //Complete the process
+<span class="nc" id="L1093">        completeProcessInstanceTasks(processInstance.getId());</span>
+
+<span class="nc bnc" id="L1095" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1096">            checkActivityInstances(procSimpleOneTask, processInstance, &quot;userTask&quot;, &quot;beforeMultiInstance&quot;, &quot;subTask1&quot;, &quot;subTask2&quot;, &quot;subTask1&quot;, &quot;userTask1Id&quot;);</span>
+
+<span class="nc" id="L1098">            checkTaskInstance(procSimpleOneTask, processInstance, &quot;beforeMultiInstance&quot;, &quot;subTask1&quot;, &quot;subTask2&quot;, &quot;subTask1&quot;, &quot;userTask1Id&quot;);</span>
+        }
+
+<span class="nc" id="L1101">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L1102">    }</span>
+
+    @Test
+    public void testMigrateParallelMultiInstanceSubProcessToSimpleActivity() {
+<span class="nc" id="L1106">        ProcessDefinition procParallelMultiInst = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-multi-instance-subprocess.bpmn20.xml&quot;);
+<span class="nc" id="L1108">        ProcessDefinition procSimpleOneTask = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-task-simple-process.bpmn20.xml&quot;);
+
+        //Start the processInstance
+<span class="nc" id="L1112">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procParallelMultiInst.getId(), Collections.singletonMap(&quot;nrOfLoops&quot;, 3));</span>
+
+        //Progress to the MI subProcess
+<span class="nc" id="L1115">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1116">        assertThat(task).extracting(Task::getTaskDefinitionKey).isEqualTo(&quot;beforeMultiInstance&quot;);</span>
+<span class="nc" id="L1117">        completeTask(task);</span>
+
+        //Confirm the state to migrate
+<span class="nc" id="L1120">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        //MI subProcess root execution, actual subProcess and 1 task
+<span class="nc" id="L1122">        assertThat(executions)</span>
+<span class="nc" id="L1123">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1124">                .containsExactly(&quot;parallelMISubProcess&quot;, &quot;parallelMISubProcess&quot;, &quot;parallelMISubProcess&quot;, &quot;parallelMISubProcess&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;,</span>
+                        &quot;subTask1&quot;);
+<span class="nc" id="L1126">        assertThat(executions)</span>
+<span class="nc" id="L1127">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1128">                .containsOnly(procParallelMultiInst.getId());</span>
+<span class="nc" id="L1129">        Execution miRoot = executions.stream().filter(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot()).findFirst().get();</span>
+<span class="nc" id="L1130">        Map&lt;String, Object&gt; miRootVars = runtimeService.getVariables(miRoot.getId());</span>
+<span class="nc" id="L1131">        assertThat(miRootVars)</span>
+<span class="nc" id="L1132">                .extracting(&quot;nrOfActiveInstances&quot;, &quot;nrOfCompletedInstances&quot;, &quot;nrOfLoops&quot;)</span>
+<span class="nc" id="L1133">                .containsExactly(3, 0, 3);</span>
+<span class="nc" id="L1134">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1135">        assertThat(tasks)</span>
+<span class="nc" id="L1136">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L1137">                .containsOnly(&quot;subTask1&quot;);</span>
+<span class="nc" id="L1138">        assertThat(tasks)</span>
+<span class="nc" id="L1139">                .extracting(Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1140">                .containsOnly(procParallelMultiInst.getId());</span>
+<span class="nc" id="L1141">        List&lt;Integer&gt; loopCounters = tasks.stream().map(aTask -&gt; taskService.getVariable(aTask.getId(), &quot;loopCounter&quot;, Integer.class))</span>
+<span class="nc" id="L1142">                .collect(Collectors.toList());</span>
+<span class="nc" id="L1143">        assertThat(loopCounters).containsExactlyInAnyOrder(0, 1, 2);</span>
+
+        //Complete the iteration with loopCounter 1
+<span class="nc bnc" id="L1146" title="All 2 branches missed.">        task = tasks.stream().filter(aTask -&gt; taskService.getVariable(aTask.getId(), &quot;loopCounter&quot;, Integer.class) == 1).findFirst().get();</span>
+<span class="nc" id="L1147">        completeTask(task);</span>
+<span class="nc" id="L1148">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).taskDefinitionKey(&quot;subTask2&quot;).singleResult();</span>
+<span class="nc" id="L1149">        completeTask(task);</span>
+
+        //Two subProcess Instances remain
+<span class="nc" id="L1152">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1153">        assertThat(executions)</span>
+<span class="nc" id="L1154">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1155">                .containsExactly(&quot;parallelMISubProcess&quot;, &quot;parallelMISubProcess&quot;, &quot;parallelMISubProcess&quot;, &quot;parallelMISubProcess&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;);</span>
+<span class="nc" id="L1156">        assertThat(executions)</span>
+<span class="nc" id="L1157">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1158">                .containsOnly(procParallelMultiInst.getId());</span>
+<span class="nc" id="L1159">        assertThat(executions)</span>
+<span class="nc" id="L1160">                .haveExactly(1, new Condition&lt;&gt;((Execution execution) -&gt; ((ExecutionEntity) execution).isMultiInstanceRoot(), &quot;is Multi Instance root&quot;));</span>
+<span class="nc" id="L1161">        miRoot = executions.stream().filter(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot()).findFirst().get();</span>
+<span class="nc" id="L1162">        miRootVars = runtimeService.getVariables(miRoot.getId());</span>
+<span class="nc" id="L1163">        assertThat(miRootVars)</span>
+<span class="nc" id="L1164">                .extracting(&quot;nrOfActiveInstances&quot;, &quot;nrOfCompletedInstances&quot;, &quot;nrOfLoops&quot;)</span>
+<span class="nc" id="L1165">                .containsExactly(2, 1, 3);</span>
+<span class="nc" id="L1166">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1167">        assertThat(tasks)</span>
+<span class="nc" id="L1168">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1169">                .containsOnly(tuple(&quot;subTask1&quot;, procParallelMultiInst.getId()));</span>
+<span class="nc" id="L1170">        loopCounters = tasks.stream().map(aTask -&gt; taskService.getVariable(aTask.getId(), &quot;loopCounter&quot;, Integer.class)).collect(Collectors.toList());</span>
+<span class="nc" id="L1171">        assertThat(loopCounters).containsExactlyInAnyOrder(0, 2);</span>
+
+        //Complete one of the tasks
+<span class="nc" id="L1174">        completeTask(tasks.get(0));</span>
+<span class="nc" id="L1175">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1176">        assertThat(tasks)</span>
+<span class="nc" id="L1177">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L1178">                .containsExactlyInAnyOrder(&quot;subTask1&quot;, &quot;subTask2&quot;);</span>
+
+        //Prepare and action the migration
+<span class="nc" id="L1181">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L1182">                .migrateToProcessDefinition(procSimpleOneTask.getId())</span>
+<span class="nc" id="L1183">                .addActivityMigrationMapping(ActivityMigrationMapping.createMappingFor(&quot;parallelMISubProcess&quot;, &quot;userTask1Id&quot;));</span>
+<span class="nc" id="L1184">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L1185">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L1186">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L1187">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+        //Confirm
+<span class="nc" id="L1190">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1191">        assertThat(executions)</span>
+<span class="nc" id="L1192">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1193">                .containsExactly(&quot;userTask1Id&quot;);</span>
+<span class="nc" id="L1194">        assertThat(executions)</span>
+<span class="nc" id="L1195">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1196">                .containsOnly(procSimpleOneTask.getId());</span>
+<span class="nc" id="L1197">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1198">        assertThat(task)</span>
+<span class="nc" id="L1199">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1200">                .containsOnly(&quot;userTask1Id&quot;, procSimpleOneTask.getId());</span>
+<span class="nc" id="L1201">        assertThat(taskService.getVariable(task.getId(), &quot;loopCounter&quot;)).isNull();</span>
+
+<span class="nc bnc" id="L1203" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1204">            checkActivityInstances(procSimpleOneTask, processInstance, &quot;userTask&quot;, &quot;beforeMultiInstance&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;, &quot;subTask2&quot;,</span>
+                    &quot;subTask2&quot;, &quot;userTask1Id&quot;);
+
+<span class="nc" id="L1207">            checkTaskInstance(procSimpleOneTask, processInstance, &quot;beforeMultiInstance&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;, &quot;subTask2&quot;, &quot;subTask2&quot;,</span>
+                    &quot;userTask1Id&quot;);
+        }
+
+        //Complete the process
+<span class="nc" id="L1212">        completeProcessInstanceTasks(processInstance.getId());</span>
+
+<span class="nc bnc" id="L1214" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1215">            checkActivityInstances(procSimpleOneTask, processInstance, &quot;userTask&quot;, &quot;beforeMultiInstance&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;, &quot;subTask2&quot;,</span>
+                    &quot;subTask2&quot;, &quot;userTask1Id&quot;);
+
+<span class="nc" id="L1218">            checkTaskInstance(procSimpleOneTask, processInstance, &quot;beforeMultiInstance&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;, &quot;subTask2&quot;, &quot;subTask2&quot;,</span>
+                    &quot;userTask1Id&quot;);
+        }
+
+<span class="nc" id="L1222">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L1223">    }</span>
+    
+    @Test
+    public void testMigrateParallelMultiInstanceTaskWithLocalVariables() {
+<span class="nc" id="L1227">        ProcessDefinition startProcessDefinition = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-multi-instance-task-local-variable.bpmn20.xml&quot;);
+
+        // Start the processInstance
+<span class="nc" id="L1231">        Map&lt;String, Object&gt; variableMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L1232">        ArrayNode collectionArray = processEngineConfiguration.getObjectMapper().createArrayNode();</span>
+<span class="nc" id="L1233">        ObjectNode element1Node = collectionArray.addObject();</span>
+<span class="nc" id="L1234">        element1Node.put(&quot;name&quot;, &quot;John Doe&quot;);</span>
+<span class="nc" id="L1235">        element1Node.put(&quot;age&quot;, 30);</span>
+<span class="nc" id="L1236">        ObjectNode element2Node = collectionArray.addObject();</span>
+<span class="nc" id="L1237">        element2Node.put(&quot;name&quot;, &quot;Jane Doe&quot;);</span>
+<span class="nc" id="L1238">        element2Node.put(&quot;age&quot;, 29);</span>
+<span class="nc" id="L1239">        variableMap.put(&quot;myCollection&quot;, collectionArray);</span>
+<span class="nc" id="L1240">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(startProcessDefinition.getId(), variableMap);</span>
+
+        // Progress to the MI subProcess
+<span class="nc" id="L1243">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1244">        assertThat(task).extracting(Task::getTaskDefinitionKey).isEqualTo(&quot;beforeMultiInstance&quot;);</span>
+<span class="nc" id="L1245">        completeTask(task);</span>
+
+        // Confirm the state to migrate
+<span class="nc" id="L1248">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        // MI subProcess root execution, actual subProcess and 1 task
+<span class="nc" id="L1250">        assertThat(executions)</span>
+<span class="nc" id="L1251">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1252">                .containsExactly(&quot;task&quot;, &quot;task&quot;, &quot;task&quot;);</span>
+<span class="nc" id="L1253">        assertThat(executions)</span>
+<span class="nc" id="L1254">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1255">                .containsOnly(startProcessDefinition.getId());</span>
+<span class="nc" id="L1256">        Execution miRoot = executions.stream().filter(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot()).findFirst().get();</span>
+<span class="nc" id="L1257">        Map&lt;String, Object&gt; miRootVars = runtimeService.getVariables(miRoot.getId());</span>
+<span class="nc" id="L1258">        assertThat(miRootVars)</span>
+<span class="nc" id="L1259">                .extracting(&quot;nrOfActiveInstances&quot;, &quot;nrOfCompletedInstances&quot;)</span>
+<span class="nc" id="L1260">                .containsExactly(2, 0);</span>
+<span class="nc" id="L1261">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1262">        assertThat(tasks)</span>
+<span class="nc" id="L1263">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L1264">                .containsOnly(&quot;task&quot;);</span>
+<span class="nc" id="L1265">        assertThat(tasks)</span>
+<span class="nc" id="L1266">                .extracting(Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1267">                .containsOnly(startProcessDefinition.getId());</span>
+<span class="nc" id="L1268">        assertThat(tasks)</span>
+<span class="nc" id="L1269">                .extracting(Task::getAssignee)</span>
+<span class="nc" id="L1270">                .containsOnly(&quot;kermit&quot;);</span>
+<span class="nc" id="L1271">        List&lt;Integer&gt; loopCounters = tasks.stream().map(aTask -&gt; taskService.getVariable(aTask.getId(), &quot;loopCounter&quot;, Integer.class))</span>
+<span class="nc" id="L1272">                .collect(Collectors.toList());</span>
+<span class="nc" id="L1273">        assertThat(loopCounters).containsExactlyInAnyOrder(0, 1);</span>
+
+<span class="nc bnc" id="L1275" title="All 2 branches missed.">        for (Task miTask : tasks) {</span>
+<span class="nc" id="L1276">            Execution execution = runtimeService.createExecutionQuery().executionId(miTask.getExecutionId()).singleResult();</span>
+<span class="nc" id="L1277">            runtimeService.setVariableLocal(execution.getId(), &quot;localVar&quot;, &quot;test&quot;);</span>
+<span class="nc" id="L1278">            taskService.setAssignee(miTask.getId(), &quot;othervalue&quot;);</span>
+<span class="nc" id="L1279">        }</span>
+        
+<span class="nc" id="L1281">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1282">        assertThat(tasks)</span>
+<span class="nc" id="L1283">                .extracting(Task::getAssignee)</span>
+<span class="nc" id="L1284">                .containsOnly(&quot;othervalue&quot;);</span>
+        
+<span class="nc" id="L1286">        ProcessDefinition migrateToProcessDefinition = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-multi-instance-task-local-variable.bpmn20.xml&quot;);
+        
+        // Prepare and action the migration
+<span class="nc" id="L1290">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L1291">                .migrateToProcessDefinition(migrateToProcessDefinition.getId());</span>
+<span class="nc" id="L1292">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L1293">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L1294">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L1295">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+        //Confirm
+<span class="nc" id="L1298">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1299">        assertThat(executions).hasSize(3);</span>
+<span class="nc" id="L1300">        assertThat(executions)</span>
+<span class="nc" id="L1301">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1302">                .containsExactly(&quot;task&quot;, &quot;task&quot;, &quot;task&quot;);</span>
+<span class="nc" id="L1303">        assertThat(executions)</span>
+<span class="nc" id="L1304">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1305">                .containsOnly(migrateToProcessDefinition.getId());</span>
+        
+<span class="nc" id="L1307">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1308">        assertThat(tasks).hasSize(2);</span>
+<span class="nc" id="L1309">        assertThat(tasks)</span>
+<span class="nc" id="L1310">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L1311">                .containsOnly(&quot;task&quot;);</span>
+<span class="nc" id="L1312">        assertThat(tasks)</span>
+<span class="nc" id="L1313">                .extracting(Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1314">                .containsOnly(migrateToProcessDefinition.getId());</span>
+<span class="nc" id="L1315">        assertThat(tasks)</span>
+<span class="nc" id="L1316">                .extracting(Task::getAssignee)</span>
+<span class="nc" id="L1317">                .containsOnly(&quot;kermit&quot;);</span>
+<span class="nc" id="L1318">        loopCounters = tasks.stream().map(aTask -&gt; taskService.getVariable(aTask.getId(), &quot;loopCounter&quot;, Integer.class))</span>
+<span class="nc" id="L1319">                .collect(Collectors.toList());</span>
+<span class="nc" id="L1320">        assertThat(loopCounters).containsExactlyInAnyOrder(0, 1);</span>
+
+<span class="nc bnc" id="L1322" title="All 2 branches missed.">        for (Task miTask : tasks) {</span>
+<span class="nc" id="L1323">            Execution execution = runtimeService.createExecutionQuery().executionId(miTask.getExecutionId()).singleResult();</span>
+<span class="nc" id="L1324">            assertThat(runtimeService.getVariableLocal(execution.getId(), &quot;localVar&quot;)).isEqualTo(&quot;test&quot;);</span>
+<span class="nc" id="L1325">        }</span>
+
+<span class="nc bnc" id="L1327" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1328">            checkActivityInstances(migrateToProcessDefinition, processInstance, &quot;userTask&quot;, &quot;beforeMultiInstance&quot;, &quot;task&quot;, &quot;task&quot;);</span>
+
+<span class="nc" id="L1330">            checkTaskInstance(migrateToProcessDefinition, processInstance, &quot;beforeMultiInstance&quot;, &quot;task&quot;, &quot;task&quot;, &quot;task&quot;, &quot;task&quot;);</span>
+        }
+
+        // Complete the process
+<span class="nc" id="L1334">        completeProcessInstanceTasks(processInstance.getId());</span>
+
+<span class="nc bnc" id="L1336" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1337">            checkActivityInstances(migrateToProcessDefinition, processInstance, &quot;userTask&quot;, &quot;beforeMultiInstance&quot;, &quot;task&quot;, &quot;task&quot;, &quot;afterMultiInstance&quot;);</span>
+
+<span class="nc" id="L1339">            checkTaskInstance(migrateToProcessDefinition, processInstance, &quot;beforeMultiInstance&quot;, &quot;task&quot;, &quot;task&quot;, &quot;task&quot;, &quot;task&quot;, &quot;afterMultiInstance&quot;);</span>
+        }
+
+<span class="nc" id="L1342">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L1343">    }</span>
+    
+    @Test
+    public void testMigrateParallelMultiInstanceSubProcessWithLocalVariables() {
+<span class="nc" id="L1347">        ProcessDefinition startProcessDefinition = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-multi-instance-subprocess-local-variable.bpmn20.xml&quot;);
+
+        // Start the processInstance
+<span class="nc" id="L1351">        Map&lt;String, Object&gt; variableMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L1352">        ArrayNode collectionArray = processEngineConfiguration.getObjectMapper().createArrayNode();</span>
+<span class="nc" id="L1353">        ObjectNode element1Node = collectionArray.addObject();</span>
+<span class="nc" id="L1354">        element1Node.put(&quot;name&quot;, &quot;John Doe&quot;);</span>
+<span class="nc" id="L1355">        element1Node.put(&quot;age&quot;, 30);</span>
+<span class="nc" id="L1356">        ObjectNode element2Node = collectionArray.addObject();</span>
+<span class="nc" id="L1357">        element2Node.put(&quot;name&quot;, &quot;Jane Doe&quot;);</span>
+<span class="nc" id="L1358">        element2Node.put(&quot;age&quot;, 29);</span>
+<span class="nc" id="L1359">        variableMap.put(&quot;myCollection&quot;, collectionArray);</span>
+<span class="nc" id="L1360">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(startProcessDefinition.getId(), variableMap);</span>
+
+        // Progress to the MI subProcess
+<span class="nc" id="L1363">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1364">        assertThat(task).extracting(Task::getTaskDefinitionKey).isEqualTo(&quot;beforeMultiInstance&quot;);</span>
+<span class="nc" id="L1365">        completeTask(task);</span>
+
+        // Confirm the state to migrate
+<span class="nc" id="L1368">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        // MI subProcess root execution, actual subProcess and 1 task
+<span class="nc" id="L1370">        assertThat(executions)</span>
+<span class="nc" id="L1371">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1372">                .containsExactly(&quot;parallelMISubProcess&quot;, &quot;parallelMISubProcess&quot;, &quot;parallelMISubProcess&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;);</span>
+<span class="nc" id="L1373">        assertThat(executions)</span>
+<span class="nc" id="L1374">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1375">                .containsOnly(startProcessDefinition.getId());</span>
+<span class="nc" id="L1376">        Execution miRoot = executions.stream().filter(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot()).findFirst().get();</span>
+<span class="nc" id="L1377">        Map&lt;String, Object&gt; miRootVars = runtimeService.getVariables(miRoot.getId());</span>
+<span class="nc" id="L1378">        assertThat(miRootVars)</span>
+<span class="nc" id="L1379">                .extracting(&quot;nrOfActiveInstances&quot;, &quot;nrOfCompletedInstances&quot;)</span>
+<span class="nc" id="L1380">                .containsExactly(2, 0);</span>
+<span class="nc" id="L1381">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1382">        assertThat(tasks)</span>
+<span class="nc" id="L1383">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L1384">                .containsOnly(&quot;subTask1&quot;);</span>
+<span class="nc" id="L1385">        assertThat(tasks)</span>
+<span class="nc" id="L1386">                .extracting(Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1387">                .containsOnly(startProcessDefinition.getId());</span>
+<span class="nc" id="L1388">        List&lt;Integer&gt; loopCounters = tasks.stream().map(aTask -&gt; taskService.getVariable(aTask.getId(), &quot;loopCounter&quot;, Integer.class))</span>
+<span class="nc" id="L1389">                .collect(Collectors.toList());</span>
+<span class="nc" id="L1390">        assertThat(loopCounters).containsExactlyInAnyOrder(0, 1);</span>
+
+<span class="nc bnc" id="L1392" title="All 2 branches missed.">        for (Task miTask : tasks) {</span>
+<span class="nc" id="L1393">            Execution execution = runtimeService.createExecutionQuery().executionId(miTask.getExecutionId()).singleResult();</span>
+<span class="nc" id="L1394">            runtimeService.setVariableLocal(execution.getId(), &quot;localVar&quot;, &quot;test&quot;);</span>
+<span class="nc" id="L1395">        }</span>
+        
+<span class="nc" id="L1397">        ProcessDefinition migrateToProcessDefinition = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-multi-instance-subprocess-local-variable.bpmn20.xml&quot;);
+        
+        // Prepare and action the migration
+<span class="nc" id="L1401">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L1402">                .migrateToProcessDefinition(migrateToProcessDefinition.getId());</span>
+<span class="nc" id="L1403">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L1404">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L1405">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L1406">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+        //Confirm
+<span class="nc" id="L1409">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1410">        assertThat(executions).hasSize(5);</span>
+<span class="nc" id="L1411">        assertThat(executions)</span>
+<span class="nc" id="L1412">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1413">                .containsExactly(&quot;parallelMISubProcess&quot;, &quot;parallelMISubProcess&quot;, &quot;parallelMISubProcess&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;);</span>
+<span class="nc" id="L1414">        assertThat(executions)</span>
+<span class="nc" id="L1415">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1416">                .containsOnly(migrateToProcessDefinition.getId());</span>
+        
+<span class="nc" id="L1418">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1419">        assertThat(tasks).hasSize(2);</span>
+<span class="nc" id="L1420">        assertThat(tasks)</span>
+<span class="nc" id="L1421">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L1422">                .containsOnly(&quot;subTask1&quot;);</span>
+<span class="nc" id="L1423">        assertThat(tasks)</span>
+<span class="nc" id="L1424">                .extracting(Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1425">                .containsOnly(migrateToProcessDefinition.getId());</span>
+<span class="nc" id="L1426">        loopCounters = tasks.stream().map(aTask -&gt; taskService.getVariable(aTask.getId(), &quot;loopCounter&quot;, Integer.class))</span>
+<span class="nc" id="L1427">                .collect(Collectors.toList());</span>
+<span class="nc" id="L1428">        assertThat(loopCounters).containsExactlyInAnyOrder(0, 1);</span>
+
+<span class="nc bnc" id="L1430" title="All 2 branches missed.">        for (Task miTask : tasks) {</span>
+<span class="nc" id="L1431">            Execution execution = runtimeService.createExecutionQuery().executionId(miTask.getExecutionId()).singleResult();</span>
+<span class="nc" id="L1432">            assertThat(runtimeService.getVariableLocal(execution.getId(), &quot;localVar&quot;)).isEqualTo(&quot;test&quot;);</span>
+<span class="nc" id="L1433">        }</span>
+
+<span class="nc bnc" id="L1435" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1436">            checkActivityInstances(migrateToProcessDefinition, processInstance, &quot;userTask&quot;, &quot;beforeMultiInstance&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;);</span>
+
+<span class="nc" id="L1438">            checkTaskInstance(migrateToProcessDefinition, processInstance, &quot;beforeMultiInstance&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;);</span>
+        }
+
+        // Complete the process
+<span class="nc" id="L1442">        completeProcessInstanceTasks(processInstance.getId());</span>
+
+<span class="nc bnc" id="L1444" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1445">            checkActivityInstances(migrateToProcessDefinition, processInstance, &quot;userTask&quot;, &quot;beforeMultiInstance&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;, &quot;afterMultiInstance&quot;);</span>
+
+<span class="nc" id="L1447">            checkTaskInstance(migrateToProcessDefinition, processInstance, &quot;beforeMultiInstance&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;, &quot;subTask1&quot;, &quot;afterMultiInstance&quot;);</span>
+        }
+
+<span class="nc" id="L1450">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L1451">    }</span>
+    
+    @Test
+    public void testMigrateParallelMultiInstanceServiceTaskWithLocalVariables() {
+<span class="nc" id="L1455">        ProcessDefinition startProcessDefinition = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-multi-instance-servicetask.bpmn20.xml&quot;);
+
+        // Start the processInstance
+<span class="nc" id="L1459">        Map&lt;String, Object&gt; variableMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L1460">        ArrayNode collectionArray = processEngineConfiguration.getObjectMapper().createArrayNode();</span>
+<span class="nc" id="L1461">        ObjectNode element1Node = collectionArray.addObject();</span>
+<span class="nc" id="L1462">        element1Node.put(&quot;name&quot;, &quot;John Doe&quot;);</span>
+<span class="nc" id="L1463">        element1Node.put(&quot;age&quot;, 30);</span>
+<span class="nc" id="L1464">        ObjectNode element2Node = collectionArray.addObject();</span>
+<span class="nc" id="L1465">        element2Node.put(&quot;name&quot;, &quot;Jane Doe&quot;);</span>
+<span class="nc" id="L1466">        element2Node.put(&quot;age&quot;, 29);</span>
+<span class="nc" id="L1467">        variableMap.put(&quot;myCollection&quot;, collectionArray);</span>
+<span class="nc" id="L1468">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(startProcessDefinition.getId(), variableMap);</span>
+
+        // Progress to the MI subProcess
+<span class="nc" id="L1471">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1472">        assertThat(task).extracting(Task::getTaskDefinitionKey).isEqualTo(&quot;beforeMultiInstance&quot;);</span>
+<span class="nc" id="L1473">        completeTask(task);</span>
+
+        // Confirm the state to migrate
+<span class="nc" id="L1476">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1477">        assertThat(executions)</span>
+<span class="nc" id="L1478">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1479">                .containsExactly(&quot;task&quot;, &quot;task&quot;, &quot;task&quot;);</span>
+<span class="nc" id="L1480">        assertThat(executions)</span>
+<span class="nc" id="L1481">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1482">                .containsOnly(startProcessDefinition.getId());</span>
+<span class="nc" id="L1483">        Execution miRoot = executions.stream().filter(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot()).findFirst().get();</span>
+<span class="nc" id="L1484">        Map&lt;String, Object&gt; miRootVars = runtimeService.getVariables(miRoot.getId());</span>
+<span class="nc" id="L1485">        assertThat(miRootVars)</span>
+<span class="nc" id="L1486">                .extracting(&quot;nrOfActiveInstances&quot;, &quot;nrOfCompletedInstances&quot;)</span>
+<span class="nc" id="L1487">                .containsExactly(2, 0);</span>
+<span class="nc" id="L1488">        List&lt;Integer&gt; loopCounters = executions.stream().map(anExecution -&gt; runtimeService.getVariable(anExecution.getId(), &quot;loopCounter&quot;, Integer.class))</span>
+<span class="nc" id="L1489">                .collect(Collectors.toList());</span>
+<span class="nc" id="L1490">        assertThat(loopCounters).containsExactlyInAnyOrder(null, 0, 1);</span>
+
+<span class="nc bnc" id="L1492" title="All 2 branches missed.">        for (Execution miExecution : executions) {</span>
+<span class="nc" id="L1493">            runtimeService.setVariableLocal(miExecution.getId(), &quot;localVar&quot;, &quot;test&quot;);</span>
+<span class="nc" id="L1494">        }</span>
+        
+<span class="nc" id="L1496">        ProcessDefinition migrateToProcessDefinition = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-multi-instance-servicetask.bpmn20.xml&quot;);
+        
+        // Prepare and action the migration
+<span class="nc" id="L1500">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L1501">                .migrateToProcessDefinition(migrateToProcessDefinition.getId());</span>
+<span class="nc" id="L1502">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L1503">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L1504">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L1505">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+        //Confirm
+<span class="nc" id="L1508">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1509">        assertThat(executions).hasSize(3);</span>
+<span class="nc" id="L1510">        assertThat(executions)</span>
+<span class="nc" id="L1511">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1512">                .containsExactly(&quot;task&quot;, &quot;task&quot;, &quot;task&quot;);</span>
+<span class="nc" id="L1513">        assertThat(executions)</span>
+<span class="nc" id="L1514">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1515">                .containsOnly(migrateToProcessDefinition.getId());</span>
+<span class="nc" id="L1516">        loopCounters = executions.stream().map(anExecution -&gt; runtimeService.getVariable(anExecution.getId(), &quot;loopCounter&quot;, Integer.class))</span>
+<span class="nc" id="L1517">                .collect(Collectors.toList());</span>
+<span class="nc" id="L1518">        assertThat(loopCounters).containsExactlyInAnyOrder(null, 0, 1);</span>
+        
+
+<span class="nc bnc" id="L1521" title="All 2 branches missed.">        for (Execution miExecution : executions) {</span>
+<span class="nc" id="L1522">            assertThat(runtimeService.getVariableLocal(miExecution.getId(), &quot;localVar&quot;)).isEqualTo(&quot;test&quot;);</span>
+<span class="nc" id="L1523">        }</span>
+
+<span class="nc bnc" id="L1525" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1526">            checkActivityInstances(migrateToProcessDefinition, processInstance, &quot;userTask&quot;, &quot;beforeMultiInstance&quot;);</span>
+        }
+        
+<span class="nc" id="L1529">        List&lt;Job&gt; jobs = managementService.createJobQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1530">        assertThat(jobs).hasSize(2);</span>
+<span class="nc bnc" id="L1531" title="All 2 branches missed.">        for (Job job : jobs) {</span>
+<span class="nc" id="L1532">            managementService.executeJob(job.getId());</span>
+<span class="nc" id="L1533">        }</span>
+        
+<span class="nc" id="L1535">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1536">        assertThat(task).isNotNull();</span>
+<span class="nc" id="L1537">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;afterMultiInstance&quot;);</span>
+        
+<span class="nc" id="L1539">        taskService.complete(task.getId());</span>
+
+<span class="nc bnc" id="L1541" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1542">            checkActivityInstances(migrateToProcessDefinition, processInstance, &quot;userTask&quot;, &quot;beforeMultiInstance&quot;, &quot;afterMultiInstance&quot;);</span>
+<span class="nc" id="L1543">            checkActivityInstances(migrateToProcessDefinition, processInstance, &quot;serviceTask&quot;, &quot;task&quot;, &quot;task&quot;);</span>
+
+<span class="nc" id="L1545">            checkTaskInstance(migrateToProcessDefinition, processInstance, &quot;beforeMultiInstance&quot;, &quot;afterMultiInstance&quot;);</span>
+        }
+
+<span class="nc" id="L1548">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L1549">    }</span>
+    
+    @Test
+    public void testMigrateParallelMultiInstanceSubProcessWithServiceTaskAndLocalVariables() {
+<span class="nc" id="L1553">        ProcessDefinition startProcessDefinition = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-multi-instance-subprocess-servicetask.bpmn20.xml&quot;);
+
+        // Start the processInstance
+<span class="nc" id="L1557">        Map&lt;String, Object&gt; variableMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L1558">        ArrayNode collectionArray = processEngineConfiguration.getObjectMapper().createArrayNode();</span>
+<span class="nc" id="L1559">        ObjectNode element1Node = collectionArray.addObject();</span>
+<span class="nc" id="L1560">        element1Node.put(&quot;name&quot;, &quot;John Doe&quot;);</span>
+<span class="nc" id="L1561">        element1Node.put(&quot;age&quot;, 30);</span>
+<span class="nc" id="L1562">        ObjectNode element2Node = collectionArray.addObject();</span>
+<span class="nc" id="L1563">        element2Node.put(&quot;name&quot;, &quot;Jane Doe&quot;);</span>
+<span class="nc" id="L1564">        element2Node.put(&quot;age&quot;, 29);</span>
+<span class="nc" id="L1565">        variableMap.put(&quot;myCollection&quot;, collectionArray);</span>
+<span class="nc" id="L1566">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(startProcessDefinition.getId(), variableMap);</span>
+
+        // Progress to the MI subProcess
+<span class="nc" id="L1569">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1570">        assertThat(task).extracting(Task::getTaskDefinitionKey).isEqualTo(&quot;beforeMultiInstance&quot;);</span>
+<span class="nc" id="L1571">        completeTask(task);</span>
+
+        // Confirm the state to migrate
+<span class="nc" id="L1574">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1575">        assertThat(executions)</span>
+<span class="nc" id="L1576">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1577">                .containsExactly(&quot;parallelMISubProcess&quot;, &quot;parallelMISubProcess&quot;, &quot;parallelMISubProcess&quot;, &quot;subtask&quot;, &quot;subtask&quot;);</span>
+<span class="nc" id="L1578">        assertThat(executions)</span>
+<span class="nc" id="L1579">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1580">                .containsOnly(startProcessDefinition.getId());</span>
+<span class="nc" id="L1581">        Execution miRoot = executions.stream().filter(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot()).findFirst().get();</span>
+<span class="nc" id="L1582">        Map&lt;String, Object&gt; miRootVars = runtimeService.getVariables(miRoot.getId());</span>
+<span class="nc" id="L1583">        assertThat(miRootVars)</span>
+<span class="nc" id="L1584">                .extracting(&quot;nrOfActiveInstances&quot;, &quot;nrOfCompletedInstances&quot;)</span>
+<span class="nc" id="L1585">                .containsExactly(2, 0);</span>
+<span class="nc" id="L1586">        List&lt;Integer&gt; loopCounters = executions.stream().map(anExecution -&gt; runtimeService.getVariable(anExecution.getId(), &quot;loopCounter&quot;, Integer.class))</span>
+<span class="nc" id="L1587">                .collect(Collectors.toList());</span>
+<span class="nc" id="L1588">        assertThat(loopCounters).containsExactlyInAnyOrder(null, 0, 1, 0, 1);</span>
+
+<span class="nc bnc" id="L1590" title="All 2 branches missed.">        for (Execution miExecution : executions) {</span>
+<span class="nc" id="L1591">            runtimeService.setVariableLocal(miExecution.getId(), &quot;localVar&quot;, &quot;test&quot;);</span>
+<span class="nc" id="L1592">        }</span>
+        
+<span class="nc" id="L1594">        ProcessDefinition migrateToProcessDefinition = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-multi-instance-subprocess-servicetask.bpmn20.xml&quot;);
+        
+        // Prepare and action the migration
+<span class="nc" id="L1598">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L1599">                .migrateToProcessDefinition(migrateToProcessDefinition.getId());</span>
+<span class="nc" id="L1600">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L1601">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L1602">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L1603">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+        //Confirm
+<span class="nc" id="L1606">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1607">        assertThat(executions).hasSize(5);</span>
+<span class="nc" id="L1608">        assertThat(executions)</span>
+<span class="nc" id="L1609">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1610">                .containsExactly(&quot;parallelMISubProcess&quot;, &quot;parallelMISubProcess&quot;, &quot;parallelMISubProcess&quot;, &quot;subtask&quot;, &quot;subtask&quot;);</span>
+<span class="nc" id="L1611">        assertThat(executions)</span>
+<span class="nc" id="L1612">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1613">                .containsOnly(migrateToProcessDefinition.getId());</span>
+<span class="nc" id="L1614">        loopCounters = executions.stream().map(anExecution -&gt; runtimeService.getVariable(anExecution.getId(), &quot;loopCounter&quot;, Integer.class))</span>
+<span class="nc" id="L1615">                .collect(Collectors.toList());</span>
+<span class="nc" id="L1616">        assertThat(loopCounters).containsExactlyInAnyOrder(null, 0, 1, 0, 1);</span>
+        
+
+<span class="nc bnc" id="L1619" title="All 2 branches missed.">        for (Execution miExecution : executions) {</span>
+<span class="nc" id="L1620">            assertThat(runtimeService.getVariableLocal(miExecution.getId(), &quot;localVar&quot;)).isEqualTo(&quot;test&quot;);</span>
+<span class="nc" id="L1621">        }</span>
+
+<span class="nc bnc" id="L1623" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1624">            checkActivityInstances(migrateToProcessDefinition, processInstance, &quot;userTask&quot;, &quot;beforeMultiInstance&quot;);</span>
+        }
+        
+<span class="nc" id="L1627">        List&lt;Job&gt; jobs = managementService.createJobQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1628">        assertThat(jobs).hasSize(2);</span>
+<span class="nc bnc" id="L1629" title="All 2 branches missed.">        for (Job job : jobs) {</span>
+<span class="nc" id="L1630">            managementService.executeJob(job.getId());</span>
+<span class="nc" id="L1631">        }</span>
+        
+<span class="nc" id="L1633">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1634">        assertThat(task).isNotNull();</span>
+<span class="nc" id="L1635">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;afterMultiInstance&quot;);</span>
+        
+<span class="nc" id="L1637">        taskService.complete(task.getId());</span>
+
+<span class="nc bnc" id="L1639" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1640">            checkActivityInstances(migrateToProcessDefinition, processInstance, &quot;userTask&quot;, &quot;beforeMultiInstance&quot;, &quot;afterMultiInstance&quot;);</span>
+<span class="nc" id="L1641">            checkActivityInstances(migrateToProcessDefinition, processInstance, &quot;serviceTask&quot;, &quot;subtask&quot;, &quot;subtask&quot;);</span>
+
+<span class="nc" id="L1643">            checkTaskInstance(migrateToProcessDefinition, processInstance, &quot;beforeMultiInstance&quot;, &quot;afterMultiInstance&quot;);</span>
+        }
+
+<span class="nc" id="L1646">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L1647">    }</span>
+    
+    @Test
+    public void testMigrateParallelMultiInstanceCallActivityWithLocalVariables() {
+<span class="nc" id="L1651">        ProcessDefinition startProcessDefinition = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-multi-instance-callactivity-local-variable.bpmn20.xml&quot;);
+<span class="nc" id="L1653">        deployProcessDefinition(&quot;my deploy&quot;, &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot;);</span>
+
+        // Start the processInstance
+<span class="nc" id="L1656">        Map&lt;String, Object&gt; variableMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L1657">        ArrayNode collectionArray = processEngineConfiguration.getObjectMapper().createArrayNode();</span>
+<span class="nc" id="L1658">        ObjectNode element1Node = collectionArray.addObject();</span>
+<span class="nc" id="L1659">        element1Node.put(&quot;name&quot;, &quot;John Doe&quot;);</span>
+<span class="nc" id="L1660">        element1Node.put(&quot;age&quot;, 30);</span>
+<span class="nc" id="L1661">        ObjectNode element2Node = collectionArray.addObject();</span>
+<span class="nc" id="L1662">        element2Node.put(&quot;name&quot;, &quot;Jane Doe&quot;);</span>
+<span class="nc" id="L1663">        element2Node.put(&quot;age&quot;, 29);</span>
+<span class="nc" id="L1664">        variableMap.put(&quot;myCollection&quot;, collectionArray);</span>
+<span class="nc" id="L1665">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(startProcessDefinition.getId(), variableMap);</span>
+
+        // Progress to the MI subProcess
+<span class="nc" id="L1668">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1669">        assertThat(task).extracting(Task::getTaskDefinitionKey).isEqualTo(&quot;beforeMultiInstance&quot;);</span>
+<span class="nc" id="L1670">        completeTask(task);</span>
+
+        // Confirm the state to migrate
+<span class="nc" id="L1673">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1674">        assertThat(executions)</span>
+<span class="nc" id="L1675">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1676">                .containsExactly(&quot;callActivity&quot;, &quot;callActivity&quot;, &quot;callActivity&quot;);</span>
+<span class="nc" id="L1677">        assertThat(executions)</span>
+<span class="nc" id="L1678">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1679">                .containsOnly(startProcessDefinition.getId());</span>
+<span class="nc" id="L1680">        Execution miRoot = executions.stream().filter(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot()).findFirst().get();</span>
+<span class="nc" id="L1681">        Map&lt;String, Object&gt; miRootVars = runtimeService.getVariables(miRoot.getId());</span>
+<span class="nc" id="L1682">        assertThat(miRootVars)</span>
+<span class="nc" id="L1683">                .extracting(&quot;nrOfActiveInstances&quot;, &quot;nrOfCompletedInstances&quot;)</span>
+<span class="nc" id="L1684">                .containsExactly(2, 0);</span>
+<span class="nc" id="L1685">        List&lt;Integer&gt; loopCounters = executions.stream().map(anExecution -&gt; runtimeService.getVariable(anExecution.getId(), &quot;loopCounter&quot;, Integer.class))</span>
+<span class="nc" id="L1686">                .collect(Collectors.toList());</span>
+<span class="nc" id="L1687">        assertThat(loopCounters).containsExactlyInAnyOrder(null, 0, 1);</span>
+
+<span class="nc bnc" id="L1689" title="All 2 branches missed.">        for (Execution miExecution : executions) {</span>
+<span class="nc" id="L1690">            runtimeService.setVariableLocal(miExecution.getId(), &quot;localVar&quot;, &quot;test&quot;);</span>
+<span class="nc" id="L1691">        }</span>
+        
+<span class="nc bnc" id="L1693" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1694">            checkActivityInstances(startProcessDefinition, processInstance, &quot;userTask&quot;, &quot;beforeMultiInstance&quot;);</span>
+<span class="nc" id="L1695">            checkActivityInstances(startProcessDefinition, processInstance, &quot;callActivity&quot;, &quot;callActivity&quot;, &quot;callActivity&quot;);</span>
+        }
+        
+<span class="nc" id="L1698">        ProcessDefinition migrateToProcessDefinition = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-multi-instance-callactivity-local-variable.bpmn20.xml&quot;);
+        
+        // Prepare and action the migration
+<span class="nc" id="L1702">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L1703">                .migrateToProcessDefinition(migrateToProcessDefinition.getId());</span>
+<span class="nc" id="L1704">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L1705">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L1706">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L1707">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+        //Confirm
+<span class="nc" id="L1710">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1711">        assertThat(executions).hasSize(3);</span>
+<span class="nc" id="L1712">        assertThat(executions)</span>
+<span class="nc" id="L1713">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1714">                .containsExactly(&quot;callActivity&quot;, &quot;callActivity&quot;, &quot;callActivity&quot;);</span>
+<span class="nc" id="L1715">        assertThat(executions)</span>
+<span class="nc" id="L1716">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1717">                .containsOnly(migrateToProcessDefinition.getId());</span>
+<span class="nc" id="L1718">        loopCounters = executions.stream().map(anExecution -&gt; runtimeService.getVariable(anExecution.getId(), &quot;loopCounter&quot;, Integer.class))</span>
+<span class="nc" id="L1719">                .collect(Collectors.toList());</span>
+<span class="nc" id="L1720">        assertThat(loopCounters).containsExactlyInAnyOrder(null, 0, 1);</span>
+        
+
+<span class="nc bnc" id="L1723" title="All 2 branches missed.">        for (Execution miExecution : executions) {</span>
+<span class="nc" id="L1724">            assertThat(runtimeService.getVariableLocal(miExecution.getId(), &quot;localVar&quot;)).isEqualTo(&quot;test&quot;);</span>
+<span class="nc" id="L1725">        }</span>
+
+<span class="nc bnc" id="L1727" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1728">            checkActivityInstances(migrateToProcessDefinition, processInstance, &quot;userTask&quot;, &quot;beforeMultiInstance&quot;);</span>
+<span class="nc" id="L1729">            checkActivityInstances(migrateToProcessDefinition, processInstance, &quot;callActivity&quot;, &quot;callActivity&quot;, &quot;callActivity&quot;, &quot;callActivity&quot;, &quot;callActivity&quot;);</span>
+        }
+        
+<span class="nc" id="L1732">        List&lt;ProcessInstance&gt; subProcessInstances = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1733">        assertThat(subProcessInstances).hasSize(2);</span>
+<span class="nc bnc" id="L1734" title="All 2 branches missed.">        for (ProcessInstance subProcessInstance : subProcessInstances) {</span>
+<span class="nc" id="L1735">            completeProcessInstanceTasks(subProcessInstance.getId()); </span>
+<span class="nc" id="L1736">        }</span>
+        
+<span class="nc" id="L1738">        completeProcessInstanceTasks(processInstance.getId());</span>
+
+<span class="nc bnc" id="L1740" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1741">            checkActivityInstances(migrateToProcessDefinition, processInstance, &quot;userTask&quot;, &quot;beforeMultiInstance&quot;, &quot;afterMultiInstance&quot;);</span>
+<span class="nc" id="L1742">            checkActivityInstances(migrateToProcessDefinition, processInstance, &quot;callActivity&quot;, &quot;callActivity&quot;, &quot;callActivity&quot;, &quot;callActivity&quot;, &quot;callActivity&quot;);</span>
+
+<span class="nc" id="L1744">            checkTaskInstance(migrateToProcessDefinition, processInstance, &quot;beforeMultiInstance&quot;, &quot;afterMultiInstance&quot;);</span>
+        }
+
+<span class="nc" id="L1747">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L1748">    }</span>
+
+    @Test
+    public void testMigrateNestedSequentialMultiInstanceSubProcessActivityToOuterSequentialSubProcessActivity() {
+<span class="nc" id="L1752">        ProcessDefinition procNestedSequentialMultiInst = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/nested-sequential-multi-instance-subprocesses.bpmn20.xml&quot;);
+<span class="nc" id="L1754">        ProcessDefinition procSequentialMultiInst = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/sequential-multi-instance-subprocess.bpmn20.xml&quot;);
+
+        //Start the processInstance
+<span class="nc" id="L1758">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procNestedSequentialMultiInst.getId());</span>
+<span class="nc" id="L1759">        runtimeService.setVariables(processInstance.getId(), Collections.singletonMap(&quot;nrOfLoops&quot;, 2));</span>
+<span class="nc" id="L1760">        runtimeService.setVariables(processInstance.getId(), Collections.singletonMap(&quot;nestedNrOfLoops&quot;, 3));</span>
+
+        //Progress to the MI subProcess
+<span class="nc" id="L1763">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1764">        assertThat(task).extracting(Task::getTaskDefinitionKey).isEqualTo(&quot;beforeMultiInstance&quot;);</span>
+<span class="nc" id="L1765">        completeTask(task);</span>
+<span class="nc" id="L1766">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1767">        assertThat(task).extracting(Task::getTaskDefinitionKey).isEqualTo(&quot;subTask1&quot;);</span>
+<span class="nc" id="L1768">        completeTask(task);</span>
+
+        //Confirm the state to migrate
+<span class="nc" id="L1771">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        //MI subProcess root execution, actual subProcess and 1 task
+<span class="nc" id="L1773">        assertThat(executions)</span>
+<span class="nc" id="L1774">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1775">                .containsExactly(&quot;sequentialMISubProcess&quot;, &quot;sequentialMISubProcess&quot;, &quot;nestedSequentialMISubProcess&quot;, &quot;nestedSequentialMISubProcess&quot;,</span>
+                        &quot;nestedSubTask1&quot;);
+<span class="nc" id="L1777">        assertThat(executions)</span>
+<span class="nc" id="L1778">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1779">                .containsOnly(procNestedSequentialMultiInst.getId());</span>
+<span class="nc" id="L1780">        assertThat(executions).haveExactly(2, new Condition&lt;&gt;(execution -&gt; ((ExecutionEntity) execution).isMultiInstanceRoot(), &quot;is MultiInstance root&quot;));</span>
+<span class="nc" id="L1781">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1782">        assertThat(task)</span>
+<span class="nc" id="L1783">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1784">                .containsOnly(&quot;nestedSubTask1&quot;, procNestedSequentialMultiInst.getId());</span>
+<span class="nc" id="L1785">        assertThat(taskService.getVariable(task.getId(), &quot;loopCounter&quot;)).isEqualTo(0);</span>
+<span class="nc" id="L1786">        completeTask(task);</span>
+<span class="nc" id="L1787">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1788">        assertThat(task).extracting(Task::getTaskDefinitionKey).isEqualTo(&quot;nestedSubTask2&quot;);</span>
+<span class="nc" id="L1789">        completeTask(task);</span>
+        //Confirm one iteration of the nested MI subProcess is completed
+<span class="nc" id="L1791">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1792">        assertThat(task)</span>
+<span class="nc" id="L1793">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1794">                .containsOnly(&quot;nestedSubTask1&quot;, procNestedSequentialMultiInst.getId());</span>
+<span class="nc" id="L1795">        assertThat(taskService.getVariable(task.getId(), &quot;loopCounter&quot;)).isEqualTo(1);</span>
+
+        //Prepare and action the migration
+<span class="nc" id="L1798">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L1799">                .migrateToProcessDefinition(procSequentialMultiInst.getId())</span>
+<span class="nc" id="L1800">                .addActivityMigrationMapping(ActivityMigrationMapping.createMappingFor(&quot;nestedSequentialMISubProcess&quot;, &quot;sequentialMISubProcess&quot;));</span>
+<span class="nc" id="L1801">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L1802">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L1803">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L1804">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+        //Confirm
+<span class="nc" id="L1807">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        //MI subProcess root execution, actual subProcess and 1 task
+<span class="nc" id="L1809">        assertThat(executions)</span>
+<span class="nc" id="L1810">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1811">                .containsExactly(&quot;sequentialMISubProcess&quot;, &quot;sequentialMISubProcess&quot;, &quot;subTask1&quot;);</span>
+<span class="nc" id="L1812">        assertThat(executions)</span>
+<span class="nc" id="L1813">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1814">                .containsOnly(procSequentialMultiInst.getId());</span>
+<span class="nc" id="L1815">        Execution miRoot = executions.stream().filter(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot()).findFirst().get();</span>
+<span class="nc" id="L1816">        Map&lt;String, Object&gt; miRootVars = runtimeService.getVariables(miRoot.getId());</span>
+<span class="nc" id="L1817">        assertThat(miRootVars)</span>
+<span class="nc" id="L1818">                .extracting(&quot;nrOfActiveInstances&quot;, &quot;nrOfCompletedInstances&quot;, &quot;nrOfLoops&quot;)</span>
+<span class="nc" id="L1819">                .containsExactly(1, 0, 2);</span>
+<span class="nc" id="L1820">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1821">        assertThat(task)</span>
+<span class="nc" id="L1822">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1823">                .containsOnly(&quot;subTask1&quot;, procSequentialMultiInst.getId());</span>
+<span class="nc" id="L1824">        assertThat(taskService.getVariable(task.getId(), &quot;loopCounter&quot;)).isEqualTo(0);</span>
+
+        //Complete one iteration
+<span class="nc" id="L1827">        completeTask(task);</span>
+<span class="nc" id="L1828">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1829">        assertThat(task).extracting(Task::getTaskDefinitionKey).isEqualTo(&quot;subTask2&quot;);</span>
+<span class="nc" id="L1830">        completeTask(task);</span>
+
+        //Confirm
+<span class="nc" id="L1833">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        //MI subProcess root execution, actual subProcess and 1 task
+<span class="nc" id="L1835">        assertThat(executions)</span>
+<span class="nc" id="L1836">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1837">                .containsExactly(&quot;sequentialMISubProcess&quot;, &quot;sequentialMISubProcess&quot;, &quot;subTask1&quot;);</span>
+<span class="nc" id="L1838">        assertThat(executions)</span>
+<span class="nc" id="L1839">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1840">                .containsOnly(procSequentialMultiInst.getId());</span>
+<span class="nc" id="L1841">        miRoot = executions.stream().filter(e -&gt; ((ExecutionEntity) e).isMultiInstanceRoot()).findFirst().get();</span>
+<span class="nc" id="L1842">        miRootVars = runtimeService.getVariables(miRoot.getId());</span>
+<span class="nc" id="L1843">        assertThat(miRootVars)</span>
+<span class="nc" id="L1844">                .extracting(&quot;nrOfActiveInstances&quot;, &quot;nrOfCompletedInstances&quot;, &quot;nrOfLoops&quot;)</span>
+<span class="nc" id="L1845">                .containsExactly(1, 1, 2);</span>
+<span class="nc" id="L1846">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1847">        assertThat(task)</span>
+<span class="nc" id="L1848">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1849">                .containsOnly(&quot;subTask1&quot;, procSequentialMultiInst.getId());</span>
+<span class="nc" id="L1850">        assertThat(taskService.getVariable(task.getId(), &quot;loopCounter&quot;)).isEqualTo(1);</span>
+
+<span class="nc bnc" id="L1852" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1853">            checkActivityInstances(procSequentialMultiInst, processInstance, &quot;userTask&quot;, &quot;beforeMultiInstance&quot;, &quot;subTask1&quot;, &quot;nestedSubTask1&quot;, &quot;nestedSubTask2&quot;,</span>
+                    &quot;nestedSubTask1&quot;, &quot;subTask1&quot;, &quot;subTask2&quot;, &quot;subTask1&quot;);
+
+<span class="nc" id="L1856">            checkTaskInstance(procSequentialMultiInst, processInstance, &quot;beforeMultiInstance&quot;, &quot;subTask1&quot;, &quot;nestedSubTask1&quot;, &quot;nestedSubTask2&quot;, &quot;nestedSubTask1&quot;,</span>
+                    &quot;subTask1&quot;, &quot;subTask2&quot;, &quot;subTask1&quot;);
+        }
+
+        //Complete the process
+<span class="nc" id="L1861">        completeProcessInstanceTasks(processInstance.getId());</span>
+
+<span class="nc bnc" id="L1863" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1864">            checkActivityInstances(procSequentialMultiInst, processInstance, &quot;userTask&quot;, &quot;beforeMultiInstance&quot;, &quot;subTask1&quot;, &quot;nestedSubTask1&quot;, &quot;nestedSubTask2&quot;,</span>
+                    &quot;nestedSubTask1&quot;, &quot;subTask1&quot;, &quot;subTask2&quot;, &quot;subTask1&quot;, &quot;subTask2&quot;, &quot;afterMultiInstance&quot;);
+
+<span class="nc" id="L1867">            checkTaskInstance(procSequentialMultiInst, processInstance, &quot;beforeMultiInstance&quot;, &quot;subTask1&quot;, &quot;nestedSubTask1&quot;, &quot;nestedSubTask2&quot;, &quot;nestedSubTask1&quot;,</span>
+                    &quot;subTask1&quot;, &quot;subTask2&quot;, &quot;subTask1&quot;, &quot;subTask2&quot;, &quot;afterMultiInstance&quot;);
+        }
+
+<span class="nc bnc" id="L1871" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+            //Check History
+<span class="nc" id="L1873">            List&lt;HistoricActivityInstance&gt; taskExecutions = historyService.createHistoricActivityInstanceQuery()</span>
+<span class="nc" id="L1874">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L1875">                    .activityType(&quot;userTask&quot;)</span>
+<span class="nc" id="L1876">                    .list();</span>
+<span class="nc" id="L1877">            assertThat(taskExecutions)</span>
+<span class="nc" id="L1878">                    .extracting(HistoricActivityInstance::getActivityId)</span>
+<span class="nc" id="L1879">                    .containsExactlyInAnyOrder(&quot;beforeMultiInstance&quot;, &quot;subTask1&quot;, &quot;nestedSubTask1&quot;, &quot;nestedSubTask2&quot;, &quot;nestedSubTask1&quot;, &quot;subTask1&quot;, &quot;subTask2&quot;,</span>
+                            &quot;subTask1&quot;, &quot;subTask2&quot;, &quot;afterMultiInstance&quot;);
+<span class="nc" id="L1881">            assertThat(taskExecutions)</span>
+<span class="nc" id="L1882">                    .extracting(HistoricActivityInstance::getProcessDefinitionId)</span>
+<span class="nc" id="L1883">                    .containsOnly(procSequentialMultiInst.getId());</span>
+
+<span class="nc bnc" id="L1885" title="All 2 branches missed.">            if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.AUDIT, processEngineConfiguration)) {</span>
+<span class="nc" id="L1886">                List&lt;HistoricTaskInstance&gt; historicTasks = historyService.createHistoricTaskInstanceQuery()</span>
+<span class="nc" id="L1887">                        .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L1888">                        .list();</span>
+<span class="nc" id="L1889">                assertThat(historicTasks)</span>
+<span class="nc" id="L1890">                        .extracting(HistoricTaskInstance::getTaskDefinitionKey)</span>
+<span class="nc" id="L1891">                        .containsExactlyInAnyOrder(&quot;beforeMultiInstance&quot;, &quot;subTask1&quot;, &quot;nestedSubTask1&quot;, &quot;nestedSubTask2&quot;, &quot;nestedSubTask1&quot;, &quot;subTask1&quot;,</span>
+                                &quot;subTask2&quot;, &quot;subTask1&quot;, &quot;subTask2&quot;, &quot;afterMultiInstance&quot;);
+<span class="nc" id="L1893">                assertThat(historicTasks)</span>
+<span class="nc" id="L1894">                        .extracting(HistoricTaskInstance::getProcessDefinitionId)</span>
+<span class="nc" id="L1895">                        .containsOnly(procSequentialMultiInst.getId());</span>
+            }
+        }
+
+<span class="nc" id="L1899">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L1900">    }</span>
+
+    @Test
+    public void testMigrateNestedParallelMultiInstanceSubProcessActivityToOuterParallelSubProcessActivity() {
+<span class="nc" id="L1904">        ProcessDefinition procNestedParallelMultiInst = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/nested-parallel-multi-instance-subprocesses.bpmn20.xml&quot;);
+<span class="nc" id="L1906">        ProcessDefinition procParallelMultiInst = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/parallel-multi-instance-subprocess.bpmn20.xml&quot;);
+
+        //Start the processInstance
+<span class="nc" id="L1910">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procNestedParallelMultiInst.getId());</span>
+<span class="nc" id="L1911">        runtimeService.setVariables(processInstance.getId(), Collections.singletonMap(&quot;nrOfLoops&quot;, 2));</span>
+<span class="nc" id="L1912">        runtimeService.setVariables(processInstance.getId(), Collections.singletonMap(&quot;nestedNrOfLoops&quot;, 3));</span>
+
+        //Progress to the MI subProcess
+<span class="nc" id="L1915">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1916">        assertThat(task)</span>
+<span class="nc" id="L1917">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L1918">                .isEqualTo(&quot;beforeMultiInstance&quot;);</span>
+<span class="nc" id="L1919">        completeTask(task);</span>
+<span class="nc" id="L1920">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1921">        assertThat(tasks)</span>
+<span class="nc" id="L1922">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L1923">                .containsOnly(&quot;subTask1&quot;);</span>
+<span class="nc" id="L1924">        tasks.forEach(this::completeTask);</span>
+
+        //Confirm the state to migrate
+<span class="nc" id="L1927">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        //MI subProcess root execution, actual subProcess and 1 task
+<span class="nc" id="L1929">        assertThat(executions).hasSize(17);</span>
+<span class="nc" id="L1930">        assertThat(executions).haveExactly(3, new Condition&lt;&gt;(execution -&gt; &quot;parallelMISubProcess&quot;.equals(execution.getActivityId()), &quot;Outer MI SubProcess&quot;));</span>
+<span class="nc" id="L1931">        assertThat(executions).haveExactly(1,</span>
+<span class="nc bnc" id="L1932" title="All 4 branches missed.">                new Condition&lt;&gt;(execution -&gt; &quot;parallelMISubProcess&quot;.equals(execution.getActivityId()) &amp;&amp; ((ExecutionEntity) execution).isMultiInstanceRoot(),</span>
+                        &quot;Outer MI SubProcess roots&quot;));
+<span class="nc" id="L1934">        assertThat(executions)</span>
+<span class="nc" id="L1935">                .haveExactly(8, new Condition&lt;&gt;(execution -&gt; &quot;nestedParallelMISubProcess&quot;.equals(execution.getActivityId()), &quot;Nested MI SubProcess&quot;));</span>
+<span class="nc" id="L1936">        assertThat(executions).haveExactly(2, new Condition&lt;&gt;(</span>
+<span class="nc bnc" id="L1937" title="All 4 branches missed.">                execution -&gt; &quot;nestedParallelMISubProcess&quot;.equals(execution.getActivityId()) &amp;&amp; ((ExecutionEntity) execution).isMultiInstanceRoot(),</span>
+                &quot;Nested MI SubProcess roots&quot;));
+<span class="nc" id="L1939">        assertThat(executions).haveExactly(6, new Condition&lt;&gt;(execution -&gt; &quot;nestedSubTask1&quot;.equals(execution.getActivityId()), &quot;Task Executions&quot;));</span>
+<span class="nc" id="L1940">        assertThat(executions)</span>
+<span class="nc" id="L1941">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1942">                .containsOnly(procNestedParallelMultiInst.getId());</span>
+
+<span class="nc" id="L1944">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1945">        assertThat(tasks).hasSize(6);</span>
+<span class="nc" id="L1946">        assertThat(tasks)</span>
+<span class="nc" id="L1947">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1948">                .containsOnly(tuple(&quot;nestedSubTask1&quot;, procNestedParallelMultiInst.getId()));</span>
+
+        //Prepare and action the migration
+<span class="nc" id="L1951">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L1952">                .migrateToProcessDefinition(procParallelMultiInst.getId())</span>
+<span class="nc" id="L1953">                .addActivityMigrationMapping(ActivityMigrationMapping.createMappingFor(&quot;nestedParallelMISubProcess&quot;, &quot;parallelMISubProcess&quot;));</span>
+<span class="nc" id="L1954">        ProcessInstanceMigrationValidationResult processInstanceMigrationValidationResult = processInstanceMigrationBuilder</span>
+<span class="nc" id="L1955">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L1956">        assertThat(processInstanceMigrationValidationResult.isMigrationValid()).isTrue();</span>
+<span class="nc" id="L1957">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+        //IMPORTANT: Might not be the expected result, but it is currently the correct one, as there are two MI roots (nestedParallelMISubProcess) migrating independently
+<span class="nc" id="L1960">        executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1961">        assertThat(executions).hasSize(10);</span>
+<span class="nc" id="L1962">        assertThat(executions)</span>
+<span class="nc" id="L1963">                .haveExactly(6, new Condition&lt;&gt;(execution -&gt; &quot;parallelMISubProcess&quot;.equals(execution.getActivityId()), &quot;Outer MI SubProcess&quot;));</span>
+<span class="nc" id="L1964">        assertThat(executions)</span>
+<span class="nc" id="L1965">                .haveExactly(2, new Condition&lt;&gt;(</span>
+<span class="nc bnc" id="L1966" title="All 4 branches missed.">                        execution -&gt; &quot;parallelMISubProcess&quot;.equals(execution.getActivityId()) &amp;&amp; ((ExecutionEntity) execution).isMultiInstanceRoot(),</span>
+                        &quot;Outer MI SubProcess roots&quot;));
+<span class="nc" id="L1968">        assertThat(executions)</span>
+<span class="nc" id="L1969">                .haveExactly(4, new Condition&lt;&gt;(execution -&gt; &quot;subTask1&quot;.equals(execution.getActivityId()), &quot;Task Executions&quot;));</span>
+<span class="nc" id="L1970">        assertThat(executions)</span>
+<span class="nc" id="L1971">                .extracting(&quot;processDefinitionId&quot;)</span>
+<span class="nc" id="L1972">                .containsOnly(procParallelMultiInst.getId());</span>
+
+<span class="nc" id="L1974">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1975">        assertThat(tasks).hasSize(4);</span>
+<span class="nc" id="L1976">        assertThat(tasks)</span>
+<span class="nc" id="L1977">                .extracting(Task::getTaskDefinitionKey, Task::getProcessDefinitionId)</span>
+<span class="nc" id="L1978">                .containsOnly(tuple(&quot;subTask1&quot;, procParallelMultiInst.getId()));</span>
+
+        //Complete the process
+<span class="nc" id="L1981">        completeProcessInstanceTasks(processInstance.getId());</span>
+
+<span class="nc bnc" id="L1983" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+            //Check History
+<span class="nc" id="L1985">            List&lt;HistoricActivityInstance&gt; taskExecutions = historyService.createHistoricActivityInstanceQuery()</span>
+<span class="nc" id="L1986">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L1987">                    .activityType(&quot;userTask&quot;)</span>
+<span class="nc" id="L1988">                    .list();</span>
+<span class="nc" id="L1989">            assertThat(taskExecutions)</span>
+<span class="nc" id="L1990">                    .extracting(HistoricActivityInstance::getActivityId)</span>
+<span class="nc" id="L1991">                    .haveAtMost(1, new Condition&lt;&gt;((String s) -&gt; &quot;beforeMultiInstance&quot;.equals(s), &quot;beforeMultiInstance completed task&quot;));</span>
+<span class="nc" id="L1992">            assertThat(taskExecutions)</span>
+<span class="nc" id="L1993">                    .extracting(HistoricActivityInstance::getActivityId)</span>
+<span class="nc" id="L1994">                    .haveAtMost(6, new Condition&lt;&gt;((String s) -&gt; &quot;nestedSubTask1&quot;.equals(s), &quot;nestedSubTask1 completed task&quot;));</span>
+<span class="nc" id="L1995">            assertThat(taskExecutions)</span>
+<span class="nc" id="L1996">                    .extracting(HistoricActivityInstance::getActivityId)</span>
+<span class="nc" id="L1997">                    .haveAtMost(6, new Condition&lt;&gt;((String s) -&gt; &quot;subTask1&quot;.equals(s), &quot;subTask1 completed task&quot;));</span>
+<span class="nc" id="L1998">            assertThat(taskExecutions)</span>
+<span class="nc" id="L1999">                    .extracting(HistoricActivityInstance::getActivityId)</span>
+<span class="nc" id="L2000">                    .haveAtMost(4, new Condition&lt;&gt;((String s) -&gt; &quot;subTask2&quot;.equals(s), &quot;subTask2 completed task&quot;));</span>
+<span class="nc" id="L2001">            assertThat(taskExecutions)</span>
+<span class="nc" id="L2002">                    .extracting(HistoricActivityInstance::getActivityId)</span>
+<span class="nc" id="L2003">                    .haveAtMost(2, new Condition&lt;&gt;((String s) -&gt; &quot;afterMultiInstance&quot;.equals(s), &quot;afterMultiInstance completed task&quot;));</span>
+<span class="nc" id="L2004">            assertThat(taskExecutions)</span>
+<span class="nc" id="L2005">                    .extracting(HistoricActivityInstance::getProcessDefinitionId)</span>
+<span class="nc" id="L2006">                    .containsOnly(procParallelMultiInst.getId());</span>
+
+<span class="nc bnc" id="L2008" title="All 2 branches missed.">            if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.AUDIT, processEngineConfiguration)) {</span>
+<span class="nc" id="L2009">                List&lt;HistoricTaskInstance&gt; historicTasks = historyService.createHistoricTaskInstanceQuery()</span>
+<span class="nc" id="L2010">                        .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L2011">                        .list();</span>
+<span class="nc" id="L2012">                assertThat(historicTasks)</span>
+<span class="nc" id="L2013">                        .extracting(HistoricTaskInstance::getTaskDefinitionKey)</span>
+<span class="nc" id="L2014">                        .haveAtMost(1, new Condition&lt;&gt;((String s) -&gt; &quot;beforeMultiInstance&quot;.equals(s), &quot;beforeMultiInstance completed task&quot;));</span>
+<span class="nc" id="L2015">                assertThat(historicTasks)</span>
+<span class="nc" id="L2016">                        .extracting(HistoricTaskInstance::getTaskDefinitionKey)</span>
+<span class="nc" id="L2017">                        .haveAtMost(6, new Condition&lt;&gt;((String s) -&gt; &quot;nestedSubTask1&quot;.equals(s), &quot;nestedSubTask1 completed task&quot;));</span>
+<span class="nc" id="L2018">                assertThat(historicTasks)</span>
+<span class="nc" id="L2019">                        .extracting(HistoricTaskInstance::getTaskDefinitionKey)</span>
+<span class="nc" id="L2020">                        .haveAtMost(6, new Condition&lt;&gt;((String s) -&gt; &quot;subTask1&quot;.equals(s), &quot;subTask1 completed task&quot;));</span>
+<span class="nc" id="L2021">                assertThat(historicTasks)</span>
+<span class="nc" id="L2022">                        .extracting(HistoricTaskInstance::getTaskDefinitionKey)</span>
+<span class="nc" id="L2023">                        .haveAtMost(4, new Condition&lt;&gt;((String s) -&gt; &quot;subTask2&quot;.equals(s), &quot;subTask2 completed task&quot;));</span>
+<span class="nc" id="L2024">                assertThat(historicTasks)</span>
+<span class="nc" id="L2025">                        .extracting(HistoricTaskInstance::getTaskDefinitionKey)</span>
+<span class="nc" id="L2026">                        .haveAtMost(2, new Condition&lt;&gt;((String s) -&gt; &quot;afterMultiInstance&quot;.equals(s), &quot;afterMultiInstance completed task&quot;));</span>
+<span class="nc" id="L2027">                assertThat(historicTasks)</span>
+<span class="nc" id="L2028">                        .extracting(HistoricTaskInstance::getProcessDefinitionId)</span>
+<span class="nc" id="L2029">                        .containsOnly(procParallelMultiInst.getId());</span>
+            }
+        }
+
+<span class="nc" id="L2033">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L2034">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

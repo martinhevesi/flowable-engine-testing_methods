@@ -1,0 +1,285 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TerminateEndEventActivityBehavior.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.bpmn.behavior</a> &gt; <span class="el_source">TerminateEndEventActivityBehavior.java</span></div><h1>TerminateEndEventActivityBehavior.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.impl.bpmn.behavior;
+
+import java.util.List;
+
+import org.flowable.bpmn.model.CallActivity;
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.FlowElementsContainer;
+import org.flowable.bpmn.model.Process;
+import org.flowable.bpmn.model.SubProcess;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.delegate.event.FlowableEngineEventType;
+import org.flowable.common.engine.api.delegate.event.FlowableEventDispatcher;
+import org.flowable.common.engine.impl.context.Context;
+import org.flowable.common.engine.impl.history.HistoryLevel;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.common.engine.impl.runtime.Clock;
+import org.flowable.engine.delegate.DelegateExecution;
+import org.flowable.engine.delegate.ExecutionListener;
+import org.flowable.engine.delegate.event.impl.FlowableEventBuilder;
+import org.flowable.engine.history.DeleteReason;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.delegate.SubProcessActivityBehavior;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntity;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntityManager;
+import org.flowable.engine.impl.persistence.entity.HistoricActivityInstanceEntity;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.engine.impl.util.ProcessDefinitionUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * @author Joram Barrez
+ */
+public class TerminateEndEventActivityBehavior extends FlowNodeActivityBehavior {
+    
+<span class="nc" id="L48">    private static final Logger LOGGER = LoggerFactory.getLogger(TerminateEndEventActivityBehavior.class);</span>
+
+    private static final long serialVersionUID = 1L;
+
+    protected boolean terminateAll;
+    protected boolean terminateMultiInstance;
+
+<span class="nc" id="L55">    public TerminateEndEventActivityBehavior() {</span>
+
+<span class="nc" id="L57">    }</span>
+
+    @Override
+    public void execute(DelegateExecution execution) {
+
+<span class="nc" id="L62">        CommandContext commandContext = Context.getCommandContext();</span>
+<span class="nc" id="L63">        ExecutionEntityManager executionEntityManager = CommandContextUtil.getExecutionEntityManager(commandContext);</span>
+        
+        // The current execution always stops here
+<span class="nc" id="L66">        ExecutionEntity executionEntity = (ExecutionEntity) execution;</span>
+<span class="nc" id="L67">        executionEntityManager.deleteExecutionAndRelatedData(executionEntity, createDeleteReason(executionEntity.getCurrentActivityId()), false);</span>
+        
+<span class="nc bnc" id="L69" title="All 2 branches missed.">        if (terminateAll) {</span>
+<span class="nc" id="L70">            terminateAllBehaviour(executionEntity, commandContext, executionEntityManager);</span>
+<span class="nc bnc" id="L71" title="All 2 branches missed.">        } else if (terminateMultiInstance) {</span>
+<span class="nc" id="L72">            terminateMultiInstanceRoot(executionEntity, commandContext, executionEntityManager);</span>
+        } else {
+<span class="nc" id="L74">            defaultTerminateEndEventBehaviour(executionEntity, commandContext, executionEntityManager);</span>
+        }
+<span class="nc" id="L76">    }</span>
+
+    protected void terminateAllBehaviour(ExecutionEntity execution, CommandContext commandContext, ExecutionEntityManager executionEntityManager) {
+<span class="nc" id="L79">        ExecutionEntity rootExecutionEntity = executionEntityManager.findByRootProcessInstanceId(execution.getRootProcessInstanceId());</span>
+<span class="nc" id="L80">        String deleteReason = createDeleteReason(execution.getCurrentActivityId());</span>
+<span class="nc" id="L81">        deleteExecutionEntities(executionEntityManager, rootExecutionEntity, execution, deleteReason);</span>
+<span class="nc" id="L82">        endAllHistoricActivities(rootExecutionEntity.getId(), deleteReason);</span>
+<span class="nc" id="L83">        CommandContextUtil.getHistoryManager(commandContext).recordProcessInstanceEnd(rootExecutionEntity,</span>
+<span class="nc" id="L84">                deleteReason, execution.getCurrentActivityId(), CommandContextUtil.getProcessEngineConfiguration(commandContext).getClock().getCurrentTime());</span>
+<span class="nc" id="L85">    }</span>
+
+    protected void defaultTerminateEndEventBehaviour(ExecutionEntity execution, CommandContext commandContext,
+            ExecutionEntityManager executionEntityManager) {
+
+<span class="nc" id="L90">        ExecutionEntity scopeExecutionEntity = executionEntityManager.findFirstScope(execution);</span>
+
+        // If the scope is the process instance, we can just terminate it all
+        // Special treatment is needed when the terminated activity is a subprocess (embedded/callactivity/..)
+        // The subprocess is destroyed, but the execution calling it, continues further on.
+        // In case of a multi-instance subprocess, only one instance is terminated, the other instances continue to exist.
+
+<span class="nc" id="L97">        String deleteReason = createDeleteReason(execution.getCurrentActivityId());</span>
+
+<span class="nc bnc" id="L99" title="All 4 branches missed.">        if (scopeExecutionEntity.isProcessInstanceType() &amp;&amp; scopeExecutionEntity.getSuperExecutionId() == null) {</span>
+<span class="nc" id="L100">            endAllHistoricActivities(scopeExecutionEntity.getId(), deleteReason);</span>
+<span class="nc" id="L101">            deleteExecutionEntities(executionEntityManager, scopeExecutionEntity, execution, deleteReason);</span>
+<span class="nc" id="L102">            CommandContextUtil.getHistoryManager(commandContext).recordProcessInstanceEnd(scopeExecutionEntity, deleteReason, execution.getCurrentActivityId(),</span>
+<span class="nc" id="L103">                    CommandContextUtil.getProcessEngineConfiguration(commandContext).getClock().getCurrentTime());</span>
+
+<span class="nc bnc" id="L105" title="All 2 branches missed.">        } else if (scopeExecutionEntity.getCurrentFlowElement() != null</span>
+<span class="nc bnc" id="L106" title="All 2 branches missed.">                &amp;&amp; scopeExecutionEntity.getCurrentFlowElement() instanceof SubProcess) { // SubProcess</span>
+
+<span class="nc" id="L108">            SubProcess subProcess = (SubProcess) scopeExecutionEntity.getCurrentFlowElement();</span>
+            
+<span class="nc" id="L110">            scopeExecutionEntity.setDeleteReason(deleteReason);</span>
+<span class="nc bnc" id="L111" title="All 2 branches missed.">            if (subProcess.hasMultiInstanceLoopCharacteristics()) {</span>
+<span class="nc" id="L112">                CommandContextUtil.getAgenda(commandContext).planDestroyScopeOperation(scopeExecutionEntity);</span>
+<span class="nc" id="L113">                MultiInstanceActivityBehavior multiInstanceBehavior = (MultiInstanceActivityBehavior) subProcess.getBehavior();</span>
+<span class="nc" id="L114">                multiInstanceBehavior.leave(scopeExecutionEntity);</span>
+
+<span class="nc" id="L116">            } else {</span>
+<span class="nc" id="L117">                CommandContextUtil.getAgenda(commandContext).planDestroyScopeOperation(scopeExecutionEntity);</span>
+<span class="nc" id="L118">                ExecutionEntity outgoingFlowExecution = executionEntityManager.createChildExecution(scopeExecutionEntity.getParent());</span>
+<span class="nc" id="L119">                outgoingFlowExecution.setCurrentFlowElement(scopeExecutionEntity.getCurrentFlowElement());</span>
+<span class="nc" id="L120">                CommandContextUtil.getAgenda(commandContext).planTakeOutgoingSequenceFlowsOperation(outgoingFlowExecution, true);</span>
+            }
+
+<span class="nc bnc" id="L123" title="All 2 branches missed.">        } else if (scopeExecutionEntity.getParentId() == null</span>
+<span class="nc bnc" id="L124" title="All 2 branches missed.">                &amp;&amp; scopeExecutionEntity.getSuperExecutionId() != null) { // CallActivity</span>
+
+<span class="nc" id="L126">            ExecutionEntity callActivityExecution = scopeExecutionEntity.getSuperExecution();</span>
+<span class="nc" id="L127">            CallActivity callActivity = (CallActivity) callActivityExecution.getCurrentFlowElement();</span>
+            
+<span class="nc" id="L129">            SubProcessActivityBehavior subProcessActivityBehavior = null;</span>
+
+            // copy variables before destroying the ended sub process instance (call activity)
+<span class="nc" id="L132">            subProcessActivityBehavior = (SubProcessActivityBehavior) callActivity.getBehavior();</span>
+            try {
+<span class="nc" id="L134">                subProcessActivityBehavior.completing(callActivityExecution, scopeExecutionEntity);</span>
+<span class="nc" id="L135">            } catch (RuntimeException e) {</span>
+<span class="nc" id="L136">                LOGGER.error(&quot;Error while completing sub process of execution {}&quot;, scopeExecutionEntity, e);</span>
+<span class="nc" id="L137">                throw e;</span>
+<span class="nc" id="L138">            } catch (Exception e) {</span>
+<span class="nc" id="L139">                LOGGER.error(&quot;Error while completing sub process of execution {}&quot;, scopeExecutionEntity, e);</span>
+<span class="nc" id="L140">                throw new FlowableException(&quot;Error while completing sub process of execution &quot; + scopeExecutionEntity, e);</span>
+<span class="nc" id="L141">            }</span>
+
+<span class="nc bnc" id="L143" title="All 2 branches missed.">            if (callActivity.hasMultiInstanceLoopCharacteristics()) {</span>
+
+<span class="nc" id="L145">                sendProcessInstanceCompletedEvent(scopeExecutionEntity, execution.getCurrentFlowElement());</span>
+<span class="nc" id="L146">                MultiInstanceActivityBehavior multiInstanceBehavior = (MultiInstanceActivityBehavior) callActivity.getBehavior();</span>
+<span class="nc" id="L147">                multiInstanceBehavior.leave(callActivityExecution);</span>
+<span class="nc" id="L148">                executionEntityManager.deleteProcessInstanceExecutionEntity(scopeExecutionEntity.getId(), </span>
+<span class="nc" id="L149">                                execution.getCurrentFlowElement().getId(), &quot;terminate end event&quot;, false, false, false);</span>
+
+<span class="nc" id="L151">            } else {</span>
+<span class="nc" id="L152">                sendProcessInstanceCompletedEvent(scopeExecutionEntity, execution.getCurrentFlowElement());</span>
+<span class="nc" id="L153">                executionEntityManager.deleteProcessInstanceExecutionEntity(scopeExecutionEntity.getId(), </span>
+<span class="nc" id="L154">                                execution.getCurrentFlowElement().getId(), &quot;terminate end event&quot;, false, false, false);</span>
+<span class="nc" id="L155">                ExecutionEntity superExecutionEntity = executionEntityManager.findById(scopeExecutionEntity.getSuperExecutionId());</span>
+<span class="nc" id="L156">                CommandContextUtil.getAgenda(commandContext).planTakeOutgoingSequenceFlowsOperation(superExecutionEntity, true);</span>
+
+            }
+
+        }
+<span class="nc" id="L161">    }</span>
+
+    protected void endAllHistoricActivities(String processInstanceId, String deleteReason) {
+
+<span class="nc" id="L165">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration();</span>
+<span class="nc bnc" id="L166" title="All 2 branches missed.">        if (!processEngineConfiguration.getHistoryLevel().isAtLeast(HistoryLevel.ACTIVITY)) {</span>
+<span class="nc" id="L167">            return;</span>
+        }
+
+<span class="nc" id="L170">        List&lt;HistoricActivityInstanceEntity&gt; historicActivityInstances = processEngineConfiguration.getHistoricActivityInstanceEntityManager()</span>
+<span class="nc" id="L171">                .findUnfinishedHistoricActivityInstancesByProcessInstanceId(processInstanceId);</span>
+
+<span class="nc" id="L173">        Clock clock = processEngineConfiguration.getClock();</span>
+<span class="nc bnc" id="L174" title="All 2 branches missed.">        for (HistoricActivityInstanceEntity historicActivityInstance : historicActivityInstances) {</span>
+<span class="nc" id="L175">            historicActivityInstance.markEnded(deleteReason, clock.getCurrentTime());</span>
+
+            // Fire event
+<span class="nc" id="L178">            FlowableEventDispatcher eventDispatcher = null;</span>
+<span class="nc bnc" id="L179" title="All 2 branches missed.">            if (processEngineConfiguration != null) {</span>
+<span class="nc" id="L180">                eventDispatcher = processEngineConfiguration.getEventDispatcher();</span>
+            }
+<span class="nc bnc" id="L182" title="All 4 branches missed.">            if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L183">                eventDispatcher.dispatchEvent(FlowableEventBuilder.createEntityEvent(FlowableEngineEventType.HISTORIC_ACTIVITY_INSTANCE_ENDED, historicActivityInstance),</span>
+<span class="nc" id="L184">                        processEngineConfiguration.getEngineCfgKey());</span>
+            }
+<span class="nc" id="L186">        }</span>
+
+<span class="nc" id="L188">    }</span>
+
+    protected void terminateMultiInstanceRoot(ExecutionEntity execution, CommandContext commandContext,
+            ExecutionEntityManager executionEntityManager) {
+
+        // When terminateMultiInstance is 'true', we look for the multi instance root and delete it from there.
+<span class="nc" id="L194">        ExecutionEntity miRootExecutionEntity = executionEntityManager.findFirstMultiInstanceRoot( execution);</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">        if (miRootExecutionEntity != null) {</span>
+
+            // Create sibling execution to continue process instance execution before deletion
+<span class="nc" id="L198">            ExecutionEntity siblingExecution = executionEntityManager.createChildExecution(miRootExecutionEntity.getParent());</span>
+<span class="nc" id="L199">            siblingExecution.setCurrentFlowElement(miRootExecutionEntity.getCurrentFlowElement());</span>
+
+<span class="nc" id="L201">            deleteExecutionEntities(executionEntityManager, miRootExecutionEntity, execution, createDeleteReason(miRootExecutionEntity.getActivityId()));</span>
+
+<span class="nc" id="L203">            CommandContextUtil.getAgenda(commandContext).planTakeOutgoingSequenceFlowsOperation(siblingExecution, true);</span>
+<span class="nc" id="L204">        } else {</span>
+<span class="nc" id="L205">            defaultTerminateEndEventBehaviour(execution, commandContext, executionEntityManager);</span>
+        }
+<span class="nc" id="L207">    }</span>
+
+    protected void deleteExecutionEntities(ExecutionEntityManager executionEntityManager, ExecutionEntity rootExecutionEntity,
+                    ExecutionEntity executionAtTerminateEndEvent, String deleteReason) {
+
+<span class="nc" id="L212">        FlowElement terminateEndEvent = executionAtTerminateEndEvent.getCurrentFlowElement();</span>
+        
+<span class="nc" id="L214">        List&lt;ExecutionEntity&gt; childExecutions = executionEntityManager.collectChildren(rootExecutionEntity);</span>
+<span class="nc bnc" id="L215" title="All 2 branches missed.">        for (ExecutionEntity childExecution : childExecutions) {</span>
+<span class="nc bnc" id="L216" title="All 2 branches missed.">            if (childExecution.isProcessInstanceType()) {</span>
+<span class="nc" id="L217">                sendProcessInstanceCompletedEvent(childExecution, terminateEndEvent);</span>
+            }
+<span class="nc" id="L219">        }</span>
+        
+<span class="nc" id="L221">        CommandContextUtil.getExecutionEntityManager().deleteChildExecutions(rootExecutionEntity, null, null, deleteReason, true, terminateEndEvent);</span>
+<span class="nc" id="L222">        sendProcessInstanceCompletedEvent(rootExecutionEntity, terminateEndEvent);</span>
+<span class="nc" id="L223">        executionEntityManager.deleteExecutionAndRelatedData(rootExecutionEntity, deleteReason, false);</span>
+<span class="nc" id="L224">    }</span>
+
+    protected void sendProcessInstanceCompletedEvent(ExecutionEntity execution, FlowElement terminateEndEvent) {
+<span class="nc" id="L227">        Process process = ProcessDefinitionUtil.getProcess(execution.getProcessDefinitionId());</span>
+<span class="nc" id="L228">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration();</span>
+<span class="nc" id="L229">        processEngineConfiguration.getListenerNotificationHelper().executeExecutionListeners(</span>
+                process, execution, ExecutionListener.EVENTNAME_END);
+
+<span class="nc" id="L232">        FlowableEventDispatcher eventDispatcher = processEngineConfiguration.getEventDispatcher();</span>
+<span class="nc bnc" id="L233" title="All 4 branches missed.">        if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc bnc" id="L234" title="All 4 branches missed.">            if ((execution.isProcessInstanceType() &amp;&amp; execution.getSuperExecutionId() == null) ||</span>
+<span class="nc bnc" id="L235" title="All 4 branches missed.">                    (execution.getParentId() == null &amp;&amp; execution.getSuperExecutionId() != null)) {</span>
+
+                // This event should only be fired if terminate end event is part of the process definition for the process instance execution,
+                // otherwise a regular cancel event of the process instance will be fired (see above).
+<span class="nc" id="L239">                boolean fireEvent = true;</span>
+<span class="nc bnc" id="L240" title="All 2 branches missed.">                if (!terminateAll) {</span>
+<span class="nc" id="L241">                    Process processForExecution = ProcessDefinitionUtil.getProcess(execution.getProcessDefinitionId());</span>
+<span class="nc" id="L242">                    Process processForTerminateEndEvent = getProcessForTerminateEndEvent(terminateEndEvent);</span>
+<span class="nc" id="L243">                    fireEvent = processForExecution.getId().equals(processForTerminateEndEvent.getId());</span>
+                }
+                
+<span class="nc bnc" id="L246" title="All 2 branches missed.">                if (fireEvent) {</span>
+<span class="nc" id="L247">                    eventDispatcher.dispatchEvent(FlowableEventBuilder.createTerminateEvent(execution, terminateEndEvent),</span>
+<span class="nc" id="L248">                            processEngineConfiguration.getEngineCfgKey());</span>
+                }
+            }
+        }
+<span class="nc" id="L252">    }</span>
+    
+    protected Process getProcessForTerminateEndEvent(FlowElement terminateEndEvent) {
+<span class="nc" id="L255">        FlowElementsContainer parent = terminateEndEvent.getParentContainer();</span>
+<span class="nc bnc" id="L256" title="All 2 branches missed.">        while (!(parent instanceof Process)) {</span>
+            // FlowElementsContainer can only be Process or SubProcess (and its subtypes)
+<span class="nc" id="L258">            SubProcess subProcess = (SubProcess) parent;</span>
+<span class="nc" id="L259">            parent = subProcess.getParentContainer();</span>
+<span class="nc" id="L260">        }</span>
+<span class="nc" id="L261">        return (Process) parent;</span>
+    }
+
+    protected String createDeleteReason(String activityId) {
+<span class="nc" id="L265">        return DeleteReason.TERMINATE_END_EVENT + &quot; (&quot; + activityId + &quot;)&quot;;</span>
+    }
+
+    public boolean isTerminateAll() {
+<span class="nc" id="L269">        return terminateAll;</span>
+    }
+
+    public void setTerminateAll(boolean terminateAll) {
+<span class="nc" id="L273">        this.terminateAll = terminateAll;</span>
+<span class="nc" id="L274">    }</span>
+
+    public boolean isTerminateMultiInstance() {
+<span class="nc" id="L277">        return terminateMultiInstance;</span>
+    }
+
+    public void setTerminateMultiInstance(boolean terminateMultiInstance) {
+<span class="nc" id="L281">        this.terminateMultiInstance = terminateMultiInstance;</span>
+<span class="nc" id="L282">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

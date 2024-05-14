@@ -1,0 +1,561 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BpmnDeployer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.bpmn.deployer</a> &gt; <span class="el_source">BpmnDeployer.java</span></div><h1>BpmnDeployer.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.impl.bpmn.deployer;
+
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.bpmn.constants.BpmnXMLConstants;
+import org.flowable.bpmn.model.BpmnModel;
+import org.flowable.bpmn.model.ExtensionElement;
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.Process;
+import org.flowable.bpmn.model.StartEvent;
+import org.flowable.bpmn.model.SubProcess;
+import org.flowable.bpmn.model.UserTask;
+import org.flowable.bpmn.model.ValuedDataObject;
+import org.flowable.common.engine.api.delegate.event.FlowableEngineEventType;
+import org.flowable.common.engine.api.delegate.event.FlowableEventDispatcher;
+import org.flowable.common.engine.api.repository.EngineDeployment;
+import org.flowable.common.engine.api.repository.EngineResource;
+import org.flowable.common.engine.impl.EngineDeployer;
+import org.flowable.common.engine.impl.cfg.IdGenerator;
+import org.flowable.common.engine.impl.context.Context;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.engine.DynamicBpmnConstants;
+import org.flowable.engine.DynamicBpmnService;
+import org.flowable.engine.delegate.event.impl.FlowableEventBuilder;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.cmd.DeploymentSettings;
+import org.flowable.engine.impl.persistence.entity.DeploymentEntity;
+import org.flowable.engine.impl.persistence.entity.ProcessDefinitionEntity;
+import org.flowable.engine.impl.persistence.entity.ProcessDefinitionEntityManager;
+import org.flowable.engine.impl.persistence.entity.ResourceEntity;
+import org.flowable.engine.impl.persistence.entity.ResourceEntityManager;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+/**
+ * @author Joram Barrez
+ * @author Tijs Rademakers
+ */
+<span class="nc" id="L59">public class BpmnDeployer implements EngineDeployer {</span>
+
+<span class="nc" id="L61">    private static final Logger LOGGER = LoggerFactory.getLogger(BpmnDeployer.class);</span>
+
+    protected IdGenerator idGenerator;
+    protected ParsedDeploymentBuilderFactory parsedDeploymentBuilderFactory;
+    protected BpmnDeploymentHelper bpmnDeploymentHelper;
+    protected CachingAndArtifactsManager cachingAndArtifactsManager;
+    protected ProcessDefinitionDiagramHelper processDefinitionDiagramHelper;
+    protected boolean usePrefixId;
+
+    @Override
+    public void deploy(EngineDeployment deployment, Map&lt;String, Object&gt; deploymentSettings) {
+<span class="nc" id="L72">        LOGGER.debug(&quot;Processing deployment {}&quot;, deployment.getName());</span>
+
+        // The ParsedDeployment represents the deployment, the process definitions, and the BPMN
+        // resource, parse, and model associated with each process definition.
+<span class="nc" id="L76">        ParsedDeployment parsedDeployment = parsedDeploymentBuilderFactory</span>
+<span class="nc" id="L77">                .getBuilderForDeploymentAndSettings(deployment, deploymentSettings)</span>
+<span class="nc" id="L78">                .build();</span>
+
+<span class="nc" id="L80">        bpmnDeploymentHelper.verifyProcessDefinitionsDoNotShareKeys(parsedDeployment.getAllProcessDefinitions());</span>
+
+<span class="nc" id="L82">        bpmnDeploymentHelper.copyDeploymentValuesToProcessDefinitions(</span>
+<span class="nc" id="L83">                parsedDeployment.getDeployment(), parsedDeployment.getAllProcessDefinitions());</span>
+<span class="nc" id="L84">        bpmnDeploymentHelper.setResourceNamesOnProcessDefinitions(parsedDeployment);</span>
+
+<span class="nc" id="L86">        createAndPersistNewDiagramsIfNeeded(parsedDeployment);</span>
+<span class="nc" id="L87">        setProcessDefinitionDiagramNames(parsedDeployment);</span>
+
+<span class="nc bnc" id="L89" title="All 2 branches missed.">        if (deployment.isNew()) {</span>
+<span class="nc bnc" id="L90" title="All 2 branches missed.">            if (!deploymentSettings.containsKey(DeploymentSettings.IS_DERIVED_DEPLOYMENT)) {</span>
+<span class="nc" id="L91">                Map&lt;ProcessDefinitionEntity, ProcessDefinitionEntity&gt; mapOfNewProcessDefinitionToPreviousVersion = getPreviousVersionsOfProcessDefinitions(parsedDeployment);</span>
+<span class="nc" id="L92">                setProcessDefinitionVersionsAndIds(parsedDeployment, mapOfNewProcessDefinitionToPreviousVersion);</span>
+<span class="nc" id="L93">                persistProcessDefinitionsAndAuthorizations(parsedDeployment);</span>
+<span class="nc" id="L94">                updateTimersAndEvents(parsedDeployment, mapOfNewProcessDefinitionToPreviousVersion);</span>
+
+<span class="nc" id="L96">            } else {</span>
+<span class="nc" id="L97">                Map&lt;ProcessDefinitionEntity, ProcessDefinitionEntity&gt; mapOfNewProcessDefinitionToPreviousDerivedVersion = </span>
+<span class="nc" id="L98">                                getPreviousDerivedFromVersionsOfProcessDefinitions(parsedDeployment);</span>
+<span class="nc" id="L99">                setDerivedProcessDefinitionVersionsAndIds(parsedDeployment, mapOfNewProcessDefinitionToPreviousDerivedVersion, deploymentSettings);</span>
+<span class="nc" id="L100">                persistProcessDefinitionsAndAuthorizations(parsedDeployment);</span>
+<span class="nc" id="L101">            }</span>
+          
+        } else {
+<span class="nc" id="L104">            makeProcessDefinitionsConsistentWithPersistedVersions(parsedDeployment);</span>
+        }
+
+<span class="nc" id="L107">        cachingAndArtifactsManager.updateCachingAndArtifacts(parsedDeployment);</span>
+
+<span class="nc bnc" id="L109" title="All 2 branches missed.">        if (deployment.isNew()) {</span>
+<span class="nc" id="L110">            dispatchProcessDefinitionEntityInitializedEvent(parsedDeployment);</span>
+        }
+
+<span class="nc bnc" id="L113" title="All 2 branches missed.">        for (ProcessDefinitionEntity processDefinition : parsedDeployment.getAllProcessDefinitions()) {</span>
+<span class="nc" id="L114">            BpmnModel bpmnModel = parsedDeployment.getBpmnModelForProcessDefinition(processDefinition);</span>
+<span class="nc" id="L115">            createLocalizationValues(processDefinition.getId(), bpmnModel.getProcessById(processDefinition.getKey()));</span>
+<span class="nc" id="L116">        }</span>
+<span class="nc" id="L117">    }</span>
+
+    /**
+     * Creates new diagrams for process definitions if the deployment is new, the process definition in question supports it, and the engine is configured to make new diagrams.
+     *
+     * When this method creates a new diagram, it also persists it via the ResourceEntityManager and adds it to the resources of the deployment.
+     */
+    protected void createAndPersistNewDiagramsIfNeeded(ParsedDeployment parsedDeployment) {
+<span class="nc" id="L125">        final ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration();</span>
+<span class="nc" id="L126">        final DeploymentEntity deploymentEntity = parsedDeployment.getDeployment();</span>
+
+<span class="nc" id="L128">        final ResourceEntityManager resourceEntityManager = processEngineConfiguration.getResourceEntityManager();</span>
+
+<span class="nc bnc" id="L130" title="All 2 branches missed.">        for (ProcessDefinitionEntity processDefinition : parsedDeployment.getAllProcessDefinitions()) {</span>
+<span class="nc bnc" id="L131" title="All 2 branches missed.">            if (processDefinitionDiagramHelper.shouldCreateDiagram(processDefinition, deploymentEntity)) {</span>
+<span class="nc" id="L132">                ResourceEntity resource = processDefinitionDiagramHelper.createDiagramForProcessDefinition(</span>
+<span class="nc" id="L133">                        processDefinition, parsedDeployment.getBpmnParseForProcessDefinition(processDefinition));</span>
+<span class="nc bnc" id="L134" title="All 2 branches missed.">                if (resource != null) {</span>
+<span class="nc" id="L135">                    resourceEntityManager.insert(resource, false);</span>
+<span class="nc" id="L136">                    deploymentEntity.addResource(resource); // now we'll find it if we look for the diagram name later.</span>
+                }
+            }
+<span class="nc" id="L139">        }</span>
+<span class="nc" id="L140">    }</span>
+
+    /**
+     * Updates all the process definition entities to have the correct diagram resource name. Must be called after createAndPersistNewDiagramsAsNeeded to ensure that any newly-created diagrams already
+     * have their resources attached to the deployment.
+     */
+    protected void setProcessDefinitionDiagramNames(ParsedDeployment parsedDeployment) {
+<span class="nc" id="L147">        Map&lt;String, EngineResource&gt; resources = parsedDeployment.getDeployment().getResources();</span>
+
+<span class="nc bnc" id="L149" title="All 2 branches missed.">        for (ProcessDefinitionEntity processDefinition : parsedDeployment.getAllProcessDefinitions()) {</span>
+<span class="nc" id="L150">            String diagramResourceName = ResourceNameUtil.getProcessDiagramResourceNameFromDeployment(processDefinition, resources);</span>
+<span class="nc" id="L151">            processDefinition.setDiagramResourceName(diagramResourceName);</span>
+<span class="nc" id="L152">        }</span>
+<span class="nc" id="L153">    }</span>
+
+    /**
+     * Constructs a map from new ProcessDefinitionEntities to the previous version by key and tenant. If no previous version exists, no map entry is created.
+     */
+    protected Map&lt;ProcessDefinitionEntity, ProcessDefinitionEntity&gt; getPreviousVersionsOfProcessDefinitions(
+            ParsedDeployment parsedDeployment) {
+
+<span class="nc" id="L161">        Map&lt;ProcessDefinitionEntity, ProcessDefinitionEntity&gt; result = new LinkedHashMap&lt;&gt;();</span>
+
+<span class="nc bnc" id="L163" title="All 2 branches missed.">        for (ProcessDefinitionEntity newDefinition : parsedDeployment.getAllProcessDefinitions()) {</span>
+<span class="nc" id="L164">            ProcessDefinitionEntity existingDefinition = bpmnDeploymentHelper.getMostRecentVersionOfProcessDefinition(newDefinition);</span>
+
+<span class="nc bnc" id="L166" title="All 2 branches missed.">            if (existingDefinition != null) {</span>
+<span class="nc" id="L167">                result.put(newDefinition, existingDefinition);</span>
+            }
+<span class="nc" id="L169">        }</span>
+
+<span class="nc" id="L171">        return result;</span>
+    }
+    
+    /**
+     * Constructs a map from new ProcessDefinitionEntities to the previous derived from version by key and tenant. If no previous version exists, no map entry is created.
+     */
+    protected Map&lt;ProcessDefinitionEntity, ProcessDefinitionEntity&gt; getPreviousDerivedFromVersionsOfProcessDefinitions(
+            ParsedDeployment parsedDeployment) {
+
+<span class="nc" id="L180">        Map&lt;ProcessDefinitionEntity, ProcessDefinitionEntity&gt; result = new LinkedHashMap&lt;&gt;();</span>
+
+<span class="nc bnc" id="L182" title="All 2 branches missed.">        for (ProcessDefinitionEntity newDefinition : parsedDeployment.getAllProcessDefinitions()) {</span>
+<span class="nc" id="L183">            ProcessDefinitionEntity existingDefinition = bpmnDeploymentHelper.getMostRecentDerivedVersionOfProcessDefinition(newDefinition);</span>
+
+<span class="nc bnc" id="L185" title="All 2 branches missed.">            if (existingDefinition != null) {</span>
+<span class="nc" id="L186">                result.put(newDefinition, existingDefinition);</span>
+            }
+<span class="nc" id="L188">        }</span>
+
+<span class="nc" id="L190">        return result;</span>
+    }
+
+    /**
+     * Sets the version on each process definition entity, and the identifier. If the map contains an older version for a process definition, then the version is set to that older entity's version
+     * plus one; otherwise it is set to 1. Also dispatches an ENTITY_CREATED event.
+     */
+    protected void setProcessDefinitionVersionsAndIds(ParsedDeployment parsedDeployment,
+            Map&lt;ProcessDefinitionEntity, ProcessDefinitionEntity&gt; mapNewToOldProcessDefinitions) {
+        
+<span class="nc" id="L200">        CommandContext commandContext = Context.getCommandContext();</span>
+
+<span class="nc bnc" id="L202" title="All 2 branches missed.">        for (ProcessDefinitionEntity processDefinition : parsedDeployment.getAllProcessDefinitions()) {</span>
+<span class="nc" id="L203">            int version = 1;</span>
+
+<span class="nc" id="L205">            ProcessDefinitionEntity latest = mapNewToOldProcessDefinitions.get(processDefinition);</span>
+<span class="nc bnc" id="L206" title="All 2 branches missed.">            if (latest != null) {</span>
+<span class="nc" id="L207">                version = latest.getVersion() + 1;</span>
+            }
+
+<span class="nc" id="L210">            processDefinition.setVersion(version);</span>
+<span class="nc" id="L211">            processDefinition.setId(getIdForNewProcessDefinition(processDefinition));</span>
+<span class="nc" id="L212">            Process process = parsedDeployment.getProcessModelForProcessDefinition(processDefinition);</span>
+<span class="nc" id="L213">            FlowElement initialElement = process.getInitialFlowElement();</span>
+<span class="nc bnc" id="L214" title="All 2 branches missed.">            if (initialElement instanceof StartEvent) {</span>
+<span class="nc" id="L215">                StartEvent startEvent = (StartEvent) initialElement;</span>
+<span class="nc bnc" id="L216" title="All 2 branches missed.">                if (startEvent.getFormKey() != null) {</span>
+<span class="nc" id="L217">                    processDefinition.setHasStartFormKey(true);</span>
+                }
+            }
+
+<span class="nc" id="L221">            cachingAndArtifactsManager.updateProcessDefinitionCache(parsedDeployment);</span>
+
+<span class="nc" id="L223">            ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc" id="L224">            FlowableEventDispatcher eventDispatcher = processEngineConfiguration.getEventDispatcher();</span>
+<span class="nc bnc" id="L225" title="All 4 branches missed.">            if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L226">                eventDispatcher.dispatchEvent(FlowableEventBuilder.createEntityEvent(FlowableEngineEventType.ENTITY_CREATED, processDefinition),</span>
+<span class="nc" id="L227">                        processEngineConfiguration.getEngineCfgKey());</span>
+            }
+<span class="nc" id="L229">        }</span>
+<span class="nc" id="L230">    }</span>
+    
+    protected void setDerivedProcessDefinitionVersionsAndIds(ParsedDeployment parsedDeployment, 
+            Map&lt;ProcessDefinitionEntity, ProcessDefinitionEntity&gt; mapNewToOldProcessDefinitions, Map&lt;String, Object&gt; deploymentSettings) {
+        
+<span class="nc" id="L235">        CommandContext commandContext = Context.getCommandContext();</span>
+        
+<span class="nc bnc" id="L237" title="All 2 branches missed.">        for (ProcessDefinitionEntity processDefinition : parsedDeployment.getAllProcessDefinitions()) {</span>
+<span class="nc" id="L238">            int derivedVersion = 1;</span>
+            
+<span class="nc" id="L240">            ProcessDefinitionEntity latest = mapNewToOldProcessDefinitions.get(processDefinition);</span>
+<span class="nc bnc" id="L241" title="All 2 branches missed.">            if (latest != null) {</span>
+<span class="nc" id="L242">                derivedVersion = latest.getDerivedVersion() + 1;</span>
+            }
+            
+<span class="nc" id="L245">            processDefinition.setVersion(0);</span>
+<span class="nc" id="L246">            processDefinition.setDerivedVersion(derivedVersion);</span>
+<span class="nc bnc" id="L247" title="All 2 branches missed.">            if (usePrefixId) {</span>
+<span class="nc" id="L248">                processDefinition.setId(processDefinition.getIdPrefix() + idGenerator.getNextId());</span>
+            } else {
+<span class="nc" id="L250">                processDefinition.setId(idGenerator.getNextId());</span>
+            }
+            
+<span class="nc" id="L253">            processDefinition.setDerivedFrom((String) deploymentSettings.get(DeploymentSettings.DERIVED_PROCESS_DEFINITION_ID));</span>
+<span class="nc" id="L254">            processDefinition.setDerivedFromRoot((String) deploymentSettings.get(DeploymentSettings.DERIVED_PROCESS_DEFINITION_ROOT_ID));</span>
+
+<span class="nc" id="L256">            Process process = parsedDeployment.getProcessModelForProcessDefinition(processDefinition);</span>
+<span class="nc" id="L257">            FlowElement initialElement = process.getInitialFlowElement();</span>
+<span class="nc bnc" id="L258" title="All 2 branches missed.">            if (initialElement instanceof StartEvent) {</span>
+<span class="nc" id="L259">                StartEvent startEvent = (StartEvent) initialElement;</span>
+<span class="nc bnc" id="L260" title="All 2 branches missed.">                if (startEvent.getFormKey() != null) {</span>
+<span class="nc" id="L261">                    processDefinition.setHasStartFormKey(true);</span>
+                }
+            }
+            
+<span class="nc" id="L265">            cachingAndArtifactsManager.updateProcessDefinitionCache(parsedDeployment);</span>
+
+<span class="nc" id="L267">            ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc" id="L268">            FlowableEventDispatcher eventDispatcher = processEngineConfiguration.getEventDispatcher();</span>
+<span class="nc bnc" id="L269" title="All 4 branches missed.">            if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L270">                eventDispatcher.dispatchEvent(FlowableEventBuilder.createEntityEvent(FlowableEngineEventType.ENTITY_CREATED, processDefinition),</span>
+<span class="nc" id="L271">                        processEngineConfiguration.getEngineCfgKey());</span>
+            }
+<span class="nc" id="L273">        }</span>
+<span class="nc" id="L274">    }</span>
+
+    /**
+     * Saves each process definition. It is assumed that the deployment is new, the definitions have never been saved before, and that they have all their values properly set up.
+     */
+    protected void persistProcessDefinitionsAndAuthorizations(ParsedDeployment parsedDeployment) {
+<span class="nc" id="L280">        CommandContext commandContext = Context.getCommandContext();</span>
+<span class="nc" id="L281">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc" id="L282">        ProcessDefinitionEntityManager processDefinitionManager = processEngineConfiguration.getProcessDefinitionEntityManager();</span>
+
+<span class="nc bnc" id="L284" title="All 2 branches missed.">        for (ProcessDefinitionEntity processDefinition : parsedDeployment.getAllProcessDefinitions()) {</span>
+<span class="nc" id="L285">            processDefinitionManager.insert(processDefinition, false);</span>
+<span class="nc" id="L286">            bpmnDeploymentHelper.addAuthorizationsForNewProcessDefinition(parsedDeployment.getProcessModelForProcessDefinition(processDefinition), processDefinition);</span>
+<span class="nc" id="L287">        }</span>
+<span class="nc" id="L288">    }</span>
+
+    protected void updateTimersAndEvents(ParsedDeployment parsedDeployment,
+            Map&lt;ProcessDefinitionEntity, ProcessDefinitionEntity&gt; mapNewToOldProcessDefinitions) {
+
+<span class="nc bnc" id="L293" title="All 2 branches missed.">        for (ProcessDefinitionEntity processDefinition : parsedDeployment.getAllProcessDefinitions()) {</span>
+<span class="nc" id="L294">            bpmnDeploymentHelper.updateTimersAndEvents(processDefinition,</span>
+<span class="nc" id="L295">                    mapNewToOldProcessDefinitions.get(processDefinition),</span>
+                    parsedDeployment);
+<span class="nc" id="L297">        }</span>
+<span class="nc" id="L298">    }</span>
+
+    protected void dispatchProcessDefinitionEntityInitializedEvent(ParsedDeployment parsedDeployment) {
+<span class="nc" id="L301">        CommandContext commandContext = Context.getCommandContext();</span>
+<span class="nc" id="L302">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc bnc" id="L303" title="All 2 branches missed.">        for (ProcessDefinitionEntity processDefinitionEntity : parsedDeployment.getAllProcessDefinitions()) {</span>
+<span class="nc" id="L304">            FlowableEventDispatcher eventDispatcher = processEngineConfiguration.getEventDispatcher();</span>
+<span class="nc bnc" id="L305" title="All 4 branches missed.">            if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L306">                eventDispatcher.dispatchEvent(FlowableEventBuilder.createEntityEvent(FlowableEngineEventType.ENTITY_INITIALIZED, processDefinitionEntity),</span>
+<span class="nc" id="L307">                        processEngineConfiguration.getEngineCfgKey());</span>
+            }
+<span class="nc" id="L309">        }</span>
+<span class="nc" id="L310">    }</span>
+
+    /**
+     * Returns the ID to use for a new process definition; subclasses may override this to provide their own identification scheme.
+     *
+     * Process definition ids NEED to be unique across the whole engine!
+     */
+    protected String getIdForNewProcessDefinition(ProcessDefinitionEntity processDefinition) {
+<span class="nc" id="L318">        String prefixId = &quot;&quot;;</span>
+<span class="nc bnc" id="L319" title="All 2 branches missed.">        if (usePrefixId) {</span>
+<span class="nc" id="L320">            prefixId = processDefinition.getIdPrefix();</span>
+        } 
+        
+<span class="nc" id="L323">        String nextId = idGenerator.getNextId();</span>
+
+<span class="nc" id="L325">        String result = prefixId + processDefinition.getKey() + &quot;:&quot; + processDefinition.getVersion() + &quot;:&quot; + nextId; // ACT-505</span>
+        // ACT-115: maximum id length is 64 characters
+<span class="nc bnc" id="L327" title="All 2 branches missed.">        if (result.length() &gt; 64) {</span>
+            // The length is exceeded due to the long process definition key
+<span class="nc" id="L329">            result = prefixId + nextId;</span>
+        }
+
+<span class="nc" id="L332">        return result;</span>
+    }
+
+    /**
+     * Loads the persisted version of each process definition and set values on the in-memory version to be consistent.
+     */
+    protected void makeProcessDefinitionsConsistentWithPersistedVersions(ParsedDeployment parsedDeployment) {
+<span class="nc bnc" id="L339" title="All 2 branches missed.">        for (ProcessDefinitionEntity processDefinition : parsedDeployment.getAllProcessDefinitions()) {</span>
+<span class="nc" id="L340">            ProcessDefinitionEntity persistedProcessDefinition = bpmnDeploymentHelper.getPersistedInstanceOfProcessDefinition(processDefinition);</span>
+
+<span class="nc bnc" id="L342" title="All 2 branches missed.">            if (persistedProcessDefinition != null) {</span>
+<span class="nc" id="L343">                processDefinition.setId(persistedProcessDefinition.getId());</span>
+<span class="nc" id="L344">                processDefinition.setVersion(persistedProcessDefinition.getVersion());</span>
+<span class="nc" id="L345">                processDefinition.setSuspensionState(persistedProcessDefinition.getSuspensionState());</span>
+<span class="nc" id="L346">                processDefinition.setHasStartFormKey(persistedProcessDefinition.hasStartFormKey());</span>
+<span class="nc" id="L347">                processDefinition.setGraphicalNotationDefined(persistedProcessDefinition.isGraphicalNotationDefined());</span>
+            }
+<span class="nc" id="L349">        }</span>
+<span class="nc" id="L350">    }</span>
+
+    protected void createLocalizationValues(String processDefinitionId, Process process) {
+<span class="nc bnc" id="L353" title="All 2 branches missed.">        if (process == null) {</span>
+<span class="nc" id="L354">            return;</span>
+        }
+
+<span class="nc" id="L357">        CommandContext commandContext = Context.getCommandContext();</span>
+<span class="nc" id="L358">        DynamicBpmnService dynamicBpmnService = CommandContextUtil.getProcessEngineConfiguration(commandContext).getDynamicBpmnService();</span>
+<span class="nc" id="L359">        ObjectNode infoNode = dynamicBpmnService.getProcessDefinitionInfo(processDefinitionId);</span>
+
+<span class="nc" id="L361">        boolean localizationValuesChanged = false;</span>
+<span class="nc" id="L362">        List&lt;ExtensionElement&gt; localizationElements = process.getExtensionElements().get(&quot;localization&quot;);</span>
+<span class="nc bnc" id="L363" title="All 2 branches missed.">        if (localizationElements != null) {</span>
+<span class="nc bnc" id="L364" title="All 2 branches missed.">            for (ExtensionElement localizationElement : localizationElements) {</span>
+<span class="nc bnc" id="L365" title="All 2 branches missed.">                if (BpmnXMLConstants.FLOWABLE_EXTENSIONS_PREFIX.equals(localizationElement.getNamespacePrefix()) ||</span>
+<span class="nc bnc" id="L366" title="All 2 branches missed.">                        BpmnXMLConstants.ACTIVITI_EXTENSIONS_PREFIX.equals(localizationElement.getNamespacePrefix())) {</span>
+
+<span class="nc" id="L368">                    String locale = localizationElement.getAttributeValue(null, &quot;locale&quot;);</span>
+<span class="nc" id="L369">                    String name = localizationElement.getAttributeValue(null, &quot;name&quot;);</span>
+<span class="nc" id="L370">                    String documentation = null;</span>
+<span class="nc" id="L371">                    List&lt;ExtensionElement&gt; documentationElements = localizationElement.getChildElements().get(&quot;documentation&quot;);</span>
+<span class="nc bnc" id="L372" title="All 2 branches missed.">                    if (documentationElements != null) {</span>
+<span class="nc bnc" id="L373" title="All 2 branches missed.">                        for (ExtensionElement documentationElement : documentationElements) {</span>
+<span class="nc" id="L374">                            documentation = StringUtils.trimToNull(documentationElement.getElementText());</span>
+<span class="nc" id="L375">                            break;</span>
+                        }
+                    }
+
+<span class="nc" id="L379">                    String processId = process.getId();</span>
+<span class="nc bnc" id="L380" title="All 2 branches missed.">                    if (!isEqualToCurrentLocalizationValue(locale, processId, &quot;name&quot;, name, infoNode)) {</span>
+<span class="nc" id="L381">                        dynamicBpmnService.changeLocalizationName(locale, processId, name, infoNode);</span>
+<span class="nc" id="L382">                        localizationValuesChanged = true;</span>
+                    }
+
+<span class="nc bnc" id="L385" title="All 4 branches missed.">                    if (documentation != null &amp;&amp; !isEqualToCurrentLocalizationValue(locale, processId, &quot;description&quot;, documentation, infoNode)) {</span>
+<span class="nc" id="L386">                        dynamicBpmnService.changeLocalizationDescription(locale, processId, documentation, infoNode);</span>
+<span class="nc" id="L387">                        localizationValuesChanged = true;</span>
+                    }
+                }
+<span class="nc" id="L390">            }</span>
+        }
+
+<span class="nc" id="L393">        boolean isFlowElementLocalizationChanged = localizeFlowElements(process.getFlowElements(), infoNode);</span>
+<span class="nc" id="L394">        boolean isDataObjectLocalizationChanged = localizeDataObjectElements(process.getDataObjects(), infoNode);</span>
+<span class="nc bnc" id="L395" title="All 4 branches missed.">        if (isFlowElementLocalizationChanged || isDataObjectLocalizationChanged) {</span>
+<span class="nc" id="L396">            localizationValuesChanged = true;</span>
+        }
+
+<span class="nc bnc" id="L399" title="All 2 branches missed.">        if (localizationValuesChanged) {</span>
+<span class="nc" id="L400">            dynamicBpmnService.saveProcessDefinitionInfo(processDefinitionId, infoNode);</span>
+        }
+<span class="nc" id="L402">    }</span>
+
+    protected boolean localizeFlowElements(Collection&lt;FlowElement&gt; flowElements, ObjectNode infoNode) {
+<span class="nc" id="L405">        boolean localizationValuesChanged = false;</span>
+
+<span class="nc bnc" id="L407" title="All 2 branches missed.">        if (flowElements == null) {</span>
+<span class="nc" id="L408">            return localizationValuesChanged;</span>
+        }
+
+<span class="nc" id="L411">        CommandContext commandContext = Context.getCommandContext();</span>
+<span class="nc" id="L412">        DynamicBpmnService dynamicBpmnService = CommandContextUtil.getProcessEngineConfiguration(commandContext).getDynamicBpmnService();</span>
+
+<span class="nc bnc" id="L414" title="All 2 branches missed.">        for (FlowElement flowElement : flowElements) {</span>
+<span class="nc bnc" id="L415" title="All 4 branches missed.">            if (flowElement instanceof UserTask || flowElement instanceof SubProcess) {</span>
+<span class="nc" id="L416">                List&lt;ExtensionElement&gt; localizationElements = flowElement.getExtensionElements().get(&quot;localization&quot;);</span>
+<span class="nc bnc" id="L417" title="All 2 branches missed.">                if (localizationElements != null) {</span>
+<span class="nc bnc" id="L418" title="All 2 branches missed.">                    for (ExtensionElement localizationElement : localizationElements) {</span>
+<span class="nc bnc" id="L419" title="All 2 branches missed.">                        if (BpmnXMLConstants.FLOWABLE_EXTENSIONS_PREFIX.equals(localizationElement.getNamespacePrefix()) ||</span>
+<span class="nc bnc" id="L420" title="All 2 branches missed.">                                BpmnXMLConstants.ACTIVITI_EXTENSIONS_PREFIX.equals(localizationElement.getNamespacePrefix())) {</span>
+
+<span class="nc" id="L422">                            String locale = localizationElement.getAttributeValue(null, &quot;locale&quot;);</span>
+<span class="nc" id="L423">                            String name = localizationElement.getAttributeValue(null, &quot;name&quot;);</span>
+<span class="nc" id="L424">                            String documentation = null;</span>
+<span class="nc" id="L425">                            List&lt;ExtensionElement&gt; documentationElements = localizationElement.getChildElements().get(&quot;documentation&quot;);</span>
+<span class="nc bnc" id="L426" title="All 2 branches missed.">                            if (documentationElements != null) {</span>
+<span class="nc bnc" id="L427" title="All 2 branches missed.">                                for (ExtensionElement documentationElement : documentationElements) {</span>
+<span class="nc" id="L428">                                    documentation = StringUtils.trimToNull(documentationElement.getElementText());</span>
+<span class="nc" id="L429">                                    break;</span>
+                                }
+                            }
+
+<span class="nc" id="L433">                            String flowElementId = flowElement.getId();</span>
+<span class="nc bnc" id="L434" title="All 2 branches missed.">                            if (!isEqualToCurrentLocalizationValue(locale, flowElementId, &quot;name&quot;, name, infoNode)) {</span>
+<span class="nc" id="L435">                                dynamicBpmnService.changeLocalizationName(locale, flowElementId, name, infoNode);</span>
+<span class="nc" id="L436">                                localizationValuesChanged = true;</span>
+                            }
+
+<span class="nc bnc" id="L439" title="All 4 branches missed.">                            if (documentation != null &amp;&amp; !isEqualToCurrentLocalizationValue(locale, flowElementId, &quot;description&quot;, documentation, infoNode)) {</span>
+<span class="nc" id="L440">                                dynamicBpmnService.changeLocalizationDescription(locale, flowElementId, documentation, infoNode);</span>
+<span class="nc" id="L441">                                localizationValuesChanged = true;</span>
+                            }
+                        }
+<span class="nc" id="L444">                    }</span>
+                }
+
+<span class="nc bnc" id="L447" title="All 2 branches missed.">                if (flowElement instanceof SubProcess) {</span>
+<span class="nc" id="L448">                    SubProcess subprocess = (SubProcess) flowElement;</span>
+<span class="nc" id="L449">                    boolean isFlowElementLocalizationChanged = localizeFlowElements(subprocess.getFlowElements(), infoNode);</span>
+<span class="nc" id="L450">                    boolean isDataObjectLocalizationChanged = localizeDataObjectElements(subprocess.getDataObjects(), infoNode);</span>
+<span class="nc bnc" id="L451" title="All 4 branches missed.">                    if (isFlowElementLocalizationChanged || isDataObjectLocalizationChanged) {</span>
+<span class="nc" id="L452">                        localizationValuesChanged = true;</span>
+                    }
+                }
+            }
+<span class="nc" id="L456">        }</span>
+
+<span class="nc" id="L458">        return localizationValuesChanged;</span>
+    }
+
+    protected boolean isEqualToCurrentLocalizationValue(String language, String id, String propertyName, String propertyValue, ObjectNode infoNode) {
+<span class="nc" id="L462">        boolean isEqual = false;</span>
+<span class="nc" id="L463">        JsonNode localizationNode = infoNode.path(&quot;localization&quot;).path(language).path(id).path(propertyName);</span>
+<span class="nc bnc" id="L464" title="All 6 branches missed.">        if (!localizationNode.isMissingNode() &amp;&amp; !localizationNode.isNull() &amp;&amp; localizationNode.asText().equals(propertyValue)) {</span>
+<span class="nc" id="L465">            isEqual = true;</span>
+        }
+<span class="nc" id="L467">        return isEqual;</span>
+    }
+
+    protected boolean localizeDataObjectElements(List&lt;ValuedDataObject&gt; dataObjects, ObjectNode infoNode) {
+<span class="nc" id="L471">        boolean localizationValuesChanged = false;</span>
+<span class="nc" id="L472">        CommandContext commandContext = Context.getCommandContext();</span>
+<span class="nc" id="L473">        DynamicBpmnService dynamicBpmnService = CommandContextUtil.getProcessEngineConfiguration(commandContext).getDynamicBpmnService();</span>
+
+<span class="nc bnc" id="L475" title="All 2 branches missed.">        for (ValuedDataObject dataObject : dataObjects) {</span>
+<span class="nc" id="L476">            List&lt;ExtensionElement&gt; localizationElements = dataObject.getExtensionElements().get(&quot;localization&quot;);</span>
+<span class="nc bnc" id="L477" title="All 2 branches missed.">            if (localizationElements != null) {</span>
+<span class="nc bnc" id="L478" title="All 2 branches missed.">                for (ExtensionElement localizationElement : localizationElements) {</span>
+<span class="nc bnc" id="L479" title="All 2 branches missed.">                    if (BpmnXMLConstants.FLOWABLE_EXTENSIONS_PREFIX.equals(localizationElement.getNamespacePrefix()) ||</span>
+<span class="nc bnc" id="L480" title="All 2 branches missed.">                            BpmnXMLConstants.ACTIVITI_EXTENSIONS_PREFIX.equals(localizationElement.getNamespacePrefix())) {</span>
+
+<span class="nc" id="L482">                        String locale = localizationElement.getAttributeValue(null, &quot;locale&quot;);</span>
+<span class="nc" id="L483">                        String name = localizationElement.getAttributeValue(null, &quot;name&quot;);</span>
+<span class="nc" id="L484">                        String documentation = null;</span>
+
+<span class="nc" id="L486">                        List&lt;ExtensionElement&gt; documentationElements = localizationElement.getChildElements().get(&quot;documentation&quot;);</span>
+<span class="nc bnc" id="L487" title="All 2 branches missed.">                        if (documentationElements != null) {</span>
+<span class="nc bnc" id="L488" title="All 2 branches missed.">                            for (ExtensionElement documentationElement : documentationElements) {</span>
+<span class="nc" id="L489">                                documentation = StringUtils.trimToNull(documentationElement.getElementText());</span>
+<span class="nc" id="L490">                                break;</span>
+                            }
+                        }
+
+<span class="nc bnc" id="L494" title="All 4 branches missed.">                        if (name != null &amp;&amp; !isEqualToCurrentLocalizationValue(locale, dataObject.getId(), DynamicBpmnConstants.LOCALIZATION_NAME, name, infoNode)) {</span>
+<span class="nc" id="L495">                            dynamicBpmnService.changeLocalizationName(locale, dataObject.getId(), name, infoNode);</span>
+<span class="nc" id="L496">                            localizationValuesChanged = true;</span>
+                        }
+
+<span class="nc bnc" id="L499" title="All 4 branches missed.">                        if (documentation != null &amp;&amp; !isEqualToCurrentLocalizationValue(locale, dataObject.getId(),</span>
+                                DynamicBpmnConstants.LOCALIZATION_DESCRIPTION, documentation, infoNode)) {
+
+<span class="nc" id="L502">                            dynamicBpmnService.changeLocalizationDescription(locale, dataObject.getId(), documentation, infoNode);</span>
+<span class="nc" id="L503">                            localizationValuesChanged = true;</span>
+                        }
+                    }
+<span class="nc" id="L506">                }</span>
+            }
+<span class="nc" id="L508">        }</span>
+
+<span class="nc" id="L510">        return localizationValuesChanged;</span>
+    }
+
+    public IdGenerator getIdGenerator() {
+<span class="nc" id="L514">        return idGenerator;</span>
+    }
+
+    public void setIdGenerator(IdGenerator idGenerator) {
+<span class="nc" id="L518">        this.idGenerator = idGenerator;</span>
+<span class="nc" id="L519">    }</span>
+
+    public ParsedDeploymentBuilderFactory getExParsedDeploymentBuilderFactory() {
+<span class="nc" id="L522">        return parsedDeploymentBuilderFactory;</span>
+    }
+
+    public void setParsedDeploymentBuilderFactory(ParsedDeploymentBuilderFactory parsedDeploymentBuilderFactory) {
+<span class="nc" id="L526">        this.parsedDeploymentBuilderFactory = parsedDeploymentBuilderFactory;</span>
+<span class="nc" id="L527">    }</span>
+
+    public BpmnDeploymentHelper getBpmnDeploymentHelper() {
+<span class="nc" id="L530">        return bpmnDeploymentHelper;</span>
+    }
+
+    public void setBpmnDeploymentHelper(BpmnDeploymentHelper bpmnDeploymentHelper) {
+<span class="nc" id="L534">        this.bpmnDeploymentHelper = bpmnDeploymentHelper;</span>
+<span class="nc" id="L535">    }</span>
+
+    public CachingAndArtifactsManager getCachingAndArtifcatsManager() {
+<span class="nc" id="L538">        return cachingAndArtifactsManager;</span>
+    }
+
+    public void setCachingAndArtifactsManager(CachingAndArtifactsManager manager) {
+<span class="nc" id="L542">        this.cachingAndArtifactsManager = manager;</span>
+<span class="nc" id="L543">    }</span>
+
+    public ProcessDefinitionDiagramHelper getProcessDefinitionDiagramHelper() {
+<span class="nc" id="L546">        return processDefinitionDiagramHelper;</span>
+    }
+
+    public void setProcessDefinitionDiagramHelper(ProcessDefinitionDiagramHelper processDefinitionDiagramHelper) {
+<span class="nc" id="L550">        this.processDefinitionDiagramHelper = processDefinitionDiagramHelper;</span>
+<span class="nc" id="L551">    }</span>
+
+    public boolean isUsePrefixId() {
+<span class="nc" id="L554">        return usePrefixId;</span>
+    }
+
+    public void setUsePrefixId(boolean usePrefixId) {
+<span class="nc" id="L558">        this.usePrefixId = usePrefixId;</span>
+<span class="nc" id="L559">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

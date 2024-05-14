@@ -1,0 +1,363 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ExecutorPerTenantAsyncExecutor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.job.service.impl.asyncexecutor.multitenant</a> &gt; <span class="el_source">ExecutorPerTenantAsyncExecutor.java</span></div><h1>ExecutorPerTenantAsyncExecutor.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.flowable.job.service.impl.asyncexecutor.multitenant;
+
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+
+import org.flowable.common.engine.api.async.AsyncTaskExecutor;
+import org.flowable.common.engine.impl.cfg.multitenant.TenantInfoHolder;
+import org.flowable.job.api.JobInfo;
+import org.flowable.job.service.JobServiceConfiguration;
+import org.flowable.job.service.impl.asyncexecutor.AbstractAsyncExecutor;
+import org.flowable.job.service.impl.asyncexecutor.AsyncExecutor;
+import org.flowable.job.service.impl.asyncexecutor.DefaultAsyncJobExecutor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * An {@link AsyncExecutor} that has one {@link AsyncExecutor} per tenant. So each tenant has its own acquiring threads and it's own threadpool for executing jobs.
+ * 
+ * @author Joram Barrez
+ */
+public class ExecutorPerTenantAsyncExecutor implements TenantAwareAsyncExecutor {
+
+<span class="nc" id="L37">    private static final Logger LOGGER = LoggerFactory.getLogger(ExecutorPerTenantAsyncExecutor.class);</span>
+
+    protected TenantInfoHolder tenantInfoHolder;
+    protected TenantAwareAsyncExecutorFactory tenantAwareAyncExecutorFactory;
+
+    protected AsyncExecutor nullTenantIdAsyncExecutor; // a concurrent hashmap doesn't allow for null keys, hence why it needs to be stored separately.
+<span class="nc" id="L43">    protected Map&lt;String, AsyncExecutor&gt; tenantExecutors = new ConcurrentHashMap&lt;&gt;();</span>
+
+    protected JobServiceConfiguration jobServiceConfiguration;
+    protected boolean active;
+    protected boolean autoActivate;
+
+    public ExecutorPerTenantAsyncExecutor(TenantInfoHolder tenantInfoHolder) {
+<span class="nc" id="L50">        this(tenantInfoHolder, null);</span>
+<span class="nc" id="L51">    }</span>
+
+<span class="nc" id="L53">    public ExecutorPerTenantAsyncExecutor(TenantInfoHolder tenantInfoHolder, TenantAwareAsyncExecutorFactory tenantAwareAyncExecutorFactory) {</span>
+<span class="nc" id="L54">        this.tenantInfoHolder = tenantInfoHolder;</span>
+<span class="nc" id="L55">        this.tenantAwareAyncExecutorFactory = tenantAwareAyncExecutorFactory;</span>
+<span class="nc" id="L56">    }</span>
+
+    @Override
+    public Set&lt;String&gt; getTenantIds() {
+<span class="nc" id="L60">        return tenantExecutors.keySet();</span>
+    }
+
+    @Override
+    public void addTenantAsyncExecutor(String tenantId, boolean startExecutor) {
+<span class="nc" id="L65">        AsyncExecutor tenantExecutor = null;</span>
+
+<span class="nc bnc" id="L67" title="All 2 branches missed.">        if (tenantAwareAyncExecutorFactory == null) {</span>
+<span class="nc" id="L68">            DefaultAsyncJobExecutor defaultAsyncJobExecutor = new DefaultAsyncJobExecutor();</span>
+<span class="nc" id="L69">            defaultAsyncJobExecutor.setTenantId(tenantId);</span>
+<span class="nc" id="L70">            tenantExecutor = defaultAsyncJobExecutor;</span>
+<span class="nc" id="L71">        } else {</span>
+<span class="nc" id="L72">            tenantExecutor = tenantAwareAyncExecutorFactory.createAsyncExecutor(tenantId);</span>
+        }
+
+<span class="nc" id="L75">        tenantExecutor.setJobServiceConfiguration(jobServiceConfiguration);</span>
+
+<span class="nc bnc" id="L77" title="All 2 branches missed.">        if (tenantExecutor instanceof AbstractAsyncExecutor) {</span>
+<span class="nc" id="L78">            AbstractAsyncExecutor defaultAsyncJobExecutor = (AbstractAsyncExecutor) tenantExecutor;</span>
+<span class="nc" id="L79">            defaultAsyncJobExecutor.setAsyncJobsDueRunnable(new TenantAwareAcquireAsyncJobsDueRunnable(defaultAsyncJobExecutor, tenantInfoHolder, tenantId));</span>
+<span class="nc" id="L80">            defaultAsyncJobExecutor.setTimerJobRunnable(new TenantAwareAcquireTimerJobsRunnable(defaultAsyncJobExecutor, tenantInfoHolder, tenantId, defaultAsyncJobExecutor.getMoveTimerExecutorPoolSize()));</span>
+<span class="nc" id="L81">            defaultAsyncJobExecutor.setExecuteAsyncRunnableFactory(new TenantAwareExecuteAsyncRunnableFactory(tenantInfoHolder, tenantId));</span>
+<span class="nc" id="L82">            defaultAsyncJobExecutor.setResetExpiredJobsRunnable(new TenantAwareResetExpiredJobsRunnable(defaultAsyncJobExecutor, tenantInfoHolder, tenantId));</span>
+        }
+
+<span class="nc bnc" id="L85" title="All 2 branches missed.">        if (tenantId != null) {</span>
+<span class="nc" id="L86">            tenantExecutors.put(tenantId, tenantExecutor);</span>
+        } else {
+<span class="nc" id="L88">            nullTenantIdAsyncExecutor = tenantExecutor;</span>
+        }
+
+<span class="nc bnc" id="L91" title="All 2 branches missed.">        if (startExecutor) {</span>
+<span class="nc" id="L92">            startTenantExecutor(tenantId);</span>
+        }
+<span class="nc" id="L94">    }</span>
+    
+    @Override
+    public AsyncExecutor getTenantAsyncExecutor(String tenantId) {
+<span class="nc bnc" id="L98" title="All 2 branches missed.">        if (tenantId != null) {</span>
+<span class="nc" id="L99">            return tenantExecutors.get(tenantId);</span>
+        }
+<span class="nc" id="L101">        return nullTenantIdAsyncExecutor;</span>
+    }
+
+    @Override
+    public void removeTenantAsyncExecutor(String tenantId) {
+<span class="nc" id="L106">        shutdownTenantExecutor(tenantId);</span>
+
+<span class="nc bnc" id="L108" title="All 2 branches missed.">        if (tenantId != null) {</span>
+<span class="nc" id="L109">            tenantExecutors.remove(tenantId);</span>
+        } else {
+<span class="nc" id="L111">            nullTenantIdAsyncExecutor = null;</span>
+        }
+<span class="nc" id="L113">    }</span>
+
+    protected AsyncExecutor determineAsyncExecutor() {
+<span class="nc" id="L116">        String currentTenantId = tenantInfoHolder.getCurrentTenantId();</span>
+<span class="nc bnc" id="L117" title="All 2 branches missed.">        if (currentTenantId != null) {</span>
+<span class="nc" id="L118">            return tenantExecutors.get(currentTenantId);</span>
+        }
+<span class="nc" id="L120">        return nullTenantIdAsyncExecutor;</span>
+    }
+
+    @Override
+    public boolean executeAsyncJob(JobInfo job) {
+<span class="nc" id="L125">        return determineAsyncExecutor().executeAsyncJob(job);</span>
+    }
+
+    @Override
+    public void setJobServiceConfiguration(JobServiceConfiguration jobServiceConfiguration) {
+<span class="nc" id="L130">        this.jobServiceConfiguration = jobServiceConfiguration;</span>
+<span class="nc bnc" id="L131" title="All 2 branches missed.">        for (AsyncExecutor asyncExecutor : tenantExecutors.values()) {</span>
+<span class="nc" id="L132">            asyncExecutor.setJobServiceConfiguration(jobServiceConfiguration);</span>
+<span class="nc" id="L133">        }</span>
+<span class="nc bnc" id="L134" title="All 2 branches missed.">        if (nullTenantIdAsyncExecutor != null) {</span>
+<span class="nc" id="L135">            nullTenantIdAsyncExecutor.setJobServiceConfiguration(jobServiceConfiguration);</span>
+        }
+<span class="nc" id="L137">    }</span>
+
+    @Override
+    public JobServiceConfiguration getJobServiceConfiguration() {
+<span class="nc" id="L141">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public boolean isAutoActivate() {
+<span class="nc" id="L146">        return autoActivate;</span>
+    }
+
+    @Override
+    public void setAutoActivate(boolean isAutoActivate) {
+<span class="nc" id="L151">        autoActivate = isAutoActivate;</span>
+<span class="nc" id="L152">    }</span>
+
+    @Override
+    public boolean isActive() {
+<span class="nc" id="L156">        return active;</span>
+    }
+
+    @Override
+    public void start() {
+<span class="nc bnc" id="L161" title="All 2 branches missed.">        for (String tenantId : tenantExecutors.keySet()) {</span>
+<span class="nc" id="L162">            startTenantExecutor(tenantId);</span>
+<span class="nc" id="L163">        }</span>
+<span class="nc bnc" id="L164" title="All 2 branches missed.">        if (nullTenantIdAsyncExecutor != null) {</span>
+<span class="nc" id="L165">            startTenantExecutor(null);</span>
+        }
+<span class="nc" id="L167">        active = true;</span>
+<span class="nc" id="L168">    }</span>
+
+    protected void startTenantExecutor(String tenantId) {
+<span class="nc" id="L171">        tenantInfoHolder.setCurrentTenantId(tenantId);</span>
+<span class="nc bnc" id="L172" title="All 2 branches missed.">        if (tenantId != null) {</span>
+<span class="nc" id="L173">            tenantExecutors.get(tenantId).start();</span>
+<span class="nc bnc" id="L174" title="All 2 branches missed.">        } else if (nullTenantIdAsyncExecutor != null) {</span>
+<span class="nc" id="L175">            nullTenantIdAsyncExecutor.start();</span>
+        }
+<span class="nc" id="L177">        tenantInfoHolder.clearCurrentTenantId();</span>
+<span class="nc" id="L178">    }</span>
+
+    @Override
+    public synchronized void shutdown() {
+<span class="nc bnc" id="L182" title="All 2 branches missed.">        for (String tenantId : tenantExecutors.keySet()) {</span>
+<span class="nc" id="L183">            shutdownTenantExecutor(tenantId);</span>
+<span class="nc" id="L184">        }</span>
+<span class="nc bnc" id="L185" title="All 2 branches missed.">        if (nullTenantIdAsyncExecutor != null) {</span>
+<span class="nc" id="L186">            shutdownTenantExecutor(null);</span>
+        }
+<span class="nc" id="L188">        active = false;</span>
+<span class="nc" id="L189">    }</span>
+
+    protected void shutdownTenantExecutor(String tenantId) {
+<span class="nc" id="L192">        LOGGER.info(&quot;Shutting down async executor for tenant {}&quot;, tenantId);</span>
+<span class="nc" id="L193">        tenantInfoHolder.setCurrentTenantId(tenantId);</span>
+<span class="nc bnc" id="L194" title="All 2 branches missed.">        if (tenantId != null) {</span>
+<span class="nc" id="L195">            tenantExecutors.get(tenantId).shutdown();</span>
+<span class="nc bnc" id="L196" title="All 2 branches missed.">        } else if (nullTenantIdAsyncExecutor != null) {</span>
+<span class="nc" id="L197">            nullTenantIdAsyncExecutor.shutdown();</span>
+        }
+<span class="nc" id="L199">        tenantInfoHolder.clearCurrentTenantId();</span>
+<span class="nc" id="L200">    }</span>
+
+    @Override
+    public String getLockOwner() {
+<span class="nc" id="L204">        return determineAsyncExecutor().getLockOwner();</span>
+    }
+
+    @Override
+    public int getTimerLockTimeInMillis() {
+<span class="nc" id="L209">        return determineAsyncExecutor().getTimerLockTimeInMillis();</span>
+    }
+
+    @Override
+    public void setTimerLockTimeInMillis(int lockTimeInMillis) {
+<span class="nc bnc" id="L214" title="All 2 branches missed.">        for (AsyncExecutor asyncExecutor : tenantExecutors.values()) {</span>
+<span class="nc" id="L215">            asyncExecutor.setTimerLockTimeInMillis(lockTimeInMillis);</span>
+<span class="nc" id="L216">        }</span>
+<span class="nc bnc" id="L217" title="All 2 branches missed.">        if (nullTenantIdAsyncExecutor != null) {</span>
+<span class="nc" id="L218">            nullTenantIdAsyncExecutor.setTimerLockTimeInMillis(lockTimeInMillis);</span>
+        }
+<span class="nc" id="L220">    }</span>
+
+    @Override
+    public int getAsyncJobLockTimeInMillis() {
+<span class="nc" id="L224">        return determineAsyncExecutor().getAsyncJobLockTimeInMillis();</span>
+    }
+
+    @Override
+    public void setAsyncJobLockTimeInMillis(int lockTimeInMillis) {
+<span class="nc bnc" id="L229" title="All 2 branches missed.">        for (AsyncExecutor asyncExecutor : tenantExecutors.values()) {</span>
+<span class="nc" id="L230">            asyncExecutor.setAsyncJobLockTimeInMillis(lockTimeInMillis);</span>
+<span class="nc" id="L231">        }</span>
+<span class="nc bnc" id="L232" title="All 2 branches missed.">        if (nullTenantIdAsyncExecutor != null) {</span>
+<span class="nc" id="L233">            nullTenantIdAsyncExecutor.setAsyncJobLockTimeInMillis(lockTimeInMillis);</span>
+        }
+<span class="nc" id="L235">    }</span>
+
+    @Override
+    public int getDefaultTimerJobAcquireWaitTimeInMillis() {
+<span class="nc" id="L239">        return determineAsyncExecutor().getDefaultTimerJobAcquireWaitTimeInMillis();</span>
+    }
+
+    @Override
+    public void setDefaultTimerJobAcquireWaitTimeInMillis(int waitTimeInMillis) {
+<span class="nc bnc" id="L244" title="All 2 branches missed.">        for (AsyncExecutor asyncExecutor : tenantExecutors.values()) {</span>
+<span class="nc" id="L245">            asyncExecutor.setDefaultTimerJobAcquireWaitTimeInMillis(waitTimeInMillis);</span>
+<span class="nc" id="L246">        }</span>
+<span class="nc bnc" id="L247" title="All 2 branches missed.">        if (nullTenantIdAsyncExecutor != null) {</span>
+<span class="nc" id="L248">            nullTenantIdAsyncExecutor.setDefaultTimerJobAcquireWaitTimeInMillis(waitTimeInMillis);</span>
+        }
+<span class="nc" id="L250">    }</span>
+
+    @Override
+    public int getDefaultAsyncJobAcquireWaitTimeInMillis() {
+<span class="nc" id="L254">        return determineAsyncExecutor().getDefaultAsyncJobAcquireWaitTimeInMillis();</span>
+    }
+
+    @Override
+    public void setDefaultAsyncJobAcquireWaitTimeInMillis(int waitTimeInMillis) {
+<span class="nc bnc" id="L259" title="All 2 branches missed.">        for (AsyncExecutor asyncExecutor : tenantExecutors.values()) {</span>
+<span class="nc" id="L260">            asyncExecutor.setDefaultAsyncJobAcquireWaitTimeInMillis(waitTimeInMillis);</span>
+<span class="nc" id="L261">        }</span>
+<span class="nc bnc" id="L262" title="All 2 branches missed.">        if (nullTenantIdAsyncExecutor != null) {</span>
+<span class="nc" id="L263">            nullTenantIdAsyncExecutor.setDefaultAsyncJobAcquireWaitTimeInMillis(waitTimeInMillis);</span>
+        }
+<span class="nc" id="L265">    }</span>
+
+    @Override
+    public int getDefaultQueueSizeFullWaitTimeInMillis() {
+<span class="nc" id="L269">        return determineAsyncExecutor().getDefaultQueueSizeFullWaitTimeInMillis();</span>
+    }
+
+    @Override
+    public void setDefaultQueueSizeFullWaitTimeInMillis(int defaultQueueSizeFullWaitTimeInMillis) {
+<span class="nc bnc" id="L274" title="All 2 branches missed.">        for (AsyncExecutor asyncExecutor : tenantExecutors.values()) {</span>
+<span class="nc" id="L275">            asyncExecutor.setDefaultQueueSizeFullWaitTimeInMillis(defaultQueueSizeFullWaitTimeInMillis);</span>
+<span class="nc" id="L276">        }</span>
+<span class="nc bnc" id="L277" title="All 2 branches missed.">        if (nullTenantIdAsyncExecutor != null) {</span>
+<span class="nc" id="L278">            nullTenantIdAsyncExecutor.setDefaultQueueSizeFullWaitTimeInMillis(defaultQueueSizeFullWaitTimeInMillis);</span>
+        }
+<span class="nc" id="L280">    }</span>
+
+    @Override
+    public int getMaxAsyncJobsDuePerAcquisition() {
+<span class="nc" id="L284">        return determineAsyncExecutor().getMaxAsyncJobsDuePerAcquisition();</span>
+    }
+
+    @Override
+    public void setMaxAsyncJobsDuePerAcquisition(int maxJobs) {
+<span class="nc bnc" id="L289" title="All 2 branches missed.">        for (AsyncExecutor asyncExecutor : tenantExecutors.values()) {</span>
+<span class="nc" id="L290">            asyncExecutor.setMaxAsyncJobsDuePerAcquisition(maxJobs);</span>
+<span class="nc" id="L291">        }</span>
+<span class="nc bnc" id="L292" title="All 2 branches missed.">        if (nullTenantIdAsyncExecutor != null) {</span>
+<span class="nc" id="L293">            nullTenantIdAsyncExecutor.setMaxAsyncJobsDuePerAcquisition(maxJobs);</span>
+        }
+<span class="nc" id="L295">    }</span>
+
+    @Override
+    public int getMaxTimerJobsPerAcquisition() {
+<span class="nc" id="L299">        return determineAsyncExecutor().getMaxTimerJobsPerAcquisition();</span>
+    }
+
+    @Override
+    public void setMaxTimerJobsPerAcquisition(int maxJobs) {
+<span class="nc bnc" id="L304" title="All 2 branches missed.">        for (AsyncExecutor asyncExecutor : tenantExecutors.values()) {</span>
+<span class="nc" id="L305">            asyncExecutor.setMaxTimerJobsPerAcquisition(maxJobs);</span>
+<span class="nc" id="L306">        }</span>
+<span class="nc bnc" id="L307" title="All 2 branches missed.">        if (nullTenantIdAsyncExecutor != null) {</span>
+<span class="nc" id="L308">            nullTenantIdAsyncExecutor.setMaxTimerJobsPerAcquisition(maxJobs);</span>
+        }
+<span class="nc" id="L310">    }</span>
+
+    @Override
+    public int getResetExpiredJobsInterval() {
+<span class="nc" id="L314">        return determineAsyncExecutor().getResetExpiredJobsInterval();</span>
+    }
+
+    @Override
+    public void setResetExpiredJobsInterval(int resetExpiredJobsInterval) {
+<span class="nc bnc" id="L319" title="All 2 branches missed.">        for (AsyncExecutor asyncExecutor : tenantExecutors.values()) {</span>
+<span class="nc" id="L320">            asyncExecutor.setResetExpiredJobsInterval(resetExpiredJobsInterval);</span>
+<span class="nc" id="L321">        }</span>
+<span class="nc bnc" id="L322" title="All 2 branches missed.">        if (nullTenantIdAsyncExecutor != null) {</span>
+<span class="nc" id="L323">            nullTenantIdAsyncExecutor.setResetExpiredJobsInterval(resetExpiredJobsInterval);</span>
+        }
+<span class="nc" id="L325">    }</span>
+
+    @Override
+    public int getResetExpiredJobsPageSize() {
+<span class="nc" id="L329">        return determineAsyncExecutor().getResetExpiredJobsPageSize();</span>
+    }
+
+    @Override
+    public void setResetExpiredJobsPageSize(int resetExpiredJobsPageSize) {
+<span class="nc bnc" id="L334" title="All 2 branches missed.">        for (AsyncExecutor asyncExecutor : tenantExecutors.values()) {</span>
+<span class="nc" id="L335">            asyncExecutor.setResetExpiredJobsPageSize(resetExpiredJobsPageSize);</span>
+<span class="nc" id="L336">        }</span>
+<span class="nc bnc" id="L337" title="All 2 branches missed.">        if (nullTenantIdAsyncExecutor != null) {</span>
+<span class="nc" id="L338">            nullTenantIdAsyncExecutor.setResetExpiredJobsPageSize(resetExpiredJobsPageSize);</span>
+        }
+<span class="nc" id="L340">    }</span>
+
+    @Override
+    public AsyncTaskExecutor getTaskExecutor() {
+<span class="nc" id="L344">        AsyncExecutor asyncExecutor = determineAsyncExecutor();</span>
+<span class="nc bnc" id="L345" title="All 2 branches missed.">        if (asyncExecutor == null) {</span>
+<span class="nc" id="L346">            return null;</span>
+        }
+<span class="nc" id="L348">        return asyncExecutor.getTaskExecutor();</span>
+    }
+
+    @Override
+    public void setTaskExecutor(AsyncTaskExecutor taskExecutor) {
+<span class="nc bnc" id="L353" title="All 2 branches missed.">        for (AsyncExecutor asyncExecutor : tenantExecutors.values()) {</span>
+<span class="nc bnc" id="L354" title="All 2 branches missed.">            if (asyncExecutor.getTaskExecutor() == null) {</span>
+<span class="nc" id="L355">                asyncExecutor.setTaskExecutor(taskExecutor);</span>
+            }
+<span class="nc" id="L357">        }</span>
+<span class="nc bnc" id="L358" title="All 2 branches missed.">        if (nullTenantIdAsyncExecutor != null) {</span>
+<span class="nc" id="L359">            nullTenantIdAsyncExecutor.setTaskExecutor(taskExecutor);</span>
+        }
+<span class="nc" id="L361">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

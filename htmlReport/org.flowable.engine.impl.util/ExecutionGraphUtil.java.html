@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ExecutionGraphUtil.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.util</a> &gt; <span class="el_source">ExecutionGraphUtil.java</span></div><h1>ExecutionGraphUtil.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.impl.util;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.bpmn.model.BoundaryEvent;
+import org.flowable.bpmn.model.EventSubProcess;
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.FlowElementsContainer;
+import org.flowable.bpmn.model.FlowNode;
+import org.flowable.bpmn.model.Process;
+import org.flowable.bpmn.model.SequenceFlow;
+import org.flowable.bpmn.model.StartEvent;
+import org.flowable.bpmn.model.SubProcess;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.engine.delegate.DelegateExecution;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntity;
+
+<span class="nc" id="L35">public class ExecutionGraphUtil {</span>
+
+    /**
+     * Verifies if the element with the given source identifier can reach the element with the target identifier through following sequence flow.
+     */
+    public static boolean isReachable(String processDefinitionId, String sourceElementId, String targetElementId) {
+
+        // Fetch source and target elements
+<span class="nc" id="L43">        Process process = ProcessDefinitionUtil.getProcess(processDefinitionId);</span>
+
+<span class="nc" id="L45">        FlowElement sourceFlowElement = process.getFlowElement(sourceElementId, true);</span>
+<span class="nc" id="L46">        FlowNode sourceElement = null;</span>
+<span class="nc bnc" id="L47" title="All 2 branches missed.">        if (sourceFlowElement instanceof FlowNode) {</span>
+<span class="nc" id="L48">            sourceElement = (FlowNode) sourceFlowElement;</span>
+<span class="nc bnc" id="L49" title="All 2 branches missed.">        } else if (sourceFlowElement instanceof SequenceFlow) {</span>
+<span class="nc" id="L50">            sourceElement = (FlowNode) ((SequenceFlow) sourceFlowElement).getTargetFlowElement();</span>
+        }
+
+<span class="nc" id="L53">        FlowElement targetFlowElement = process.getFlowElement(targetElementId, true);</span>
+<span class="nc" id="L54">        FlowNode targetElement = null;</span>
+<span class="nc bnc" id="L55" title="All 2 branches missed.">        if (targetFlowElement instanceof FlowNode) {</span>
+<span class="nc" id="L56">            targetElement = (FlowNode) targetFlowElement;</span>
+<span class="nc bnc" id="L57" title="All 2 branches missed.">        } else if (targetFlowElement instanceof SequenceFlow) {</span>
+<span class="nc" id="L58">            targetElement = (FlowNode) ((SequenceFlow) targetFlowElement).getTargetFlowElement();</span>
+        }
+
+<span class="nc bnc" id="L61" title="All 2 branches missed.">        if (sourceElement == null) {</span>
+<span class="nc" id="L62">            throw new FlowableException(&quot;Invalid sourceElementId '&quot; + sourceElementId + &quot;': no element found for this id n process definition '&quot; + processDefinitionId + &quot;'&quot;);</span>
+        }
+<span class="nc bnc" id="L64" title="All 2 branches missed.">        if (targetElement == null) {</span>
+<span class="nc" id="L65">            throw new FlowableException(&quot;Invalid targetElementId '&quot; + targetElementId + &quot;': no element found for this id n process definition '&quot; + processDefinitionId + &quot;'&quot;);</span>
+        }
+
+<span class="nc" id="L68">        Set&lt;String&gt; visitedElements = new HashSet&lt;&gt;();</span>
+<span class="nc" id="L69">        return isReachable(process, sourceElement, targetElement, visitedElements);</span>
+    }
+
+    public static boolean isReachable(Process process, FlowNode sourceElement, FlowNode targetElement, Set&lt;String&gt; visitedElements) {
+        
+        // Special case: start events in an event subprocess might exist as an execution and are most likely be able to reach the target
+        // when the target is in the event subprocess, but should be ignored as they are not 'real' runtime executions (but rather waiting for a trigger)
+<span class="nc bnc" id="L76" title="All 4 branches missed.">        if (sourceElement instanceof StartEvent &amp;&amp; isInEventSubprocess(sourceElement)) {</span>
+<span class="nc" id="L77">            return false;</span>
+        }
+
+        // No outgoing seq flow: could be the end of eg . the process or an embedded subprocess
+<span class="nc bnc" id="L81" title="All 2 branches missed.">        if (sourceElement.getOutgoingFlows().size() == 0) {</span>
+<span class="nc" id="L82">            visitedElements.add(sourceElement.getId());</span>
+
+<span class="nc" id="L84">            FlowElementsContainer parentElement = process.findParent(sourceElement);</span>
+<span class="nc bnc" id="L85" title="All 2 branches missed.">            if (parentElement instanceof SubProcess) {</span>
+<span class="nc" id="L86">                sourceElement = (SubProcess) parentElement;</span>
+            } else {
+<span class="nc" id="L88">                return false;</span>
+            }
+        }
+
+<span class="nc bnc" id="L92" title="All 2 branches missed.">        if (sourceElement.getId().equals(targetElement.getId())) {</span>
+<span class="nc" id="L93">            return true;</span>
+        }
+
+        // To avoid infinite looping, we must capture every node we visit
+        // and check before going further in the graph if we have already
+        // visited the node.
+<span class="nc" id="L99">        visitedElements.add(sourceElement.getId());</span>
+
+<span class="nc" id="L101">        List&lt;SequenceFlow&gt; sequenceFlows = sourceElement.getOutgoingFlows();</span>
+<span class="nc bnc" id="L102" title="All 4 branches missed.">        if (sequenceFlows != null &amp;&amp; sequenceFlows.size() &gt; 0) {</span>
+<span class="nc bnc" id="L103" title="All 2 branches missed.">            for (SequenceFlow sequenceFlow : sequenceFlows) {</span>
+<span class="nc" id="L104">                String targetRef = sequenceFlow.getTargetRef();</span>
+<span class="nc" id="L105">                FlowNode sequenceFlowTarget = (FlowNode) process.getFlowElement(targetRef, true);</span>
+<span class="nc bnc" id="L106" title="All 4 branches missed.">                if (sequenceFlowTarget != null &amp;&amp; !visitedElements.contains(sequenceFlowTarget.getId())) {</span>
+<span class="nc" id="L107">                    boolean reachable = isReachable(process, sequenceFlowTarget, targetElement, visitedElements);</span>
+
+<span class="nc bnc" id="L109" title="All 2 branches missed.">                    if (reachable) {</span>
+<span class="nc" id="L110">                        return true;</span>
+                    }
+                }
+<span class="nc" id="L113">            }</span>
+        }
+
+<span class="nc" id="L116">        return false;</span>
+    }
+
+    protected static boolean isInEventSubprocess(FlowNode flowNode) {
+<span class="nc" id="L120">        FlowElementsContainer flowElementsContainer = flowNode.getParentContainer();</span>
+<span class="nc bnc" id="L121" title="All 2 branches missed.">        while (flowElementsContainer != null) {</span>
+<span class="nc bnc" id="L122" title="All 2 branches missed.">            if (flowElementsContainer instanceof EventSubProcess) {</span>
+<span class="nc" id="L123">                return true;</span>
+            }
+            
+<span class="nc bnc" id="L126" title="All 2 branches missed.">            if (flowElementsContainer instanceof FlowElement) {</span>
+<span class="nc" id="L127">                flowElementsContainer = ((FlowElement) flowElementsContainer).getParentContainer();</span>
+            } else {
+<span class="nc" id="L129">                flowElementsContainer = null;</span>
+            }
+        }
+<span class="nc" id="L132">        return false;</span>
+    }
+
+    public static DelegateExecution getMultiInstanceRootExecution(ExecutionEntity execution) {
+<span class="nc" id="L136">        ExecutionEntity multiInstanceRootExecution = null;</span>
+<span class="nc" id="L137">        ExecutionEntity currentExecution = execution;</span>
+<span class="nc bnc" id="L138" title="All 6 branches missed.">        while (currentExecution != null &amp;&amp; multiInstanceRootExecution == null &amp;&amp; currentExecution.getParentId() != null) {</span>
+<span class="nc bnc" id="L139" title="All 2 branches missed.">            if (currentExecution.isMultiInstanceRoot()) {</span>
+<span class="nc" id="L140">                multiInstanceRootExecution = currentExecution;</span>
+            } else {
+<span class="nc" id="L142">                currentExecution = currentExecution.getParent();</span>
+            }
+        }
+<span class="nc" id="L145">        return multiInstanceRootExecution;</span>
+    }
+
+    public static DelegateExecution getParentInstanceExecutionInMultiInstance(ExecutionEntity execution) {
+<span class="nc" id="L149">        ExecutionEntity instanceExecution = null;</span>
+<span class="nc" id="L150">        ExecutionEntity currentExecution = execution;</span>
+<span class="nc bnc" id="L151" title="All 6 branches missed.">        while (currentExecution != null &amp;&amp; instanceExecution == null &amp;&amp; currentExecution.getParentId() != null) {</span>
+<span class="nc bnc" id="L152" title="All 2 branches missed.">            if (currentExecution.getParent().isMultiInstanceRoot()) {</span>
+<span class="nc" id="L153">                instanceExecution = currentExecution;</span>
+            } else {
+<span class="nc" id="L155">                currentExecution = currentExecution.getParent();</span>
+            }
+        }
+<span class="nc" id="L158">        return instanceExecution;</span>
+    }
+
+    /**
+     * Returns the list of boundary event activity ids that are in the the process model,
+     * associated with the current activity of the passed execution.
+     * Note that no check if made here whether this an active child execution for those boundary events.
+     */
+    public static List&lt;String&gt; getBoundaryEventActivityIds(DelegateExecution execution) {
+<span class="nc" id="L167">        Process process = ProcessDefinitionUtil.getProcess(execution.getProcessDefinitionId());</span>
+
+<span class="nc" id="L169">        String activityId = execution.getCurrentActivityId();</span>
+<span class="nc bnc" id="L170" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(activityId)) {</span>
+<span class="nc" id="L171">            List&lt;String&gt; boundaryEventActivityIds = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L172">            List&lt;BoundaryEvent&gt; boundaryEvents = process.findFlowElementsOfType(BoundaryEvent.class, true);</span>
+<span class="nc bnc" id="L173" title="All 2 branches missed.">            for (BoundaryEvent boundaryEvent : boundaryEvents) {</span>
+<span class="nc bnc" id="L174" title="All 2 branches missed.">                if (activityId.equals(boundaryEvent.getAttachedToRefId())) {</span>
+<span class="nc" id="L175">                    boundaryEventActivityIds.add(boundaryEvent.getId());</span>
+                }
+<span class="nc" id="L177">            }</span>
+<span class="nc" id="L178">            return boundaryEventActivityIds;</span>
+
+        } else {
+<span class="nc" id="L181">            return Collections.emptyList();</span>
+
+        }
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

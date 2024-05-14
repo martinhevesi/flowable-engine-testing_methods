@@ -1,0 +1,1251 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>HistoryDataDeleteTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.cmmn.test.history</a> &gt; <span class="el_source">HistoryDataDeleteTest.java</span></div><h1>HistoryDataDeleteTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.cmmn.test.history;
+
+import static net.javacrumbs.jsonunit.assertj.JsonAssertions.assertThatJson;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
+
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.lang.reflect.Parameter;
+import java.time.Instant;
+import java.time.temporal.ChronoField;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Calendar;
+import java.util.Collection;
+import java.util.Date;
+import java.util.GregorianCalendar;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+import org.apache.commons.lang3.tuple.Pair;
+import org.flowable.batch.api.Batch;
+import org.flowable.batch.api.BatchPart;
+import org.flowable.cmmn.api.history.HistoricCaseInstanceQuery;
+import org.flowable.cmmn.api.runtime.CaseInstance;
+import org.flowable.cmmn.engine.impl.delete.DeleteCaseInstanceBatchConstants;
+import org.flowable.cmmn.engine.impl.delete.DeleteHistoricCaseInstancesSequentialJobHandler;
+import org.flowable.cmmn.engine.impl.job.CmmnHistoryCleanupJobHandler;
+import org.flowable.cmmn.engine.impl.util.CommandContextUtil;
+import org.flowable.cmmn.engine.test.CmmnDeployment;
+import org.flowable.cmmn.engine.test.FlowableCmmnTestCase;
+import org.flowable.cmmn.engine.test.impl.CmmnHistoryTestHelper;
+import org.flowable.cmmn.test.itemcontrol.RepetitionVariableAggregationTest;
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.impl.history.HistoryLevel;
+import org.flowable.common.engine.impl.identity.Authentication;
+import org.flowable.identitylink.api.IdentityLinkType;
+import org.flowable.job.api.Job;
+import org.flowable.job.service.impl.persistence.entity.TimerJobEntity;
+import org.flowable.task.api.Task;
+import org.junit.After;
+import org.junit.Test;
+import org.opentest4j.AssertionFailedError;
+
+import net.javacrumbs.jsonunit.core.Option;
+
+/**
+ * @author Tijs Rademakers
+ * @author Filip Hrisafov
+ */
+<span class="nc" id="L71">public class HistoryDataDeleteTest extends FlowableCmmnTestCase {</span>
+
+<span class="nc" id="L73">    protected Collection&lt;String&gt; batchesToRemove = new HashSet&lt;&gt;();</span>
+
+    @After
+    public void tearDown() {
+<span class="nc" id="L77">        batchesToRemove.forEach(cmmnManagementService::deleteBatch);</span>
+<span class="nc" id="L78">        Authentication.setAuthenticatedUserId(null);</span>
+        
+<span class="nc" id="L80">        List&lt;Job&gt; jobs = cmmnManagementService.createJobQuery().list();</span>
+<span class="nc bnc" id="L81" title="All 2 branches missed.">        for (Job job : jobs) {</span>
+            try {
+<span class="nc" id="L83">                cmmnManagementService.deleteJob(job.getId());</span>
+<span class="nc" id="L84">            } catch(Exception e) {}</span>
+<span class="nc" id="L85">        }</span>
+        
+<span class="nc" id="L87">        List&lt;Job&gt; timerJobs = cmmnManagementService.createTimerJobQuery().list();</span>
+<span class="nc bnc" id="L88" title="All 2 branches missed.">        for (Job job : timerJobs) {</span>
+            try {
+<span class="nc" id="L90">                cmmnManagementService.deleteTimerJob(job.getId());</span>
+<span class="nc" id="L91">            } catch(Exception e) {}</span>
+<span class="nc" id="L92">        }</span>
+<span class="nc" id="L93">    }</span>
+
+    @Test
+    @CmmnDeployment(resources = &quot;org/flowable/cmmn/test/one-human-task-model.cmmn&quot;)
+    public void testDeleteSingleHistoricCaseInstance() {
+<span class="nc" id="L98">        CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder().caseDefinitionKey(&quot;oneTaskCase&quot;).start();</span>
+<span class="nc" id="L99">        cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;testVar&quot;, &quot;testValue&quot;);</span>
+<span class="nc" id="L100">        cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;numVar&quot;, 43);</span>
+<span class="nc" id="L101">        cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;serializableVar&quot;, new RepetitionVariableAggregationTest.TestSerializableVariable());</span>
+
+<span class="nc bnc" id="L103" title="All 2 branches missed.">        if (CmmnHistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.NONE, cmmnEngineConfiguration)) {</span>
+<span class="nc" id="L104">            assertThat(cmmnHistoryService.createHistoricCaseInstanceQuery().caseInstanceId(caseInstance.getId()).count()).isEqualTo(1);</span>
+        }
+
+<span class="nc" id="L107">        Task task = cmmnTaskService.createTaskQuery().caseInstanceId(caseInstance.getId()).singleResult();</span>
+<span class="nc" id="L108">        cmmnTaskService.setVariableLocal(task.getId(), &quot;taskVar&quot;, &quot;taskValue&quot;);</span>
+<span class="nc" id="L109">        cmmnTaskService.setVariableLocal(task.getId(), &quot;taskSerializableVar&quot;, new RepetitionVariableAggregationTest.TestSerializableVariable());</span>
+<span class="nc" id="L110">        cmmnTaskService.complete(task.getId());</span>
+
+<span class="nc bnc" id="L112" title="All 2 branches missed.">        if (CmmnHistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.NONE, cmmnEngineConfiguration)) {</span>
+<span class="nc" id="L113">            HistoricCaseInstanceQuery query = cmmnHistoryService.createHistoricCaseInstanceQuery();</span>
+<span class="nc" id="L114">            Calendar cal = new GregorianCalendar();</span>
+<span class="nc" id="L115">            cal.set(Calendar.YEAR, cal.get(Calendar.YEAR) + 1);</span>
+<span class="nc" id="L116">            query.finishedBefore(cal.getTime());</span>
+
+<span class="nc" id="L118">            query.deleteWithRelatedData();</span>
+
+<span class="nc" id="L120">            assertThat(cmmnHistoryService.createHistoricCaseInstanceQuery().caseInstanceId(caseInstance.getId()).count()).isZero();</span>
+<span class="nc" id="L121">            assertThat(cmmnHistoryService.createHistoricPlanItemInstanceQuery().planItemInstanceCaseInstanceId(caseInstance.getId()).count()).isZero();</span>
+<span class="nc" id="L122">            assertThat(cmmnHistoryService.createHistoricTaskInstanceQuery().caseInstanceId(caseInstance.getId()).count()).isZero();</span>
+<span class="nc" id="L123">            assertThat(cmmnHistoryService.getHistoricIdentityLinksForCaseInstance(caseInstance.getId())).isEmpty();</span>
+<span class="nc" id="L124">            assertThat(cmmnHistoryService.getHistoricEntityLinkChildrenForCaseInstance(caseInstance.getId())).isEmpty();</span>
+<span class="nc" id="L125">            assertThat(cmmnHistoryService.createHistoricTaskLogEntryQuery().caseInstanceId(caseInstance.getId()).count()).isZero();</span>
+<span class="nc" id="L126">            assertThat(cmmnHistoryService.createHistoricVariableInstanceQuery().caseInstanceId(caseInstance.getId()).count()).isZero();</span>
+        }
+<span class="nc" id="L128">    }</span>
+
+    @Test
+    @CmmnDeployment(resources = &quot;org/flowable/cmmn/test/human-task-milestone-model.cmmn&quot;)
+    public void testDeleteHistoricInstancesWithFinishedBefore() {
+<span class="nc" id="L133">        List&lt;String&gt; caseInstanceIds = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L134" title="All 2 branches missed.">        for (int i = 0; i &lt; 20; i++) {</span>
+<span class="nc" id="L135">            CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder().caseDefinitionKey(&quot;oneTaskCase&quot;).start();</span>
+<span class="nc" id="L136">            caseInstanceIds.add(caseInstance.getId());</span>
+<span class="nc" id="L137">            cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;testVar&quot;, &quot;testValue&quot; + (i + 1));</span>
+<span class="nc" id="L138">            cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;numVar&quot;, (i + 1));</span>
+<span class="nc" id="L139">            cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;serializableVar&quot;, new RepetitionVariableAggregationTest.TestSerializableVariable());</span>
+        }
+
+<span class="nc bnc" id="L142" title="All 2 branches missed.">        if (CmmnHistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.NONE, cmmnEngineConfiguration)) {</span>
+
+<span class="nc" id="L144">            assertThat(cmmnHistoryService.createHistoricCaseInstanceQuery().count()).isEqualTo(20);</span>
+
+        }
+
+<span class="nc bnc" id="L148" title="All 2 branches missed.">        for (int i = 0; i &lt; 10; i++) {</span>
+<span class="nc" id="L149">            Task task = cmmnTaskService.createTaskQuery().caseInstanceId(caseInstanceIds.get(i)).singleResult();</span>
+<span class="nc" id="L150">            cmmnTaskService.setVariableLocal(task.getId(), &quot;taskVar&quot;, &quot;taskValue&quot; + (i + 1));</span>
+<span class="nc" id="L151">            cmmnTaskService.setVariableLocal(task.getId(), &quot;taskSerializableVar&quot;, new RepetitionVariableAggregationTest.TestSerializableVariable());</span>
+<span class="nc" id="L152">            cmmnTaskService.complete(task.getId());</span>
+        }
+
+<span class="nc bnc" id="L155" title="All 2 branches missed.">        if (CmmnHistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.NONE, cmmnEngineConfiguration)) {</span>
+<span class="nc" id="L156">            HistoricCaseInstanceQuery query = cmmnHistoryService.createHistoricCaseInstanceQuery();</span>
+<span class="nc" id="L157">            Calendar cal = new GregorianCalendar();</span>
+<span class="nc" id="L158">            cal.set(Calendar.YEAR, cal.get(Calendar.YEAR) + 1);</span>
+<span class="nc" id="L159">            query.finishedBefore(cal.getTime());</span>
+<span class="nc" id="L160">            query.deleteWithRelatedData();</span>
+
+<span class="nc" id="L162">            assertThat(cmmnHistoryService.createHistoricCaseInstanceQuery().count()).isEqualTo(10);</span>
+<span class="nc" id="L163">            assertThat(cmmnHistoryService.createHistoricPlanItemInstanceQuery().count()).isEqualTo(20);</span>
+<span class="nc" id="L164">            assertThat(cmmnHistoryService.createHistoricTaskInstanceQuery().count()).isEqualTo(10);</span>
+
+<span class="nc bnc" id="L166" title="All 2 branches missed.">            for (int i = 0; i &lt; 20; i++) {</span>
+<span class="nc bnc" id="L167" title="All 2 branches missed.">                if (i &lt; 10) {</span>
+<span class="nc" id="L168">                    assertThat(cmmnHistoryService.getHistoricIdentityLinksForCaseInstance(caseInstanceIds.get(i))).isEmpty();</span>
+<span class="nc" id="L169">                    assertThat(cmmnHistoryService.createHistoricTaskLogEntryQuery().caseInstanceId(caseInstanceIds.get(i)).count()).isZero();</span>
+<span class="nc" id="L170">                    assertThat(cmmnHistoryService.createHistoricVariableInstanceQuery().caseInstanceId(caseInstanceIds.get(i)).count()).isZero();</span>
+<span class="nc" id="L171">                    assertThat(cmmnHistoryService.createHistoricMilestoneInstanceQuery().milestoneInstanceCaseInstanceId(caseInstanceIds.get(i)).count())</span>
+<span class="nc" id="L172">                            .isZero();</span>
+                } else {
+<span class="nc" id="L174">                    assertThat(cmmnHistoryService.getHistoricIdentityLinksForCaseInstance(caseInstanceIds.get(i))).hasSize(1);</span>
+<span class="nc" id="L175">                    assertThat(cmmnHistoryService.createHistoricTaskLogEntryQuery().caseInstanceId(caseInstanceIds.get(i)).count()).isEqualTo(1);</span>
+<span class="nc" id="L176">                    assertThat(cmmnHistoryService.createHistoricVariableInstanceQuery().caseInstanceId(caseInstanceIds.get(i)).count()).isEqualTo(3);</span>
+<span class="nc" id="L177">                    assertThat(cmmnHistoryService.createHistoricMilestoneInstanceQuery().milestoneInstanceCaseInstanceId(caseInstanceIds.get(i)).count())</span>
+<span class="nc" id="L178">                            .isEqualTo(1);</span>
+                }
+            }
+        }
+<span class="nc" id="L182">    }</span>
+    
+    @Test
+    @CmmnDeployment(resources = &quot;org/flowable/cmmn/test/human-task-milestone-model.cmmn&quot;)
+    public void testDeleteHistoricInstances() {
+<span class="nc" id="L187">        List&lt;String&gt; caseInstanceIds = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L188" title="All 2 branches missed.">        for (int i = 0; i &lt; 20; i++) {</span>
+<span class="nc" id="L189">            CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder().caseDefinitionKey(&quot;oneTaskCase&quot;).start();</span>
+<span class="nc" id="L190">            caseInstanceIds.add(caseInstance.getId());</span>
+<span class="nc" id="L191">            cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;testVar&quot;, &quot;testValue&quot; + (i + 1));</span>
+<span class="nc" id="L192">            cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;numVar&quot;, (i + 1));</span>
+<span class="nc" id="L193">            cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;serializableVar&quot;, new RepetitionVariableAggregationTest.TestSerializableVariable());</span>
+        }
+
+<span class="nc bnc" id="L196" title="All 2 branches missed.">        if (CmmnHistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.NONE, cmmnEngineConfiguration)) {</span>
+
+<span class="nc" id="L198">            assertThat(cmmnHistoryService.createHistoricCaseInstanceQuery().count()).isEqualTo(20);</span>
+
+        }
+
+<span class="nc bnc" id="L202" title="All 2 branches missed.">        for (int i = 0; i &lt; 10; i++) {</span>
+<span class="nc" id="L203">            Task task = cmmnTaskService.createTaskQuery().caseInstanceId(caseInstanceIds.get(i)).singleResult();</span>
+<span class="nc" id="L204">            cmmnTaskService.setVariableLocal(task.getId(), &quot;taskVar&quot;, &quot;taskValue&quot; + (i + 1));</span>
+<span class="nc" id="L205">            cmmnTaskService.setVariableLocal(task.getId(), &quot;taskSerializableVar&quot;, new RepetitionVariableAggregationTest.TestSerializableVariable());</span>
+<span class="nc" id="L206">            cmmnTaskService.complete(task.getId());</span>
+        }
+
+<span class="nc bnc" id="L209" title="All 2 branches missed.">        if (CmmnHistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.NONE, cmmnEngineConfiguration)) {</span>
+<span class="nc" id="L210">            HistoricCaseInstanceQuery query = cmmnHistoryService.createHistoricCaseInstanceQuery();</span>
+<span class="nc" id="L211">            query.activePlanItemDefinitionId(&quot;noneexisting&quot;);</span>
+<span class="nc" id="L212">            query.deleteWithRelatedData();</span>
+
+<span class="nc" id="L214">            assertThat(cmmnHistoryService.createHistoricCaseInstanceQuery().count()).isEqualTo(20);</span>
+<span class="nc" id="L215">            assertThat(cmmnHistoryService.createHistoricPlanItemInstanceQuery().count()).isEqualTo(40);</span>
+<span class="nc" id="L216">            assertThat(cmmnHistoryService.createHistoricTaskInstanceQuery().count()).isEqualTo(20);</span>
+        }
+<span class="nc" id="L218">    }</span>
+
+    @Test
+    @CmmnDeployment(resources = &quot;org/flowable/cmmn/test/one-human-task-model.cmmn&quot;)
+    public void testDeleteSingleHistoricCaseInstanceShouldDeleteTasks() {
+<span class="nc" id="L223">        CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder().caseDefinitionKey(&quot;oneTaskCase&quot;).start();</span>
+<span class="nc" id="L224">        cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;testVar&quot;, &quot;testValue&quot;);</span>
+<span class="nc" id="L225">        cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;numVar&quot;, 43);</span>
+<span class="nc" id="L226">        cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;serializableVar&quot;, new RepetitionVariableAggregationTest.TestSerializableVariable());</span>
+
+<span class="nc" id="L228">        cmmnRuntimeService.terminateCaseInstance(caseInstance.getId());</span>
+
+<span class="nc bnc" id="L230" title="All 2 branches missed.">        if (CmmnHistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.AUDIT, cmmnEngineConfiguration)) {</span>
+<span class="nc" id="L231">            assertThat(cmmnHistoryService.createHistoricCaseInstanceQuery().caseInstanceId(caseInstance.getId()).list()).hasSize(1);</span>
+<span class="nc" id="L232">            assertThat(cmmnHistoryService.createHistoricVariableInstanceQuery().caseInstanceId(caseInstance.getId()).list()).hasSize(3);</span>
+<span class="nc" id="L233">            assertThat(cmmnHistoryService.createHistoricTaskInstanceQuery().caseInstanceId(caseInstance.getId()).list()).hasSize(1);</span>
+        }
+
+<span class="nc bnc" id="L236" title="All 2 branches missed.">        if (CmmnHistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.AUDIT, cmmnEngineConfiguration)) {</span>
+<span class="nc" id="L237">            cmmnHistoryService.deleteHistoricCaseInstance(caseInstance.getId());</span>
+        }
+
+<span class="nc bnc" id="L240" title="All 2 branches missed.">        if (CmmnHistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.AUDIT, cmmnEngineConfiguration)) {</span>
+<span class="nc" id="L241">            assertThat(cmmnHistoryService.createHistoricCaseInstanceQuery().caseInstanceId(caseInstance.getId()).list()).isEmpty();</span>
+<span class="nc" id="L242">            assertThat(cmmnHistoryService.createHistoricPlanItemInstanceQuery().planItemInstanceCaseInstanceId(caseInstance.getId()).list()).isEmpty();</span>
+<span class="nc" id="L243">            assertThat(cmmnHistoryService.createHistoricTaskInstanceQuery().caseInstanceId(caseInstance.getId()).list()).isEmpty();</span>
+<span class="nc" id="L244">            assertThat(cmmnHistoryService.getHistoricIdentityLinksForCaseInstance(caseInstance.getId())).isEmpty();</span>
+<span class="nc" id="L245">            assertThat(cmmnHistoryService.getHistoricEntityLinkChildrenForCaseInstance(caseInstance.getId())).isEmpty();</span>
+<span class="nc" id="L246">            assertThat(cmmnHistoryService.createHistoricTaskLogEntryQuery().caseInstanceId(caseInstance.getId()).list()).isEmpty();</span>
+<span class="nc" id="L247">            assertThat(cmmnHistoryService.createHistoricVariableInstanceQuery().caseInstanceId(caseInstance.getId()).list()).isEmpty();</span>
+        }
+<span class="nc" id="L249">    }</span>
+
+    @Test
+    @CmmnDeployment(resources = &quot;org/flowable/cmmn/test/human-task-milestone-model.cmmn&quot;)
+    public void testDeleteHistoricInstancesUsingBatch() {
+<span class="nc" id="L254">        List&lt;String&gt; caseInstanceIds = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L255" title="All 2 branches missed.">        for (int i = 0; i &lt; 20; i++) {</span>
+<span class="nc" id="L256">            CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder().caseDefinitionKey(&quot;oneTaskCase&quot;).start();</span>
+<span class="nc" id="L257">            caseInstanceIds.add(caseInstance.getId());</span>
+<span class="nc" id="L258">            cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;testVar&quot;, &quot;testValue&quot; + (i + 1));</span>
+<span class="nc" id="L259">            cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;numVar&quot;, (i + 1));</span>
+<span class="nc" id="L260">            cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;serializableVar&quot;, new RepetitionVariableAggregationTest.TestSerializableVariable());</span>
+        }
+
+<span class="nc bnc" id="L263" title="All 2 branches missed.">        if (CmmnHistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, cmmnEngineConfiguration)) {</span>
+
+<span class="nc" id="L265">            assertThat(cmmnHistoryService.createHistoricCaseInstanceQuery().count()).isEqualTo(20);</span>
+
+        }
+
+<span class="nc bnc" id="L269" title="All 2 branches missed.">        for (int i = 0; i &lt; 10; i++) {</span>
+<span class="nc" id="L270">            Task task = cmmnTaskService.createTaskQuery().caseInstanceId(caseInstanceIds.get(i)).singleResult();</span>
+<span class="nc" id="L271">            cmmnTaskService.setVariableLocal(task.getId(), &quot;taskVar&quot;, &quot;taskValue&quot; + (i + 1));</span>
+<span class="nc" id="L272">            cmmnTaskService.setVariableLocal(task.getId(), &quot;taskSerializableVar&quot;, new RepetitionVariableAggregationTest.TestSerializableVariable());</span>
+<span class="nc" id="L273">            cmmnTaskService.complete(task.getId());</span>
+        }
+
+<span class="nc bnc" id="L276" title="All 2 branches missed.">        if (CmmnHistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, cmmnEngineConfiguration)) {</span>
+<span class="nc" id="L277">            HistoricCaseInstanceQuery query = cmmnHistoryService.createHistoricCaseInstanceQuery();</span>
+<span class="nc" id="L278">            Calendar cal = new GregorianCalendar();</span>
+<span class="nc" id="L279">            cal.set(Calendar.YEAR, cal.get(Calendar.YEAR) + 1);</span>
+<span class="nc" id="L280">            query.finishedBefore(cal.getTime());</span>
+<span class="nc" id="L281">            String batchId = query.deleteSequentiallyUsingBatch(5, &quot;Test Deletion&quot;);</span>
+<span class="nc" id="L282">            batchesToRemove.add(batchId);</span>
+
+<span class="nc" id="L284">            assertThat(cmmnHistoryService.createHistoricCaseInstanceQuery().count()).isEqualTo(20);</span>
+<span class="nc" id="L285">            assertThat(cmmnHistoryService.createHistoricPlanItemInstanceQuery().count()).isEqualTo(40);</span>
+<span class="nc" id="L286">            assertThat(cmmnHistoryService.createHistoricTaskInstanceQuery().count()).isEqualTo(20);</span>
+
+<span class="nc" id="L288">            Batch batch = cmmnManagementService.createBatchQuery().batchId(batchId).singleResult();</span>
+<span class="nc" id="L289">            assertThat(batch).isNotNull();</span>
+<span class="nc" id="L290">            assertThat(batch.getStatus()).isEqualTo(DeleteCaseInstanceBatchConstants.STATUS_IN_PROGRESS);</span>
+<span class="nc" id="L291">            assertThat(batch.getBatchType()).isEqualTo(Batch.HISTORIC_CASE_DELETE_TYPE);</span>
+<span class="nc" id="L292">            assertThat(batch.getCompleteTime()).isNull();</span>
+
+<span class="nc" id="L294">            assertThat(cmmnManagementService.createBatchPartQuery().list())</span>
+<span class="nc" id="L295">                    .hasSize(1)</span>
+<span class="nc" id="L296">                    .allSatisfy(part -&gt; {</span>
+<span class="nc" id="L297">                        assertThat(part.getStatus()).isEqualTo(DeleteCaseInstanceBatchConstants.STATUS_WAITING);</span>
+<span class="nc" id="L298">                        assertThat(part.getType()).isEqualTo(DeleteCaseInstanceBatchConstants.BATCH_PART_DELETE_CASE_INSTANCES_TYPE);</span>
+<span class="nc" id="L299">                    });</span>
+
+<span class="nc" id="L301">            assertThat(cmmnManagementService.createJobQuery().list())</span>
+<span class="nc" id="L302">                    .hasSize(1)</span>
+<span class="nc" id="L303">                    .allSatisfy(job -&gt; {</span>
+<span class="nc" id="L304">                        assertThat(job.getJobHandlerType()).isEqualTo(DeleteHistoricCaseInstancesSequentialJobHandler.TYPE);</span>
+<span class="nc" id="L305">                    });</span>
+
+<span class="nc" id="L307">            waitForJobExecutorToProcessAllAsyncJobs();</span>
+<span class="nc" id="L308">            waitForAsyncHistoryExecutorToProcessAllJobs();</span>
+<span class="nc" id="L309">            assertThat(cmmnManagementService.createJobQuery().list()).isEmpty();</span>
+<span class="nc" id="L310">            assertThat(cmmnManagementService.createTimerJobQuery().list()).isEmpty();</span>
+<span class="nc" id="L311">            assertThat(cmmnManagementService.createBatchPartQuery().list())</span>
+<span class="nc" id="L312">                    .extracting(BatchPart::getStatus, BatchPart::getType)</span>
+<span class="nc" id="L313">                    .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L314">                            tuple(DeleteCaseInstanceBatchConstants.STATUS_COMPLETED, DeleteCaseInstanceBatchConstants.BATCH_PART_DELETE_CASE_INSTANCES_TYPE),</span>
+<span class="nc" id="L315">                            tuple(DeleteCaseInstanceBatchConstants.STATUS_COMPLETED, DeleteCaseInstanceBatchConstants.BATCH_PART_DELETE_CASE_INSTANCES_TYPE),</span>
+<span class="nc" id="L316">                            tuple(DeleteCaseInstanceBatchConstants.STATUS_COMPLETED, DeleteCaseInstanceBatchConstants.BATCH_PART_DELETE_CASE_INSTANCES_TYPE)</span>
+                    );
+
+<span class="nc" id="L319">            batch = cmmnManagementService.createBatchQuery().batchId(batchId).singleResult();</span>
+<span class="nc" id="L320">            assertThat(batch).isNotNull();</span>
+<span class="nc" id="L321">            assertThat(batch.getStatus()).isEqualTo(DeleteCaseInstanceBatchConstants.STATUS_COMPLETED);</span>
+<span class="nc" id="L322">            assertThat(batch.getBatchType()).isEqualTo(Batch.HISTORIC_CASE_DELETE_TYPE);</span>
+<span class="nc" id="L323">            assertThat(batch.getCompleteTime()).isNotNull();</span>
+
+<span class="nc" id="L325">            waitForAsyncHistoryExecutorToProcessAllJobs();</span>
+<span class="nc" id="L326">            assertThat(cmmnHistoryService.createHistoricCaseInstanceQuery().count()).isEqualTo(10);</span>
+<span class="nc" id="L327">            assertThat(cmmnHistoryService.createHistoricPlanItemInstanceQuery().count()).isEqualTo(20);</span>
+<span class="nc" id="L328">            assertThat(cmmnHistoryService.createHistoricTaskInstanceQuery().count()).isEqualTo(10);</span>
+
+<span class="nc bnc" id="L330" title="All 2 branches missed.">            for (int i = 0; i &lt; 20; i++) {</span>
+<span class="nc bnc" id="L331" title="All 2 branches missed.">                if (i &lt; 10) {</span>
+<span class="nc" id="L332">                    assertThat(cmmnHistoryService.getHistoricIdentityLinksForCaseInstance(caseInstanceIds.get(i))).isEmpty();</span>
+<span class="nc" id="L333">                    assertThat(cmmnHistoryService.createHistoricTaskLogEntryQuery().caseInstanceId(caseInstanceIds.get(i)).count()).isZero();</span>
+<span class="nc" id="L334">                    assertThat(cmmnHistoryService.createHistoricVariableInstanceQuery().caseInstanceId(caseInstanceIds.get(i)).count()).isZero();</span>
+<span class="nc" id="L335">                    assertThat(cmmnHistoryService.createHistoricMilestoneInstanceQuery().milestoneInstanceCaseInstanceId(caseInstanceIds.get(i)).count()).isZero();</span>
+                } else {
+<span class="nc" id="L337">                    assertThat(cmmnHistoryService.getHistoricIdentityLinksForCaseInstance(caseInstanceIds.get(i))).hasSize(1);</span>
+<span class="nc" id="L338">                    assertThat(cmmnHistoryService.createHistoricTaskLogEntryQuery().caseInstanceId(caseInstanceIds.get(i)).count()).isEqualTo(1);</span>
+<span class="nc" id="L339">                    assertThat(cmmnHistoryService.createHistoricVariableInstanceQuery().caseInstanceId(caseInstanceIds.get(i)).count()).isEqualTo(3);</span>
+<span class="nc" id="L340">                    assertThat(cmmnHistoryService.createHistoricMilestoneInstanceQuery().milestoneInstanceCaseInstanceId(caseInstanceIds.get(i)).count()).isEqualTo(1);</span>
+                }
+            }
+        }
+<span class="nc" id="L344">    }</span>
+
+    @Test
+    @CmmnDeployment(resources = &quot;org/flowable/cmmn/test/human-task-milestone-model.cmmn&quot;)
+    public void testDeleteHistoricInstancesUsingBatchWithAuthenticatedUser() {
+<span class="nc" id="L349">        Authentication.setAuthenticatedUserId(&quot;test-user&quot;);</span>
+<span class="nc" id="L350">        String batchId = cmmnHistoryService.createHistoricCaseInstanceQuery()</span>
+<span class="nc" id="L351">                .caseDefinitionKey(&quot;dummy&quot;)</span>
+<span class="nc" id="L352">                .deleteSequentiallyUsingBatch(5, &quot;Test Deletion&quot;);</span>
+<span class="nc" id="L353">        batchesToRemove.add(batchId);</span>
+
+<span class="nc" id="L355">        Batch batch = cmmnManagementService.createBatchQuery().batchId(batchId).singleResult();</span>
+<span class="nc" id="L356">        assertThat(batch).isNotNull();</span>
+<span class="nc" id="L357">        assertThat(batch.getStatus()).isEqualTo(DeleteCaseInstanceBatchConstants.STATUS_COMPLETED);</span>
+<span class="nc" id="L358">        assertThat(batch.getBatchType()).isEqualTo(Batch.HISTORIC_CASE_DELETE_TYPE);</span>
+<span class="nc" id="L359">        assertThat(batch.getBatchSearchKey()).isEqualTo(&quot;Test Deletion&quot;);</span>
+<span class="nc" id="L360">        assertThat(batch.getBatchSearchKey2()).isEqualTo(&quot;test-user&quot;);</span>
+<span class="nc" id="L361">    }</span>
+
+    @Test
+    @CmmnDeployment(resources = &quot;org/flowable/cmmn/test/human-task-milestone-model.cmmn&quot;)
+    public void testDeleteHistoricInstancesUsingBatchAndDeleteFails() {
+<span class="nc" id="L366">        List&lt;String&gt; caseInstanceIds = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L367" title="All 2 branches missed.">        for (int i = 0; i &lt; 20; i++) {</span>
+<span class="nc" id="L368">            CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder().caseDefinitionKey(&quot;oneTaskCase&quot;).start();</span>
+<span class="nc" id="L369">            caseInstanceIds.add(caseInstance.getId());</span>
+<span class="nc" id="L370">            cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;testVar&quot;, &quot;testValue&quot; + (i + 1));</span>
+<span class="nc" id="L371">            cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;numVar&quot;, (i + 1));</span>
+<span class="nc" id="L372">            cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;serializableVar&quot;, new RepetitionVariableAggregationTest.TestSerializableVariable());</span>
+        }
+
+<span class="nc bnc" id="L375" title="All 2 branches missed.">        if (CmmnHistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, cmmnEngineConfiguration)) {</span>
+<span class="nc" id="L376">            assertThat(cmmnHistoryService.createHistoricCaseInstanceQuery().count()).isEqualTo(20);</span>
+        }
+
+<span class="nc bnc" id="L379" title="All 2 branches missed.">        for (int i = 0; i &lt; 10; i++) {</span>
+<span class="nc" id="L380">            Task task = cmmnTaskService.createTaskQuery().caseInstanceId(caseInstanceIds.get(i)).singleResult();</span>
+<span class="nc" id="L381">            cmmnTaskService.setVariableLocal(task.getId(), &quot;taskVar&quot;, &quot;taskValue&quot; + (i + 1));</span>
+<span class="nc" id="L382">            cmmnTaskService.setVariableLocal(task.getId(), &quot;taskSerializableVar&quot;, new RepetitionVariableAggregationTest.TestSerializableVariable());</span>
+<span class="nc" id="L383">            cmmnTaskService.complete(task.getId());</span>
+        }
+
+<span class="nc bnc" id="L386" title="All 2 branches missed.">        if (CmmnHistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, cmmnEngineConfiguration)) {</span>
+<span class="nc" id="L387">            String batchId = cmmnHistoryService.createHistoricCaseInstanceQuery()</span>
+<span class="nc" id="L388">                    .deleteSequentiallyUsingBatch(5, &quot;Test Deletion&quot;);</span>
+<span class="nc" id="L389">            batchesToRemove.add(batchId);</span>
+
+<span class="nc" id="L391">            assertThat(cmmnHistoryService.createHistoricCaseInstanceQuery().count()).isEqualTo(20);</span>
+<span class="nc" id="L392">            assertThat(cmmnHistoryService.createHistoricPlanItemInstanceQuery().count()).isEqualTo(40);</span>
+<span class="nc" id="L393">            assertThat(cmmnHistoryService.createHistoricTaskInstanceQuery().count()).isEqualTo(20);</span>
+
+<span class="nc" id="L395">            Batch batch = cmmnManagementService.createBatchQuery().batchId(batchId).singleResult();</span>
+<span class="nc" id="L396">            assertThat(batch).isNotNull();</span>
+<span class="nc" id="L397">            assertThat(batch.getStatus()).isEqualTo(DeleteCaseInstanceBatchConstants.STATUS_IN_PROGRESS);</span>
+<span class="nc" id="L398">            assertThat(batch.getBatchType()).isEqualTo(Batch.HISTORIC_CASE_DELETE_TYPE);</span>
+<span class="nc" id="L399">            assertThat(batch.getCompleteTime()).isNull();</span>
+<span class="nc" id="L400">            assertThatJson(batch.getBatchDocumentJson(ScopeTypes.CMMN))</span>
+<span class="nc" id="L401">                    .isEqualTo(&quot;{&quot;</span>
+                            + &quot;  numberOfInstances: 20,&quot;
+                            + &quot;  batchSize: 5,&quot;
+                            + &quot;  query: { },&quot;
+                            + &quot;  sequential: true&quot;
+                            + &quot;}&quot;);
+
+<span class="nc" id="L408">            assertThat(cmmnManagementService.createBatchPartQuery().list())</span>
+<span class="nc" id="L409">                    .hasSize(1)</span>
+<span class="nc" id="L410">                    .allSatisfy(part -&gt; {</span>
+<span class="nc" id="L411">                        assertThat(part.getStatus()).isEqualTo(DeleteCaseInstanceBatchConstants.STATUS_WAITING);</span>
+<span class="nc" id="L412">                        assertThat(part.getType()).isEqualTo(DeleteCaseInstanceBatchConstants.BATCH_PART_DELETE_CASE_INSTANCES_TYPE);</span>
+<span class="nc" id="L413">                    });</span>
+
+<span class="nc" id="L415">            assertThat(cmmnManagementService.createJobQuery().list())</span>
+<span class="nc" id="L416">                    .hasSize(1)</span>
+<span class="nc" id="L417">                    .allSatisfy(job -&gt; {</span>
+<span class="nc" id="L418">                        assertThat(job.getJobHandlerType()).isEqualTo(DeleteHistoricCaseInstancesSequentialJobHandler.TYPE);</span>
+<span class="nc" id="L419">                    });</span>
+
+<span class="nc" id="L421">            waitForJobExecutorToProcessAllAsyncJobs();</span>
+<span class="nc" id="L422">            waitForAsyncHistoryExecutorToProcessAllJobs();</span>
+<span class="nc" id="L423">            assertThat(cmmnManagementService.createJobQuery().list()).isEmpty();</span>
+<span class="nc" id="L424">            assertThat(cmmnManagementService.createTimerJobQuery().list()).isEmpty();</span>
+<span class="nc" id="L425">            assertThat(cmmnManagementService.createBatchPartQuery().list())</span>
+<span class="nc" id="L426">                    .extracting(BatchPart::getStatus, BatchPart::getType)</span>
+<span class="nc" id="L427">                    .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L428">                            tuple(DeleteCaseInstanceBatchConstants.STATUS_COMPLETED, DeleteCaseInstanceBatchConstants.BATCH_PART_DELETE_CASE_INSTANCES_TYPE),</span>
+<span class="nc" id="L429">                            tuple(DeleteCaseInstanceBatchConstants.STATUS_COMPLETED, DeleteCaseInstanceBatchConstants.BATCH_PART_DELETE_CASE_INSTANCES_TYPE),</span>
+<span class="nc" id="L430">                            tuple(DeleteCaseInstanceBatchConstants.STATUS_COMPLETED, DeleteCaseInstanceBatchConstants.BATCH_PART_DELETE_CASE_INSTANCES_TYPE),</span>
+<span class="nc" id="L431">                            tuple(DeleteCaseInstanceBatchConstants.STATUS_COMPLETED, DeleteCaseInstanceBatchConstants.BATCH_PART_DELETE_CASE_INSTANCES_TYPE),</span>
+<span class="nc" id="L432">                            tuple(DeleteCaseInstanceBatchConstants.STATUS_COMPLETED, DeleteCaseInstanceBatchConstants.BATCH_PART_DELETE_CASE_INSTANCES_TYPE)</span>
+                    );
+
+<span class="nc" id="L435">            batch = cmmnManagementService.createBatchQuery().batchId(batchId).singleResult();</span>
+<span class="nc" id="L436">            assertThat(batch).isNotNull();</span>
+<span class="nc" id="L437">            assertThat(batch.getStatus()).isEqualTo(DeleteCaseInstanceBatchConstants.STATUS_COMPLETED);</span>
+<span class="nc" id="L438">            assertThat(batch.getBatchType()).isEqualTo(Batch.HISTORIC_CASE_DELETE_TYPE);</span>
+<span class="nc" id="L439">            assertThat(batch.getCompleteTime()).isNotNull();</span>
+<span class="nc" id="L440">            assertThatJson(batch.getBatchDocumentJson(ScopeTypes.CMMN))</span>
+<span class="nc" id="L441">                    .isEqualTo(&quot;{&quot;</span>
+                            + &quot;  numberOfInstances: 20,&quot;
+                            + &quot;  batchSize: 5,&quot;
+                            + &quot;  query: { },&quot;
+                            + &quot;  sequential: true&quot;
+                            + &quot;}&quot;);
+
+<span class="nc" id="L448">            waitForAsyncHistoryExecutorToProcessAllJobs();</span>
+<span class="nc" id="L449">            assertThat(cmmnHistoryService.createHistoricCaseInstanceQuery().count()).isEqualTo(0);</span>
+<span class="nc" id="L450">            assertThat(cmmnHistoryService.createHistoricPlanItemInstanceQuery().count()).isEqualTo(0);</span>
+<span class="nc" id="L451">            assertThat(cmmnHistoryService.createHistoricTaskInstanceQuery().count()).isEqualTo(0);</span>
+
+<span class="nc bnc" id="L453" title="All 2 branches missed.">            for (int i = 0; i &lt; 20; i++) {</span>
+<span class="nc" id="L454">                assertThat(cmmnHistoryService.getHistoricIdentityLinksForCaseInstance(caseInstanceIds.get(i))).isEmpty();</span>
+<span class="nc" id="L455">                assertThat(cmmnHistoryService.createHistoricTaskLogEntryQuery().caseInstanceId(caseInstanceIds.get(i)).count()).isZero();</span>
+<span class="nc" id="L456">                assertThat(cmmnHistoryService.createHistoricVariableInstanceQuery().caseInstanceId(caseInstanceIds.get(i)).count()).isZero();</span>
+<span class="nc" id="L457">                assertThat(cmmnHistoryService.createHistoricMilestoneInstanceQuery().milestoneInstanceCaseInstanceId(caseInstanceIds.get(i)).count()).isZero();</span>
+            }
+        }
+<span class="nc" id="L460">    }</span>
+
+    @Test
+    @CmmnDeployment(resources = &quot;org/flowable/cmmn/test/human-task-milestone-model.cmmn&quot;)
+    public void testDeleteHistoricInstancesWithOrAndVariableValueUsingBatch() {
+<span class="nc" id="L465">        List&lt;String&gt; caseInstanceIds = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L466" title="All 2 branches missed.">        for (int i = 0; i &lt; 10; i++) {</span>
+<span class="nc" id="L467">            CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder().caseDefinitionKey(&quot;oneTaskCase&quot;).start();</span>
+<span class="nc" id="L468">            caseInstanceIds.add(caseInstance.getId());</span>
+<span class="nc" id="L469">            cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;testVar&quot;, &quot;testValue&quot; + (i + 1));</span>
+<span class="nc" id="L470">            cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;numVar&quot;, (i + 1));</span>
+<span class="nc" id="L471">            cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;serializableVar&quot;, new RepetitionVariableAggregationTest.TestSerializableVariable());</span>
+        }
+
+<span class="nc bnc" id="L474" title="All 2 branches missed.">        if (CmmnHistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, cmmnEngineConfiguration)) {</span>
+
+<span class="nc" id="L476">            assertThat(cmmnHistoryService.createHistoricCaseInstanceQuery().count()).isEqualTo(10);</span>
+
+        }
+
+<span class="nc bnc" id="L480" title="All 2 branches missed.">        for (int i = 0; i &lt; 5; i++) {</span>
+<span class="nc" id="L481">            Task task = cmmnTaskService.createTaskQuery().caseInstanceId(caseInstanceIds.get(i)).singleResult();</span>
+<span class="nc" id="L482">            cmmnTaskService.setVariableLocal(task.getId(), &quot;taskVar&quot;, &quot;taskValue&quot; + (i + 1));</span>
+<span class="nc" id="L483">            cmmnTaskService.setVariableLocal(task.getId(), &quot;taskSerializableVar&quot;, new RepetitionVariableAggregationTest.TestSerializableVariable());</span>
+<span class="nc" id="L484">            cmmnTaskService.complete(task.getId());</span>
+        }
+
+<span class="nc bnc" id="L487" title="All 2 branches missed.">        if (CmmnHistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, cmmnEngineConfiguration)) {</span>
+<span class="nc" id="L488">            String batchId = cmmnHistoryService.createHistoricCaseInstanceQuery()</span>
+<span class="nc" id="L489">                    .finished()</span>
+<span class="nc" id="L490">                    .or()</span>
+<span class="nc" id="L491">                        .variableValueEquals(&quot;numVar&quot;, 1)</span>
+<span class="nc" id="L492">                        .variableValueEquals(&quot;numVar&quot;, 2)</span>
+<span class="nc" id="L493">                        .variableValueEquals(&quot;numVar&quot;, 3)</span>
+<span class="nc" id="L494">                        .variableValueEquals(&quot;numVar&quot;, 6)</span>
+<span class="nc" id="L495">                        .variableValueEquals(&quot;numVar&quot;, 7)</span>
+<span class="nc" id="L496">                    .endOr()</span>
+<span class="nc" id="L497">                    .deleteSequentiallyUsingBatch(5, &quot;Test Deletion&quot;);</span>
+<span class="nc" id="L498">            batchesToRemove.add(batchId);</span>
+
+<span class="nc" id="L500">            assertThat(cmmnHistoryService.createHistoricCaseInstanceQuery().count()).isEqualTo(10);</span>
+<span class="nc" id="L501">            assertThat(cmmnHistoryService.createHistoricPlanItemInstanceQuery().count()).isEqualTo(20);</span>
+<span class="nc" id="L502">            assertThat(cmmnHistoryService.createHistoricTaskInstanceQuery().count()).isEqualTo(10);</span>
+
+<span class="nc" id="L504">            Batch batch = cmmnManagementService.createBatchQuery().batchId(batchId).singleResult();</span>
+<span class="nc" id="L505">            assertThat(batch).isNotNull();</span>
+<span class="nc" id="L506">            assertThat(batch.getStatus()).isEqualTo(DeleteCaseInstanceBatchConstants.STATUS_IN_PROGRESS);</span>
+<span class="nc" id="L507">            assertThat(batch.getBatchType()).isEqualTo(Batch.HISTORIC_CASE_DELETE_TYPE);</span>
+<span class="nc" id="L508">            assertThatJson(batch.getBatchDocumentJson(ScopeTypes.CMMN))</span>
+<span class="nc" id="L509">                    .isEqualTo(&quot;{&quot;</span>
+                            + &quot;  numberOfInstances: 3,&quot;
+                            + &quot;  batchSize: 5,&quot;
+                            + &quot;  query: {&quot;
+                            + &quot;    finished: true,&quot;
+                            + &quot;    orQueryObjects: [&quot;
+                            + &quot;      {&quot;
+                            + &quot;        queryVariableValues: [&quot;
+                            + &quot;          { name: 'numVar', operator: 'EQUALS', textValue: '1', longValue: 1, type: 'integer' },&quot;
+                            + &quot;          { name: 'numVar', operator: 'EQUALS', textValue: '2', longValue: 2, type: 'integer' },&quot;
+                            + &quot;          { name: 'numVar', operator: 'EQUALS', textValue: '3', longValue: 3, type: 'integer' },&quot;
+                            + &quot;          { name: 'numVar', operator: 'EQUALS', textValue: '6', longValue: 6, type: 'integer' },&quot;
+                            + &quot;          { name: 'numVar', operator: 'EQUALS', textValue: '7', longValue: 7, type: 'integer' }&quot;
+                            + &quot;        ]&quot;
+                            + &quot;      }&quot;
+                            + &quot;    ]&quot;
+                            + &quot;  },&quot;
+                            + &quot;  sequential: true&quot;
+                            + &quot;}&quot;);
+
+<span class="nc" id="L529">            waitForJobExecutorToProcessAllAsyncJobs();</span>
+<span class="nc" id="L530">            waitForAsyncHistoryExecutorToProcessAllJobs();</span>
+            
+<span class="nc" id="L532">            assertThat(cmmnHistoryService.createHistoricCaseInstanceQuery().count()).isEqualTo(7);</span>
+<span class="nc" id="L533">            assertThat(cmmnHistoryService.createHistoricPlanItemInstanceQuery().count()).isEqualTo(14);</span>
+<span class="nc" id="L534">            assertThat(cmmnHistoryService.createHistoricTaskInstanceQuery().count()).isEqualTo(7);</span>
+
+<span class="nc bnc" id="L536" title="All 2 branches missed.">            for (int i = 0; i &lt; 10; i++) {</span>
+<span class="nc bnc" id="L537" title="All 2 branches missed.">                if (i &lt; 3) {</span>
+<span class="nc" id="L538">                    assertThat(cmmnHistoryService.getHistoricIdentityLinksForCaseInstance(caseInstanceIds.get(i))).isEmpty();</span>
+<span class="nc" id="L539">                    assertThat(cmmnHistoryService.createHistoricTaskLogEntryQuery().caseInstanceId(caseInstanceIds.get(i)).count()).isZero();</span>
+<span class="nc" id="L540">                    assertThat(cmmnHistoryService.createHistoricVariableInstanceQuery().caseInstanceId(caseInstanceIds.get(i)).count()).isZero();</span>
+<span class="nc" id="L541">                    assertThat(cmmnHistoryService.createHistoricMilestoneInstanceQuery().milestoneInstanceCaseInstanceId(caseInstanceIds.get(i)).count()).isZero();</span>
+<span class="nc bnc" id="L542" title="All 2 branches missed.">                } else if (i &lt; 5) {</span>
+<span class="nc" id="L543">                    assertThat(cmmnHistoryService.getHistoricIdentityLinksForCaseInstance(caseInstanceIds.get(i))).hasSize(1);</span>
+<span class="nc" id="L544">                    assertThat(cmmnHistoryService.createHistoricTaskLogEntryQuery().caseInstanceId(caseInstanceIds.get(i)).count()).isEqualTo(2);</span>
+<span class="nc" id="L545">                    assertThat(cmmnHistoryService.createHistoricVariableInstanceQuery().caseInstanceId(caseInstanceIds.get(i)).count()).isEqualTo(5);</span>
+<span class="nc" id="L546">                    assertThat(cmmnHistoryService.createHistoricMilestoneInstanceQuery().milestoneInstanceCaseInstanceId(caseInstanceIds.get(i)).count()).isEqualTo(1);</span>
+                } else {
+<span class="nc" id="L548">                    assertThat(cmmnHistoryService.getHistoricIdentityLinksForCaseInstance(caseInstanceIds.get(i))).hasSize(1);</span>
+<span class="nc" id="L549">                    assertThat(cmmnHistoryService.createHistoricTaskLogEntryQuery().caseInstanceId(caseInstanceIds.get(i)).count()).isEqualTo(1);</span>
+<span class="nc" id="L550">                    assertThat(cmmnHistoryService.createHistoricVariableInstanceQuery().caseInstanceId(caseInstanceIds.get(i)).count()).isEqualTo(3);</span>
+<span class="nc" id="L551">                    assertThat(cmmnHistoryService.createHistoricMilestoneInstanceQuery().milestoneInstanceCaseInstanceId(caseInstanceIds.get(i)).count()).isEqualTo(1);</span>
+                }
+            }
+        }
+<span class="nc" id="L555">    }</span>
+
+    @Test
+    @CmmnDeployment(resources = &quot;org/flowable/cmmn/test/human-task-milestone-model.cmmn&quot;)
+    public void testDeleteHistoricInstancesUsingBatchWhenNothingMatches() {
+<span class="nc" id="L560">        List&lt;String&gt; caseInstanceIds = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L561" title="All 2 branches missed.">        for (int i = 0; i &lt; 10; i++) {</span>
+<span class="nc" id="L562">            CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder().caseDefinitionKey(&quot;oneTaskCase&quot;).start();</span>
+<span class="nc" id="L563">            caseInstanceIds.add(caseInstance.getId());</span>
+<span class="nc" id="L564">            cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;testVar&quot;, &quot;testValue&quot; + (i + 1));</span>
+<span class="nc" id="L565">            cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;numVar&quot;, (i + 1));</span>
+<span class="nc" id="L566">            cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;serializableVar&quot;, new RepetitionVariableAggregationTest.TestSerializableVariable());</span>
+        }
+
+<span class="nc bnc" id="L569" title="All 2 branches missed.">        if (CmmnHistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, cmmnEngineConfiguration)) {</span>
+
+<span class="nc" id="L571">            assertThat(cmmnHistoryService.createHistoricCaseInstanceQuery().count()).isEqualTo(10);</span>
+
+        }
+
+<span class="nc bnc" id="L575" title="All 2 branches missed.">        for (int i = 0; i &lt; 5; i++) {</span>
+<span class="nc" id="L576">            Task task = cmmnTaskService.createTaskQuery().caseInstanceId(caseInstanceIds.get(i)).singleResult();</span>
+<span class="nc" id="L577">            cmmnTaskService.setVariableLocal(task.getId(), &quot;taskVar&quot;, &quot;taskValue&quot; + (i + 1));</span>
+<span class="nc" id="L578">            cmmnTaskService.setVariableLocal(task.getId(), &quot;taskSerializableVar&quot;, new RepetitionVariableAggregationTest.TestSerializableVariable());</span>
+<span class="nc" id="L579">            cmmnTaskService.complete(task.getId());</span>
+        }
+
+<span class="nc bnc" id="L582" title="All 2 branches missed.">        if (CmmnHistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, cmmnEngineConfiguration)) {</span>
+<span class="nc" id="L583">            String batchId = cmmnHistoryService.createHistoricCaseInstanceQuery()</span>
+<span class="nc" id="L584">                    .finished()</span>
+<span class="nc" id="L585">                    .caseDefinitionKey(&quot;dummy&quot;)</span>
+<span class="nc" id="L586">                    .deleteSequentiallyUsingBatch(5, &quot;Test Deletion&quot;);</span>
+<span class="nc" id="L587">            batchesToRemove.add(batchId);</span>
+
+<span class="nc" id="L589">            assertThat(cmmnHistoryService.createHistoricCaseInstanceQuery().count()).isEqualTo(10);</span>
+<span class="nc" id="L590">            assertThat(cmmnHistoryService.createHistoricPlanItemInstanceQuery().count()).isEqualTo(20);</span>
+<span class="nc" id="L591">            assertThat(cmmnHistoryService.createHistoricTaskInstanceQuery().count()).isEqualTo(10);</span>
+
+<span class="nc" id="L593">            Batch batch = cmmnManagementService.createBatchQuery().batchId(batchId).singleResult();</span>
+<span class="nc" id="L594">            assertThat(batch).isNotNull();</span>
+<span class="nc" id="L595">            assertThat(batch.getStatus()).isEqualTo(DeleteCaseInstanceBatchConstants.STATUS_COMPLETED);</span>
+<span class="nc" id="L596">            assertThat(batch.getBatchType()).isEqualTo(Batch.HISTORIC_CASE_DELETE_TYPE);</span>
+<span class="nc" id="L597">            assertThat(batch.getCompleteTime()).isNotNull();</span>
+<span class="nc" id="L598">            assertThatJson(batch.getBatchDocumentJson(ScopeTypes.CMMN))</span>
+<span class="nc" id="L599">                    .isEqualTo(&quot;{&quot;</span>
+                            + &quot;  numberOfInstances: 0,&quot;
+                            + &quot;  batchSize: 5,&quot;
+                            + &quot;  query: {&quot;
+                            + &quot;    finished: true,&quot;
+                            + &quot;    caseDefinitionKey: 'dummy'&quot;
+                            + &quot;  },&quot;
+                            + &quot;  sequential: true&quot;
+                            + &quot;}&quot;);
+
+<span class="nc" id="L609">            assertThat(cmmnManagementService.createBatchPartQuery().batchId(batchId).list()).isEmpty();</span>
+<span class="nc" id="L610">            assertThat(cmmnManagementService.createJobQuery().list()).isEmpty();</span>
+<span class="nc" id="L611">            assertThat(cmmnManagementService.createTimerJobQuery().list()).isEmpty();</span>
+        }
+<span class="nc" id="L613">    }</span>
+
+    @Test
+    @CmmnDeployment(resources = &quot;org/flowable/cmmn/test/human-task-milestone-model.cmmn&quot;)
+    public void testDeleteHistoricInstancesUsingUnevenBatch() {
+<span class="nc" id="L618">        List&lt;String&gt; caseInstanceIds = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L619" title="All 2 branches missed.">        for (int i = 0; i &lt; 20; i++) {</span>
+<span class="nc" id="L620">            CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder().caseDefinitionKey(&quot;oneTaskCase&quot;).start();</span>
+<span class="nc" id="L621">            caseInstanceIds.add(caseInstance.getId());</span>
+<span class="nc" id="L622">            cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;testVar&quot;, &quot;testValue&quot; + (i + 1));</span>
+<span class="nc" id="L623">            cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;numVar&quot;, (i + 1));</span>
+<span class="nc" id="L624">            cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;serializableVar&quot;, new RepetitionVariableAggregationTest.TestSerializableVariable());</span>
+        }
+
+<span class="nc bnc" id="L627" title="All 2 branches missed.">        if (CmmnHistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, cmmnEngineConfiguration)) {</span>
+<span class="nc" id="L628">            assertThat(cmmnHistoryService.createHistoricCaseInstanceQuery().count()).isEqualTo(20);</span>
+        }
+
+<span class="nc bnc" id="L631" title="All 2 branches missed.">        for (int i = 0; i &lt; 10; i++) {</span>
+<span class="nc" id="L632">            Task task = cmmnTaskService.createTaskQuery().caseInstanceId(caseInstanceIds.get(i)).singleResult();</span>
+<span class="nc" id="L633">            cmmnTaskService.setVariableLocal(task.getId(), &quot;taskVar&quot;, &quot;taskValue&quot; + (i + 1));</span>
+<span class="nc" id="L634">            cmmnTaskService.setVariableLocal(task.getId(), &quot;taskSerializableVar&quot;, new RepetitionVariableAggregationTest.TestSerializableVariable());</span>
+<span class="nc" id="L635">            cmmnTaskService.complete(task.getId());</span>
+        }
+
+<span class="nc bnc" id="L638" title="All 2 branches missed.">        if (CmmnHistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, cmmnEngineConfiguration)) {</span>
+<span class="nc" id="L639">            HistoricCaseInstanceQuery query = cmmnHistoryService.createHistoricCaseInstanceQuery();</span>
+<span class="nc" id="L640">            Calendar cal = new GregorianCalendar();</span>
+<span class="nc" id="L641">            cal.set(Calendar.YEAR, cal.get(Calendar.YEAR) + 1);</span>
+<span class="nc" id="L642">            query.finishedBefore(cal.getTime());</span>
+<span class="nc" id="L643">            String batchId = query.deleteSequentiallyUsingBatch(7, &quot;Test Deletion Uneven&quot;);</span>
+<span class="nc" id="L644">            batchesToRemove.add(batchId);</span>
+
+<span class="nc" id="L646">            assertThat(cmmnHistoryService.createHistoricCaseInstanceQuery().count()).isEqualTo(20);</span>
+<span class="nc" id="L647">            assertThat(cmmnHistoryService.createHistoricPlanItemInstanceQuery().count()).isEqualTo(40);</span>
+<span class="nc" id="L648">            assertThat(cmmnHistoryService.createHistoricTaskInstanceQuery().count()).isEqualTo(20);</span>
+
+<span class="nc" id="L650">            Batch batch = cmmnManagementService.createBatchQuery().batchId(batchId).singleResult();</span>
+<span class="nc" id="L651">            assertThat(batch).isNotNull();</span>
+<span class="nc" id="L652">            assertThat(batch.getStatus()).isEqualTo(DeleteCaseInstanceBatchConstants.STATUS_IN_PROGRESS);</span>
+<span class="nc" id="L653">            assertThat(batch.getBatchType()).isEqualTo(Batch.HISTORIC_CASE_DELETE_TYPE);</span>
+<span class="nc" id="L654">            assertThat(batch.getBatchSearchKey()).isEqualTo(&quot;Test Deletion Uneven&quot;);</span>
+<span class="nc" id="L655">            assertThat(batch.getBatchSearchKey2()).isNull();</span>
+<span class="nc" id="L656">            assertThatJson(batch.getBatchDocumentJson(ScopeTypes.CMMN))</span>
+<span class="nc" id="L657">                    .isEqualTo(&quot;{&quot;</span>
+                            + &quot;  numberOfInstances: 10,&quot;
+                            + &quot;  batchSize: 7,&quot;
+                            + &quot;  query: {&quot;
+                            + &quot;    finishedBefore: '${json-unit.any-string}'&quot;
+                            + &quot;  },&quot;
+                            + &quot;  sequential: true&quot;
+                            + &quot;}&quot;);
+
+<span class="nc" id="L666">            assertThat(cmmnManagementService.createBatchPartQuery().list())</span>
+<span class="nc" id="L667">                    .hasSize(1)</span>
+<span class="nc" id="L668">                    .allSatisfy(part -&gt; {</span>
+<span class="nc" id="L669">                        assertThat(part.getStatus()).isEqualTo(DeleteCaseInstanceBatchConstants.STATUS_WAITING);</span>
+<span class="nc" id="L670">                        assertThat(part.getType()).isEqualTo(DeleteCaseInstanceBatchConstants.BATCH_PART_DELETE_CASE_INSTANCES_TYPE);</span>
+<span class="nc" id="L671">                    });</span>
+
+<span class="nc" id="L673">            assertThat(cmmnManagementService.createJobQuery().list())</span>
+<span class="nc" id="L674">                    .hasSize(1)</span>
+<span class="nc" id="L675">                    .allSatisfy(job -&gt; {</span>
+<span class="nc" id="L676">                        assertThat(job.getJobHandlerType()).isEqualTo(DeleteHistoricCaseInstancesSequentialJobHandler.TYPE);</span>
+<span class="nc" id="L677">                    });</span>
+
+<span class="nc" id="L679">            waitForJobExecutorToProcessAllAsyncJobs();</span>
+<span class="nc" id="L680">            waitForAsyncHistoryExecutorToProcessAllJobs();</span>
+            
+<span class="nc" id="L682">            assertThat(cmmnManagementService.createJobQuery().list()).isEmpty();</span>
+<span class="nc" id="L683">            assertThat(cmmnManagementService.createTimerJobQuery().list()).isEmpty();</span>
+<span class="nc" id="L684">            assertThat(cmmnManagementService.createBatchPartQuery().list())</span>
+<span class="nc" id="L685">                    .extracting(BatchPart::getStatus, BatchPart::getType)</span>
+<span class="nc" id="L686">                    .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L687">                            tuple(DeleteCaseInstanceBatchConstants.STATUS_COMPLETED, DeleteCaseInstanceBatchConstants.BATCH_PART_DELETE_CASE_INSTANCES_TYPE),</span>
+<span class="nc" id="L688">                            tuple(DeleteCaseInstanceBatchConstants.STATUS_COMPLETED, DeleteCaseInstanceBatchConstants.BATCH_PART_DELETE_CASE_INSTANCES_TYPE),</span>
+<span class="nc" id="L689">                            tuple(DeleteCaseInstanceBatchConstants.STATUS_COMPLETED, DeleteCaseInstanceBatchConstants.BATCH_PART_DELETE_CASE_INSTANCES_TYPE)</span>
+                    );
+
+<span class="nc" id="L692">            batch = cmmnManagementService.createBatchQuery().batchId(batchId).singleResult();</span>
+<span class="nc" id="L693">            assertThat(batch).isNotNull();</span>
+<span class="nc" id="L694">            assertThat(batch.getStatus()).isEqualTo(DeleteCaseInstanceBatchConstants.STATUS_COMPLETED);</span>
+<span class="nc" id="L695">            assertThat(batch.getBatchType()).isEqualTo(Batch.HISTORIC_CASE_DELETE_TYPE);</span>
+<span class="nc" id="L696">            assertThat(batch.getBatchSearchKey()).isEqualTo(&quot;Test Deletion Uneven&quot;);</span>
+<span class="nc" id="L697">            assertThat(batch.getBatchSearchKey2()).isNull();</span>
+<span class="nc" id="L698">            assertThatJson(batch.getBatchDocumentJson(ScopeTypes.CMMN))</span>
+<span class="nc" id="L699">                    .isEqualTo(&quot;{&quot;</span>
+                            + &quot;  numberOfInstances: 10,&quot;
+                            + &quot;  batchSize: 7,&quot;
+                            + &quot;  query: {&quot;
+                            + &quot;    finishedBefore: '${json-unit.any-string}'&quot;
+                            + &quot;  },&quot;
+                            + &quot;  sequential: true&quot;
+                            + &quot;}&quot;);
+
+<span class="nc" id="L708">            assertThat(cmmnHistoryService.createHistoricCaseInstanceQuery().count()).isEqualTo(10);</span>
+<span class="nc" id="L709">            assertThat(cmmnHistoryService.createHistoricPlanItemInstanceQuery().count()).isEqualTo(20);</span>
+<span class="nc" id="L710">            assertThat(cmmnHistoryService.createHistoricTaskInstanceQuery().count()).isEqualTo(10);</span>
+
+<span class="nc bnc" id="L712" title="All 2 branches missed.">            for (int i = 0; i &lt; 20; i++) {</span>
+<span class="nc bnc" id="L713" title="All 2 branches missed.">                if (i &lt; 10) {</span>
+<span class="nc" id="L714">                    assertThat(cmmnHistoryService.getHistoricIdentityLinksForCaseInstance(caseInstanceIds.get(i))).isEmpty();</span>
+<span class="nc" id="L715">                    assertThat(cmmnHistoryService.createHistoricTaskLogEntryQuery().caseInstanceId(caseInstanceIds.get(i)).count()).isZero();</span>
+<span class="nc" id="L716">                    assertThat(cmmnHistoryService.createHistoricVariableInstanceQuery().caseInstanceId(caseInstanceIds.get(i)).count()).isZero();</span>
+<span class="nc" id="L717">                    assertThat(cmmnHistoryService.createHistoricMilestoneInstanceQuery().milestoneInstanceCaseInstanceId(caseInstanceIds.get(i)).count())</span>
+<span class="nc" id="L718">                            .isZero();</span>
+                } else {
+<span class="nc" id="L720">                    assertThat(cmmnHistoryService.getHistoricIdentityLinksForCaseInstance(caseInstanceIds.get(i))).hasSize(1);</span>
+<span class="nc" id="L721">                    assertThat(cmmnHistoryService.createHistoricTaskLogEntryQuery().caseInstanceId(caseInstanceIds.get(i)).count()).isEqualTo(1);</span>
+<span class="nc" id="L722">                    assertThat(cmmnHistoryService.createHistoricVariableInstanceQuery().caseInstanceId(caseInstanceIds.get(i)).count()).isEqualTo(3);</span>
+<span class="nc" id="L723">                    assertThat(cmmnHistoryService.createHistoricMilestoneInstanceQuery().milestoneInstanceCaseInstanceId(caseInstanceIds.get(i)).count())</span>
+<span class="nc" id="L724">                            .isEqualTo(1);</span>
+                }
+            }
+        }
+<span class="nc" id="L728">    }</span>
+
+    @Test
+    @CmmnDeployment(resources = &quot;org/flowable/cmmn/test/human-task-milestone-model.cmmn&quot;)
+    public void testDeleteHistoricInstancesSequentiallyUsingBatch() {
+<span class="nc" id="L733">        List&lt;String&gt; caseInstanceIds = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L734" title="All 2 branches missed.">        for (int i = 0; i &lt; 20; i++) {</span>
+<span class="nc" id="L735">            CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder().caseDefinitionKey(&quot;oneTaskCase&quot;).start();</span>
+<span class="nc" id="L736">            caseInstanceIds.add(caseInstance.getId());</span>
+<span class="nc" id="L737">            cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;testVar&quot;, &quot;testValue&quot; + (i + 1));</span>
+<span class="nc" id="L738">            cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;numVar&quot;, (i + 1));</span>
+<span class="nc" id="L739">            cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;serializableVar&quot;, new RepetitionVariableAggregationTest.TestSerializableVariable());</span>
+        }
+
+<span class="nc bnc" id="L742" title="All 2 branches missed.">        if (CmmnHistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, cmmnEngineConfiguration)) {</span>
+
+<span class="nc" id="L744">            assertThat(cmmnHistoryService.createHistoricCaseInstanceQuery().count()).isEqualTo(20);</span>
+
+        }
+
+<span class="nc bnc" id="L748" title="All 2 branches missed.">        for (int i = 0; i &lt; 10; i++) {</span>
+<span class="nc" id="L749">            Task task = cmmnTaskService.createTaskQuery().caseInstanceId(caseInstanceIds.get(i)).singleResult();</span>
+<span class="nc" id="L750">            cmmnTaskService.setVariableLocal(task.getId(), &quot;taskVar&quot;, &quot;taskValue&quot; + (i + 1));</span>
+<span class="nc" id="L751">            cmmnTaskService.setVariableLocal(task.getId(), &quot;taskSerializableVar&quot;, new RepetitionVariableAggregationTest.TestSerializableVariable());</span>
+<span class="nc" id="L752">            cmmnTaskService.complete(task.getId());</span>
+        }
+
+<span class="nc bnc" id="L755" title="All 2 branches missed.">        if (CmmnHistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, cmmnEngineConfiguration)) {</span>
+<span class="nc" id="L756">            HistoricCaseInstanceQuery query = cmmnHistoryService.createHistoricCaseInstanceQuery();</span>
+<span class="nc" id="L757">            Calendar cal = new GregorianCalendar();</span>
+<span class="nc" id="L758">            cal.set(Calendar.YEAR, cal.get(Calendar.YEAR) + 1);</span>
+<span class="nc" id="L759">            query.finishedBefore(cal.getTime());</span>
+<span class="nc" id="L760">            String batchId = query.deleteSequentiallyUsingBatch(5, &quot;Test Deletion&quot;);</span>
+<span class="nc" id="L761">            batchesToRemove.add(batchId);</span>
+
+<span class="nc" id="L763">            assertThat(cmmnHistoryService.createHistoricCaseInstanceQuery().count()).isEqualTo(20);</span>
+<span class="nc" id="L764">            assertThat(cmmnHistoryService.createHistoricPlanItemInstanceQuery().count()).isEqualTo(40);</span>
+<span class="nc" id="L765">            assertThat(cmmnHistoryService.createHistoricTaskInstanceQuery().count()).isEqualTo(20);</span>
+
+<span class="nc" id="L767">            Batch batch = cmmnManagementService.createBatchQuery().batchId(batchId).singleResult();</span>
+<span class="nc" id="L768">            assertThat(batch).isNotNull();</span>
+<span class="nc" id="L769">            assertThat(batch.getStatus()).isEqualTo(DeleteCaseInstanceBatchConstants.STATUS_IN_PROGRESS);</span>
+<span class="nc" id="L770">            assertThat(batch.getBatchType()).isEqualTo(Batch.HISTORIC_CASE_DELETE_TYPE);</span>
+<span class="nc" id="L771">            assertThat(batch.getBatchSearchKey()).isEqualTo(&quot;Test Deletion&quot;);</span>
+<span class="nc" id="L772">            assertThat(batch.getBatchSearchKey2()).isNull();</span>
+<span class="nc" id="L773">            assertThat(batch.getCompleteTime()).isNull();</span>
+<span class="nc" id="L774">            assertThatJson(batch.getBatchDocumentJson(ScopeTypes.CMMN))</span>
+<span class="nc" id="L775">                    .isEqualTo(&quot;{&quot;</span>
+                            + &quot;  numberOfInstances: 10,&quot;
+                            + &quot;  batchSize: 5,&quot;
+                            + &quot;  sequential: true,&quot;
+                            + &quot;  query: {&quot;
+                            + &quot;    finishedBefore: '${json-unit.any-string}'&quot;
+                            + &quot;  }&quot;
+                            + &quot;}&quot;);
+
+<span class="nc" id="L784">            assertThat(cmmnManagementService.createBatchPartQuery().list())</span>
+<span class="nc" id="L785">                    .extracting(BatchPart::getStatus, BatchPart::getType)</span>
+<span class="nc" id="L786">                    .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L787">                            tuple(DeleteCaseInstanceBatchConstants.STATUS_WAITING, DeleteCaseInstanceBatchConstants.BATCH_PART_DELETE_CASE_INSTANCES_TYPE)</span>
+                    );
+
+<span class="nc" id="L790">            assertThat(cmmnManagementService.createJobQuery().list())</span>
+<span class="nc" id="L791">                    .hasSize(1)</span>
+<span class="nc" id="L792">                    .allSatisfy(job -&gt; {</span>
+<span class="nc" id="L793">                        assertThat(job.getJobHandlerType()).isEqualTo(DeleteHistoricCaseInstancesSequentialJobHandler.TYPE);</span>
+<span class="nc" id="L794">                    });</span>
+
+<span class="nc" id="L796">            Job batchJob = cmmnManagementService.createJobQuery().singleResult();</span>
+<span class="nc" id="L797">            cmmnManagementService.executeJob(batchJob.getId());</span>
+
+<span class="nc" id="L799">            assertThat(cmmnManagementService.createBatchPartQuery().list())</span>
+<span class="nc" id="L800">                    .extracting(BatchPart::getStatus, BatchPart::getType)</span>
+<span class="nc" id="L801">                    .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L802">                            tuple(DeleteCaseInstanceBatchConstants.STATUS_COMPLETED, DeleteCaseInstanceBatchConstants.BATCH_PART_DELETE_CASE_INSTANCES_TYPE),</span>
+<span class="nc" id="L803">                            tuple(DeleteCaseInstanceBatchConstants.STATUS_WAITING, DeleteCaseInstanceBatchConstants.BATCH_PART_DELETE_CASE_INSTANCES_TYPE)</span>
+                    );
+
+<span class="nc" id="L806">            assertThat(cmmnManagementService.createJobQuery().list())</span>
+<span class="nc" id="L807">                    .hasSize(1)</span>
+<span class="nc" id="L808">                    .allSatisfy(job -&gt; {</span>
+<span class="nc" id="L809">                        assertThat(job.getJobHandlerType()).isEqualTo(DeleteHistoricCaseInstancesSequentialJobHandler.TYPE);</span>
+<span class="nc" id="L810">                    });</span>
+
+<span class="nc" id="L812">            batch = cmmnManagementService.createBatchQuery().batchId(batchId).singleResult();</span>
+<span class="nc" id="L813">            assertThat(batch).isNotNull();</span>
+<span class="nc" id="L814">            assertThat(batch.getStatus()).isEqualTo(DeleteCaseInstanceBatchConstants.STATUS_IN_PROGRESS);</span>
+<span class="nc" id="L815">            assertThat(batch.getBatchType()).isEqualTo(Batch.HISTORIC_CASE_DELETE_TYPE);</span>
+<span class="nc" id="L816">            assertThat(batch.getCompleteTime()).isNull();</span>
+
+<span class="nc" id="L818">            batchJob = cmmnManagementService.createJobQuery().singleResult();</span>
+<span class="nc" id="L819">            cmmnManagementService.executeJob(batchJob.getId());</span>
+
+<span class="nc" id="L821">            assertThat(cmmnManagementService.createBatchPartQuery().list())</span>
+<span class="nc" id="L822">                    .extracting(BatchPart::getStatus, BatchPart::getType)</span>
+<span class="nc" id="L823">                    .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L824">                            tuple(DeleteCaseInstanceBatchConstants.STATUS_COMPLETED, DeleteCaseInstanceBatchConstants.BATCH_PART_DELETE_CASE_INSTANCES_TYPE),</span>
+<span class="nc" id="L825">                            tuple(DeleteCaseInstanceBatchConstants.STATUS_COMPLETED, DeleteCaseInstanceBatchConstants.BATCH_PART_DELETE_CASE_INSTANCES_TYPE),</span>
+<span class="nc" id="L826">                            tuple(DeleteCaseInstanceBatchConstants.STATUS_WAITING, DeleteCaseInstanceBatchConstants.BATCH_PART_DELETE_CASE_INSTANCES_TYPE)</span>
+                    );
+
+<span class="nc" id="L829">            batch = cmmnManagementService.createBatchQuery().batchId(batchId).singleResult();</span>
+<span class="nc" id="L830">            assertThat(batch).isNotNull();</span>
+<span class="nc" id="L831">            assertThat(batch.getStatus()).isEqualTo(DeleteCaseInstanceBatchConstants.STATUS_IN_PROGRESS);</span>
+<span class="nc" id="L832">            assertThat(batch.getBatchType()).isEqualTo(Batch.HISTORIC_CASE_DELETE_TYPE);</span>
+<span class="nc" id="L833">            assertThat(batch.getCompleteTime()).isNull();</span>
+
+<span class="nc" id="L835">            batchJob = cmmnManagementService.createJobQuery().singleResult();</span>
+<span class="nc" id="L836">            cmmnManagementService.executeJob(batchJob.getId());</span>
+
+<span class="nc" id="L838">            assertThat(cmmnManagementService.createJobQuery().list()).isEmpty();</span>
+<span class="nc" id="L839">            assertThat(cmmnManagementService.createTimerJobQuery().list()).isEmpty();</span>
+
+<span class="nc" id="L841">            assertThat(cmmnManagementService.createBatchPartQuery().list())</span>
+<span class="nc" id="L842">                    .extracting(BatchPart::getStatus, BatchPart::getType)</span>
+<span class="nc" id="L843">                    .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L844">                            tuple(DeleteCaseInstanceBatchConstants.STATUS_COMPLETED, DeleteCaseInstanceBatchConstants.BATCH_PART_DELETE_CASE_INSTANCES_TYPE),</span>
+<span class="nc" id="L845">                            tuple(DeleteCaseInstanceBatchConstants.STATUS_COMPLETED, DeleteCaseInstanceBatchConstants.BATCH_PART_DELETE_CASE_INSTANCES_TYPE),</span>
+<span class="nc" id="L846">                            tuple(DeleteCaseInstanceBatchConstants.STATUS_COMPLETED, DeleteCaseInstanceBatchConstants.BATCH_PART_DELETE_CASE_INSTANCES_TYPE)</span>
+                    );
+
+<span class="nc" id="L849">            batch = cmmnManagementService.createBatchQuery().batchId(batchId).singleResult();</span>
+<span class="nc" id="L850">            assertThat(batch).isNotNull();</span>
+<span class="nc" id="L851">            assertThat(batch.getStatus()).isEqualTo(DeleteCaseInstanceBatchConstants.STATUS_COMPLETED);</span>
+<span class="nc" id="L852">            assertThat(batch.getBatchType()).isEqualTo(Batch.HISTORIC_CASE_DELETE_TYPE);</span>
+<span class="nc" id="L853">            assertThat(batch.getCompleteTime()).isNotNull();</span>
+
+<span class="nc" id="L855">            waitForAsyncHistoryExecutorToProcessAllJobs();</span>
+
+<span class="nc" id="L857">            assertThat(cmmnHistoryService.createHistoricCaseInstanceQuery().count()).isEqualTo(10);</span>
+<span class="nc" id="L858">            assertThat(cmmnHistoryService.createHistoricPlanItemInstanceQuery().count()).isEqualTo(20);</span>
+<span class="nc" id="L859">            assertThat(cmmnHistoryService.createHistoricTaskInstanceQuery().count()).isEqualTo(10);</span>
+
+<span class="nc bnc" id="L861" title="All 2 branches missed.">            for (int i = 0; i &lt; 20; i++) {</span>
+<span class="nc bnc" id="L862" title="All 2 branches missed.">                if (i &lt; 10) {</span>
+<span class="nc" id="L863">                    assertThat(cmmnHistoryService.getHistoricIdentityLinksForCaseInstance(caseInstanceIds.get(i))).isEmpty();</span>
+<span class="nc" id="L864">                    assertThat(cmmnHistoryService.createHistoricTaskLogEntryQuery().caseInstanceId(caseInstanceIds.get(i)).count()).isZero();</span>
+<span class="nc" id="L865">                    assertThat(cmmnHistoryService.createHistoricVariableInstanceQuery().caseInstanceId(caseInstanceIds.get(i)).count()).isZero();</span>
+<span class="nc" id="L866">                    assertThat(cmmnHistoryService.createHistoricMilestoneInstanceQuery().milestoneInstanceCaseInstanceId(caseInstanceIds.get(i)).count())</span>
+<span class="nc" id="L867">                            .isZero();</span>
+                } else {
+<span class="nc" id="L869">                    assertThat(cmmnHistoryService.getHistoricIdentityLinksForCaseInstance(caseInstanceIds.get(i))).hasSize(1);</span>
+<span class="nc" id="L870">                    assertThat(cmmnHistoryService.createHistoricTaskLogEntryQuery().caseInstanceId(caseInstanceIds.get(i)).count()).isEqualTo(1);</span>
+<span class="nc" id="L871">                    assertThat(cmmnHistoryService.createHistoricVariableInstanceQuery().caseInstanceId(caseInstanceIds.get(i)).count()).isEqualTo(3);</span>
+<span class="nc" id="L872">                    assertThat(cmmnHistoryService.createHistoricMilestoneInstanceQuery().milestoneInstanceCaseInstanceId(caseInstanceIds.get(i)).count())</span>
+<span class="nc" id="L873">                            .isEqualTo(1);</span>
+                }
+            }
+        }
+<span class="nc" id="L877">    }</span>
+
+    @Test
+    public void testDeleteHistoricInstancesWithAllQueryOptions() throws InvocationTargetException, IllegalAccessException {
+        // This test is meant to validate that all query options are present when doing delete
+        // If this test fails verify that the properties that are missing are added to DeleteHistoricCaseInstancesUsingBatchesCmd and BatchDeleteCaseConfig
+<span class="nc" id="L883">        Map&lt;String, String&gt; methodNameToExpectedQueryPropertyName = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L884">        methodNameToExpectedQueryPropertyName.put(&quot;caseInstanceBusinessKey&quot;, &quot;businessKey&quot;);</span>
+<span class="nc" id="L885">        methodNameToExpectedQueryPropertyName.put(&quot;caseInstanceBusinessStatus&quot;, &quot;businessStatus&quot;);</span>
+<span class="nc" id="L886">        methodNameToExpectedQueryPropertyName.put(&quot;caseInstanceCallbackType&quot;, &quot;callbackType&quot;);</span>
+<span class="nc" id="L887">        methodNameToExpectedQueryPropertyName.put(&quot;caseInstanceCallbackId&quot;, &quot;callbackId&quot;);</span>
+<span class="nc" id="L888">        methodNameToExpectedQueryPropertyName.put(&quot;withoutCaseInstanceCallbackId&quot;, &quot;withoutCallbackId&quot;);</span>
+<span class="nc" id="L889">        methodNameToExpectedQueryPropertyName.put(&quot;caseInstanceReferenceType&quot;, &quot;referenceType&quot;);</span>
+<span class="nc" id="L890">        methodNameToExpectedQueryPropertyName.put(&quot;caseInstanceReferenceId&quot;, &quot;referenceId&quot;);</span>
+<span class="nc" id="L891">        methodNameToExpectedQueryPropertyName.put(&quot;caseInstanceWithoutTenantId&quot;, &quot;withoutTenantId&quot;);</span>
+<span class="nc" id="L892">        methodNameToExpectedQueryPropertyName.put(&quot;caseInstanceTenantId&quot;, &quot;tenantId&quot;);</span>
+<span class="nc" id="L893">        methodNameToExpectedQueryPropertyName.put(&quot;withoutCaseInstanceParent&quot;, &quot;withoutCaseInstanceParentId&quot;);</span>
+<span class="nc" id="L894">        Set&lt;String&gt; methodsToIgnore = new HashSet&lt;&gt;();</span>
+<span class="nc" id="L895">        methodsToIgnore.add(&quot;limitCaseVariables&quot;);</span>
+<span class="nc" id="L896">        methodsToIgnore.add(&quot;includeCaseVariables&quot;);</span>
+<span class="nc" id="L897">        methodsToIgnore.add(&quot;locale&quot;);</span>
+<span class="nc" id="L898">        methodsToIgnore.add(&quot;withLocalizationFallback&quot;);</span>
+<span class="nc" id="L899">        methodsToIgnore.add(&quot;asc&quot;);</span>
+<span class="nc" id="L900">        methodsToIgnore.add(&quot;desc&quot;);</span>
+<span class="nc" id="L901">        methodsToIgnore.add(&quot;or&quot;);</span>
+<span class="nc" id="L902">        methodsToIgnore.add(&quot;endOr&quot;);</span>
+<span class="nc" id="L903">        methodsToIgnore.add(&quot;singleResult&quot;);</span>
+<span class="nc" id="L904">        Set&lt;String&gt; methodsWith2ParametersToIgnore = new HashSet&lt;&gt;();</span>
+<span class="nc" id="L905">        methodsWith2ParametersToIgnore.add(&quot;involvedUser&quot;);</span>
+<span class="nc" id="L906">        methodsWith2ParametersToIgnore.add(&quot;involvedGroup&quot;);</span>
+<span class="nc" id="L907">        HistoricCaseInstanceQuery query = cmmnHistoryService.createHistoricCaseInstanceQuery();</span>
+<span class="nc" id="L908">        Map&lt;String, String&gt; expectedParameters = new LinkedHashMap&lt;&gt;();</span>
+
+<span class="nc" id="L910">        Map&lt;Method, Pair&lt;String, Object&gt;&gt; methodsAndParametersForOr = new LinkedHashMap&lt;&gt;();</span>
+
+<span class="nc bnc" id="L912" title="All 2 branches missed.">        for (Method method : HistoricCaseInstanceQuery.class.getMethods()) {</span>
+<span class="nc" id="L913">            String methodName = method.getName();</span>
+<span class="nc bnc" id="L914" title="All 2 branches missed.">            if (methodsToIgnore.contains(methodName)</span>
+<span class="nc bnc" id="L915" title="All 2 branches missed.">                    || methodName.startsWith(&quot;orderBy&quot;)</span>
+<span class="nc bnc" id="L916" title="All 2 branches missed.">                    || methodName.startsWith(&quot;variable&quot;)</span>
+<span class="nc bnc" id="L917" title="All 4 branches missed.">                    || (method.getParameterCount() == 2 &amp;&amp; methodsWith2ParametersToIgnore.contains(methodName))</span>
+            ) {
+<span class="nc" id="L919">                continue;</span>
+            }
+<span class="nc" id="L921">            Class&lt;?&gt; returnType = method.getReturnType();</span>
+<span class="nc bnc" id="L922" title="All 2 branches missed.">            if (!returnType.isInstance(query)) {</span>
+                // We only care about methods that return the query itself
+<span class="nc" id="L924">                continue;</span>
+            }
+
+<span class="nc" id="L927">            Instant baseTime = Instant.now().truncatedTo(ChronoUnit.SECONDS)</span>
+<span class="nc" id="L928">                    .minus(365, ChronoUnit.DAYS)</span>
+<span class="nc" id="L929">                    .with(ChronoField.MILLI_OF_SECOND, 563);</span>
+
+<span class="nc" id="L931">            Parameter[] parameters = method.getParameters();</span>
+<span class="nc" id="L932">            String propertyName = methodNameToExpectedQueryPropertyName.getOrDefault(methodName, methodName);</span>
+<span class="nc bnc" id="L933" title="All 2 branches missed.">            if (parameters.length == 0) {</span>
+<span class="nc" id="L934">                expectedParameters.put(propertyName, &quot;true&quot;);</span>
+<span class="nc" id="L935">                method.invoke(query);</span>
+<span class="nc" id="L936">                methodsAndParametersForOr.put(method, Pair.of(&quot;true&quot;, null));</span>
+<span class="nc bnc" id="L937" title="All 2 branches missed.">            } else if (parameters.length == 1) {</span>
+<span class="nc" id="L938">                Parameter parameter = parameters[0];</span>
+<span class="nc" id="L939">                Class&lt;?&gt; parameterType = parameter.getType();</span>
+                Object parameterValue;
+                Object parameterOrValue;
+                String expectedValue;
+                String expectedOrValue;
+<span class="nc bnc" id="L944" title="All 2 branches missed.">                if (parameterType.isAssignableFrom(String.class)) {</span>
+<span class="nc" id="L945">                    parameterValue = methodName + &quot;Value&quot;;</span>
+<span class="nc" id="L946">                    expectedValue = &quot;'&quot; + parameterValue + &quot;'&quot;;</span>
+<span class="nc" id="L947">                    parameterOrValue = methodName + &quot;OrValue&quot;;</span>
+<span class="nc" id="L948">                    expectedOrValue = &quot;'&quot; + parameterOrValue + &quot;'&quot;;</span>
+<span class="nc bnc" id="L949" title="All 2 branches missed.">                } else if (parameterType.isAssignableFrom(Set.class)) {</span>
+<span class="nc" id="L950">                    String value1 = methodName + &quot;SetValue1&quot;;</span>
+<span class="nc" id="L951">                    String value2 = methodName + &quot;SetValue2&quot;;</span>
+<span class="nc" id="L952">                    parameterValue = new LinkedHashSet&lt;&gt;(Arrays.asList(value1, value2));</span>
+<span class="nc" id="L953">                    expectedValue = &quot;[&quot;</span>
+                            + &quot;  '&quot; + value1 + &quot;',&quot;
+                            + &quot;  '&quot; + value2 + &quot;'&quot;
+                            + &quot;]&quot;;
+
+<span class="nc" id="L958">                    String value1Or = value1 + &quot;Or&quot;;</span>
+<span class="nc" id="L959">                    String value2Or = value2 + &quot;Or&quot;;</span>
+<span class="nc" id="L960">                    parameterOrValue = new LinkedHashSet&lt;&gt;(Arrays.asList(value1Or, value2Or));</span>
+<span class="nc" id="L961">                    expectedOrValue = &quot;[&quot;</span>
+                            + &quot;  '&quot; + value1Or + &quot;',&quot;
+                            + &quot;  '&quot; + value2Or + &quot;'&quot;
+                            + &quot;]&quot;;
+<span class="nc bnc" id="L965" title="All 2 branches missed.">                } else if (parameterType.isAssignableFrom(List.class)) {</span>
+<span class="nc" id="L966">                    String value1 = methodName + &quot;ListValue1&quot;;</span>
+<span class="nc" id="L967">                    String value2 = methodName + &quot;ListValue2&quot;;</span>
+<span class="nc" id="L968">                    parameterValue = Arrays.asList(value1, value2);</span>
+<span class="nc" id="L969">                    expectedValue = &quot;[&quot;</span>
+                            + &quot;  '&quot; + value1 + &quot;',&quot;
+                            + &quot;  '&quot; + value2 + &quot;'&quot;
+                            + &quot;]&quot;;
+
+<span class="nc" id="L974">                    String value1Or = value1 + &quot;Or&quot;;</span>
+<span class="nc" id="L975">                    String value2Or = value2 + &quot;Or&quot;;</span>
+<span class="nc" id="L976">                    parameterOrValue = Arrays.asList(value1Or, value2Or);</span>
+<span class="nc" id="L977">                    expectedOrValue = &quot;[&quot;</span>
+                            + &quot;  '&quot; + value1Or + &quot;',&quot;
+                            + &quot;  '&quot; + value2Or + &quot;'&quot;
+                            + &quot;]&quot;;
+<span class="nc bnc" id="L981" title="All 2 branches missed.">                } else if (parameterType.isAssignableFrom(Integer.class)) {</span>
+<span class="nc" id="L982">                    parameterValue = methodName.hashCode();</span>
+<span class="nc" id="L983">                    expectedValue = parameterValue.toString();</span>
+
+<span class="nc" id="L985">                    parameterOrValue = methodName.hashCode() * 21;</span>
+<span class="nc" id="L986">                    expectedOrValue = parameterOrValue.toString();</span>
+<span class="nc bnc" id="L987" title="All 2 branches missed.">                } else if (parameterType.isAssignableFrom(Date.class)) {</span>
+<span class="nc" id="L988">                    baseTime = baseTime.plus(10, ChronoUnit.DAYS);</span>
+<span class="nc" id="L989">                    parameterValue = Date.from(baseTime);</span>
+<span class="nc" id="L990">                    expectedValue = &quot;'&quot; + baseTime + &quot;'&quot;;</span>
+
+<span class="nc" id="L992">                    Instant orTime = baseTime.plus(3, ChronoUnit.DAYS);</span>
+<span class="nc" id="L993">                    parameterOrValue = Date.from(orTime);</span>
+<span class="nc" id="L994">                    expectedOrValue = &quot;'&quot; + orTime + &quot;'&quot;;</span>
+<span class="nc" id="L995">                } else {</span>
+<span class="nc" id="L996">                    throw new AssertionFailedError(&quot;No value could be resolved for method &quot; + method);</span>
+                }
+
+<span class="nc" id="L999">                expectedParameters.put(propertyName, expectedValue);</span>
+<span class="nc" id="L1000">                method.invoke(query, parameterValue);</span>
+<span class="nc" id="L1001">                methodsAndParametersForOr.put(method, Pair.of(expectedOrValue, parameterOrValue));</span>
+<span class="nc" id="L1002">            } else {</span>
+<span class="nc" id="L1003">                throw new AssertionFailedError(&quot;No value could be resolved for method &quot; + method);</span>
+            }
+        }
+
+<span class="nc" id="L1007">        query.or();</span>
+<span class="nc bnc" id="L1008" title="All 2 branches missed.">        for (Map.Entry&lt;Method, Pair&lt;String, Object&gt;&gt; entry : methodsAndParametersForOr.entrySet()) {</span>
+<span class="nc" id="L1009">            Object argument = entry.getValue().getRight();</span>
+<span class="nc bnc" id="L1010" title="All 2 branches missed.">            if (argument == null) {</span>
+<span class="nc" id="L1011">                entry.getKey().invoke(query);</span>
+            } else {
+<span class="nc" id="L1013">                entry.getKey().invoke(query, argument);</span>
+            }
+<span class="nc" id="L1015">        }</span>
+<span class="nc" id="L1016">        query.endOr();</span>
+
+<span class="nc" id="L1018">        String batchId = query.deleteSequentiallyUsingBatch(5, &quot;Test Deletion&quot;);</span>
+<span class="nc" id="L1019">        batchesToRemove.add(batchId);</span>
+
+<span class="nc" id="L1021">        Batch batch = cmmnManagementService.createBatchQuery().batchId(batchId).singleResult();</span>
+<span class="nc" id="L1022">        assertThat(batch).isNotNull();</span>
+
+<span class="nc" id="L1024">        Function&lt;Method, String&gt; propertyNameProvider = m -&gt; methodNameToExpectedQueryPropertyName.getOrDefault(m.getName(), m.getName());</span>
+<span class="nc" id="L1025">        String expectedOrQueryValue = methodsAndParametersForOr.entrySet()</span>
+<span class="nc" id="L1026">                .stream()</span>
+<span class="nc" id="L1027">                .map(entry -&gt; propertyNameProvider.apply(entry.getKey()) + &quot;: &quot; + entry.getValue().getLeft())</span>
+<span class="nc" id="L1028">                .collect(Collectors.joining(&quot;,&quot;));</span>
+
+<span class="nc" id="L1030">        expectedParameters.put(&quot;orQueryObjects&quot;, &quot;[{&quot; + expectedOrQueryValue + &quot;}]&quot;);</span>
+
+<span class="nc" id="L1032">        String expectedQueryValue = expectedParameters.entrySet()</span>
+<span class="nc" id="L1033">                .stream()</span>
+<span class="nc" id="L1034">                .map(entry -&gt; entry.getKey() + &quot;: &quot; + entry.getValue())</span>
+<span class="nc" id="L1035">                .collect(Collectors.joining(&quot;,&quot;));</span>
+
+<span class="nc" id="L1037">        assertThatJson(batch.getBatchDocumentJson(ScopeTypes.CMMN))</span>
+<span class="nc" id="L1038">                .isEqualTo(&quot;{&quot;</span>
+                        + &quot;  numberOfInstances: 0,&quot;
+                        + &quot;  batchSize: 5,&quot;
+                        + &quot;  sequential: true,&quot;
+                        + &quot;  query: {&quot; + expectedQueryValue + &quot;}&quot;
+                        + &quot;}&quot;);
+<span class="nc" id="L1044">    }</span>
+
+    @Test
+    public void testDeleteHistoricInstancesWithInvolvedOptions()  {
+<span class="nc" id="L1048">        String batchId = cmmnHistoryService.createHistoricCaseInstanceQuery()</span>
+<span class="nc" id="L1049">                .involvedUser(&quot;kermit&quot;)</span>
+<span class="nc" id="L1050">                .involvedUser(&quot;fozzie&quot;, IdentityLinkType.ASSIGNEE)</span>
+<span class="nc" id="L1051">                .involvedGroups(new HashSet&lt;&gt;(Arrays.asList(&quot;sales&quot;, &quot;hr&quot;)))</span>
+<span class="nc" id="L1052">                .involvedGroup(&quot;admin&quot;, IdentityLinkType.CANDIDATE)</span>
+<span class="nc" id="L1053">                .or()</span>
+<span class="nc" id="L1054">                    .involvedUser(&quot;kermitOr&quot;)</span>
+<span class="nc" id="L1055">                    .involvedUser(&quot;fozzieOr&quot;, IdentityLinkType.ASSIGNEE)</span>
+<span class="nc" id="L1056">                    .involvedGroups(new HashSet&lt;&gt;(Arrays.asList(&quot;salesOr&quot;, &quot;hrOr&quot;)))</span>
+<span class="nc" id="L1057">                    .involvedGroup(&quot;adminOr&quot;, IdentityLinkType.CANDIDATE)</span>
+<span class="nc" id="L1058">                .endOr()</span>
+<span class="nc" id="L1059">                .deleteSequentiallyUsingBatch(10, &quot;Test&quot;);</span>
+<span class="nc" id="L1060">        batchesToRemove.add(batchId);</span>
+
+<span class="nc" id="L1062">        Batch batch = cmmnManagementService.createBatchQuery().batchId(batchId).singleResult();</span>
+<span class="nc" id="L1063">        assertThat(batch).isNotNull();</span>
+
+<span class="nc" id="L1065">        assertThatJson(batch.getBatchDocumentJson(ScopeTypes.CMMN))</span>
+<span class="nc" id="L1066">                .when(Option.IGNORING_ARRAY_ORDER)</span>
+<span class="nc" id="L1067">                .isEqualTo(&quot;{&quot;</span>
+                        + &quot;  numberOfInstances: 0,&quot;
+                        + &quot;  batchSize: 10,&quot;
+                        + &quot;  sequential: true,&quot;
+                        + &quot;  query: {&quot;
+                        + &quot;    involvedUser: 'kermit',&quot;
+                        + &quot;    involvedUserIdentityLink: {&quot;
+                        + &quot;      userId: 'fozzie',&quot;
+                        + &quot;      type: 'assignee'&quot;
+                        + &quot;    },&quot;
+                        + &quot;    involvedGroups: [ 'hr', 'sales' ],&quot;
+                        + &quot;    involvedGroupIdentityLink: {&quot;
+                        + &quot;      groupId: 'admin',&quot;
+                        + &quot;      type: 'candidate'&quot;
+                        + &quot;    },&quot;
+                        + &quot;    orQueryObjects: [&quot;
+                        + &quot;      {&quot;
+                        + &quot;        involvedUser: 'kermitOr',&quot;
+                        + &quot;        involvedUserIdentityLink: {&quot;
+                        + &quot;          userId: 'fozzieOr',&quot;
+                        + &quot;          type: 'assignee'&quot;
+                        + &quot;        },&quot;
+                        + &quot;        involvedGroups: [ 'hrOr', 'salesOr' ],&quot;
+                        + &quot;        involvedGroupIdentityLink: {&quot;
+                        + &quot;          groupId: 'adminOr',&quot;
+                        + &quot;          type: 'candidate'&quot;
+                        + &quot;        }&quot;
+                        + &quot;      }&quot;
+                        + &quot;    ]&quot;
+                        + &quot;  }&quot;
+                        + &quot;}&quot;);
+<span class="nc" id="L1098">    }</span>
+
+    @Test
+    public void testHistoryCleanupTimerJobCorrectlyUpdated() {
+<span class="nc" id="L1102">        String originalConfig = cmmnEngineConfiguration.getHistoryCleaningTimeCycleConfig();</span>
+<span class="nc" id="L1103">        String initialConfig = &quot;0 0 1 * * ?&quot;;</span>
+<span class="nc" id="L1104">        cmmnEngineConfiguration.setHistoryCleaningTimeCycleConfig(initialConfig);</span>
+
+        try {
+<span class="nc" id="L1107">            assertThat(cmmnManagementService.createTimerJobQuery().handlerType(CmmnHistoryCleanupJobHandler.TYPE).count()).isZero();</span>
+
+<span class="nc" id="L1109">            cmmnManagementService.handleHistoryCleanupTimerJob();</span>
+
+<span class="nc" id="L1111">            assertThat(cmmnManagementService.createTimerJobQuery().handlerType(CmmnHistoryCleanupJobHandler.TYPE).count()).isEqualTo(1);</span>
+<span class="nc" id="L1112">            Job job = cmmnManagementService.createTimerJobQuery().handlerType(CmmnHistoryCleanupJobHandler.TYPE).singleResult();</span>
+<span class="nc" id="L1113">            TimerJobEntity timerJob = (TimerJobEntity) job;</span>
+<span class="nc" id="L1114">            assertThat(timerJob.getRepeat()).isEqualTo(initialConfig);</span>
+
+<span class="nc" id="L1116">            cmmnManagementService.handleHistoryCleanupTimerJob();</span>
+<span class="nc" id="L1117">            assertThat(cmmnManagementService.createTimerJobQuery().handlerType(CmmnHistoryCleanupJobHandler.TYPE).count()).isEqualTo(1);</span>
+<span class="nc" id="L1118">            job = cmmnManagementService.createTimerJobQuery().handlerType(CmmnHistoryCleanupJobHandler.TYPE).singleResult();</span>
+<span class="nc" id="L1119">            assertThat(job.getId()).isEqualTo(timerJob.getId());</span>
+
+<span class="nc" id="L1121">            cmmnEngineConfiguration.setHistoryCleaningTimeCycleConfig(&quot;0 0 2 * * ?&quot;);</span>
+
+<span class="nc" id="L1123">            cmmnManagementService.handleHistoryCleanupTimerJob();</span>
+<span class="nc" id="L1124">            assertThat(cmmnManagementService.createTimerJobQuery().handlerType(CmmnHistoryCleanupJobHandler.TYPE).count()).isEqualTo(1);</span>
+<span class="nc" id="L1125">            job = cmmnManagementService.createTimerJobQuery().handlerType(CmmnHistoryCleanupJobHandler.TYPE).singleResult();</span>
+<span class="nc" id="L1126">            assertThat(job.getId()).isNotEqualTo(timerJob.getId());</span>
+
+<span class="nc" id="L1128">            timerJob = (TimerJobEntity) job;</span>
+<span class="nc" id="L1129">            assertThat(timerJob.getRepeat()).isEqualTo(&quot;0 0 2 * * ?&quot;);</span>
+
+        } finally {
+<span class="nc" id="L1132">            cmmnEngineConfiguration.setHistoryCleaningTimeCycleConfig(originalConfig);</span>
+<span class="nc" id="L1133">            cmmnManagementService.createTimerJobQuery().handlerType(CmmnHistoryCleanupJobHandler.TYPE).list()</span>
+<span class="nc" id="L1134">                    .forEach(job -&gt; cmmnManagementService.deleteTimerJob(job.getId()));</span>
+        }
+<span class="nc" id="L1136">    }</span>
+
+    @Test
+    @CmmnDeployment(resources = &quot;org/flowable/cmmn/test/human-task-milestone-model.cmmn&quot;)
+    public void testDeleteHistoricInstancesUsingBatchWithStoppedBatch() {
+<span class="nc" id="L1141">        List&lt;String&gt; caseInstanceIds = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L1142" title="All 2 branches missed.">        for (int i = 0; i &lt; 20; i++) {</span>
+<span class="nc" id="L1143">            CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder().caseDefinitionKey(&quot;oneTaskCase&quot;).start();</span>
+<span class="nc" id="L1144">            caseInstanceIds.add(caseInstance.getId());</span>
+<span class="nc" id="L1145">            cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;testVar&quot;, &quot;testValue&quot; + (i + 1));</span>
+<span class="nc" id="L1146">            cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;numVar&quot;, (i + 1));</span>
+<span class="nc" id="L1147">            cmmnRuntimeService.setVariable(caseInstance.getId(), &quot;serializableVar&quot;, new RepetitionVariableAggregationTest.TestSerializableVariable());</span>
+        }
+
+<span class="nc bnc" id="L1150" title="All 2 branches missed.">        if (CmmnHistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, cmmnEngineConfiguration)) {</span>
+
+<span class="nc" id="L1152">            assertThat(cmmnHistoryService.createHistoricCaseInstanceQuery().count()).isEqualTo(20);</span>
+
+        }
+
+<span class="nc bnc" id="L1156" title="All 2 branches missed.">        for (int i = 0; i &lt; 10; i++) {</span>
+<span class="nc" id="L1157">            Task task = cmmnTaskService.createTaskQuery().caseInstanceId(caseInstanceIds.get(i)).singleResult();</span>
+<span class="nc" id="L1158">            cmmnTaskService.setVariableLocal(task.getId(), &quot;taskVar&quot;, &quot;taskValue&quot; + (i + 1));</span>
+<span class="nc" id="L1159">            cmmnTaskService.setVariableLocal(task.getId(), &quot;taskSerializableVar&quot;, new RepetitionVariableAggregationTest.TestSerializableVariable());</span>
+<span class="nc" id="L1160">            cmmnTaskService.complete(task.getId());</span>
+        }
+
+<span class="nc bnc" id="L1163" title="All 2 branches missed.">        if (CmmnHistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, cmmnEngineConfiguration)) {</span>
+<span class="nc" id="L1164">            HistoricCaseInstanceQuery query = cmmnHistoryService.createHistoricCaseInstanceQuery();</span>
+<span class="nc" id="L1165">            Calendar cal = new GregorianCalendar();</span>
+<span class="nc" id="L1166">            cal.set(Calendar.YEAR, cal.get(Calendar.YEAR) + 1);</span>
+<span class="nc" id="L1167">            query.finishedBefore(cal.getTime());</span>
+<span class="nc" id="L1168">            String batchId = query.deleteSequentiallyUsingBatch(5, &quot;Test Deletion&quot;);</span>
+<span class="nc" id="L1169">            batchesToRemove.add(batchId);</span>
+
+<span class="nc" id="L1171">            assertThat(cmmnHistoryService.createHistoricCaseInstanceQuery().count()).isEqualTo(20);</span>
+<span class="nc" id="L1172">            assertThat(cmmnHistoryService.createHistoricPlanItemInstanceQuery().count()).isEqualTo(40);</span>
+<span class="nc" id="L1173">            assertThat(cmmnHistoryService.createHistoricTaskInstanceQuery().count()).isEqualTo(20);</span>
+
+<span class="nc" id="L1175">            Batch batch = cmmnManagementService.createBatchQuery().batchId(batchId).singleResult();</span>
+<span class="nc" id="L1176">            assertThat(batch).isNotNull();</span>
+<span class="nc" id="L1177">            assertThat(batch.getStatus()).isEqualTo(DeleteCaseInstanceBatchConstants.STATUS_IN_PROGRESS);</span>
+<span class="nc" id="L1178">            assertThat(batch.getBatchType()).isEqualTo(Batch.HISTORIC_CASE_DELETE_TYPE);</span>
+<span class="nc" id="L1179">            assertThat(batch.getCompleteTime()).isNull();</span>
+
+<span class="nc" id="L1181">            assertThat(cmmnManagementService.createBatchPartQuery().list())</span>
+<span class="nc" id="L1182">                    .hasSize(1)</span>
+<span class="nc" id="L1183">                    .allSatisfy(part -&gt; {</span>
+<span class="nc" id="L1184">                        assertThat(part.getStatus()).isEqualTo(DeleteCaseInstanceBatchConstants.STATUS_WAITING);</span>
+<span class="nc" id="L1185">                        assertThat(part.getType()).isEqualTo(DeleteCaseInstanceBatchConstants.BATCH_PART_DELETE_CASE_INSTANCES_TYPE);</span>
+<span class="nc" id="L1186">                    });</span>
+
+<span class="nc" id="L1188">            assertThat(cmmnManagementService.createJobQuery().list())</span>
+<span class="nc" id="L1189">                    .hasSize(1)</span>
+<span class="nc" id="L1190">                    .allSatisfy(job -&gt; {</span>
+<span class="nc" id="L1191">                        assertThat(job.getJobHandlerType()).isEqualTo(DeleteHistoricCaseInstancesSequentialJobHandler.TYPE);</span>
+<span class="nc" id="L1192">                    });</span>
+
+<span class="nc" id="L1194">            Job job = cmmnManagementService.createJobQuery().singleResult();</span>
+<span class="nc" id="L1195">            cmmnManagementService.executeJob(job.getId());</span>
+
+<span class="nc" id="L1197">            assertThat(cmmnManagementService.createBatchPartQuery().list())</span>
+<span class="nc" id="L1198">                    .extracting(BatchPart::getStatus, BatchPart::getType)</span>
+<span class="nc" id="L1199">                    .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L1200">                            tuple(DeleteCaseInstanceBatchConstants.STATUS_COMPLETED, DeleteCaseInstanceBatchConstants.BATCH_PART_DELETE_CASE_INSTANCES_TYPE),</span>
+<span class="nc" id="L1201">                            tuple(DeleteCaseInstanceBatchConstants.STATUS_WAITING, DeleteCaseInstanceBatchConstants.BATCH_PART_DELETE_CASE_INSTANCES_TYPE)</span>
+                    );
+
+<span class="nc" id="L1204">            cmmnEngineConfiguration.getCommandExecutor().execute(commandContext -&gt; {</span>
+<span class="nc" id="L1205">                CommandContextUtil.getCmmnEngineConfiguration(commandContext)</span>
+<span class="nc" id="L1206">                        .getBatchServiceConfiguration()</span>
+<span class="nc" id="L1207">                        .getBatchService()</span>
+<span class="nc" id="L1208">                        .completeBatch(batchId, DeleteCaseInstanceBatchConstants.STATUS_STOPPED);</span>
+<span class="nc" id="L1209">                return null;</span>
+            });
+
+<span class="nc" id="L1212">            job = cmmnManagementService.createJobQuery().singleResult();</span>
+<span class="nc" id="L1213">            cmmnManagementService.executeJob(job.getId());</span>
+
+<span class="nc" id="L1215">            assertThat(cmmnManagementService.createJobQuery().list()).isEmpty();</span>
+<span class="nc" id="L1216">            assertThat(cmmnManagementService.createTimerJobQuery().list()).isEmpty();</span>
+<span class="nc" id="L1217">            assertThat(cmmnManagementService.createBatchPartQuery().list())</span>
+<span class="nc" id="L1218">                    .extracting(BatchPart::getStatus, BatchPart::getType)</span>
+<span class="nc" id="L1219">                    .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L1220">                            tuple(DeleteCaseInstanceBatchConstants.STATUS_COMPLETED, DeleteCaseInstanceBatchConstants.BATCH_PART_DELETE_CASE_INSTANCES_TYPE),</span>
+<span class="nc" id="L1221">                            tuple(DeleteCaseInstanceBatchConstants.STATUS_STOPPED, DeleteCaseInstanceBatchConstants.BATCH_PART_DELETE_CASE_INSTANCES_TYPE)</span>
+                    );
+
+<span class="nc" id="L1224">            waitForAsyncHistoryExecutorToProcessAllJobs();</span>
+<span class="nc" id="L1225">            assertThat(cmmnHistoryService.createHistoricCaseInstanceQuery().count()).isEqualTo(15);</span>
+<span class="nc" id="L1226">            assertThat(cmmnHistoryService.createHistoricPlanItemInstanceQuery().count()).isEqualTo(30);</span>
+<span class="nc" id="L1227">            assertThat(cmmnHistoryService.createHistoricTaskInstanceQuery().count()).isEqualTo(15);</span>
+
+<span class="nc bnc" id="L1229" title="All 2 branches missed.">            for (int i = 0; i &lt; 20; i++) {</span>
+<span class="nc bnc" id="L1230" title="All 2 branches missed.">                if (i &lt; 5) {</span>
+<span class="nc" id="L1231">                    assertThat(cmmnHistoryService.getHistoricIdentityLinksForCaseInstance(caseInstanceIds.get(i))).isEmpty();</span>
+<span class="nc" id="L1232">                    assertThat(cmmnHistoryService.createHistoricTaskLogEntryQuery().caseInstanceId(caseInstanceIds.get(i)).count()).isZero();</span>
+<span class="nc" id="L1233">                    assertThat(cmmnHistoryService.createHistoricVariableInstanceQuery().caseInstanceId(caseInstanceIds.get(i)).count()).isZero();</span>
+<span class="nc" id="L1234">                    assertThat(cmmnHistoryService.createHistoricMilestoneInstanceQuery().milestoneInstanceCaseInstanceId(caseInstanceIds.get(i)).count()).isZero();</span>
+<span class="nc bnc" id="L1235" title="All 2 branches missed.">                } else if (i &lt; 10) {</span>
+<span class="nc" id="L1236">                    assertThat(cmmnHistoryService.getHistoricIdentityLinksForCaseInstance(caseInstanceIds.get(i))).hasSize(1);</span>
+<span class="nc" id="L1237">                    assertThat(cmmnHistoryService.createHistoricTaskLogEntryQuery().caseInstanceId(caseInstanceIds.get(i)).count()).isEqualTo(2);</span>
+<span class="nc" id="L1238">                    assertThat(cmmnHistoryService.createHistoricVariableInstanceQuery().caseInstanceId(caseInstanceIds.get(i)).count()).isEqualTo(5);</span>
+<span class="nc" id="L1239">                    assertThat(cmmnHistoryService.createHistoricMilestoneInstanceQuery().milestoneInstanceCaseInstanceId(caseInstanceIds.get(i)).count()).isEqualTo(1);</span>
+                } else {
+<span class="nc" id="L1241">                    assertThat(cmmnHistoryService.getHistoricIdentityLinksForCaseInstance(caseInstanceIds.get(i))).hasSize(1);</span>
+<span class="nc" id="L1242">                    assertThat(cmmnHistoryService.createHistoricTaskLogEntryQuery().caseInstanceId(caseInstanceIds.get(i)).count()).isEqualTo(1);</span>
+<span class="nc" id="L1243">                    assertThat(cmmnHistoryService.createHistoricVariableInstanceQuery().caseInstanceId(caseInstanceIds.get(i)).count()).isEqualTo(3);</span>
+<span class="nc" id="L1244">                    assertThat(cmmnHistoryService.createHistoricMilestoneInstanceQuery().milestoneInstanceCaseInstanceId(caseInstanceIds.get(i)).count()).isEqualTo(1);</span>
+                }
+            }
+        }
+<span class="nc" id="L1248">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

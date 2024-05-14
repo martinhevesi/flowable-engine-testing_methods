@@ -1,0 +1,884 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DefaultJobManager.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.job.service.impl.asyncexecutor</a> &gt; <span class="el_source">DefaultJobManager.java</span></div><h1>DefaultJobManager.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.job.service.impl.asyncexecutor;
+
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.GregorianCalendar;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.FlowableIllegalArgumentException;
+import org.flowable.common.engine.api.delegate.event.FlowableEngineEventType;
+import org.flowable.common.engine.api.delegate.event.FlowableEventDispatcher;
+import org.flowable.common.engine.impl.calendar.BusinessCalendar;
+import org.flowable.common.engine.impl.cfg.TransactionContext;
+import org.flowable.common.engine.impl.cfg.TransactionState;
+import org.flowable.common.engine.impl.context.Context;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.common.engine.impl.persistence.entity.ByteArrayEntity;
+import org.flowable.common.engine.impl.persistence.entity.ByteArrayRef;
+import org.flowable.job.api.HistoryJob;
+import org.flowable.job.api.Job;
+import org.flowable.job.api.JobInfo;
+import org.flowable.job.service.HistoryJobHandler;
+import org.flowable.job.service.HistoryJobProcessorContext;
+import org.flowable.job.service.JobHandler;
+import org.flowable.job.service.JobProcessorContext;
+import org.flowable.job.service.JobServiceConfiguration;
+import org.flowable.job.service.event.impl.FlowableJobEventBuilder;
+import org.flowable.job.service.impl.history.async.TriggerAsyncHistoryExecutorTransactionListener;
+import org.flowable.job.service.impl.persistence.entity.AbstractJobEntity;
+import org.flowable.job.service.impl.persistence.entity.AbstractRuntimeJobEntity;
+import org.flowable.job.service.impl.persistence.entity.DeadLetterJobEntity;
+import org.flowable.job.service.impl.persistence.entity.ExternalWorkerJobEntity;
+import org.flowable.job.service.impl.persistence.entity.HistoryJobEntity;
+import org.flowable.job.service.impl.persistence.entity.HistoryJobEntityManager;
+import org.flowable.job.service.impl.persistence.entity.JobEntity;
+import org.flowable.job.service.impl.persistence.entity.JobInfoEntity;
+import org.flowable.job.service.impl.persistence.entity.SuspendedJobEntity;
+import org.flowable.job.service.impl.persistence.entity.TimerJobEntity;
+import org.flowable.job.service.impl.util.CommandContextUtil;
+import org.flowable.job.service.impl.util.JobProcessorUtil;
+import org.flowable.variable.api.delegate.VariableScope;
+import org.flowable.variable.service.impl.el.NoExecutionVariableScope;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.fasterxml.jackson.databind.JsonNode;
+
+public class DefaultJobManager implements JobManager {
+
+<span class="nc" id="L66">    private static final Logger LOGGER = LoggerFactory.getLogger(DefaultJobManager.class);</span>
+
+    public static final String CYCLE_TYPE = &quot;cycle&quot;;
+
+    protected JobServiceConfiguration jobServiceConfiguration;
+
+<span class="nc" id="L72">    public DefaultJobManager(JobServiceConfiguration jobServiceConfiguration) {</span>
+<span class="nc" id="L73">        this.jobServiceConfiguration = jobServiceConfiguration;</span>
+<span class="nc" id="L74">    }</span>
+
+    @Override
+    public void createAsyncJob(JobEntity jobEntity, boolean exclusive) {
+        // When the async executor is activated, the job is directly passed on to the async executor thread
+<span class="nc bnc" id="L79" title="All 2 branches missed.">        if (isJobApplicableForExecutorExecution(jobEntity)) {</span>
+<span class="nc" id="L80">            internalCreateLockedAsyncJob(jobEntity, exclusive);</span>
+
+        } else {
+<span class="nc" id="L83">            internalCreateAsyncJob(jobEntity, exclusive);</span>
+        }
+<span class="nc" id="L85">    }</span>
+
+    @Override
+    public void scheduleAsyncJob(JobEntity jobEntity) {
+<span class="nc" id="L89">        callJobProcessors(JobProcessorContext.Phase.BEFORE_CREATE, jobEntity);</span>
+<span class="nc" id="L90">        jobServiceConfiguration.getJobEntityManager().insert(jobEntity);</span>
+<span class="nc" id="L91">        triggerExecutorIfNeeded(jobEntity);</span>
+<span class="nc" id="L92">    }</span>
+
+    protected void triggerExecutorIfNeeded(JobEntity jobEntity) {
+<span class="nc bnc" id="L95" title="All 2 branches missed.">        if (isJobApplicableForExecutorExecution(jobEntity)) {</span>
+<span class="nc" id="L96">            hintAsyncExecutor(jobEntity);</span>
+        }
+<span class="nc" id="L98">    }</span>
+
+    protected boolean isJobApplicableForExecutorExecution(JobEntity jobEntity) {
+<span class="nc bnc" id="L101" title="All 2 branches missed.">        if (!isAsyncExecutorActive()) {</span>
+            // If the async executor is not active then it should not be hinted
+<span class="nc" id="L103">            return false;</span>
+        }
+<span class="nc" id="L105">        List&lt;String&gt; enabledJobCategories = jobServiceConfiguration.getEnabledJobCategories();</span>
+<span class="nc bnc" id="L106" title="All 4 branches missed.">        if (enabledJobCategories == null || enabledJobCategories.isEmpty()) {</span>
+            // If there are no job categories then we need to hint it
+<span class="nc" id="L108">            return true;</span>
+        }
+
+<span class="nc" id="L111">        String category = jobEntity.getCategory();</span>
+<span class="nc bnc" id="L112" title="All 2 branches missed.">        if (StringUtils.isEmpty(category)) {</span>
+            // If the job has no category then we should not hint it, another node needs to run it
+<span class="nc" id="L114">            return false;</span>
+        }
+
+        // Finally, the job should be hinted if the enabled job categories contain the job category
+<span class="nc" id="L118">        return enabledJobCategories.contains(category);</span>
+    }
+
+    @Override
+    public void scheduleTimerJob(TimerJobEntity timerJob) {
+<span class="nc" id="L123">        jobServiceConfiguration.getTimerJobScheduler().scheduleTimerJob(timerJob);</span>
+<span class="nc" id="L124">    }</span>
+
+    @Override
+    public JobEntity moveTimerJobToExecutableJob(TimerJobEntity timerJob) {
+<span class="nc bnc" id="L128" title="All 2 branches missed.">        if (timerJob == null) {</span>
+<span class="nc" id="L129">            throw new FlowableException(&quot;Empty timer job can not be scheduled&quot;);</span>
+        }
+
+<span class="nc" id="L132">        JobEntity executableJob = createExecutableJobFromOtherJob(timerJob);</span>
+<span class="nc" id="L133">        boolean insertSuccessful = jobServiceConfiguration.getJobEntityManager().insertJobEntity(executableJob);</span>
+<span class="nc bnc" id="L134" title="All 2 branches missed.">        if (insertSuccessful) {</span>
+<span class="nc" id="L135">            jobServiceConfiguration.getTimerJobEntityManager().delete(timerJob);</span>
+<span class="nc" id="L136">            triggerExecutorIfNeeded(executableJob);</span>
+<span class="nc" id="L137">            return executableJob;</span>
+        }
+<span class="nc" id="L139">        return null;</span>
+    }
+
+    @Override
+    public void bulkMoveTimerJobsToExecutableJobs(List&lt;TimerJobEntity&gt; timerJobEntities) {
+
+<span class="nc bnc" id="L145" title="All 4 branches missed.">        if (timerJobEntities == null || timerJobEntities.isEmpty()) {</span>
+<span class="nc" id="L146">            throw new FlowableException(&quot;Empty timer jobs collection can not be scheduled&quot;);</span>
+        }
+
+        // Only hint when there is enough capacity remaining in the job queue
+<span class="nc" id="L150">        boolean remainingCapacitySufficient = isAsyncExecutorRemainingCapacitySufficient(timerJobEntities.size());</span>
+
+<span class="nc bnc" id="L152" title="All 2 branches missed.">        for (TimerJobEntity timerJobEntity : timerJobEntities) {</span>
+<span class="nc" id="L153">            JobEntity executableJob = createExecutableJobFromOtherJob(timerJobEntity, remainingCapacitySufficient);</span>
+
+<span class="nc" id="L155">            boolean insertSuccessful = jobServiceConfiguration.getJobEntityManager().insertJobEntity(executableJob);</span>
+<span class="nc bnc" id="L156" title="All 4 branches missed.">            if (insertSuccessful &amp;&amp; remainingCapacitySufficient) {</span>
+<span class="nc" id="L157">                triggerExecutorIfNeeded(executableJob);</span>
+            }
+<span class="nc" id="L159">        }</span>
+
+<span class="nc" id="L161">        jobServiceConfiguration.getTimerJobEntityManager().bulkDeleteTimerJobsWithoutRevisionCheck(timerJobEntities);</span>
+<span class="nc" id="L162">    }</span>
+
+    @Override
+    public JobEntity moveExternalWorkerJobToExecutableJob(ExternalWorkerJobEntity externalWorkerJob) {
+<span class="nc bnc" id="L166" title="All 2 branches missed.">        if (externalWorkerJob == null) {</span>
+<span class="nc" id="L167">            throw new FlowableException(&quot;Empty external worker job can not be scheduled&quot;);</span>
+        }
+
+<span class="nc" id="L170">        JobEntity executableJob = createExecutableJobFromOtherJob(externalWorkerJob);</span>
+        // This job should now become a regular async job
+<span class="nc" id="L172">        fillDefaultAsyncJobInfo(executableJob, executableJob.isExclusive());</span>
+<span class="nc" id="L173">        boolean insertSuccessful = jobServiceConfiguration.getJobEntityManager().insertJobEntity(executableJob);</span>
+<span class="nc bnc" id="L174" title="All 2 branches missed.">        if (insertSuccessful) {</span>
+<span class="nc" id="L175">            jobServiceConfiguration.getExternalWorkerJobEntityManager().delete(externalWorkerJob);</span>
+<span class="nc" id="L176">            triggerExecutorIfNeeded(executableJob);</span>
+<span class="nc" id="L177">            return executableJob;</span>
+        }
+<span class="nc" id="L179">        return null;</span>
+    }
+
+    @Override
+    public TimerJobEntity moveJobToTimerJob(AbstractRuntimeJobEntity job) {
+<span class="nc" id="L184">        TimerJobEntity timerJob = createTimerJobFromOtherJob(job);</span>
+<span class="nc" id="L185">        boolean insertSuccessful = jobServiceConfiguration.getTimerJobEntityManager().insertTimerJobEntity(timerJob);</span>
+<span class="nc bnc" id="L186" title="All 2 branches missed.">        if (insertSuccessful) {</span>
+<span class="nc bnc" id="L187" title="All 2 branches missed.">            if (job instanceof JobEntity) {</span>
+<span class="nc" id="L188">                jobServiceConfiguration.getJobEntityManager().delete((JobEntity) job);</span>
+<span class="nc bnc" id="L189" title="All 2 branches missed.">            } else if (job instanceof SuspendedJobEntity) {</span>
+<span class="nc" id="L190">                jobServiceConfiguration.getSuspendedJobEntityManager().delete((SuspendedJobEntity) job);</span>
+            }
+
+<span class="nc" id="L193">            return timerJob;</span>
+        }
+<span class="nc" id="L195">        return null;</span>
+    }
+
+    @Override
+    public SuspendedJobEntity moveJobToSuspendedJob(AbstractRuntimeJobEntity job) {
+<span class="nc" id="L200">        SuspendedJobEntity suspendedJob = createSuspendedJobFromOtherJob(job);</span>
+<span class="nc" id="L201">        jobServiceConfiguration.getSuspendedJobEntityManager().insert(suspendedJob);</span>
+<span class="nc bnc" id="L202" title="All 2 branches missed.">        if (job instanceof TimerJobEntity) {</span>
+<span class="nc" id="L203">            jobServiceConfiguration.getTimerJobEntityManager().delete((TimerJobEntity) job);</span>
+
+<span class="nc bnc" id="L205" title="All 2 branches missed.">        } else if (job instanceof JobEntity) {</span>
+<span class="nc" id="L206">            jobServiceConfiguration.getJobEntityManager().delete((JobEntity) job);</span>
+<span class="nc bnc" id="L207" title="All 2 branches missed.">        } else if (job instanceof ExternalWorkerJobEntity) {</span>
+<span class="nc" id="L208">            jobServiceConfiguration.getExternalWorkerJobEntityManager().delete((ExternalWorkerJobEntity) job);</span>
+        }
+
+<span class="nc" id="L211">        return suspendedJob;</span>
+    }
+
+    @Override
+    public AbstractRuntimeJobEntity activateSuspendedJob(SuspendedJobEntity job) {
+<span class="nc" id="L216">        AbstractRuntimeJobEntity activatedJob = null;</span>
+<span class="nc bnc" id="L217" title="All 2 branches missed.">        if (Job.JOB_TYPE_TIMER.equals(job.getJobType())) {</span>
+<span class="nc" id="L218">            activatedJob = createTimerJobFromOtherJob(job);</span>
+<span class="nc" id="L219">            jobServiceConfiguration.getTimerJobEntityManager().insert((TimerJobEntity) activatedJob);</span>
+
+<span class="nc bnc" id="L221" title="All 2 branches missed.">        } else if (Job.JOB_TYPE_EXTERNAL_WORKER.equals(job.getJobType())) {</span>
+<span class="nc" id="L222">            activatedJob = createExternalWorkerJobFromOtherJob(job);</span>
+<span class="nc" id="L223">            jobServiceConfiguration.getExternalWorkerJobEntityManager().insert((ExternalWorkerJobEntity) activatedJob);</span>
+
+        } else {
+<span class="nc" id="L226">            activatedJob = createExecutableJobFromOtherJob(job);</span>
+<span class="nc" id="L227">            JobEntity jobEntity = (JobEntity) activatedJob;</span>
+<span class="nc" id="L228">            jobServiceConfiguration.getJobEntityManager().insert(jobEntity);</span>
+<span class="nc" id="L229">            triggerExecutorIfNeeded(jobEntity);</span>
+        }
+
+<span class="nc" id="L232">        jobServiceConfiguration.getSuspendedJobEntityManager().delete(job);</span>
+<span class="nc" id="L233">        return activatedJob;</span>
+    }
+
+    @Override
+    public DeadLetterJobEntity moveJobToDeadLetterJob(AbstractRuntimeJobEntity job) {
+<span class="nc" id="L238">        DeadLetterJobEntity deadLetterJob = createDeadLetterJobFromOtherJob(job);</span>
+<span class="nc" id="L239">        jobServiceConfiguration.getDeadLetterJobEntityManager().insert(deadLetterJob);</span>
+<span class="nc bnc" id="L240" title="All 2 branches missed.">        if (job instanceof TimerJobEntity) {</span>
+<span class="nc" id="L241">            jobServiceConfiguration.getTimerJobEntityManager().delete((TimerJobEntity) job);</span>
+
+<span class="nc bnc" id="L243" title="All 2 branches missed.">        } else if (job instanceof JobEntity) {</span>
+<span class="nc" id="L244">            jobServiceConfiguration.getJobEntityManager().delete((JobEntity) job);</span>
+<span class="nc bnc" id="L245" title="All 2 branches missed.">        } else if (job instanceof ExternalWorkerJobEntity) {</span>
+<span class="nc" id="L246">            jobServiceConfiguration.getExternalWorkerJobEntityManager().delete((ExternalWorkerJobEntity) job);</span>
+        } else {
+<span class="nc" id="L248">            throw new FlowableIllegalArgumentException(&quot;Cannot move the job to deadletter: the job is not a timer, async job or external worker job&quot;);</span>
+        }
+
+<span class="nc" id="L251">        return deadLetterJob;</span>
+    }
+
+    protected void sendMoveToDeadletterEvent(JobInfo job) {
+<span class="nc" id="L255">        FlowableEventDispatcher eventDispatcher = jobServiceConfiguration.getEventDispatcher();</span>
+<span class="nc bnc" id="L256" title="All 4 branches missed.">        if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L257">            eventDispatcher.dispatchEvent(FlowableJobEventBuilder.createEntityEvent(</span>
+<span class="nc" id="L258">                FlowableEngineEventType.JOB_MOVED_TO_DEADLETTER, job), jobServiceConfiguration.getEngineName());</span>
+        }
+<span class="nc" id="L260">    }</span>
+
+    @Override
+    public Job moveDeadLetterJobToExecutableJob(DeadLetterJobEntity deadLetterJobEntity, int retries) {
+<span class="nc bnc" id="L264" title="All 2 branches missed.">        if (deadLetterJobEntity == null) {</span>
+<span class="nc" id="L265">            throw new FlowableIllegalArgumentException(&quot;Null job provided&quot;);</span>
+        }
+
+<span class="nc bnc" id="L268" title="All 2 branches missed.">        if (HistoryJobEntity.HISTORY_JOB_TYPE.equals(deadLetterJobEntity.getJobType())) {</span>
+<span class="nc" id="L269">            throw new FlowableIllegalArgumentException(&quot;Cannot move a history job to an executable job&quot;);</span>
+        }
+
+<span class="nc bnc" id="L272" title="All 2 branches missed.">        if (Job.JOB_TYPE_EXTERNAL_WORKER.equals(deadLetterJobEntity.getJobType())) {</span>
+<span class="nc" id="L273">            ExternalWorkerJobEntity externalWorkerJob = createExternalWorkerJobFromOtherJob(deadLetterJobEntity);</span>
+<span class="nc" id="L274">            externalWorkerJob.setRetries(retries);</span>
+<span class="nc" id="L275">            boolean insertSuccessful = jobServiceConfiguration.getExternalWorkerJobEntityManager().insertExternalWorkerJobEntity(externalWorkerJob);</span>
+<span class="nc bnc" id="L276" title="All 2 branches missed.">            if (insertSuccessful) {</span>
+<span class="nc" id="L277">                jobServiceConfiguration.getDeadLetterJobEntityManager().delete(deadLetterJobEntity);</span>
+<span class="nc" id="L278">                return externalWorkerJob;</span>
+            }
+<span class="nc" id="L280">        } else {</span>
+<span class="nc" id="L281">            JobEntity executableJob = createExecutableJobFromOtherJob(deadLetterJobEntity);</span>
+<span class="nc" id="L282">            executableJob.setRetries(retries);</span>
+<span class="nc" id="L283">            boolean insertSuccessful = jobServiceConfiguration.getJobEntityManager().insertJobEntity(executableJob);</span>
+<span class="nc bnc" id="L284" title="All 2 branches missed.">            if (insertSuccessful) {</span>
+<span class="nc" id="L285">                jobServiceConfiguration.getDeadLetterJobEntityManager().delete(deadLetterJobEntity);</span>
+<span class="nc" id="L286">                triggerExecutorIfNeeded(executableJob);</span>
+<span class="nc" id="L287">                return executableJob;</span>
+            }
+        }
+
+<span class="nc" id="L291">        return null;</span>
+    }
+
+    @Override
+    public HistoryJobEntity moveDeadLetterJobToHistoryJob(DeadLetterJobEntity deadLetterJobEntity, int retries) {
+<span class="nc bnc" id="L296" title="All 2 branches missed.">        if (deadLetterJobEntity == null) {</span>
+<span class="nc" id="L297">            throw new FlowableIllegalArgumentException(&quot;Null job provided&quot;);</span>
+        }
+
+<span class="nc bnc" id="L300" title="All 2 branches missed.">        if (!HistoryJobEntity.HISTORY_JOB_TYPE.equals(deadLetterJobEntity.getJobType())) {</span>
+<span class="nc" id="L301">            throw new FlowableIllegalArgumentException(&quot;Can only move a history job to a history job&quot;);</span>
+        }
+
+<span class="nc" id="L304">        HistoryJobEntityManager historyJobEntityManager = jobServiceConfiguration.getHistoryJobEntityManager();</span>
+<span class="nc" id="L305">        HistoryJobEntity historyJobEntity = historyJobEntityManager.create();</span>
+<span class="nc" id="L306">        copyHistoryJobProperties(historyJobEntity, deadLetterJobEntity);</span>
+
+<span class="nc" id="L308">        historyJobEntity.setRetries(retries);</span>
+<span class="nc" id="L309">        historyJobEntity.setJobHandlerConfiguration(null); // special case: the deadletter jobConfiguration had the history json bytearray as reference in the configuration</span>
+
+        // Need to copy the bytes, because the delete of the deadLetterJobEntity will delete the byte array too
+        // (which is needed when the deadLetterJob gets removed through the API service, so the byte array deletion can't be removed from there)
+<span class="nc" id="L313">        ByteArrayEntity byteArrayEntity = getCommandContext().getEngineConfigurations().get(jobServiceConfiguration.getEngineName())</span>
+<span class="nc" id="L314">            .getByteArrayEntityManager().findById(deadLetterJobEntity.getJobHandlerConfiguration());</span>
+<span class="nc" id="L315">        historyJobEntity.setAdvancedJobHandlerConfigurationBytes(byteArrayEntity.getBytes());</span>
+
+<span class="nc" id="L317">        historyJobEntityManager.insert(historyJobEntity);</span>
+<span class="nc" id="L318">        jobServiceConfiguration.getDeadLetterJobEntityManager().delete(deadLetterJobEntity);</span>
+
+<span class="nc" id="L320">        return historyJobEntity;</span>
+    }
+
+    @Override
+    public void execute(JobInfo job) {
+<span class="nc bnc" id="L325" title="All 2 branches missed.">        if (job instanceof HistoryJobEntity) {</span>
+<span class="nc" id="L326">            callHistoryJobProcessors(HistoryJobProcessorContext.Phase.BEFORE_EXECUTE, (HistoryJobEntity) job);</span>
+<span class="nc" id="L327">            executeHistoryJob((HistoryJobEntity) job);</span>
+<span class="nc bnc" id="L328" title="All 2 branches missed.">        } else if (job instanceof JobEntity) {</span>
+<span class="nc" id="L329">            callJobProcessors(JobProcessorContext.Phase.BEFORE_EXECUTE, (JobEntity) job);</span>
+<span class="nc bnc" id="L330" title="All 2 branches missed.">            if (Job.JOB_TYPE_MESSAGE.equals(((Job) job).getJobType())) {</span>
+<span class="nc" id="L331">                executeMessageJob((JobEntity) job);</span>
+<span class="nc bnc" id="L332" title="All 2 branches missed.">            } else if (Job.JOB_TYPE_TIMER.equals(((Job) job).getJobType())) {</span>
+<span class="nc" id="L333">                executeTimerJob((JobEntity) job);</span>
+            }
+
+        } else {
+<span class="nc" id="L337">            throw new FlowableException(&quot;Only jobs with type JobEntity are supported to be executed. It was &quot; + job);</span>
+        }
+<span class="nc" id="L339">    }</span>
+
+    @Override
+    public void unacquire(JobInfo job) {
+
+<span class="nc bnc" id="L344" title="All 2 branches missed.">        if (job instanceof HistoryJob) {</span>
+
+<span class="nc" id="L346">            HistoryJobEntity jobEntity = jobServiceConfiguration.getHistoryJobEntityManager().findById(job.getId());</span>
+<span class="nc bnc" id="L347" title="All 2 branches missed.">            if (jobEntity == null) {</span>
+<span class="nc" id="L348">                LOGGER.debug(&quot;History Job {} does not exist anymore and will not be unacquired. It has most likely been deleted &quot;</span>
+<span class="nc" id="L349">                        + &quot;e.g. as part of another concurrent part of a process / case instance.&quot;, job.getId());</span>
+<span class="nc" id="L350">                return;</span>
+            }
+
+<span class="nc" id="L353">            jobEntity.setLockExpirationTime(null);</span>
+<span class="nc" id="L354">            jobEntity.setLockOwner(null);</span>
+
+<span class="nc bnc" id="L356" title="All 2 branches missed.">        } else if (job instanceof JobEntity) {</span>
+
+<span class="nc" id="L358">            JobEntity jobEntity = jobServiceConfiguration.getJobEntityManager().findById(job.getId());</span>
+
+<span class="nc bnc" id="L360" title="All 2 branches missed.">            if (jobEntity == null) {</span>
+<span class="nc" id="L361">                LOGGER.debug(&quot;Async Job {} does not exist anymore and will not be unacquired. It has most likely been deleted &quot;</span>
+<span class="nc" id="L362">                        + &quot;e.g. as part of another concurrent part of a process / case instance.&quot;, job.getId());</span>
+<span class="nc" id="L363">                return;</span>
+            }
+
+<span class="nc" id="L366">            jobEntity.setLockExpirationTime(null);</span>
+<span class="nc" id="L367">            jobEntity.setLockOwner(null);</span>
+
+            // We're not calling triggerExecutorIfNeeded here after the insert. The unacquire happened
+            // for a reason (eg queue full or exclusive lock failure). No need to try it immediately again,
+            // as the chance of failure will be high.
+
+<span class="nc bnc" id="L373" title="All 2 branches missed.">        } else if (job instanceof ExternalWorkerJobEntity) {</span>
+<span class="nc" id="L374">            ExternalWorkerJobEntity jobEntity = jobServiceConfiguration.getExternalWorkerJobEntityManager().findById(job.getId());</span>
+
+<span class="nc bnc" id="L376" title="All 2 branches missed.">            if (jobEntity == null) {</span>
+<span class="nc" id="L377">                LOGGER.debug(&quot;External Worker Job {} does not exist anymore and will not be unacquired. It has most likely been deleted &quot;</span>
+<span class="nc" id="L378">                        + &quot;e.g. as part of another concurrent part of a process / case instance.&quot;, job.getId());</span>
+<span class="nc" id="L379">                return;</span>
+            }
+
+<span class="nc" id="L382">            jobEntity.setLockExpirationTime(null);</span>
+<span class="nc" id="L383">            jobEntity.setLockOwner(null);</span>
+<span class="nc bnc" id="L384" title="All 2 branches missed.">        } else if (job instanceof TimerJobEntity) {</span>
+<span class="nc" id="L385">            jobServiceConfiguration.getTimerJobEntityManager().resetExpiredJob(job.getId());</span>
+        } else {
+<span class="nc bnc" id="L387" title="All 2 branches missed.">            if (job != null) {</span>
+                // It could be a v5 job, so simply unlock it.
+<span class="nc" id="L389">                jobServiceConfiguration.getJobEntityManager().resetExpiredJob(job.getId());</span>
+            } else {
+<span class="nc" id="L391">                throw new FlowableException(&quot;Programmatic error: null job passed&quot;);</span>
+            }
+        }
+
+<span class="nc" id="L395">    }</span>
+
+    @Override
+    public void unacquireWithDecrementRetries(JobInfo job, Throwable exception) {
+<span class="nc bnc" id="L399" title="All 2 branches missed.">        if (job instanceof HistoryJob) {</span>
+<span class="nc" id="L400">            HistoryJobEntity historyJobEntity = (HistoryJobEntity) job;</span>
+
+<span class="nc" id="L402">            HistoryJobEntity newHistoryJobEntity = jobServiceConfiguration.getHistoryJobEntityManager().create();</span>
+<span class="nc" id="L403">            copyHistoryJobInfo(newHistoryJobEntity, historyJobEntity);</span>
+
+<span class="nc" id="L405">            newHistoryJobEntity.setId(null); // We want a new id to be assigned to this job</span>
+<span class="nc" id="L406">            newHistoryJobEntity.setLockExpirationTime(null);</span>
+<span class="nc" id="L407">            newHistoryJobEntity.setLockOwner(null);</span>
+<span class="nc" id="L408">            newHistoryJobEntity.setCreateTime(jobServiceConfiguration.getClock().getCurrentTime());</span>
+
+<span class="nc bnc" id="L410" title="All 2 branches missed.">            if (exception != null) {</span>
+<span class="nc" id="L411">                newHistoryJobEntity.setExceptionMessage(exception.getMessage());</span>
+<span class="nc" id="L412">                newHistoryJobEntity.setExceptionStacktrace(getExceptionStacktrace(exception));</span>
+            }
+
+<span class="nc bnc" id="L415" title="All 2 branches missed.">            if (historyJobEntity.getRetries() &gt; 0) {</span>
+<span class="nc" id="L416">                newHistoryJobEntity.setRetries(newHistoryJobEntity.getRetries() - 1);</span>
+<span class="nc" id="L417">                jobServiceConfiguration.getHistoryJobEntityManager().insert(newHistoryJobEntity);</span>
+
+            } else {
+<span class="nc" id="L420">                DeadLetterJobEntity deadLetterJob = createDeadLetterJobFromHistoryJob(newHistoryJobEntity);</span>
+
+<span class="nc bnc" id="L422" title="All 2 branches missed.">                if (exception != null) {</span>
+<span class="nc" id="L423">                    deadLetterJob.setExceptionMessage(exception.getMessage());</span>
+
+                    // Is copied from original HistoryJobEntity before and needs to be reset (as a new byteRef needs to be created)
+<span class="nc bnc" id="L426" title="All 2 branches missed.">                    if (deadLetterJob.getExceptionByteArrayRef() != null) {</span>
+<span class="nc" id="L427">                        deadLetterJob.getExceptionByteArrayRef().delete(jobServiceConfiguration.getEngineName());</span>
+<span class="nc" id="L428">                        deadLetterJob.setExceptionByteArrayRef(null);</span>
+                    }
+<span class="nc" id="L430">                    deadLetterJob.setExceptionStacktrace(getExceptionStacktrace(exception));</span>
+                }
+
+<span class="nc" id="L433">                jobServiceConfiguration.getDeadLetterJobEntityManager().insert(deadLetterJob);</span>
+
+            }
+
+<span class="nc" id="L437">            jobServiceConfiguration.getHistoryJobEntityManager().deleteNoCascade(historyJobEntity); // no cascade -&gt; the bytearray ref is reused for either the new history job or the deadletter job</span>
+
+<span class="nc" id="L439">        } else {</span>
+<span class="nc" id="L440">            JobEntity jobEntity = (JobEntity) job;</span>
+
+<span class="nc" id="L442">            JobEntity newJobEntity = jobServiceConfiguration.getJobEntityManager().create();</span>
+<span class="nc" id="L443">            copyJobInfo(newJobEntity, jobEntity);</span>
+
+<span class="nc" id="L445">            newJobEntity.setId(null); // We want a new id to be assigned to this job</span>
+<span class="nc" id="L446">            newJobEntity.setLockExpirationTime(null);</span>
+<span class="nc" id="L447">            newJobEntity.setLockOwner(null);</span>
+
+<span class="nc bnc" id="L449" title="All 2 branches missed.">            if (exception != null) {</span>
+<span class="nc" id="L450">                newJobEntity.setExceptionMessage(exception.getMessage());</span>
+<span class="nc" id="L451">                newJobEntity.setExceptionStacktrace(getExceptionStacktrace(exception));</span>
+            }
+
+<span class="nc bnc" id="L454" title="All 2 branches missed.">            if (newJobEntity.getRetries() &gt; 0) {</span>
+<span class="nc" id="L455">                newJobEntity.setRetries(newJobEntity.getRetries() - 1);</span>
+<span class="nc" id="L456">                jobServiceConfiguration.getJobEntityManager().insert(newJobEntity);</span>
+
+            } else {
+<span class="nc" id="L459">                DeadLetterJobEntity deadLetterJob = createDeadLetterJobFromOtherJob(newJobEntity);</span>
+
+<span class="nc bnc" id="L461" title="All 2 branches missed.">                if (exception != null) {</span>
+<span class="nc" id="L462">                    deadLetterJob.setExceptionMessage(exception.getMessage());</span>
+<span class="nc" id="L463">                    deadLetterJob.setExceptionStacktrace(getExceptionStacktrace(exception));</span>
+                }
+
+<span class="nc" id="L466">                jobServiceConfiguration.getDeadLetterJobEntityManager().insert(deadLetterJob);</span>
+
+            }
+
+<span class="nc" id="L470">            jobServiceConfiguration.getJobEntityManager().delete(jobEntity.getId());</span>
+
+            // We're not calling triggerExecutorIfNeeded here after the insert. The unacquire happened
+            // for a reason (eg queue full or exclusive lock failure). No need to try it immediately again,
+            // as the chance of failure will be high.
+
+        }
+<span class="nc" id="L477">    }</span>
+    
+    @Override
+    public void deleteExecutableJob(JobInfo job) {
+<span class="nc bnc" id="L481" title="All 2 branches missed.">        if (job instanceof JobEntity) {</span>
+<span class="nc" id="L482">            jobServiceConfiguration.getJobEntityManager().delete((JobEntity) job);</span>
+        } 
+<span class="nc" id="L484">    }</span>
+
+    protected String getExceptionStacktrace(Throwable exception) {
+<span class="nc" id="L487">        StringWriter stringWriter = new StringWriter();</span>
+<span class="nc" id="L488">        exception.printStackTrace(new PrintWriter(stringWriter));</span>
+<span class="nc" id="L489">        return stringWriter.toString();</span>
+    }
+
+    protected void executeMessageJob(JobEntity jobEntity) {
+<span class="nc" id="L493">        executeJobHandler(jobEntity);</span>
+<span class="nc bnc" id="L494" title="All 2 branches missed.">        if (jobEntity.getId() != null) {</span>
+<span class="nc" id="L495">            jobServiceConfiguration.getJobEntityManager().delete(jobEntity);</span>
+        }
+<span class="nc" id="L497">    }</span>
+
+    protected void executeHistoryJob(HistoryJobEntity historyJobEntity) {
+<span class="nc" id="L500">        executeHistoryJobHandler(historyJobEntity);</span>
+<span class="nc bnc" id="L501" title="All 2 branches missed.">        if (historyJobEntity.getId() != null) {</span>
+<span class="nc" id="L502">            jobServiceConfiguration.getHistoryJobEntityManager().delete(historyJobEntity);</span>
+        }
+<span class="nc" id="L504">    }</span>
+
+    protected void executeTimerJob(JobEntity timerEntity) {
+<span class="nc" id="L507">        VariableScope variableScope = null;</span>
+<span class="nc bnc" id="L508" title="All 2 branches missed.">        if (jobServiceConfiguration.getInternalJobManager() != null) {</span>
+<span class="nc" id="L509">            variableScope = jobServiceConfiguration.getInternalJobManager().resolveVariableScope(timerEntity);</span>
+        }
+
+<span class="nc bnc" id="L512" title="All 2 branches missed.">        if (variableScope == null) {</span>
+<span class="nc" id="L513">            variableScope = NoExecutionVariableScope.getSharedInstance();</span>
+        }
+
+<span class="nc bnc" id="L516" title="All 2 branches missed.">        if (jobServiceConfiguration.getInternalJobManager() != null) {</span>
+<span class="nc" id="L517">            jobServiceConfiguration.getInternalJobManager().preTimerJobDelete(timerEntity, variableScope);</span>
+        }
+
+<span class="nc bnc" id="L520" title="All 4 branches missed.">        if (timerEntity.getDuedate() != null &amp;&amp; !isValidTime(timerEntity, timerEntity.getDuedate(), variableScope)) {</span>
+<span class="nc bnc" id="L521" title="All 2 branches missed.">            if (LOGGER.isDebugEnabled()) {</span>
+<span class="nc" id="L522">                LOGGER.debug(&quot;Timer {} fired. but the dueDate is after the endDate.  Deleting timer.&quot;, timerEntity.getId());</span>
+            }
+<span class="nc" id="L524">            jobServiceConfiguration.getJobEntityManager().delete(timerEntity);</span>
+<span class="nc" id="L525">            return;</span>
+        }
+
+<span class="nc" id="L528">        executeJobHandler(timerEntity);</span>
+<span class="nc" id="L529">        jobServiceConfiguration.getJobEntityManager().delete(timerEntity);</span>
+
+<span class="nc bnc" id="L531" title="All 2 branches missed.">        if (LOGGER.isDebugEnabled()) {</span>
+<span class="nc" id="L532">            LOGGER.debug(&quot;Timer {} fired. Deleting timer.&quot;, timerEntity.getId());</span>
+        }
+
+<span class="nc" id="L535">        jobServiceConfiguration.getTimerJobScheduler().rescheduleTimerJobAfterExecution(timerEntity, variableScope);</span>
+<span class="nc" id="L536">    }</span>
+    
+    protected void executeJobHandler(JobEntity jobEntity) {
+<span class="nc" id="L539">        VariableScope variableScope = null;</span>
+<span class="nc bnc" id="L540" title="All 2 branches missed.">        if (jobServiceConfiguration.getInternalJobManager() != null) {</span>
+<span class="nc" id="L541">            variableScope = jobServiceConfiguration.getInternalJobManager().resolveVariableScope(jobEntity);</span>
+        }
+        
+<span class="nc bnc" id="L544" title="All 2 branches missed.">        if (variableScope == null) {</span>
+<span class="nc" id="L545">            variableScope = NoExecutionVariableScope.getSharedInstance();</span>
+        }
+
+<span class="nc" id="L548">        Map&lt;String, JobHandler&gt; jobHandlers = jobServiceConfiguration.getJobHandlers();</span>
+<span class="nc bnc" id="L549" title="All 2 branches missed.">        if (jobEntity.getJobHandlerType() != null) {</span>
+            
+<span class="nc bnc" id="L551" title="All 2 branches missed.">            if (jobHandlers != null) {</span>
+<span class="nc" id="L552">                JobHandler jobHandler = jobHandlers.get(jobEntity.getJobHandlerType());</span>
+<span class="nc bnc" id="L553" title="All 2 branches missed.">                if (jobHandler != null) {</span>
+<span class="nc" id="L554">                    jobHandler.execute(jobEntity, jobEntity.getJobHandlerConfiguration(), variableScope, getCommandContext());</span>
+                } else {
+<span class="nc" id="L556">                    throw new FlowableException(&quot;No job handler registered for type &quot; + jobEntity.getJobHandlerType() + </span>
+<span class="nc" id="L557">                                    &quot; in job config for engine: &quot; + jobServiceConfiguration.getEngineName() + &quot; for &quot; + jobEntity);</span>
+                }
+                
+<span class="nc" id="L560">            } else {</span>
+<span class="nc" id="L561">                throw new FlowableException(&quot;No job handler registered for type &quot; + jobEntity.getJobHandlerType() +</span>
+<span class="nc" id="L562">                                &quot; in job config for engine: &quot; + jobServiceConfiguration.getEngineName() + &quot; for &quot; + jobEntity);</span>
+            }
+            
+        } else {
+<span class="nc" id="L566">            throw new FlowableException(jobEntity + &quot; has no job handler type in job config for engine: &quot; + jobServiceConfiguration.getEngineName());</span>
+        }
+<span class="nc" id="L568">    }</span>
+
+    protected void executeHistoryJobHandler(HistoryJobEntity historyJobEntity) {
+<span class="nc" id="L571">        Map&lt;String, HistoryJobHandler&gt; jobHandlers = jobServiceConfiguration.getHistoryJobHandlers();</span>
+<span class="nc bnc" id="L572" title="All 2 branches missed.">        if (historyJobEntity.getJobHandlerType() != null) {</span>
+<span class="nc bnc" id="L573" title="All 2 branches missed.">            if (jobHandlers != null) {</span>
+<span class="nc" id="L574">                HistoryJobHandler jobHandler = jobHandlers.get(historyJobEntity.getJobHandlerType());</span>
+<span class="nc bnc" id="L575" title="All 2 branches missed.">                if (jobHandler != null) {</span>
+<span class="nc" id="L576">                    jobHandler.execute(historyJobEntity, historyJobEntity.getJobHandlerConfiguration(), getCommandContext(), jobServiceConfiguration);</span>
+                } else {
+<span class="nc" id="L578">                    throw new FlowableException(&quot;No history job handler registered for type &quot; + historyJobEntity.getJobHandlerType() +</span>
+<span class="nc" id="L579">                                    &quot; in job config for engine: &quot; + jobServiceConfiguration.getEngineName() + &quot; for &quot; + historyJobEntity);</span>
+                }
+                
+<span class="nc" id="L582">            } else {</span>
+<span class="nc" id="L583">                throw new FlowableException(&quot;No history job handler registered for type &quot; + historyJobEntity.getJobHandlerType() + </span>
+<span class="nc" id="L584">                                &quot; in job config for engine: &quot; + jobServiceConfiguration.getEngineName() + &quot; for &quot; + historyJobEntity);</span>
+            }
+            
+        } else {
+<span class="nc" id="L588">            throw new FlowableException(&quot;Async &quot; + historyJobEntity + &quot; has no job handler type in job config for engine: &quot; + jobServiceConfiguration.getEngineName());</span>
+        }
+<span class="nc" id="L590">    }</span>
+
+    protected boolean isValidTime(JobEntity timerEntity, Date newTimerDate, VariableScope variableScope) {
+<span class="nc" id="L593">        BusinessCalendar businessCalendar = jobServiceConfiguration.getBusinessCalendarManager().getBusinessCalendar(</span>
+<span class="nc" id="L594">                getBusinessCalendarName(timerEntity, variableScope));</span>
+<span class="nc" id="L595">        return businessCalendar.validateDuedate(timerEntity.getRepeat(), timerEntity.getMaxIterations(), timerEntity.getEndDate(), newTimerDate);</span>
+    }
+
+    protected void hintAsyncExecutor(JobEntity job) {
+        // Verify that correct properties have been set when the async executor will be hinted
+<span class="nc bnc" id="L600" title="All 4 branches missed.">        if (job.getLockOwner() == null || job.getLockExpirationTime() == null) {</span>
+<span class="nc" id="L601">            createAsyncJob(job, job.isExclusive());</span>
+        }
+<span class="nc" id="L603">        createHintListeners(getAsyncExecutor(), job);</span>
+<span class="nc" id="L604">    }</span>
+
+    protected void createHintListeners(AsyncExecutor asyncExecutor, JobInfoEntity job) {
+<span class="nc" id="L607">        CommandContext commandContext = CommandContextUtil.getCommandContext();</span>
+<span class="nc bnc" id="L608" title="All 2 branches missed.">        if (Context.getTransactionContext() != null) {</span>
+<span class="nc" id="L609">            JobAddedTransactionListener jobAddedTransactionListener = new JobAddedTransactionListener(job, asyncExecutor,</span>
+<span class="nc" id="L610">                    jobServiceConfiguration.getCommandExecutor());</span>
+<span class="nc" id="L611">            Context.getTransactionContext().addTransactionListener(TransactionState.COMMITTED, jobAddedTransactionListener);</span>
+            
+<span class="nc" id="L613">        } else {</span>
+<span class="nc" id="L614">            AsyncJobAddedNotification jobAddedNotification = new AsyncJobAddedNotification(job, asyncExecutor);</span>
+<span class="nc" id="L615">            commandContext.addCloseListener(jobAddedNotification);</span>
+            
+        }
+<span class="nc" id="L618">    }</span>
+
+    @Override
+    public String getBusinessCalendarName(JobEntity timerEntity, VariableScope variableScope) {
+<span class="nc" id="L622">        String calendarValue = null;</span>
+<span class="nc bnc" id="L623" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(timerEntity.getJobHandlerConfiguration())) {</span>
+            try {
+<span class="nc" id="L625">                JsonNode jobConfigNode = jobServiceConfiguration.getObjectMapper().readTree(timerEntity.getJobHandlerConfiguration());</span>
+<span class="nc" id="L626">                JsonNode calendarNameNode = jobConfigNode.get(&quot;calendarName&quot;);</span>
+<span class="nc bnc" id="L627" title="All 4 branches missed.">                if (calendarNameNode != null &amp;&amp; !calendarNameNode.isNull()) {</span>
+<span class="nc" id="L628">                    calendarValue = calendarNameNode.asText();</span>
+                }
+
+<span class="nc" id="L631">            } catch (Exception e) {</span>
+                // ignore JSON exception
+<span class="nc" id="L633">            }</span>
+        }
+
+<span class="nc" id="L636">        return getBusinessCalendarName(calendarValue, variableScope);</span>
+    }
+
+    protected String getBusinessCalendarName(String calendarName, VariableScope variableScope) {
+<span class="nc" id="L640">        String businessCalendarName = CYCLE_TYPE;</span>
+<span class="nc bnc" id="L641" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(calendarName)) {</span>
+<span class="nc" id="L642">            businessCalendarName = (String) jobServiceConfiguration.getExpressionManager()</span>
+<span class="nc" id="L643">                    .createExpression(calendarName).getValue(variableScope);</span>
+        }
+<span class="nc" id="L645">        return businessCalendarName;</span>
+    }
+
+    @Override
+    public HistoryJobEntity scheduleHistoryJob(HistoryJobEntity historyJobEntity, TransactionContext transactionContext) {
+<span class="nc" id="L650">        callHistoryJobProcessors(HistoryJobProcessorContext.Phase.BEFORE_CREATE, historyJobEntity);</span>
+<span class="nc" id="L651">        jobServiceConfiguration.getHistoryJobEntityManager().insert(historyJobEntity);</span>
+<span class="nc" id="L652">        triggerAsyncHistoryExecutorIfNeeded(historyJobEntity, transactionContext);</span>
+<span class="nc" id="L653">        return historyJobEntity;</span>
+    }
+    
+    protected void triggerAsyncHistoryExecutorIfNeeded(HistoryJobEntity historyJobEntity, TransactionContext transactionContext) {
+<span class="nc bnc" id="L657" title="All 2 branches missed.">        if (isAsyncHistoryExecutorActive()) {</span>
+<span class="nc" id="L658">            hintAsyncHistoryExecutor(historyJobEntity, transactionContext);</span>
+        }
+<span class="nc" id="L660">    }</span>
+
+    protected void hintAsyncHistoryExecutor(HistoryJobEntity historyJobEntity, TransactionContext transactionContext) {
+<span class="nc bnc" id="L663" title="All 4 branches missed.">        if (historyJobEntity.getLockOwner() == null || historyJobEntity.getLockExpirationTime() == null) {</span>
+<span class="nc" id="L664">            setLockTimeAndOwner(getAsyncHistoryExecutor(), historyJobEntity);</span>
+        }
+<span class="nc" id="L666">        createAsyncHistoryHintListeners(historyJobEntity, transactionContext);</span>
+<span class="nc" id="L667">    }</span>
+
+    protected void createAsyncHistoryHintListeners(HistoryJobEntity historyJobEntity, TransactionContext transactionContext) {
+<span class="nc bnc" id="L670" title="All 2 branches missed.">        if (transactionContext != null) {</span>
+<span class="nc" id="L671">            transactionContext.addTransactionListener(TransactionState.COMMITTED, new TriggerAsyncHistoryExecutorTransactionListener(</span>
+                    jobServiceConfiguration, historyJobEntity));
+        }
+<span class="nc" id="L674">    }</span>
+    
+    protected void internalCreateAsyncJob(JobEntity jobEntity, boolean exclusive) {
+<span class="nc" id="L677">        fillDefaultAsyncJobInfo(jobEntity, exclusive);</span>
+<span class="nc" id="L678">    }</span>
+
+    protected void internalCreateLockedAsyncJob(JobEntity jobEntity, boolean exclusive) {
+<span class="nc" id="L681">        fillDefaultAsyncJobInfo(jobEntity, exclusive);</span>
+        
+<span class="nc" id="L683">        setLockTimeAndOwner(getAsyncExecutor(), jobEntity);</span>
+<span class="nc" id="L684">    }</span>
+
+    protected void setLockTimeAndOwner(AsyncExecutor asyncExecutor , JobInfoEntity jobInfoEntity) {
+<span class="nc" id="L687">        GregorianCalendar gregorianCalendar = new GregorianCalendar();</span>
+<span class="nc" id="L688">        gregorianCalendar.setTime(jobServiceConfiguration.getClock().getCurrentTime());</span>
+<span class="nc" id="L689">        gregorianCalendar.add(Calendar.MILLISECOND, asyncExecutor.getAsyncJobLockTimeInMillis());</span>
+<span class="nc" id="L690">        jobInfoEntity.setLockExpirationTime(gregorianCalendar.getTime());</span>
+<span class="nc" id="L691">        jobInfoEntity.setLockOwner(asyncExecutor.getLockOwner());</span>
+<span class="nc" id="L692">    }</span>
+
+    protected void fillDefaultAsyncJobInfo(JobEntity jobEntity, boolean exclusive) {
+<span class="nc" id="L695">        jobEntity.setJobType(JobEntity.JOB_TYPE_MESSAGE);</span>
+<span class="nc" id="L696">        jobEntity.setRevision(1);</span>
+<span class="nc" id="L697">        jobEntity.setRetries(jobServiceConfiguration.getAsyncExecutorNumberOfRetries());</span>
+<span class="nc" id="L698">        jobEntity.setExclusive(exclusive);</span>
+<span class="nc" id="L699">    }</span>
+
+    @Override
+    public JobEntity createExecutableJobFromOtherJob(AbstractRuntimeJobEntity job) {
+<span class="nc" id="L703">       return createExecutableJobFromOtherJob(job, isAsyncExecutorActive());</span>
+    }
+
+    protected JobEntity createExecutableJobFromOtherJob(AbstractRuntimeJobEntity job, boolean lockJob) {
+<span class="nc" id="L707">        JobEntity executableJob = jobServiceConfiguration.getJobEntityManager().create();</span>
+<span class="nc" id="L708">        copyJobInfo(executableJob, job);</span>
+
+<span class="nc bnc" id="L710" title="All 2 branches missed.">        if (lockJob) {</span>
+<span class="nc" id="L711">            GregorianCalendar gregorianCalendar = new GregorianCalendar();</span>
+<span class="nc" id="L712">            gregorianCalendar.setTime(jobServiceConfiguration.getClock().getCurrentTime());</span>
+<span class="nc" id="L713">            gregorianCalendar.add(Calendar.MILLISECOND, getAsyncExecutor().getAsyncJobLockTimeInMillis());</span>
+<span class="nc" id="L714">            executableJob.setLockExpirationTime(gregorianCalendar.getTime());</span>
+<span class="nc" id="L715">            executableJob.setLockOwner(getAsyncExecutor().getLockOwner());</span>
+        }
+
+<span class="nc" id="L718">        return executableJob;</span>
+    }
+
+    @Override
+    public TimerJobEntity createTimerJobFromOtherJob(AbstractRuntimeJobEntity otherJob) {
+<span class="nc" id="L723">        TimerJobEntity timerJob = jobServiceConfiguration.getTimerJobEntityManager().create();</span>
+<span class="nc" id="L724">        copyJobInfo(timerJob, otherJob);</span>
+<span class="nc" id="L725">        return timerJob;</span>
+    }
+
+    @Override
+    public SuspendedJobEntity createSuspendedJobFromOtherJob(AbstractRuntimeJobEntity otherJob) {
+<span class="nc" id="L730">        SuspendedJobEntity suspendedJob = jobServiceConfiguration.getSuspendedJobEntityManager().create();</span>
+<span class="nc" id="L731">        copyJobInfo(suspendedJob, otherJob);</span>
+<span class="nc" id="L732">        return suspendedJob;</span>
+    }
+
+    @Override
+    public DeadLetterJobEntity createDeadLetterJobFromOtherJob(AbstractRuntimeJobEntity otherJob) {
+<span class="nc" id="L737">        DeadLetterJobEntity deadLetterJob = jobServiceConfiguration.getDeadLetterJobEntityManager().create();</span>
+<span class="nc" id="L738">        copyJobInfo(deadLetterJob, otherJob);</span>
+<span class="nc" id="L739">        sendMoveToDeadletterEvent(otherJob);</span>
+<span class="nc" id="L740">        return deadLetterJob;</span>
+    }
+
+    @Override
+    public DeadLetterJobEntity createDeadLetterJobFromHistoryJob(HistoryJobEntity historyJobEntity) {
+<span class="nc" id="L745">        DeadLetterJobEntity deadLetterJob = jobServiceConfiguration.getDeadLetterJobEntityManager().create();</span>
+<span class="nc" id="L746">        deadLetterJob.setJobType(HistoryJob.HISTORY_JOB_TYPE);</span>
+<span class="nc" id="L747">        copyHistoryJobProperties(deadLetterJob, historyJobEntity);</span>
+
+        // History jobs don't use the configuration field. Deadletter jobs don't have an advanced configuration column.
+        // To work around that, the id of the byte ref (of the advanced config) is copied to the configuration field.
+        // The id will later be taken from the configuration field when moving back to a history job.
+<span class="nc bnc" id="L752" title="All 2 branches missed.">        if (historyJobEntity.getAdvancedJobHandlerConfigurationByteArrayRef() != null) {</span>
+<span class="nc" id="L753">            deadLetterJob.setJobHandlerConfiguration(historyJobEntity.getAdvancedJobHandlerConfigurationByteArrayRef().getId());</span>
+        }
+
+<span class="nc" id="L756">        sendMoveToDeadletterEvent(historyJobEntity);</span>
+
+<span class="nc" id="L758">        return deadLetterJob;</span>
+    }
+
+    @Override
+    public ExternalWorkerJobEntity createExternalWorkerJobFromOtherJob(AbstractRuntimeJobEntity otherJob) {
+<span class="nc" id="L763">        ExternalWorkerJobEntity externalWorkerJob = jobServiceConfiguration.getExternalWorkerJobEntityManager().create();</span>
+<span class="nc" id="L764">        copyJobInfo(externalWorkerJob, otherJob);</span>
+<span class="nc" id="L765">        return externalWorkerJob;</span>
+    }
+
+    @Override
+    public AbstractRuntimeJobEntity copyJobInfo(AbstractRuntimeJobEntity copyToJob, AbstractRuntimeJobEntity copyFromJob) {
+<span class="nc" id="L770">        copyToJob.setDuedate(copyFromJob.getDuedate());</span>
+<span class="nc" id="L771">        copyToJob.setEndDate(copyFromJob.getEndDate());</span>
+<span class="nc" id="L772">        copyToJob.setExclusive(copyFromJob.isExclusive());</span>
+<span class="nc" id="L773">        copyToJob.setExecutionId(copyFromJob.getExecutionId());</span>
+<span class="nc" id="L774">        copyToJob.setId(copyFromJob.getId());</span>
+<span class="nc" id="L775">        copyToJob.setProcessDefinitionId(copyFromJob.getProcessDefinitionId());</span>
+<span class="nc" id="L776">        copyToJob.setElementId(copyFromJob.getElementId());</span>
+<span class="nc" id="L777">        copyToJob.setElementName(copyFromJob.getElementName());</span>
+<span class="nc" id="L778">        copyToJob.setProcessInstanceId(copyFromJob.getProcessInstanceId());</span>
+<span class="nc" id="L779">        copyToJob.setScopeId(copyFromJob.getScopeId());</span>
+<span class="nc" id="L780">        copyToJob.setSubScopeId(copyFromJob.getSubScopeId());</span>
+<span class="nc" id="L781">        copyToJob.setScopeType(copyFromJob.getScopeType());</span>
+<span class="nc" id="L782">        copyToJob.setScopeDefinitionId(copyFromJob.getScopeDefinitionId());</span>
+<span class="nc" id="L783">        copyToJob.setJobHandlerConfiguration(copyFromJob.getJobHandlerConfiguration());</span>
+<span class="nc" id="L784">        copyToJob.setCustomValues(copyFromJob.getCustomValues());</span>
+<span class="nc" id="L785">        copyToJob.setJobHandlerType(copyFromJob.getJobHandlerType());</span>
+<span class="nc" id="L786">        copyToJob.setCategory(copyFromJob.getCategory());</span>
+<span class="nc" id="L787">        copyToJob.setJobType(copyFromJob.getJobType());</span>
+<span class="nc" id="L788">        copyToJob.setExceptionMessage(copyFromJob.getExceptionMessage());</span>
+<span class="nc" id="L789">        copyToJob.setExceptionStacktrace(copyFromJob.getExceptionStacktrace());</span>
+<span class="nc" id="L790">        copyToJob.setMaxIterations(copyFromJob.getMaxIterations());</span>
+<span class="nc" id="L791">        copyToJob.setRepeat(copyFromJob.getRepeat());</span>
+<span class="nc" id="L792">        copyToJob.setRetries(copyFromJob.getRetries());</span>
+<span class="nc" id="L793">        copyToJob.setRevision(copyFromJob.getRevision());</span>
+<span class="nc" id="L794">        copyToJob.setTenantId(copyFromJob.getTenantId());</span>
+
+<span class="nc bnc" id="L796" title="All 2 branches missed.">        if (copyFromJob.getCorrelationId() != null) {</span>
+<span class="nc" id="L797">            copyToJob.setCorrelationId(copyFromJob.getCorrelationId());</span>
+        } else {
+<span class="nc" id="L799">            copyToJob.setCorrelationId(jobServiceConfiguration.getIdGenerator().getNextId());</span>
+        }
+
+<span class="nc" id="L802">        return copyToJob;</span>
+    }
+
+    protected HistoryJobEntity copyHistoryJobInfo(HistoryJobEntity copyToJob, HistoryJobEntity copyFromJob) {
+<span class="nc" id="L806">        copyHistoryJobProperties(copyToJob, copyFromJob);</span>
+<span class="nc bnc" id="L807" title="All 2 branches missed.">        if (copyFromJob.getAdvancedJobHandlerConfigurationByteArrayRef() != null) {</span>
+<span class="nc" id="L808">            ByteArrayRef configurationByteArrayRefCopy = copyFromJob.getAdvancedJobHandlerConfigurationByteArrayRef().copy();</span>
+<span class="nc" id="L809">            copyToJob.setAdvancedJobHandlerConfigurationByteArrayRef(configurationByteArrayRefCopy);</span>
+        }
+<span class="nc" id="L811">        return copyToJob;</span>
+    }
+
+    protected AbstractJobEntity copyHistoryJobProperties(AbstractJobEntity copyToJob, AbstractJobEntity copyFromJob) {
+<span class="nc" id="L815">        copyToJob.setId(copyFromJob.getId());</span>
+<span class="nc" id="L816">        copyToJob.setScopeType(copyFromJob.getScopeType());</span>
+<span class="nc" id="L817">        copyToJob.setCreateTime(copyFromJob.getCreateTime());</span>
+<span class="nc" id="L818">        copyToJob.setJobHandlerConfiguration(copyFromJob.getJobHandlerConfiguration());</span>
+<span class="nc bnc" id="L819" title="All 2 branches missed.">        if (copyFromJob.getExceptionByteArrayRef() != null) {</span>
+<span class="nc" id="L820">            ByteArrayRef exceptionByteArrayRefCopy = copyFromJob.getExceptionByteArrayRef();</span>
+<span class="nc" id="L821">            copyToJob.setExceptionByteArrayRef(exceptionByteArrayRefCopy);</span>
+        }
+<span class="nc bnc" id="L823" title="All 2 branches missed.">        if (copyFromJob.getCustomValuesByteArrayRef() != null) {</span>
+<span class="nc" id="L824">            ByteArrayRef customValuesByteArrayRefCopy = copyFromJob.getCustomValuesByteArrayRef().copy();</span>
+<span class="nc" id="L825">            copyToJob.setCustomValuesByteArrayRef(customValuesByteArrayRefCopy);</span>
+        }
+<span class="nc" id="L827">        copyToJob.setJobHandlerType(copyFromJob.getJobHandlerType());</span>
+<span class="nc" id="L828">        copyToJob.setExceptionMessage(copyFromJob.getExceptionMessage());</span>
+<span class="nc" id="L829">        copyToJob.setExceptionStacktrace(copyFromJob.getExceptionStacktrace());</span>
+<span class="nc" id="L830">        copyToJob.setCustomValues(copyFromJob.getCustomValues());</span>
+<span class="nc" id="L831">        copyToJob.setRetries(copyFromJob.getRetries());</span>
+<span class="nc" id="L832">        copyToJob.setRevision(copyFromJob.getRevision());</span>
+<span class="nc" id="L833">        copyToJob.setTenantId(copyFromJob.getTenantId());</span>
+
+<span class="nc" id="L835">        return copyToJob;</span>
+    }
+
+    public JobServiceConfiguration getJobServiceConfiguration() {
+<span class="nc" id="L839">        return jobServiceConfiguration;</span>
+    }
+
+    @Override
+    public void setJobServiceConfiguration(JobServiceConfiguration jobServiceConfiguration) {
+<span class="nc" id="L844">        this.jobServiceConfiguration = jobServiceConfiguration;</span>
+<span class="nc" id="L845">    }</span>
+
+    protected boolean isAsyncExecutorActive() {
+<span class="nc" id="L848">        return isExecutorActive(jobServiceConfiguration.getAsyncExecutor());</span>
+    }
+
+    protected boolean isAsyncExecutorRemainingCapacitySufficient(int neededCapacity) {
+<span class="nc bnc" id="L852" title="All 4 branches missed.">        return getAsyncExecutor().isActive() &amp;&amp; getAsyncExecutor().getTaskExecutor().getRemainingCapacity() &gt;= neededCapacity;</span>
+    }
+    
+    protected boolean isAsyncHistoryExecutorActive() {
+<span class="nc" id="L856">        return isExecutorActive(jobServiceConfiguration.getAsyncHistoryExecutor());</span>
+    }
+    
+    protected boolean isExecutorActive(AsyncExecutor asyncExecutor) {
+<span class="nc bnc" id="L860" title="All 4 branches missed.">        return asyncExecutor != null &amp;&amp; asyncExecutor.isActive();</span>
+    }
+
+    protected CommandContext getCommandContext() {
+<span class="nc" id="L864">        return Context.getCommandContext();</span>
+    }
+
+    protected AsyncExecutor getAsyncExecutor() {
+<span class="nc" id="L868">        return jobServiceConfiguration.getAsyncExecutor();</span>
+    }
+    
+    protected AsyncExecutor getAsyncHistoryExecutor() {
+<span class="nc" id="L872">        return jobServiceConfiguration.getAsyncHistoryExecutor();</span>
+    }
+
+    protected void callJobProcessors(JobProcessorContext.Phase processorType, AbstractJobEntity abstractJobEntity) {
+<span class="nc" id="L876">        JobProcessorUtil.callJobProcessors(jobServiceConfiguration, processorType, abstractJobEntity);</span>
+<span class="nc" id="L877">    }</span>
+
+    protected void callHistoryJobProcessors(HistoryJobProcessorContext.Phase processorType, HistoryJobEntity historyJobEntity) {
+<span class="nc" id="L880">        JobProcessorUtil.callHistoryJobProcessors(jobServiceConfiguration, processorType, historyJobEntity);</span>
+<span class="nc" id="L881">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SharedExecutorServiceAsyncExecutor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.job.service.impl.asyncexecutor.multitenant</a> &gt; <span class="el_source">SharedExecutorServiceAsyncExecutor.java</span></div><h1>SharedExecutorServiceAsyncExecutor.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.job.service.impl.asyncexecutor.multitenant;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ExecutorService;
+
+import org.flowable.common.engine.impl.cfg.multitenant.TenantInfoHolder;
+import org.flowable.job.api.JobInfo;
+import org.flowable.job.service.JobServiceConfiguration;
+import org.flowable.job.service.impl.asyncexecutor.AsyncExecutor;
+import org.flowable.job.service.impl.asyncexecutor.DefaultAsyncJobExecutor;
+import org.flowable.job.service.impl.asyncexecutor.ExecuteAsyncRunnableFactory;
+import org.flowable.job.service.impl.cmd.UnacquireOwnedJobsCmd;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Multi tenant {@link AsyncExecutor}.
+ * 
+ * For each tenant, there will be acquire threads, but only one {@link ExecutorService} will be used once the jobs are acquired.
+ * 
+ * @author Joram Barrez
+ */
+public class SharedExecutorServiceAsyncExecutor extends DefaultAsyncJobExecutor implements TenantAwareAsyncExecutor {
+
+<span class="nc" id="L39">    private static final Logger LOGGER = LoggerFactory.getLogger(SharedExecutorServiceAsyncExecutor.class);</span>
+
+    protected TenantInfoHolder tenantInfoHolder;
+
+<span class="nc" id="L43">    protected Map&lt;String, Thread&gt; timerJobAcquisitionThreads = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L44">    protected Map&lt;String, TenantAwareAcquireTimerJobsRunnable&gt; timerJobAcquisitionRunnables = new HashMap&lt;&gt;();</span>
+
+<span class="nc" id="L46">    protected Map&lt;String, Thread&gt; asyncJobAcquisitionThreads = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L47">    protected Map&lt;String, TenantAwareAcquireAsyncJobsDueRunnable&gt; asyncJobAcquisitionRunnables = new HashMap&lt;&gt;();</span>
+
+<span class="nc" id="L49">    protected Map&lt;String, Thread&gt; resetExpiredJobsThreads = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L50">    protected Map&lt;String, TenantAwareResetExpiredJobsRunnable&gt; resetExpiredJobsRunnables = new HashMap&lt;&gt;();</span>
+
+<span class="nc" id="L52">    public SharedExecutorServiceAsyncExecutor(TenantInfoHolder tenantInfoHolder) {</span>
+<span class="nc" id="L53">        this.tenantInfoHolder = tenantInfoHolder;</span>
+<span class="nc" id="L54">        configuration.setUnlockOwnedJobs(false);</span>
+
+<span class="nc" id="L56">        setExecuteAsyncRunnableFactory(new ExecuteAsyncRunnableFactory() {</span>
+
+            @Override
+            public Runnable createExecuteAsyncRunnable(JobInfo job, JobServiceConfiguration jobServiceConfiguration) {
+
+                // Here, the runnable will be created by for example the acquire thread, which has already set the current id.
+                // But it will be executed later on, by the executorService and thus we need to set it explicitly again then
+
+<span class="nc" id="L64">                return new TenantAwareExecuteAsyncRunnable(job, jobServiceConfiguration,</span>
+                        SharedExecutorServiceAsyncExecutor.this.tenantInfoHolder,
+<span class="nc" id="L66">                        SharedExecutorServiceAsyncExecutor.this.tenantInfoHolder.getCurrentTenantId());</span>
+            }
+
+        });
+<span class="nc" id="L70">    }</span>
+
+    @Override
+    public Set&lt;String&gt; getTenantIds() {
+<span class="nc" id="L74">        return timerJobAcquisitionRunnables.keySet();</span>
+    }
+
+    @Override
+    public void addTenantAsyncExecutor(String tenantId, boolean startExecutor) {
+
+<span class="nc" id="L80">        TenantAwareAcquireTimerJobsRunnable timerRunnable = new TenantAwareAcquireTimerJobsRunnable(this, tenantInfoHolder, tenantId,</span>
+<span class="nc" id="L81">            timerLifecycleListener, new AcquireTimerRunnableConfiguration(), configuration.getMoveTimerExecutorPoolSize());</span>
+<span class="nc" id="L82">        timerJobAcquisitionRunnables.put(tenantId, timerRunnable);</span>
+<span class="nc" id="L83">        timerJobAcquisitionThreads.put(tenantId, new Thread(timerRunnable));</span>
+
+<span class="nc" id="L85">        TenantAwareAcquireAsyncJobsDueRunnable asyncJobsRunnable = new TenantAwareAcquireAsyncJobsDueRunnable(this, tenantInfoHolder, tenantId,</span>
+            asyncJobsDueLifecycleListener, new AcquireAsyncJobsDueRunnableConfiguration());
+<span class="nc" id="L87">        asyncJobAcquisitionRunnables.put(tenantId, asyncJobsRunnable);</span>
+<span class="nc" id="L88">        asyncJobAcquisitionThreads.put(tenantId, new Thread(asyncJobsRunnable));</span>
+
+<span class="nc" id="L90">        TenantAwareResetExpiredJobsRunnable resetExpiredJobsRunnable = new TenantAwareResetExpiredJobsRunnable(this, tenantInfoHolder, tenantId);</span>
+<span class="nc" id="L91">        resetExpiredJobsRunnables.put(tenantId, resetExpiredJobsRunnable);</span>
+<span class="nc" id="L92">        resetExpiredJobsThreads.put(tenantId, new Thread(resetExpiredJobsRunnable));</span>
+
+<span class="nc bnc" id="L94" title="All 2 branches missed.">        if (startExecutor) {</span>
+<span class="nc" id="L95">            startTimerJobAcquisitionForTenant(tenantId);</span>
+<span class="nc" id="L96">            startAsyncJobAcquisitionForTenant(tenantId);</span>
+<span class="nc" id="L97">            startResetExpiredJobsForTenant(tenantId);</span>
+        }
+<span class="nc" id="L99">    }</span>
+    
+    @Override
+    public AsyncExecutor getTenantAsyncExecutor(String tenantId) {
+<span class="nc" id="L103">        return this;</span>
+    }
+
+    @Override
+    public void removeTenantAsyncExecutor(String tenantId) {
+<span class="nc" id="L108">        stopThreadsForTenant(tenantId);</span>
+<span class="nc" id="L109">    }</span>
+
+    @Override
+    protected void unlockOwnedJobs() {
+<span class="nc bnc" id="L113" title="All 2 branches missed.">        for (String tenantId : timerJobAcquisitionThreads.keySet()) {</span>
+<span class="nc" id="L114">            tenantInfoHolder.setCurrentTenantId(tenantId);</span>
+<span class="nc" id="L115">            jobServiceConfiguration.getCommandExecutor().execute(new UnacquireOwnedJobsCmd(configuration.getLockOwner(), tenantId, jobServiceConfiguration));</span>
+<span class="nc" id="L116">            tenantInfoHolder.clearCurrentTenantId();</span>
+<span class="nc" id="L117">        }</span>
+<span class="nc" id="L118">    }</span>
+
+    @Override
+    public void start() {
+<span class="nc bnc" id="L122" title="All 2 branches missed.">        if (isActive) {</span>
+<span class="nc" id="L123">            return;</span>
+        }
+
+<span class="nc" id="L126">        isActive = true;</span>
+        
+<span class="nc" id="L128">        initializeJobEntityManager();</span>
+<span class="nc" id="L129">        initAsyncJobExecutionThreadPool();</span>
+
+<span class="nc bnc" id="L131" title="All 2 branches missed.">        for (String tenantId : timerJobAcquisitionRunnables.keySet()) {</span>
+<span class="nc" id="L132">            startTimerJobAcquisitionForTenant(tenantId);</span>
+<span class="nc" id="L133">            startAsyncJobAcquisitionForTenant(tenantId);</span>
+<span class="nc" id="L134">            startResetExpiredJobsForTenant(tenantId);</span>
+<span class="nc" id="L135">        }</span>
+<span class="nc" id="L136">    }</span>
+
+    protected void startTimerJobAcquisitionForTenant(String tenantId) {
+<span class="nc" id="L139">        timerJobAcquisitionThreads.get(tenantId).start();</span>
+<span class="nc" id="L140">    }</span>
+
+    protected void startAsyncJobAcquisitionForTenant(String tenantId) {
+<span class="nc" id="L143">        asyncJobAcquisitionThreads.get(tenantId).start();</span>
+<span class="nc" id="L144">    }</span>
+
+    protected void startResetExpiredJobsForTenant(String tenantId) {
+<span class="nc" id="L147">        resetExpiredJobsThreads.get(tenantId).start();</span>
+<span class="nc" id="L148">    }</span>
+
+    @Override
+    protected void stopJobAcquisitionThread() {
+<span class="nc bnc" id="L152" title="All 2 branches missed.">        for (String tenantId : timerJobAcquisitionRunnables.keySet()) {</span>
+<span class="nc" id="L153">            stopThreadsForTenant(tenantId);</span>
+<span class="nc" id="L154">        }</span>
+<span class="nc" id="L155">    }</span>
+
+    protected void stopThreadsForTenant(String tenantId) {
+<span class="nc" id="L158">        timerJobAcquisitionRunnables.get(tenantId).stop();</span>
+<span class="nc" id="L159">        asyncJobAcquisitionRunnables.get(tenantId).stop();</span>
+<span class="nc" id="L160">        resetExpiredJobsRunnables.get(tenantId).stop();</span>
+
+        try {
+<span class="nc" id="L163">            timerJobAcquisitionThreads.get(tenantId).join();</span>
+<span class="nc" id="L164">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L165">            LOGGER.warn(&quot;Interrupted while waiting for the timer job acquisition thread to terminate&quot;, e);</span>
+<span class="nc" id="L166">        }</span>
+
+        try {
+<span class="nc" id="L169">            asyncJobAcquisitionThreads.get(tenantId).join();</span>
+<span class="nc" id="L170">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L171">            LOGGER.warn(&quot;Interrupted while waiting for the timer job acquisition thread to terminate&quot;, e);</span>
+<span class="nc" id="L172">        }</span>
+
+        try {
+<span class="nc" id="L175">            resetExpiredJobsThreads.get(tenantId).join();</span>
+<span class="nc" id="L176">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L177">            LOGGER.warn(&quot;Interrupted while waiting for the reset expired jobs thread to terminate&quot;, e);</span>
+<span class="nc" id="L178">        }</span>
+<span class="nc" id="L179">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

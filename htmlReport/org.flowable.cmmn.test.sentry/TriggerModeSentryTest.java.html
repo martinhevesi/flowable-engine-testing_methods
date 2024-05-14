@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TriggerModeSentryTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.cmmn.test.sentry</a> &gt; <span class="el_source">TriggerModeSentryTest.java</span></div><h1>TriggerModeSentryTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.cmmn.test.sentry;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.io.Serializable;
+import java.util.Collections;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import org.flowable.cmmn.api.runtime.CaseInstance;
+import org.flowable.cmmn.engine.impl.persistence.entity.SentryPartInstanceEntity;
+import org.flowable.cmmn.engine.impl.util.CommandContextUtil;
+import org.flowable.cmmn.engine.test.CmmnDeployment;
+import org.flowable.cmmn.engine.test.FlowableCmmnTestCase;
+import org.flowable.common.engine.impl.interceptor.Command;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.task.api.Task;
+import org.junit.Test;
+
+/**
+ * @author Joram Barrez
+ */
+<span class="nc" id="L35">public class TriggerModeSentryTest extends FlowableCmmnTestCase {</span>
+
+    @Test
+    @CmmnDeployment
+    public void testTriggerModeOnEvent() {
+
+        // This test verifies the behavior of the onEvent triggerMode.
+        // From the start, variables are set that normally would satisfy the ifPart of some sentries.
+        // However, due to the fact the triggerMode is onEvent, these sentries are evaluated when the complete event happens and not before.
+
+<span class="nc" id="L45">        CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L46">                .caseDefinitionKey(&quot;testTriggerMode&quot;)</span>
+                // Even though the variables are true, they should not be evaluated on start due to the onEvent triggerMode
+<span class="nc" id="L48">                .variable(&quot;goToC&quot;, true)</span>
+<span class="nc" id="L49">                .start();</span>
+
+        // There should be no if parts stored
+<span class="nc" id="L52">        assertSentryPartInstanceCount(caseInstance, 0);</span>
+
+<span class="nc" id="L54">        List&lt;Task&gt; tasks = cmmnTaskService.createTaskQuery().caseInstanceId(caseInstance.getId()).orderByTaskName().asc().list();</span>
+<span class="nc" id="L55">        assertThat(tasks)</span>
+<span class="nc" id="L56">                .extracting(Task::getName)</span>
+<span class="nc" id="L57">                .containsExactly(&quot;B&quot;);</span>
+
+        // When completing B, we're setting an extra variable to go to stage 1. The goToC variable is still true and should now be evaluated.
+<span class="nc" id="L60">        cmmnTaskService.complete(tasks.get(0).getId(), Collections.singletonMap(&quot;gotoStage1&quot;, true));</span>
+
+<span class="nc" id="L62">        tasks = cmmnTaskService.createTaskQuery().caseInstanceId(caseInstance.getId()).orderByTaskName().asc().list();</span>
+<span class="nc" id="L63">        assertThat(tasks)</span>
+<span class="nc" id="L64">                .extracting(Task::getName)</span>
+<span class="nc" id="L65">                .containsExactly(&quot;A&quot;, &quot;B&quot;, &quot;C&quot;);</span>
+<span class="nc" id="L66">        assertSentryPartInstanceCount(caseInstance, 0);</span>
+
+        // Now we're completing B again, changing the variable. If we were using the default triggerMode,
+        // the ifPart would already have been stored and the wrong thing would be activated now.
+        // However, the onEvent semantics make sure the correct thing happens here.
+<span class="nc" id="L71">        cmmnTaskService.complete(tasks.get(1).getId(), Collections.singletonMap(&quot;goToC&quot;, false));</span>
+
+<span class="nc" id="L73">        tasks = cmmnTaskService.createTaskQuery().caseInstanceId(caseInstance.getId()).orderByTaskName().asc().list();</span>
+<span class="nc" id="L74">        assertThat(tasks)</span>
+<span class="nc" id="L75">                .extracting(Task::getName)</span>
+<span class="nc" id="L76">                .containsExactly(&quot;A&quot;, &quot;B&quot;, &quot;C&quot;, &quot;D&quot;);</span>
+<span class="nc" id="L77">        assertSentryPartInstanceCount(caseInstance, 0);</span>
+
+<span class="nc" id="L79">    }</span>
+
+    @Test
+    @CmmnDeployment
+    public void testTriggerModeOnEventConditionCalledOnce() {
+
+        // This tests verifies that the ifPart of an onEvent triggered sentry doesn't get called unless the event happens
+
+<span class="nc" id="L87">        cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L88">                .caseDefinitionKey(&quot;testIfPartTriggeredOnce&quot;)</span>
+<span class="nc" id="L89">                .variable(&quot;var&quot;, new TestCondition())</span>
+<span class="nc" id="L90">                .start();</span>
+<span class="nc" id="L91">        assertThat(TestCondition.COUNTER.get()).isZero();</span>
+
+<span class="nc" id="L93">        List&lt;Task&gt; tasks = cmmnTaskService.createTaskQuery().orderByTaskName().asc().list();</span>
+<span class="nc" id="L94">        assertThat(tasks)</span>
+<span class="nc" id="L95">                .extracting(Task::getName)</span>
+<span class="nc" id="L96">                .containsExactly(&quot;Guarded task&quot;, &quot;The task&quot;);</span>
+
+<span class="nc" id="L98">        cmmnTaskService.complete(tasks.get(1).getId());</span>
+<span class="nc" id="L99">        assertThat(TestCondition.COUNTER.get()).isEqualTo(1);</span>
+<span class="nc" id="L100">        tasks = cmmnTaskService.createTaskQuery().orderByTaskName().asc().list();</span>
+<span class="nc" id="L101">        assertThat(tasks).isEmpty();</span>
+<span class="nc" id="L102">    }</span>
+
+    @Test
+    @CmmnDeployment
+    public void testExitTriggersAnotherExit() {
+<span class="nc" id="L107">        CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L108">                .caseDefinitionKey(&quot;exitTriggersAnotherExit&quot;)</span>
+<span class="nc" id="L109">                .variable(&quot;var&quot;, true)</span>
+<span class="nc" id="L110">                .start();</span>
+<span class="nc" id="L111">        List&lt;Task&gt; tasks = cmmnTaskService.createTaskQuery().caseInstanceId(caseInstance.getId()).orderByTaskName().asc().list();</span>
+<span class="nc" id="L112">        assertThat(tasks)</span>
+<span class="nc" id="L113">                .extracting(Task::getName)</span>
+<span class="nc" id="L114">                .containsExactly(&quot;A&quot;, &quot;B&quot;, &quot;C&quot;);</span>
+
+        // Completing A cascades into exiting B and C when using the default trigger mode, as there is memory.
+        // This should be the same case in 'onEvent', as both events are part of the same 'evaluation cycle'.
+<span class="nc" id="L118">        cmmnTaskService.complete(tasks.get(0).getId());</span>
+<span class="nc" id="L119">        tasks = cmmnTaskService.createTaskQuery().caseInstanceId(caseInstance.getId()).orderByTaskName().asc().list();</span>
+<span class="nc" id="L120">        assertThat(tasks).isEmpty();</span>
+<span class="nc" id="L121">        assertCaseInstanceEnded(caseInstance);</span>
+<span class="nc" id="L122">    }</span>
+
+    private void assertSentryPartInstanceCount(CaseInstance caseInstance, int count) {
+<span class="nc" id="L125">        List&lt;SentryPartInstanceEntity&gt; sentryPartInstanceEntities = cmmnEngineConfiguration.getCommandExecutor()</span>
+<span class="nc" id="L126">                .execute(new Command&lt;&gt;() {</span>
+
+                    @Override
+                    public List&lt;SentryPartInstanceEntity&gt; execute(CommandContext commandContext) {
+<span class="nc" id="L130">                        return CommandContextUtil.getSentryPartInstanceEntityManager(commandContext)</span>
+<span class="nc" id="L131">                                .findSentryPartInstancesByCaseInstanceId(caseInstance.getId());</span>
+                    }
+                });
+<span class="nc" id="L134">        assertThat(sentryPartInstanceEntities).hasSize(count);</span>
+<span class="nc" id="L135">    }</span>
+
+    // Just for testing purposes using a serialized variable
+<span class="nc" id="L138">    public static class TestCondition implements Serializable {</span>
+
+<span class="nc" id="L140">        public static AtomicInteger COUNTER = new AtomicInteger(0);</span>
+
+        public static boolean calculate() {
+<span class="nc" id="L143">            COUNTER.incrementAndGet();</span>
+<span class="nc" id="L144">            return true;</span>
+        }
+
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

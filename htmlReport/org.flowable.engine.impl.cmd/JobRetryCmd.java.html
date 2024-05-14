@@ -1,0 +1,197 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>JobRetryCmd.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.cmd</a> &gt; <span class="el_source">JobRetryCmd.java</span></div><h1>JobRetryCmd.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.impl.cmd;
+
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.GregorianCalendar;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.ServiceTask;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.delegate.Expression;
+import org.flowable.common.engine.api.delegate.event.FlowableEngineEventType;
+import org.flowable.common.engine.api.delegate.event.FlowableEventDispatcher;
+import org.flowable.common.engine.impl.calendar.DurationHelper;
+import org.flowable.common.engine.impl.el.ExpressionManager;
+import org.flowable.common.engine.impl.interceptor.Command;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.common.engine.impl.util.ExceptionUtil;
+import org.flowable.engine.delegate.event.impl.FlowableEventBuilder;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntity;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.job.api.FlowableUnrecoverableJobException;
+import org.flowable.job.service.JobService;
+import org.flowable.job.service.TimerJobService;
+import org.flowable.job.service.impl.persistence.entity.AbstractRuntimeJobEntity;
+import org.flowable.job.service.impl.persistence.entity.JobEntity;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * @author Saeid Mirzaei
+ * @author Joram Barrez
+ * @author Filip Hrisafov
+ */
+
+public class JobRetryCmd implements Command&lt;Object&gt; {
+
+<span class="nc" id="L53">    private static final Logger LOGGER = LoggerFactory.getLogger(JobRetryCmd.class.getName());</span>
+
+    protected String jobId;
+    protected Throwable exception;
+
+<span class="nc" id="L58">    public JobRetryCmd(String jobId, Throwable exception) {</span>
+<span class="nc" id="L59">        this.jobId = jobId;</span>
+<span class="nc" id="L60">        this.exception = exception;</span>
+<span class="nc" id="L61">    }</span>
+
+    @Override
+    public Object execute(CommandContext commandContext) {
+<span class="nc" id="L65">        ProcessEngineConfigurationImpl processEngineConfig = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc" id="L66">        JobService jobService = processEngineConfig.getJobServiceConfiguration().getJobService();</span>
+<span class="nc" id="L67">        TimerJobService timerJobService = processEngineConfig.getJobServiceConfiguration().getTimerJobService();</span>
+        
+<span class="nc" id="L69">        JobEntity job = jobService.findJobById(jobId);</span>
+<span class="nc bnc" id="L70" title="All 2 branches missed.">        if (job == null) {</span>
+<span class="nc" id="L71">            return null;</span>
+        }
+
+<span class="nc" id="L74">        ExecutionEntity executionEntity = fetchExecutionEntity(commandContext, job.getExecutionId());</span>
+<span class="nc bnc" id="L75" title="All 2 branches missed.">        FlowElement currentFlowElement = executionEntity != null ? executionEntity.getCurrentFlowElement() : null;</span>
+
+<span class="nc" id="L77">        String failedJobRetryTimeCycleValue = null;</span>
+<span class="nc bnc" id="L78" title="All 2 branches missed.">        if (currentFlowElement instanceof ServiceTask) {</span>
+<span class="nc" id="L79">            failedJobRetryTimeCycleValue = ((ServiceTask) currentFlowElement).getFailedJobRetryTimeCycleValue();</span>
+        }
+
+<span class="nc bnc" id="L82" title="All 2 branches missed.">        if (executionEntity != null) {</span>
+<span class="nc" id="L83">            executionEntity.setActive(false);</span>
+
+<span class="nc bnc" id="L85" title="All 2 branches missed.">            if (StringUtils.isNotEmpty(failedJobRetryTimeCycleValue)) {</span>
+<span class="nc" id="L86">                ExpressionManager expressionManager = processEngineConfig.getExpressionManager();</span>
+<span class="nc bnc" id="L87" title="All 2 branches missed.">                if (expressionManager != null) {</span>
+<span class="nc" id="L88">                    Expression expression = expressionManager.createExpression(failedJobRetryTimeCycleValue);</span>
+<span class="nc" id="L89">                    Object value = expression.getValue(executionEntity);</span>
+<span class="nc bnc" id="L90" title="All 2 branches missed.">                    if (value != null) {</span>
+<span class="nc" id="L91">                        failedJobRetryTimeCycleValue = value.toString();</span>
+                    }
+                }
+            }
+        }
+
+<span class="nc" id="L97">        AbstractRuntimeJobEntity newJobEntity = null;</span>
+<span class="nc bnc" id="L98" title="All 4 branches missed.">        if (currentFlowElement == null || failedJobRetryTimeCycleValue == null) {</span>
+
+<span class="nc" id="L100">            LOGGER.debug(&quot;activity or FailedJobRetryTimerCycleValue is null in job {}. Only decrementing retries.&quot;, jobId);</span>
+
+<span class="nc bnc" id="L102" title="All 4 branches missed.">            if (job.getRetries() &lt;= 1 || isUnrecoverableException()) {</span>
+<span class="nc" id="L103">                newJobEntity = jobService.moveJobToDeadLetterJob(job);</span>
+            } else {
+<span class="nc" id="L105">                newJobEntity = timerJobService.moveJobToTimerJob(job);</span>
+            }
+
+<span class="nc" id="L108">            newJobEntity.setRetries(job.getRetries() - 1);</span>
+<span class="nc bnc" id="L109" title="All 4 branches missed.">            if (job.getDuedate() == null || JobEntity.JOB_TYPE_MESSAGE.equals(job.getJobType())) {</span>
+                // add wait time for failed async job
+<span class="nc" id="L111">                newJobEntity.setDuedate(calculateDueDate(commandContext, processEngineConfig.getAsyncFailedJobWaitTime(), null));</span>
+            } else {
+                // add default wait time for failed job
+<span class="nc" id="L114">                newJobEntity.setDuedate(calculateDueDate(commandContext, processEngineConfig.getDefaultFailedJobWaitTime(), job.getDuedate()));</span>
+            }
+
+        } else {
+            try {
+<span class="nc" id="L119">                DurationHelper durationHelper = new DurationHelper(failedJobRetryTimeCycleValue, processEngineConfig.getClock());</span>
+<span class="nc" id="L120">                int jobRetries = job.getRetries();</span>
+<span class="nc bnc" id="L121" title="All 2 branches missed.">                if (job.getExceptionMessage() == null) {</span>
+                    // change default retries to the ones configured
+<span class="nc" id="L123">                    jobRetries = durationHelper.getTimes();</span>
+                }
+
+<span class="nc bnc" id="L126" title="All 4 branches missed.">                if (jobRetries &lt;= 1 || isUnrecoverableException()) {</span>
+<span class="nc" id="L127">                    newJobEntity = jobService.moveJobToDeadLetterJob(job);</span>
+                } else {
+<span class="nc" id="L129">                    newJobEntity = timerJobService.moveJobToTimerJob(job);</span>
+                }
+
+<span class="nc" id="L132">                newJobEntity.setDuedate(durationHelper.getDateAfter());</span>
+
+<span class="nc bnc" id="L134" title="All 2 branches missed.">                if (job.getExceptionMessage() == null) { // is it the first exception</span>
+<span class="nc" id="L135">                    LOGGER.debug(&quot;Applying JobRetryStrategy '{}' the first time for job {} with {} retries&quot;, failedJobRetryTimeCycleValue, job.getId(), durationHelper.getTimes());</span>
+
+                } else {
+<span class="nc" id="L138">                    LOGGER.debug(&quot;Decrementing retries of JobRetryStrategy '{}' for job {}&quot;, failedJobRetryTimeCycleValue, job.getId());</span>
+                }
+
+<span class="nc" id="L141">                newJobEntity.setRetries(jobRetries - 1);</span>
+
+<span class="nc" id="L143">            } catch (Exception e) {</span>
+<span class="nc" id="L144">                throw new FlowableException(&quot;failedJobRetryTimeCycle has wrong format:&quot; + failedJobRetryTimeCycleValue + &quot; for execution &quot; + executionEntity, e);</span>
+<span class="nc" id="L145">            }</span>
+        }
+
+<span class="nc bnc" id="L148" title="All 2 branches missed.">        if (exception != null) {</span>
+<span class="nc" id="L149">            newJobEntity.setExceptionMessage(exception.getMessage());</span>
+<span class="nc" id="L150">            newJobEntity.setExceptionStacktrace(getExceptionStacktrace());</span>
+        }
+
+        // Dispatch both an update and a retry-decrement event
+<span class="nc" id="L154">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc" id="L155">        FlowableEventDispatcher eventDispatcher = processEngineConfiguration.getEventDispatcher();</span>
+<span class="nc bnc" id="L156" title="All 4 branches missed.">        if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L157">            eventDispatcher.dispatchEvent(FlowableEventBuilder.createEntityEvent(FlowableEngineEventType.ENTITY_UPDATED, newJobEntity),</span>
+<span class="nc" id="L158">                    processEngineConfiguration.getEngineCfgKey());</span>
+<span class="nc" id="L159">            eventDispatcher.dispatchEvent(FlowableEventBuilder.createEntityEvent(FlowableEngineEventType.JOB_RETRIES_DECREMENTED, newJobEntity),</span>
+<span class="nc" id="L160">                    processEngineConfiguration.getEngineCfgKey());</span>
+        }
+
+<span class="nc" id="L163">        return null;</span>
+    }
+
+    protected Date calculateDueDate(CommandContext commandContext, int waitTimeInSeconds, Date oldDate) {
+<span class="nc" id="L167">        Calendar newDateCal = new GregorianCalendar();</span>
+<span class="nc bnc" id="L168" title="All 2 branches missed.">        if (oldDate != null) {</span>
+<span class="nc" id="L169">            newDateCal.setTime(oldDate);</span>
+
+        } else {
+<span class="nc" id="L172">            newDateCal.setTime(CommandContextUtil.getProcessEngineConfiguration(commandContext).getClock().getCurrentTime());</span>
+        }
+
+<span class="nc" id="L175">        newDateCal.add(Calendar.SECOND, waitTimeInSeconds);</span>
+<span class="nc" id="L176">        return newDateCal.getTime();</span>
+    }
+
+    protected String getExceptionStacktrace() {
+<span class="nc" id="L180">        StringWriter stringWriter = new StringWriter();</span>
+<span class="nc" id="L181">        exception.printStackTrace(new PrintWriter(stringWriter));</span>
+<span class="nc" id="L182">        return stringWriter.toString();</span>
+    }
+
+    protected ExecutionEntity fetchExecutionEntity(CommandContext commandContext, String executionId) {
+<span class="nc bnc" id="L186" title="All 2 branches missed.">        if (executionId == null) {</span>
+<span class="nc" id="L187">            return null;</span>
+        }
+<span class="nc" id="L189">        return CommandContextUtil.getExecutionEntityManager(commandContext).findById(executionId);</span>
+    }
+
+    protected boolean isUnrecoverableException() {
+<span class="nc" id="L193">        return ExceptionUtil.containsCause(exception, FlowableUnrecoverableJobException.class);</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

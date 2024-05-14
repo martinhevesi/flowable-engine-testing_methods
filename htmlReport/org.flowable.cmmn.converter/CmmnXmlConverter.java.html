@@ -1,0 +1,734 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CmmnXmlConverter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.cmmn.converter</a> &gt; <span class="el_source">CmmnXmlConverter.java</span></div><h1>CmmnXmlConverter.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.cmmn.converter;
+
+import static org.flowable.cmmn.converter.util.CriterionUtil.generateEntryCriterionId;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.io.UnsupportedEncodingException;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.ListIterator;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import javax.xml.XMLConstants;
+import javax.xml.stream.XMLInputFactory;
+import javax.xml.stream.XMLOutputFactory;
+import javax.xml.stream.XMLStreamException;
+import javax.xml.stream.XMLStreamReader;
+import javax.xml.stream.XMLStreamWriter;
+import javax.xml.transform.stax.StAXSource;
+import javax.xml.transform.stream.StreamSource;
+import javax.xml.validation.Schema;
+import javax.xml.validation.SchemaFactory;
+import javax.xml.validation.Validator;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.cmmn.converter.exception.XMLException;
+import org.flowable.cmmn.converter.export.AssociationExport;
+import org.flowable.cmmn.converter.export.CaseExport;
+import org.flowable.cmmn.converter.export.CmmnDIExport;
+import org.flowable.cmmn.converter.export.DefinitionsRootExport;
+import org.flowable.cmmn.converter.export.PlanItemDefinitionExport;
+import org.flowable.cmmn.converter.export.TextAnnotationExport;
+import org.flowable.cmmn.converter.util.PlanItemDependencyUtil;
+import org.flowable.cmmn.model.Association;
+import org.flowable.cmmn.model.BaseElement;
+import org.flowable.cmmn.model.Case;
+import org.flowable.cmmn.model.CaseElement;
+import org.flowable.cmmn.model.CasePageTask;
+import org.flowable.cmmn.model.CmmnDiEdge;
+import org.flowable.cmmn.model.CmmnDiShape;
+import org.flowable.cmmn.model.CmmnModel;
+import org.flowable.cmmn.model.Criterion;
+import org.flowable.cmmn.model.DecisionTask;
+import org.flowable.cmmn.model.HasEntryCriteria;
+import org.flowable.cmmn.model.HasExitCriteria;
+import org.flowable.cmmn.model.ParentCompletionRule;
+import org.flowable.cmmn.model.PlanFragment;
+import org.flowable.cmmn.model.PlanItem;
+import org.flowable.cmmn.model.PlanItemControl;
+import org.flowable.cmmn.model.PlanItemDefinition;
+import org.flowable.cmmn.model.ProcessTask;
+import org.flowable.cmmn.model.Sentry;
+import org.flowable.cmmn.model.SentryOnPart;
+import org.flowable.cmmn.model.Stage;
+import org.flowable.cmmn.model.Task;
+import org.flowable.cmmn.model.TextAnnotation;
+import org.flowable.cmmn.model.TimerEventListener;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.io.InputStreamProvider;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.xml.sax.SAXException;
+
+/**
+ * @author Joram Barrez
+ */
+<span class="nc" id="L86">public class CmmnXmlConverter implements CmmnXmlConstants {</span>
+
+<span class="nc" id="L88">    protected static final Logger LOGGER = LoggerFactory.getLogger(CmmnXmlConverter.class);</span>
+    protected static final String XSD_LOCATION = &quot;org/flowable/impl/cmmn/parser/CMMN11.xsd&quot;;
+    protected static final String DEFAULT_ENCODING = &quot;UTF-8&quot;;
+
+<span class="nc" id="L92">    protected static Map&lt;String, BaseCmmnXmlConverter&gt; elementConverters = new HashMap&lt;&gt;();</span>
+
+    protected ClassLoader classloader;
+
+    static {
+<span class="nc" id="L97">        addElementConverter(new DefinitionsXmlConverter());</span>
+<span class="nc" id="L98">        addElementConverter(new DocumentationXmlConverter());</span>
+<span class="nc" id="L99">        addElementConverter(new CaseXmlConverter());</span>
+<span class="nc" id="L100">        addElementConverter(new PlanModelXmlConverter());</span>
+<span class="nc" id="L101">        addElementConverter(new PlanFragmentXmlConverter());</span>
+<span class="nc" id="L102">        addElementConverter(new StageXmlConverter());</span>
+<span class="nc" id="L103">        addElementConverter(new MilestoneXmlConverter());</span>
+<span class="nc" id="L104">        addElementConverter(new TaskXmlConverter());</span>
+<span class="nc" id="L105">        addElementConverter(new HumanTaskXmlConverter());</span>
+<span class="nc" id="L106">        addElementConverter(new PlanItemXmlConverter());</span>
+<span class="nc" id="L107">        addElementConverter(new ItemControlXmlConverter());</span>
+<span class="nc" id="L108">        addElementConverter(new DefaultControlXmlConverter());</span>
+<span class="nc" id="L109">        addElementConverter(new RequiredRuleXmlConverter());</span>
+<span class="nc" id="L110">        addElementConverter(new RepetitionRuleXmlConverter());</span>
+<span class="nc" id="L111">        addElementConverter(new ManualActivationRuleXmlConverter());</span>
+<span class="nc" id="L112">        addElementConverter(new SentryXmlConverter());</span>
+<span class="nc" id="L113">        addElementConverter(new EntryCriterionXmlConverter());</span>
+<span class="nc" id="L114">        addElementConverter(new ExitCriterionXmlConverter());</span>
+<span class="nc" id="L115">        addElementConverter(new PlanItemOnPartXmlConverter());</span>
+<span class="nc" id="L116">        addElementConverter(new SentryIfPartXmlConverter());</span>
+<span class="nc" id="L117">        addElementConverter(new CaseTaskXmlConverter());</span>
+<span class="nc" id="L118">        addElementConverter(new ProcessXmlConverter());</span>
+<span class="nc" id="L119">        addElementConverter(new ProcessTaskXmlConverter());</span>
+<span class="nc" id="L120">        addElementConverter(new DecisionXmlConverter());</span>
+<span class="nc" id="L121">        addElementConverter(new DecisionTaskXmlConverter());</span>
+<span class="nc" id="L122">        addElementConverter(new GenericEventListenerXmlConverter());</span>
+<span class="nc" id="L123">        addElementConverter(new TimerEventListenerXmlConverter());</span>
+<span class="nc" id="L124">        addElementConverter(new UserEventListenerXmlConverter());</span>
+<span class="nc" id="L125">        addElementConverter(new PlanItemStartTriggerXmlConverter());</span>
+<span class="nc" id="L126">        addElementConverter(new TextAnnotationXmlConverter());</span>
+<span class="nc" id="L127">        addElementConverter(new AssociationXmlConverter());</span>
+<span class="nc" id="L128">        addElementConverter(new CmmnDiShapeXmlConverter());</span>
+<span class="nc" id="L129">        addElementConverter(new CmmnDiEdgeXmlConverter());</span>
+<span class="nc" id="L130">        addElementConverter(new CmmnDiBoundsXmlConverter());</span>
+<span class="nc" id="L131">        addElementConverter(new CmmnDiLabelXmlConverter());</span>
+<span class="nc" id="L132">        addElementConverter(new CmmnDiWaypointXmlConverter());</span>
+<span class="nc" id="L133">        addElementConverter(new CmmnDiExtensionXmlConverter());</span>
+<span class="nc" id="L134">        addElementConverter(new StandardEventXmlConverter());</span>
+<span class="nc" id="L135">        addElementConverter(new ProcessRefExpressionXmlConverter());</span>
+<span class="nc" id="L136">        addElementConverter(new CaseRefExpressionXmlConverter());</span>
+<span class="nc" id="L137">        addElementConverter(new DecisionRefExpressionXmlConverter());</span>
+<span class="nc" id="L138">        addElementConverter(new ConditionXmlConverter());</span>
+<span class="nc" id="L139">        addElementConverter(new TimerExpressionXmlConverter());</span>
+<span class="nc" id="L140">        addElementConverter(new TextXmlConverter());</span>
+<span class="nc" id="L141">        addElementConverter(new ExtensionElementsXMLConverter());</span>
+<span class="nc" id="L142">    }</span>
+
+    public static void addElementConverter(BaseCmmnXmlConverter converter) {
+<span class="nc" id="L145">        elementConverters.put(converter.getXMLElementName(), converter);</span>
+<span class="nc" id="L146">    }</span>
+
+    public CmmnModel convertToCmmnModel(InputStreamProvider inputStreamProvider) {
+<span class="nc" id="L149">        return convertToCmmnModel(inputStreamProvider, true, true);</span>
+    }
+
+    public CmmnModel convertToCmmnModel(InputStreamProvider inputStreamProvider, boolean validateSchema, boolean enableSafeBpmnXml) {
+<span class="nc" id="L153">        return convertToCmmnModel(inputStreamProvider, validateSchema, enableSafeBpmnXml, DEFAULT_ENCODING);</span>
+    }
+
+    public CmmnModel convertToCmmnModel(InputStreamProvider inputStreamProvider, boolean validateSchema, boolean enableSafeBpmnXml, String encoding) {
+<span class="nc" id="L157">        XMLInputFactory xif = XMLInputFactory.newInstance();</span>
+
+<span class="nc bnc" id="L159" title="All 2 branches missed.">        if (xif.isPropertySupported(XMLInputFactory.IS_REPLACING_ENTITY_REFERENCES)) {</span>
+<span class="nc" id="L160">            xif.setProperty(XMLInputFactory.IS_REPLACING_ENTITY_REFERENCES, false);</span>
+        }
+<span class="nc bnc" id="L162" title="All 2 branches missed.">        if (xif.isPropertySupported(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES)) {</span>
+<span class="nc" id="L163">            xif.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false);</span>
+        }
+<span class="nc bnc" id="L165" title="All 2 branches missed.">        if (xif.isPropertySupported(XMLInputFactory.SUPPORT_DTD)) {</span>
+<span class="nc" id="L166">            xif.setProperty(XMLInputFactory.SUPPORT_DTD, false);</span>
+        }
+
+<span class="nc bnc" id="L169" title="All 2 branches missed.">        if (encoding == null) {</span>
+<span class="nc" id="L170">            encoding = DEFAULT_ENCODING;</span>
+        }
+
+<span class="nc bnc" id="L173" title="All 2 branches missed.">        if (validateSchema) {</span>
+<span class="nc" id="L174">            try (InputStreamReader in = new InputStreamReader(inputStreamProvider.getInputStream(), encoding)) {</span>
+<span class="nc bnc" id="L175" title="All 2 branches missed.">                if (!enableSafeBpmnXml) {</span>
+<span class="nc" id="L176">                    validateModel(inputStreamProvider);</span>
+                } else {
+<span class="nc" id="L178">                    validateModel(xif.createXMLStreamReader(in));</span>
+                }
+<span class="nc" id="L180">            } catch (UnsupportedEncodingException e) {</span>
+<span class="nc" id="L181">                throw new CmmnXMLException(&quot;The CMMN 1.1 xml is not properly encoded&quot;, e);</span>
+<span class="nc" id="L182">            } catch (XMLStreamException e) {</span>
+<span class="nc" id="L183">                throw new CmmnXMLException(&quot;Error while reading the CMMN 1.1 XML&quot;, e);</span>
+<span class="nc" id="L184">            } catch (Exception e) {</span>
+<span class="nc" id="L185">                throw new CmmnXMLException(e.getMessage(), e);</span>
+<span class="nc" id="L186">            }</span>
+        }
+        // The input stream is closed after schema validation
+<span class="nc" id="L189">        try (InputStreamReader in = new InputStreamReader(inputStreamProvider.getInputStream(), encoding)) {</span>
+            // XML conversion
+<span class="nc" id="L191">            return convertToCmmnModel(xif.createXMLStreamReader(in));</span>
+<span class="nc" id="L192">        } catch (UnsupportedEncodingException e) {</span>
+<span class="nc" id="L193">            throw new CmmnXMLException(&quot;The CMMN 1.1 xml is not properly encoded&quot;, e);</span>
+<span class="nc" id="L194">        } catch (XMLStreamException e) {</span>
+<span class="nc" id="L195">            throw new CmmnXMLException(&quot;Error while reading the CMMN 1.1 XML&quot;, e);</span>
+<span class="nc" id="L196">        } catch (IOException e) {</span>
+<span class="nc" id="L197">            throw new CmmnXMLException(e.getMessage(), e);</span>
+        }
+    }
+
+    public CmmnModel convertToCmmnModel(XMLStreamReader xtr) {
+
+<span class="nc" id="L203">        ConversionHelper conversionHelper = new ConversionHelper();</span>
+<span class="nc" id="L204">        conversionHelper.setCmmnModel(new CmmnModel());</span>
+
+        try {
+<span class="nc" id="L207">            String currentXmlElement = null;</span>
+<span class="nc bnc" id="L208" title="All 2 branches missed.">            while (xtr.hasNext()) {</span>
+                try {
+<span class="nc" id="L210">                    xtr.next();</span>
+<span class="nc" id="L211">                } catch (Exception e) {</span>
+<span class="nc" id="L212">                    LOGGER.debug(&quot;Error reading CMMN XML document&quot;, e);</span>
+<span class="nc" id="L213">                    throw new CmmnXMLException(&quot;Error reading XML&quot;, e);</span>
+<span class="nc" id="L214">                }</span>
+
+<span class="nc bnc" id="L216" title="All 2 branches missed.">                if (xtr.isStartElement()) {</span>
+<span class="nc" id="L217">                    currentXmlElement = xtr.getLocalName();</span>
+<span class="nc bnc" id="L218" title="All 2 branches missed.">                    if (elementConverters.containsKey(currentXmlElement)) {</span>
+<span class="nc" id="L219">                        elementConverters.get(currentXmlElement).convertToCmmnModel(xtr, conversionHelper);</span>
+                    }
+
+<span class="nc bnc" id="L222" title="All 2 branches missed.">                } else if (xtr.isEndElement()) {</span>
+<span class="nc" id="L223">                    currentXmlElement = null;</span>
+<span class="nc bnc" id="L224" title="All 2 branches missed.">                    if (elementConverters.containsKey(xtr.getLocalName())) {</span>
+<span class="nc" id="L225">                        elementConverters.get(xtr.getLocalName()).elementEnd(xtr, conversionHelper);</span>
+                    }
+
+                }
+            }
+
+<span class="nc" id="L231">        } catch (CmmnXMLException e) {</span>
+<span class="nc" id="L232">            throw e;</span>
+
+<span class="nc" id="L234">        } catch (Exception e) {</span>
+<span class="nc" id="L235">            LOGGER.error(&quot;Error processing CMMN XML document&quot;, e);</span>
+<span class="nc" id="L236">            throw new CmmnXMLException(&quot;Error processing CMMN XML document&quot;, e);</span>
+<span class="nc" id="L237">        }</span>
+
+        // Post process all elements: add instances where a reference is used
+<span class="nc" id="L240">        processCmmnElements(conversionHelper);</span>
+<span class="nc" id="L241">        return conversionHelper.getCmmnModel();</span>
+    }
+
+    public void validateModel(InputStreamProvider inputStreamProvider) throws Exception {
+<span class="nc" id="L245">        Schema schema = createSchema();</span>
+
+<span class="nc" id="L247">        Validator validator = schema.newValidator();</span>
+<span class="nc" id="L248">        validator.validate(new StreamSource(inputStreamProvider.getInputStream()));</span>
+<span class="nc" id="L249">    }</span>
+
+    public void validateModel(XMLStreamReader xmlStreamReader) throws Exception {
+<span class="nc" id="L252">        Schema schema = createSchema();</span>
+
+<span class="nc" id="L254">        Validator validator = schema.newValidator();</span>
+<span class="nc" id="L255">        validator.validate(new StAXSource(xmlStreamReader));</span>
+<span class="nc" id="L256">    }</span>
+
+    protected Schema createSchema() throws SAXException {
+<span class="nc" id="L259">        SchemaFactory factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);</span>
+<span class="nc" id="L260">        Schema schema = null;</span>
+<span class="nc bnc" id="L261" title="All 2 branches missed.">        if (classloader != null) {</span>
+<span class="nc" id="L262">            schema = factory.newSchema(classloader.getResource(XSD_LOCATION));</span>
+        }
+
+<span class="nc bnc" id="L265" title="All 2 branches missed.">        if (schema == null) {</span>
+<span class="nc" id="L266">            schema = factory.newSchema(this.getClass().getClassLoader().getResource(XSD_LOCATION));</span>
+        }
+
+<span class="nc bnc" id="L269" title="All 2 branches missed.">        if (schema == null) {</span>
+<span class="nc" id="L270">            throw new CmmnXMLException(&quot;CMND XSD could not be found&quot;);</span>
+        }
+<span class="nc" id="L272">        return schema;</span>
+    }
+
+    public byte[] convertToXML(CmmnModel model) {
+<span class="nc" id="L276">        return convertToXML(model, DEFAULT_ENCODING);</span>
+    }
+
+    public byte[] convertToXML(CmmnModel model, String encoding) {
+        try {
+
+<span class="nc" id="L282">            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();</span>
+
+<span class="nc" id="L284">            XMLOutputFactory xof = XMLOutputFactory.newInstance();</span>
+<span class="nc" id="L285">            OutputStreamWriter out = new OutputStreamWriter(outputStream, encoding);</span>
+
+<span class="nc" id="L287">            XMLStreamWriter writer = xof.createXMLStreamWriter(out);</span>
+<span class="nc" id="L288">            XMLStreamWriter xtw = new IndentingXMLStreamWriter(writer);</span>
+
+<span class="nc" id="L290">            DefinitionsRootExport.writeRootElement(model, xtw, encoding);</span>
+
+<span class="nc bnc" id="L292" title="All 2 branches missed.">            for (Case caseModel : model.getCases()) {</span>
+
+<span class="nc" id="L294">                CaseExport.writeCase(model, caseModel, xtw);</span>
+
+<span class="nc" id="L296">                Stage planModel = caseModel.getPlanModel();</span>
+
+<span class="nc" id="L298">                PlanItemDefinitionExport.writePlanItemDefinition(model, planModel, xtw);</span>
+
+                // end case element
+<span class="nc" id="L301">                xtw.writeEndElement();</span>
+<span class="nc" id="L302">            }</span>
+
+            // We're currently only writing out associations for text annotations
+<span class="nc" id="L305">            List&lt;Association&gt; associations = model.getAssociations();</span>
+
+<span class="nc" id="L307">            List&lt;TextAnnotation&gt; textAnnotations = model.getTextAnnotations();</span>
+<span class="nc bnc" id="L308" title="All 2 branches missed.">            for (TextAnnotation textAnnotation : textAnnotations) {</span>
+<span class="nc" id="L309">                TextAnnotationExport.writeTextAnnotations(textAnnotation, xtw);</span>
+
+<span class="nc" id="L311">                String textAnnotationId = textAnnotation.getId();</span>
+<span class="nc bnc" id="L312" title="All 2 branches missed.">                if (textAnnotationId != null) {</span>
+<span class="nc bnc" id="L313" title="All 2 branches missed.">                    for (Association association : associations) {</span>
+<span class="nc bnc" id="L314" title="All 4 branches missed.">                        if (textAnnotationId.equals(association.getSourceRef()) || textAnnotationId.equals(association.getTargetRef())) {</span>
+<span class="nc" id="L315">                            AssociationExport.writeAssociation(association, xtw);</span>
+                        }
+<span class="nc" id="L317">                    }</span>
+                }
+
+<span class="nc" id="L320">            }</span>
+
+<span class="nc" id="L322">            CmmnDIExport.writeCmmnDI(model, xtw);</span>
+
+            // end definitions root element
+<span class="nc" id="L325">            xtw.writeEndElement();</span>
+<span class="nc" id="L326">            xtw.writeEndDocument();</span>
+
+<span class="nc" id="L328">            xtw.flush();</span>
+
+<span class="nc" id="L330">            outputStream.close();</span>
+
+<span class="nc" id="L332">            xtw.close();</span>
+
+<span class="nc" id="L334">            return outputStream.toByteArray();</span>
+
+<span class="nc" id="L336">        } catch (Exception e) {</span>
+<span class="nc" id="L337">            LOGGER.error(&quot;Error writing CMMN XML&quot;, e);</span>
+<span class="nc" id="L338">            throw new XMLException(&quot;Error writing CMMN XML&quot;, e);</span>
+        }
+    }
+
+    protected void processCmmnElements(ConversionHelper conversionHelper) {
+<span class="nc" id="L343">        CmmnModel cmmnModel = conversionHelper.getCmmnModel();</span>
+<span class="nc bnc" id="L344" title="All 2 branches missed.">        for (Case caze : cmmnModel.getCases()) {</span>
+<span class="nc" id="L345">            processPlanFragment(cmmnModel, caze.getPlanModel());</span>
+<span class="nc" id="L346">        }</span>
+
+        // CMMN doesn't mandate ids on many elements ... adding generated ids
+        // to those elements as this makes the logic much easier
+<span class="nc" id="L350">        ensureIds(conversionHelper.getPlanFragments(), &quot;planFragment_&quot;);</span>
+<span class="nc" id="L351">        ensureIds(conversionHelper.getStages(), &quot;stage_&quot;);</span>
+<span class="nc" id="L352">        ensureIds(conversionHelper.getEntryCriteria(), &quot;entryCriterion_&quot;);</span>
+<span class="nc" id="L353">        ensureIds(conversionHelper.getExitCriteria(), &quot;exitCriterion_&quot;);</span>
+<span class="nc" id="L354">        ensureIds(conversionHelper.getSentries(), &quot;sentry_&quot;);</span>
+<span class="nc" id="L355">        ensureIds(conversionHelper.getSentryOnParts(), &quot;onPart_&quot;);</span>
+<span class="nc" id="L356">        ensureIds(conversionHelper.getSentryIfParts(), &quot;ifPart_&quot;);</span>
+<span class="nc" id="L357">        ensureIds(conversionHelper.getPlanItems(), &quot;planItem_&quot;);</span>
+<span class="nc" id="L358">        ensureIds(conversionHelper.getPlanItemDefinitions(), &quot;planItemDefinition_&quot;);</span>
+
+        // Now everything has an id, the map of all case elements can be filled
+<span class="nc bnc" id="L361" title="All 2 branches missed.">        for (Case caze : cmmnModel.getCases()) {</span>
+<span class="nc" id="L362">            processSentries(caze.getPlanModel(), caze.getPlanModel());</span>
+<span class="nc bnc" id="L363" title="All 2 branches missed.">            for (CaseElement caseElement : conversionHelper.getCaseElements().get(caze)) {</span>
+<span class="nc" id="L364">                caze.getAllCaseElements().put(caseElement.getId(), caseElement);</span>
+<span class="nc" id="L365">            }</span>
+<span class="nc" id="L366">        }</span>
+
+        // Now everything has an id, the sentry onParts are filled to have source PlanItems,
+        // this is used later when determining the dependency information
+<span class="nc bnc" id="L370" title="All 2 branches missed.">        for (SentryOnPart sentryOnPart : conversionHelper.getSentryOnParts()) {</span>
+<span class="nc" id="L371">            Optional&lt;PlanItem&gt; planItem = conversionHelper.findPlanItem(sentryOnPart.getSourceRef());</span>
+<span class="nc bnc" id="L372" title="All 2 branches missed.">            if (planItem.isPresent()) {</span>
+<span class="nc" id="L373">                sentryOnPart.setSource(planItem.get());</span>
+            }
+<span class="nc" id="L375">        }</span>
+
+        // Now all sentries have a source, the plan items can be enriched with dependency information
+<span class="nc bnc" id="L378" title="All 2 branches missed.">        for (PlanItem planItem : conversionHelper.getPlanItems()) {</span>
+
+            // Dependencies
+<span class="nc" id="L381">            planItem.getEntryDependencies().addAll(PlanItemDependencyUtil.getEntryDependencies(planItem));</span>
+<span class="nc" id="L382">            planItem.getExitDependencies().addAll(PlanItemDependencyUtil.getExitDependencies(planItem));</span>
+
+            // Dependents
+<span class="nc" id="L385">            planItem.getEntryDependencies().forEach(entryDependency -&gt; entryDependency.addEntryDependentPlanItem(planItem));</span>
+<span class="nc" id="L386">            planItem.getExitDependencies().forEach(exitDependency -&gt; exitDependency.addExitDependentPlanItem(planItem));</span>
+
+<span class="nc" id="L388">        }</span>
+
+<span class="nc" id="L390">        processCriteria(cmmnModel, conversionHelper.getEntryCriteria());</span>
+<span class="nc" id="L391">        processCriteria(cmmnModel, conversionHelper.getExitCriteria());</span>
+
+
+        // set DI elements
+<span class="nc bnc" id="L395" title="All 2 branches missed.">        for (CmmnDiShape diShape : conversionHelper.getDiShapes()) {</span>
+<span class="nc" id="L396">            cmmnModel.addGraphicInfo(diShape.getCmmnElementRef(), diShape.getGraphicInfo());</span>
+<span class="nc bnc" id="L397" title="All 2 branches missed.">            if (diShape.getLabelGraphicInfo() != null) {</span>
+<span class="nc" id="L398">                cmmnModel.addLabelGraphicInfo(diShape.getCmmnElementRef(), diShape.getLabelGraphicInfo());</span>
+            }
+<span class="nc" id="L400">        }</span>
+
+<span class="nc" id="L402">        processDiEdges(cmmnModel, conversionHelper.getDiEdges());</span>
+
+        // In case there are some associations that didn't have a DI then create an ID for them
+<span class="nc" id="L405">        ensureIds(cmmnModel.getAssociations(), &quot;association_&quot;);</span>
+
+        // There could still be associations without source/target set, do a last pass
+<span class="nc" id="L408">        processAssociations(cmmnModel);</span>
+<span class="nc" id="L409">    }</span>
+
+    protected void processDiEdges(CmmnModel cmmnModel, List&lt;CmmnDiEdge&gt; diEdges) {
+<span class="nc bnc" id="L412" title="All 2 branches missed.">        if (diEdges.isEmpty()) {</span>
+<span class="nc" id="L413">            return;</span>
+        }
+        // The DI Edges are actually the associations between the Criteria and Plan Items
+        // Link the associations with the edges
+<span class="nc" id="L417">        Map&lt;String, List&lt;Association&gt;&gt; associationsMap = cmmnModel.getAssociations()</span>
+<span class="nc" id="L418">                .stream()</span>
+<span class="nc" id="L419">                .collect(Collectors.groupingBy(association -&gt; association.getSourceRef() + &quot;_&quot; + association.getTargetRef()));</span>
+
+<span class="nc bnc" id="L421" title="All 2 branches missed.">        for (CmmnDiEdge diEdge : diEdges) {</span>
+<span class="nc" id="L422">            String associationKey = diEdge.getCmmnElementRef() + &quot;_&quot; + diEdge.getTargetCmmnElementRef();</span>
+            List&lt;Association&gt; edgeAssociations;
+<span class="nc bnc" id="L424" title="All 2 branches missed.">            if (associationsMap.containsKey(associationKey)) {</span>
+<span class="nc" id="L425">                edgeAssociations = associationsMap.get(associationKey);</span>
+            } else {
+                // Perhaps the association is reverse of what is expected
+                // exit criteria -&gt; plan item
+<span class="nc" id="L429">                edgeAssociations = associationsMap.getOrDefault(diEdge.getTargetCmmnElementRef() + &quot;_&quot; + diEdge.getCmmnElementRef(), Collections.emptyList());</span>
+            }
+
+<span class="nc" id="L432">            ListIterator&lt;Association&gt; associationIterator = edgeAssociations.listIterator();</span>
+<span class="nc bnc" id="L433" title="All 2 branches missed.">            if (associationIterator.hasNext()) {</span>
+                // If there was a DI edge for the association then use the id from the edge and remove it
+                // An association is between a plan item and a criterion
+                // which means that there might be more than one association between the same plan item and criterion
+                // therefore remove it once we set the id, so the next edge can set the next id
+<span class="nc" id="L438">                Association association = associationIterator.next();</span>
+<span class="nc" id="L439">                association.setId(diEdge.getId());</span>
+<span class="nc" id="L440">                associationIterator.remove();</span>
+            }
+
+<span class="nc" id="L443">            cmmnModel.addEdgeInfo(diEdge.getId(), diEdge);</span>
+<span class="nc" id="L444">            cmmnModel.addFlowGraphicInfoList(diEdge.getId(), diEdge.getWaypoints());</span>
+<span class="nc bnc" id="L445" title="All 2 branches missed.">            if (diEdge.getLabelGraphicInfo() != null) {</span>
+<span class="nc" id="L446">                cmmnModel.addLabelGraphicInfo(diEdge.getId(), diEdge.getLabelGraphicInfo());</span>
+            }
+<span class="nc" id="L448">        }</span>
+<span class="nc" id="L449">    }</span>
+
+    protected void processCriteria(CmmnModel cmmnModel, List&lt;Criterion&gt; criteria) {
+<span class="nc bnc" id="L452" title="All 2 branches missed.">        for (Criterion criterion : criteria) {</span>
+            // Every criterion is potentially a target of an association
+            // For every planItemOnPart of the sentry of the criterion an association should be created
+            // The source ref of the planItemOnPart is the source of the association
+
+<span class="nc" id="L457">            Sentry sentry = criterion.getSentry();</span>
+            List&lt;SentryOnPart&gt; onParts;
+<span class="nc bnc" id="L459" title="All 2 branches missed.">            if (sentry != null) {</span>
+<span class="nc" id="L460">                onParts = sentry.getOnParts();</span>
+            } else {
+                // This means that the criterion sentry was never set
+                // This can happen for non blocking tasks
+                // The reason for this is that the CMMN spec does not allow criteria on non blocking tasks.
+                // However, you can write them in the CMMN XML and the CmmnXmlConverter would skip this criteria
+                // (i.e. the task would have no exit criteria, thus the sentry will never be set in the Exit Criterion)
+<span class="nc" id="L467">                onParts = Collections.emptyList();</span>
+            }
+
+<span class="nc bnc" id="L470" title="All 2 branches missed.">            for (SentryOnPart onPart : onParts) {</span>
+<span class="nc" id="L471">                PlanItem source = onPart.getSource();</span>
+<span class="nc bnc" id="L472" title="All 2 branches missed.">                if (source != null) {</span>
+<span class="nc" id="L473">                    Association association = new Association();</span>
+<span class="nc" id="L474">                    association.setTargetElement(criterion);</span>
+<span class="nc" id="L475">                    association.setTargetRef(criterion.getId());</span>
+
+<span class="nc" id="L477">                    association.setSourceElement(source);</span>
+<span class="nc" id="L478">                    association.setSourceRef(source.getId());</span>
+
+<span class="nc" id="L480">                    association.setTransitionEvent(onPart.getStandardEvent());</span>
+
+<span class="nc" id="L482">                    cmmnModel.addAssociation(association);</span>
+                }
+<span class="nc" id="L484">            }</span>
+<span class="nc" id="L485">        }</span>
+<span class="nc" id="L486">    }</span>
+
+    protected void processPlanFragment(CmmnModel cmmnModel, PlanFragment planFragment) {
+<span class="nc" id="L489">        processPlanItems(cmmnModel, planFragment);</span>
+
+<span class="nc bnc" id="L491" title="All 2 branches missed.">        if (planFragment instanceof Stage) {</span>
+<span class="nc" id="L492">            Stage stage = (Stage) planFragment;</span>
+<span class="nc bnc" id="L493" title="All 2 branches missed.">            for (PlanItemDefinition planItemDefinition : stage.getPlanItemDefinitions()) {</span>
+<span class="nc bnc" id="L494" title="All 2 branches missed.">                if (planItemDefinition instanceof PlanFragment) {</span>
+<span class="nc" id="L495">                    processPlanFragment(cmmnModel, (PlanFragment) planItemDefinition);</span>
+                }
+<span class="nc" id="L497">            }</span>
+
+<span class="nc bnc" id="L499" title="All 2 branches missed.">            if (!stage.getExitCriteria().isEmpty()) {</span>
+<span class="nc" id="L500">                resolveExitCriteriaSentry(stage);</span>
+            }
+        }
+<span class="nc" id="L503">    }</span>
+
+    protected void processPlanItems(CmmnModel cmmnModel, PlanFragment planFragment) {
+<span class="nc bnc" id="L506" title="All 2 branches missed.">        for (PlanItem planItem : planFragment.getPlanItems()) {</span>
+            // Plan items are defined on the same level or in a higher parent stage, never in a child stage.
+<span class="nc" id="L508">            Stage parentStage = planItem.getParentStage();</span>
+<span class="nc" id="L509">            PlanItemDefinition planItemDefinition = parentStage.findPlanItemDefinitionInStageOrUpwards(planItem.getDefinitionRef());</span>
+<span class="nc bnc" id="L510" title="All 2 branches missed.">            if (planItemDefinition == null) {</span>
+<span class="nc" id="L511">                throw new FlowableException(&quot;No matching plan item definition found for reference &quot;</span>
+<span class="nc" id="L512">                    + planItem.getDefinitionRef() + &quot; of plan item &quot; + planItem.getId());</span>
+            }
+
+<span class="nc" id="L515">            planItem.setPlanItemDefinition(planItemDefinition);</span>
+<span class="nc" id="L516">            procesPlanItem(cmmnModel, planItem, planItemDefinition);</span>
+
+<span class="nc" id="L518">        }</span>
+
+<span class="nc" id="L520">    }</span>
+
+    protected void procesPlanItem(CmmnModel cmmnModel, PlanItem planItem, PlanItemDefinition planItemDefinition) {
+<span class="nc bnc" id="L523" title="All 2 branches missed.">        if (!planItem.getEntryCriteria().isEmpty()) {</span>
+<span class="nc" id="L524">            resolveEntryCriteria(planItem);</span>
+        }
+
+<span class="nc bnc" id="L527" title="All 2 branches missed.">        if (!planItem.getExitCriteria().isEmpty()) {</span>
+<span class="nc" id="L528">            boolean exitCriteriaAllowed = true;</span>
+<span class="nc bnc" id="L529" title="All 2 branches missed.">            if (planItemDefinition instanceof Task) {</span>
+<span class="nc" id="L530">                Task task = (Task) planItemDefinition;</span>
+<span class="nc bnc" id="L531" title="All 4 branches missed.">                if (!task.isBlocking() &amp;&amp; StringUtils.isEmpty(task.getBlockingExpression())) {</span>
+<span class="nc" id="L532">                    exitCriteriaAllowed = false;</span>
+                }
+            }
+
+<span class="nc bnc" id="L536" title="All 2 branches missed.">            if (exitCriteriaAllowed) {</span>
+<span class="nc" id="L537">                resolveExitCriteriaSentry(planItem);</span>
+            } else {
+<span class="nc" id="L539">                LOGGER.warn(&quot;Ignoring exit criteria on plan item {}&quot;, planItem.getId());</span>
+<span class="nc" id="L540">                planItem.getExitCriteria().clear();</span>
+            }
+        }
+
+<span class="nc bnc" id="L544" title="All 2 branches missed.">        if (planItemDefinition instanceof Stage) {</span>
+<span class="nc" id="L545">            Stage planItemStage = (Stage) planItemDefinition;</span>
+<span class="nc" id="L546">            planItemStage.setPlanItem(planItem);</span>
+<span class="nc" id="L547">            processPlanFragment(cmmnModel, planItemStage);</span>
+
+<span class="nc bnc" id="L549" title="All 2 branches missed.">        } else if (planItemDefinition instanceof ProcessTask) {</span>
+<span class="nc" id="L550">            ProcessTask processTask = (ProcessTask) planItemDefinition;</span>
+<span class="nc bnc" id="L551" title="All 2 branches missed.">            if (processTask.getProcessRef() != null) {</span>
+<span class="nc" id="L552">                org.flowable.cmmn.model.Process process = cmmnModel.getProcessById(processTask.getProcessRef());</span>
+<span class="nc bnc" id="L553" title="All 2 branches missed.">                if (process != null) {</span>
+<span class="nc" id="L554">                    processTask.setProcess(process);</span>
+                }
+            }
+
+<span class="nc bnc" id="L558" title="All 2 branches missed.">        } else if (planItemDefinition instanceof DecisionTask) {</span>
+<span class="nc" id="L559">            DecisionTask decisionTask = (DecisionTask) planItemDefinition;</span>
+<span class="nc bnc" id="L560" title="All 2 branches missed.">            if (decisionTask.getDecisionRef() != null) {</span>
+<span class="nc" id="L561">                org.flowable.cmmn.model.Decision decision = cmmnModel.getDecisionById(decisionTask.getDecisionRef());</span>
+<span class="nc bnc" id="L562" title="All 2 branches missed.">                if (decision != null) {</span>
+<span class="nc" id="L563">                    decisionTask.setDecision(decision);</span>
+                }
+            }
+
+<span class="nc bnc" id="L567" title="All 2 branches missed.">        } else if (planItemDefinition instanceof TimerEventListener) {</span>
+<span class="nc" id="L568">            TimerEventListener timerEventListener = (TimerEventListener) planItemDefinition;</span>
+<span class="nc" id="L569">            String sourceRef = timerEventListener.getTimerStartTriggerSourceRef();</span>
+<span class="nc" id="L570">            PlanItem startTriggerPlanItem = timerEventListener.getParentStage().findPlanItemInPlanFragmentOrUpwards(sourceRef);</span>
+<span class="nc bnc" id="L571" title="All 2 branches missed.">            if (startTriggerPlanItem != null) {</span>
+<span class="nc" id="L572">                timerEventListener.setTimerStartTriggerPlanItem(startTriggerPlanItem);</span>
+
+                // Although the CMMN spec does not categorize the timer start trigger as an entry criterion,
+                // it is exposed as such to the engine as there is no difference in handling it vs a real criterion
+                // which means no special care will need to be taken in the core engine operations
+
+<span class="nc" id="L578">                Criterion criterion = new Criterion();</span>
+<span class="nc" id="L579">                criterion.setId(generateEntryCriterionId(planItem));</span>
+<span class="nc" id="L580">                criterion.setEntryCriterion(true);</span>
+
+<span class="nc" id="L582">                SentryOnPart sentryOnPart = new SentryOnPart();</span>
+<span class="nc" id="L583">                sentryOnPart.setSourceRef(startTriggerPlanItem.getId());</span>
+<span class="nc" id="L584">                sentryOnPart.setSource(startTriggerPlanItem);</span>
+<span class="nc" id="L585">                sentryOnPart.setStandardEvent(timerEventListener.getTimerStartTriggerStandardEvent());</span>
+
+<span class="nc" id="L587">                Sentry sentry = new Sentry();</span>
+<span class="nc" id="L588">                sentry.addSentryOnPart(sentryOnPart);</span>
+
+<span class="nc" id="L590">                criterion.setSentry(sentry);</span>
+<span class="nc" id="L591">                planItem.addEntryCriterion(criterion);</span>
+            }
+
+<span class="nc" id="L594">            PlanItemControl itemControl = planItem.getItemControl();</span>
+<span class="nc bnc" id="L595" title="All 2 branches missed.">            if (itemControl != null) {</span>
+                // A timer event should never be repeatable, as that's controlled by the timer expression
+<span class="nc" id="L597">                itemControl.setRepetitionRule(null);</span>
+            }
+
+<span class="nc bnc" id="L600" title="All 2 branches missed.">        } else if (planItemDefinition instanceof CasePageTask) {</span>
+            // check, if the parent completion rule is set and if not, set it to the default value for a case page which is always ignore
+<span class="nc bnc" id="L602" title="All 2 branches missed.">            if (planItem.getItemControl() == null) {</span>
+<span class="nc" id="L603">                PlanItemControl planItemControl = new PlanItemControl();</span>
+<span class="nc" id="L604">                planItem.setItemControl(planItemControl);</span>
+            }
+<span class="nc bnc" id="L606" title="All 2 branches missed.">            if (planItem.getItemControl().getParentCompletionRule() == null) {</span>
+<span class="nc" id="L607">                ParentCompletionRule parentCompletionRule = new ParentCompletionRule();</span>
+<span class="nc" id="L608">                parentCompletionRule.setType(ParentCompletionRule.IGNORE);</span>
+
+<span class="nc" id="L610">                planItem.getItemControl().setParentCompletionRule(parentCompletionRule);</span>
+            }
+        }
+<span class="nc" id="L613">    }</span>
+
+    protected void resolveEntryCriteria(HasEntryCriteria hasEntryCriteria) {
+<span class="nc bnc" id="L616" title="All 2 branches missed.">        for (Criterion entryCriterion : hasEntryCriteria.getEntryCriteria()) {</span>
+<span class="nc bnc" id="L617" title="All 2 branches missed.">            if (entryCriterion.getSentry() == null) {</span>
+                // The timer event listener creates a fake sentry for the planItemStartTrigger.
+                // Therefore only look for a sentry if it hasn't been set yet
+<span class="nc" id="L620">                Sentry sentry = entryCriterion.getParent().findSentry(entryCriterion.getSentryRef());</span>
+<span class="nc bnc" id="L621" title="All 2 branches missed.">                if (sentry != null) {</span>
+<span class="nc" id="L622">                    entryCriterion.setSentry(sentry);</span>
+                } else {
+<span class="nc" id="L624">                    throw new FlowableException(&quot;No sentry found for reference &quot;</span>
+<span class="nc" id="L625">                            + entryCriterion.getSentryRef() + &quot; of entry criterion &quot; + entryCriterion.getId());</span>
+                }
+            }
+<span class="nc" id="L628">        }</span>
+<span class="nc" id="L629">    }</span>
+
+    protected void resolveExitCriteriaSentry(HasExitCriteria hasExitCriteria) {
+<span class="nc bnc" id="L632" title="All 2 branches missed.">        for (Criterion exitCriterion : hasExitCriteria.getExitCriteria()) {</span>
+<span class="nc" id="L633">            Sentry sentry = exitCriterion.getParent().findSentry(exitCriterion.getSentryRef());</span>
+<span class="nc bnc" id="L634" title="All 2 branches missed.">            if (sentry != null) {</span>
+<span class="nc" id="L635">                exitCriterion.setSentry(sentry);</span>
+            } else {
+<span class="nc" id="L637">                throw new FlowableException(&quot;No sentry found for reference &quot;</span>
+<span class="nc" id="L638">                        + exitCriterion.getSentryRef() + &quot; of exit criterion &quot; + exitCriterion.getId());</span>
+            }
+<span class="nc" id="L640">        }</span>
+<span class="nc" id="L641">    }</span>
+
+    protected void processSentries(Stage planModelStage, PlanFragment planFragment) {
+<span class="nc bnc" id="L644" title="All 2 branches missed.">        for (Sentry sentry : planFragment.getSentries()) {</span>
+<span class="nc bnc" id="L645" title="All 2 branches missed.">            for (SentryOnPart onPart : sentry.getOnParts()) {</span>
+<span class="nc" id="L646">                PlanItem planItem = planModelStage.findPlanItemInPlanFragmentOrDownwards(onPart.getSourceRef());</span>
+<span class="nc bnc" id="L647" title="All 2 branches missed.">                if (planItem != null) {</span>
+<span class="nc" id="L648">                    onPart.setSource(planItem);</span>
+                } else {
+<span class="nc" id="L650">                    throw new FlowableException(&quot;Could not resolve on part source reference &quot;</span>
+<span class="nc" id="L651">                            + onPart.getSourceRef() + &quot; of sentry &quot; + sentry.getId());</span>
+                }
+<span class="nc" id="L653">            }</span>
+<span class="nc" id="L654">        }</span>
+
+<span class="nc bnc" id="L656" title="All 2 branches missed.">        for (PlanItem planItem : planFragment.getPlanItems()) {</span>
+<span class="nc bnc" id="L657" title="All 2 branches missed.">            if (planItem.getPlanItemDefinition() instanceof PlanFragment) {</span>
+<span class="nc" id="L658">                processSentries(planModelStage, (PlanFragment) planItem.getPlanItemDefinition());</span>
+            }
+<span class="nc" id="L660">        }</span>
+<span class="nc" id="L661">    }</span>
+
+    protected void ensureIds(List&lt;? extends BaseElement&gt; elements, String idPrefix) {
+<span class="nc" id="L664">        Map&lt;String, BaseElement&gt; elementsWithId = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L665">        Set&lt;BaseElement&gt; baseElementsWithoutId = new HashSet&lt;&gt;();</span>
+<span class="nc bnc" id="L666" title="All 2 branches missed.">        for (BaseElement baseElement : elements) {</span>
+<span class="nc bnc" id="L667" title="All 2 branches missed.">            if (baseElement.getId() != null) {</span>
+<span class="nc" id="L668">                elementsWithId.put(baseElement.getId(), baseElement);</span>
+            } else {
+<span class="nc" id="L670">                baseElementsWithoutId.add(baseElement);</span>
+            }
+<span class="nc" id="L672">        }</span>
+
+<span class="nc bnc" id="L674" title="All 2 branches missed.">        if (!baseElementsWithoutId.isEmpty()) {</span>
+<span class="nc" id="L675">            int counter = 1;</span>
+<span class="nc bnc" id="L676" title="All 2 branches missed.">            for (BaseElement baseElement : baseElementsWithoutId) {</span>
+<span class="nc" id="L677">                String id = idPrefix + counter++;</span>
+<span class="nc bnc" id="L678" title="All 2 branches missed.">                while (elementsWithId.containsKey(id)) {</span>
+<span class="nc" id="L679">                    id = idPrefix + counter++;</span>
+                }
+
+<span class="nc" id="L682">                baseElement.setId(id);</span>
+<span class="nc" id="L683">                elementsWithId.put(id, baseElement);</span>
+<span class="nc" id="L684">            }</span>
+        }
+<span class="nc" id="L686">    }</span>
+
+    protected void processAssociations(CmmnModel cmmnModel) {
+<span class="nc" id="L689">        List&lt;Association&gt; associations = cmmnModel.getAssociations();</span>
+<span class="nc bnc" id="L690" title="All 2 branches missed.">        for (Association association : associations) {</span>
+
+<span class="nc" id="L692">            String sourceRef = association.getSourceRef();</span>
+<span class="nc bnc" id="L693" title="All 4 branches missed.">            if (sourceRef != null &amp;&amp; association.getSourceElement() == null) {</span>
+<span class="nc" id="L694">                PlanItem planItem = cmmnModel.findPlanItem(sourceRef);</span>
+<span class="nc bnc" id="L695" title="All 2 branches missed.">                if (planItem != null) {</span>
+<span class="nc" id="L696">                    association.setSourceElement(planItem);</span>
+                } else {
+<span class="nc" id="L698">                    TextAnnotation textAnnotation = cmmnModel.findTextAnnotation(sourceRef);</span>
+<span class="nc bnc" id="L699" title="All 2 branches missed.">                    if (textAnnotation != null) {</span>
+<span class="nc" id="L700">                        association.setSourceElement(textAnnotation);</span>
+                    }
+                }
+            }
+
+<span class="nc" id="L705">            String targetRef = association.getTargetRef();</span>
+<span class="nc bnc" id="L706" title="All 4 branches missed.">            if (targetRef != null &amp;&amp; association.getTargetElement() == null) {</span>
+<span class="nc" id="L707">                PlanItem planItem = cmmnModel.findPlanItem(targetRef);</span>
+<span class="nc bnc" id="L708" title="All 2 branches missed.">                if (planItem != null) {</span>
+<span class="nc" id="L709">                    association.setTargetElement(planItem);</span>
+                } else {
+<span class="nc" id="L711">                    TextAnnotation textAnnotation = cmmnModel.findTextAnnotation(targetRef);</span>
+<span class="nc bnc" id="L712" title="All 2 branches missed.">                    if (textAnnotation != null) {</span>
+<span class="nc" id="L713">                        association.setTargetElement(textAnnotation);</span>
+                    }
+                }
+            }
+
+<span class="nc" id="L718">        }</span>
+<span class="nc" id="L719">    }</span>
+
+    public void setClassloader(ClassLoader classloader) {
+<span class="nc" id="L722">        this.classloader = classloader;</span>
+<span class="nc" id="L723">    }</span>
+
+    public static Map&lt;String, BaseCmmnXmlConverter&gt; getConvertersToCmmnModelMap() {
+<span class="nc" id="L726">        return elementConverters;</span>
+    }
+
+    public static void setConvertersToCmmnModelMap(Map&lt;String, BaseCmmnXmlConverter&gt; convertersToCmmnModelMap) {
+<span class="nc" id="L730">        CmmnXmlConverter.elementConverters = convertersToCmmnModelMap;</span>
+<span class="nc" id="L731">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

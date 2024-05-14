@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CommandContextInterceptor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.common.engine.impl.interceptor</a> &gt; <span class="el_source">CommandContextInterceptor.java</span></div><h1>CommandContextInterceptor.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.flowable.common.engine.impl.interceptor;
+
+import java.util.HashMap;
+import java.util.Map;
+
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.impl.AbstractEngineConfiguration;
+import org.flowable.common.engine.impl.context.Context;
+import org.flowable.common.engine.impl.runtime.Clock;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+/**
+ * @author Tom Baeyens
+ * @author Joram Barrez
+ */
+public class CommandContextInterceptor extends AbstractCommandInterceptor {
+
+<span class="nc" id="L34">    private static final Logger LOGGER = LoggerFactory.getLogger(CommandContextInterceptor.class);</span>
+
+    protected CommandContextFactory commandContextFactory;
+    protected ClassLoader classLoader;
+    protected boolean useClassForNameClassLoading;
+    protected Clock clock;
+    protected ObjectMapper objectMapper;
+<span class="nc" id="L41">    protected Map&lt;String, AbstractEngineConfiguration&gt; engineConfigurations = new HashMap&lt;&gt;();</span>
+
+    protected String engineCfgKey;
+
+<span class="nc" id="L45">    public CommandContextInterceptor() {</span>
+<span class="nc" id="L46">    }</span>
+
+    public CommandContextInterceptor(CommandContextFactory commandContextFactory, ClassLoader classLoader, 
+<span class="nc" id="L49">            boolean useClassForNameClassLoading, Clock clock, ObjectMapper objectMapper) {</span>
+        
+<span class="nc" id="L51">        this.commandContextFactory = commandContextFactory;</span>
+<span class="nc" id="L52">        this.classLoader = classLoader;</span>
+<span class="nc" id="L53">        this.useClassForNameClassLoading = useClassForNameClassLoading;</span>
+<span class="nc" id="L54">        this.clock = clock;</span>
+<span class="nc" id="L55">        this.objectMapper = objectMapper;</span>
+<span class="nc" id="L56">    }</span>
+
+    @Override
+    public &lt;T&gt; T execute(CommandConfig config, Command&lt;T&gt; command, CommandExecutor commandExecutor) {
+<span class="nc" id="L60">        CommandContext commandContext = Context.getCommandContext();</span>
+
+        /*
+         * This flag indicates whether the context is reused for the execution of the current command.
+         * If a valid command context exists, this means a nested service call is being executed.
+         * If so, this flag will change to 'true', with the purpose of closing the command context in the finally block.
+         */
+<span class="nc" id="L67">        boolean contextReused = false;</span>
+
+        /*
+         * Commands can execute service calls, even deeply nested service calls.
+         * This flag stores the 'reused' flag on the command context as it was when starting to execute the command.
+         * For a nested command, this will be 'true'. Only for the root command context usage, this will be false.
+         * When the nested command is done, the original state is restored, which allows to detect at the CommandInvoker
+         * level which command context is the actual root.
+         */
+<span class="nc" id="L76">        boolean originalContextReusedState = false;</span>
+
+        // We need to check the exception, because the transaction can be in a
+        // rollback state, and some other command is being fired to compensate (eg. decrementing job retries)
+<span class="nc bnc" id="L80" title="All 6 branches missed.">        if (!config.isContextReusePossible() || commandContext == null || commandContext.getException() != null) {</span>
+<span class="nc" id="L81">            commandContext = commandContextFactory.createCommandContext(command);</span>
+<span class="nc" id="L82">            commandContext.setEngineConfigurations(engineConfigurations);</span>
+<span class="nc" id="L83">            commandContext.setCommandExecutor(commandExecutor);</span>
+<span class="nc" id="L84">            commandContext.setClassLoader(classLoader);</span>
+<span class="nc" id="L85">            commandContext.setUseClassForNameClassLoading(useClassForNameClassLoading);</span>
+<span class="nc" id="L86">            commandContext.setClock(clock);</span>
+<span class="nc" id="L87">            commandContext.setObjectMapper(objectMapper);</span>
+            
+        } else {
+<span class="nc" id="L90">            LOGGER.debug(&quot;Valid context found. Reusing it for the current command '{}'&quot;, command.getClass().getCanonicalName());</span>
+<span class="nc" id="L91">            contextReused = true;</span>
+<span class="nc" id="L92">            originalContextReusedState = commandContext.isReused();</span>
+<span class="nc" id="L93">            commandContext.setReused(true);</span>
+        }
+
+
+        try {
+            // Push the current engine configuration key to a stack
+            // shared between nested calls that reuse the command context
+<span class="nc" id="L100">            commandContext.pushEngineCfgToStack(engineCfgKey);</span>
+
+            // Push on command stack
+<span class="nc" id="L103">            Context.setCommandContext(commandContext);</span>
+
+<span class="nc" id="L105">            return next.execute(config, command, commandExecutor);</span>
+
+<span class="nc" id="L107">        } catch (Throwable e) {</span>
+
+<span class="nc" id="L109">            commandContext.exception(e);</span>
+
+        } finally {
+            try {
+<span class="nc bnc" id="L113" title="All 2 branches missed.">                if (!contextReused) {</span>
+<span class="nc" id="L114">                    commandContext.close();</span>
+                }
+<span class="nc" id="L116">                commandContext.setReused(originalContextReusedState);</span>
+
+            } finally {
+                // Pop from stacks
+<span class="nc" id="L120">                commandContext.popEngineCfgStack();</span>
+<span class="nc" id="L121">                Context.removeCommandContext();</span>
+            }
+        }
+
+        // Rethrow exception if needed
+<span class="nc bnc" id="L126" title="All 4 branches missed.">        if (contextReused &amp;&amp; commandContext.getException() != null) {</span>
+
+            // If it's reused, we need to throw the exception again so it propagates upwards,
+            // but the exception needs to be reset again or the parent call can incorrectly be marked
+            // as having an exception (the nested call can be try-catched for example)
+<span class="nc" id="L131">            Throwable exception = commandContext.getException();</span>
+<span class="nc" id="L132">            commandContext.resetException();</span>
+
+            // Wrapping it to avoid having 'throws throwable' in all method signatures
+<span class="nc bnc" id="L135" title="All 2 branches missed.">            if (exception instanceof FlowableException) {</span>
+<span class="nc" id="L136">                throw (FlowableException) exception;</span>
+            } else {
+<span class="nc" id="L138">                throw new FlowableException(&quot;Exception during execution of command &quot; + command, exception);</span>
+            }
+        }
+
+<span class="nc" id="L142">        return null;</span>
+    }
+    
+    public CommandContextFactory getCommandContextFactory() {
+<span class="nc" id="L146">        return commandContextFactory;</span>
+    }
+
+    public void setCommandContextFactory(CommandContextFactory commandContextFactory) {
+<span class="nc" id="L150">        this.commandContextFactory = commandContextFactory;</span>
+<span class="nc" id="L151">    }</span>
+    
+    public Map&lt;String, AbstractEngineConfiguration&gt; getEngineConfigurations() {
+<span class="nc" id="L154">        return engineConfigurations;</span>
+    }
+
+    public void setEngineConfigurations(Map&lt;String, AbstractEngineConfiguration&gt; engineConfigurations) {
+<span class="nc" id="L158">        this.engineConfigurations = engineConfigurations;</span>
+<span class="nc" id="L159">    }</span>
+
+    public String getEngineCfgKey() {
+<span class="nc" id="L162">        return engineCfgKey;</span>
+    }
+    public void setEngineCfgKey(String engineCfgKey) {
+<span class="nc" id="L165">        this.engineCfgKey = engineCfgKey;</span>
+<span class="nc" id="L166">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

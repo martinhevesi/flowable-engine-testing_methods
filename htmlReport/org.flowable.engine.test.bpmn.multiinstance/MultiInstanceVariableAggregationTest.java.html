@@ -1,0 +1,1957 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MultiInstanceVariableAggregationTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.bpmn.multiinstance</a> &gt; <span class="el_source">MultiInstanceVariableAggregationTest.java</span></div><h1>MultiInstanceVariableAggregationTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.test.bpmn.multiinstance;
+
+import static net.javacrumbs.jsonunit.assertj.JsonAssertions.assertThatJson;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.Month;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+
+import org.flowable.bpmn.model.VariableAggregationDefinition;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.impl.history.HistoryLevel;
+import org.flowable.common.engine.impl.interceptor.Command;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.engine.delegate.DelegateExecution;
+import org.flowable.engine.delegate.variable.VariableAggregator;
+import org.flowable.engine.delegate.variable.VariableAggregatorContext;
+import org.flowable.engine.history.HistoricProcessInstance;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntity;
+import org.flowable.engine.impl.test.HistoryTestHelper;
+import org.flowable.engine.impl.test.PluggableFlowableTestCase;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.engine.impl.variable.BpmnAggregatedVariableType;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.test.Deployment;
+import org.flowable.engine.test.api.variables.VariablesTest;
+import org.flowable.eventsubscription.api.EventSubscription;
+import org.flowable.job.api.Job;
+import org.flowable.task.api.Task;
+import org.flowable.variable.api.history.HistoricVariableInstance;
+import org.flowable.variable.api.persistence.entity.VariableInstance;
+import org.flowable.variable.service.impl.persistence.entity.VariableInstanceEntity;
+import org.flowable.variable.service.impl.types.JsonType;
+import org.junit.jupiter.api.Test;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+/**
+ * @author Joram Barrez
+ * @author Filip Hrisafov
+ */
+<span class="nc" id="L65">public class MultiInstanceVariableAggregationTest extends PluggableFlowableTestCase {</span>
+
+    @Test
+    @Deployment
+    public void testParallelMultiInstanceUserTask() {
+<span class="nc" id="L70">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L71">            .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L72">            .variable(&quot;nrOfLoops&quot;, 3)</span>
+<span class="nc" id="L73">            .start();</span>
+
+<span class="nc" id="L75">        ArrayNode reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L77">        assertThatJson(reviews)</span>
+<span class="nc" id="L78">            .isEqualTo(&quot;[&quot;</span>
+                    + &quot;{ userId: null },&quot;
+                    + &quot;{ userId: null },&quot;
+                    + &quot;{ userId: null }&quot;
+                    + &quot;]&quot;);
+
+<span class="nc" id="L84">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L85">                .orderByTaskPriority().asc()</span>
+<span class="nc" id="L86">                .list();</span>
+<span class="nc" id="L87">        assertThat(tasks).hasSize(3);</span>
+
+<span class="nc" id="L89">        taskService.setAssignee(tasks.get(0).getId(), &quot;userOne&quot;);</span>
+<span class="nc" id="L90">        taskService.setAssignee(tasks.get(1).getId(), &quot;userTwo&quot;);</span>
+<span class="nc" id="L91">        taskService.setAssignee(tasks.get(2).getId(), &quot;userThree&quot;);</span>
+
+<span class="nc" id="L93">        reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L95">        assertThatJson(reviews)</span>
+<span class="nc" id="L96">            .isEqualTo(</span>
+                &quot;[&quot;
+                    + &quot;{ userId: 'userOne' },&quot;
+                    + &quot;{ userId: 'userTwo' },&quot;
+                    + &quot;{ userId: 'userThree' }&quot;
+                    + &quot;]&quot;);
+
+<span class="nc" id="L103">        Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L104">        variables.put(&quot;approved&quot;, true);</span>
+<span class="nc" id="L105">        variables.put(&quot;description&quot;, &quot;description task 0&quot;);</span>
+<span class="nc" id="L106">        taskService.complete(tasks.get(0).getId(), variables);</span>
+
+<span class="nc" id="L108">        reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L110">        assertThatJson(reviews)</span>
+<span class="nc" id="L111">            .isEqualTo(</span>
+                &quot;[&quot;
+                    + &quot;{ userId: 'userOne', approved : true, description : 'description task 0' },&quot;
+                    + &quot;{ userId: 'userTwo' },&quot;
+                    + &quot;{ userId: 'userThree' }&quot;
+                    + &quot;]&quot;);
+
+<span class="nc" id="L118">        assertVariablesNotVisibleForProcessInstance(processInstance);</span>
+
+<span class="nc bnc" id="L120" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L121">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L122">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L123">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L124">                    .singleResult();</span>
+<span class="nc" id="L125">            assertThat(historicReviews).isNotNull();</span>
+<span class="nc" id="L126">            assertThat(historicReviews.getVariableTypeName()).isEqualTo(BpmnAggregatedVariableType.TYPE_NAME);</span>
+<span class="nc" id="L127">            assertThatJson(historicReviews.getValue())</span>
+<span class="nc" id="L128">                    .isEqualTo(&quot;[&quot;</span>
+                            + &quot;{ userId: 'userOne', approved : true, description : 'description task 0' },&quot;
+                            + &quot;{ userId: 'userTwo' },&quot;
+                            + &quot;{ userId: 'userThree' }&quot;
+                            + &quot;]&quot;);
+        }
+
+<span class="nc" id="L135">        variables.put(&quot;approved&quot;, true);</span>
+<span class="nc" id="L136">        variables.put(&quot;description&quot;, &quot;description task 1&quot;);</span>
+<span class="nc" id="L137">        taskService.complete(tasks.get(1).getId(), variables);</span>
+
+<span class="nc" id="L139">        reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L141">        assertThatJson(reviews)</span>
+<span class="nc" id="L142">            .isEqualTo(</span>
+                &quot;[&quot;
+                    + &quot;{ userId: 'userOne', approved : true, description : 'description task 0' },&quot;
+                    + &quot;{ userId: 'userTwo', approved : true, description : 'description task 1' },&quot;
+                    + &quot;{ userId: 'userThree' }&quot;
+                    + &quot;]&quot;);
+
+<span class="nc" id="L149">        variables.put(&quot;approved&quot;, false);</span>
+<span class="nc" id="L150">        variables.put(&quot;description&quot;, &quot;description task 2&quot;);</span>
+<span class="nc" id="L151">        taskService.complete(tasks.get(2).getId(), variables);</span>
+
+<span class="nc" id="L153">        assertVariablesNotVisibleForProcessInstance(processInstance);</span>
+
+<span class="nc" id="L155">       reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L157">        assertThatJson(reviews)</span>
+<span class="nc" id="L158">            .isEqualTo(</span>
+                &quot;[&quot;
+                + &quot;{ userId: 'userOne', approved : true, description : 'description task 0' },&quot;
+                + &quot;{ userId: 'userTwo', approved : true, description : 'description task 1' },&quot;
+                + &quot;{ userId: 'userThree', approved : false, description : 'description task 2' }&quot;
+                + &quot;]&quot;);
+
+<span class="nc" id="L165">        assertNoAggregatedVariables();</span>
+<span class="nc" id="L166">        VariableInstance reviewsVarInstance = runtimeService.getVariableInstance(processInstance.getId(), &quot;reviews&quot;);</span>
+<span class="nc" id="L167">        assertThat(reviewsVarInstance.getTypeName()).isEqualTo(JsonType.TYPE_NAME);</span>
+
+<span class="nc bnc" id="L169" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L170">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L171">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L172">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L173">                    .singleResult();</span>
+<span class="nc" id="L174">            assertThat(historicReviews).isNotNull();</span>
+<span class="nc" id="L175">            assertThat(historicReviews.getVariableTypeName()).isEqualTo(JsonType.TYPE_NAME);</span>
+        }
+
+<span class="nc" id="L178">    }</span>
+
+    @Test
+    @Deployment
+    public void testParallelMultiInstanceUserTaskWithoutCreateOverview() {
+<span class="nc" id="L183">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L184">            .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L185">            .variable(&quot;nrOfLoops&quot;, 3)</span>
+<span class="nc" id="L186">            .start();</span>
+
+<span class="nc" id="L188">        VariableInstance reviews = runtimeService.getVariableInstance(processInstance.getId(), &quot;reviews&quot;);</span>
+<span class="nc" id="L189">        assertThat(reviews).isNull();</span>
+
+<span class="nc" id="L191">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L192">                .orderByTaskPriority().asc()</span>
+<span class="nc" id="L193">                .list();</span>
+<span class="nc" id="L194">        assertThat(tasks).hasSize(3);</span>
+
+<span class="nc" id="L196">        taskService.setAssignee(tasks.get(0).getId(), &quot;userOne&quot;);</span>
+<span class="nc" id="L197">        taskService.setAssignee(tasks.get(1).getId(), &quot;userTwo&quot;);</span>
+<span class="nc" id="L198">        taskService.setAssignee(tasks.get(2).getId(), &quot;userThree&quot;);</span>
+
+<span class="nc" id="L200">        reviews = runtimeService.getVariableInstance(processInstance.getId(), &quot;reviews&quot;);</span>
+
+<span class="nc" id="L202">        assertThat(reviews).isNull();</span>
+
+<span class="nc" id="L204">        Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L205">        variables.put(&quot;approved&quot;, true);</span>
+<span class="nc" id="L206">        variables.put(&quot;description&quot;, &quot;description task 0&quot;);</span>
+<span class="nc" id="L207">        taskService.complete(tasks.get(0).getId(), variables);</span>
+
+<span class="nc" id="L209">        reviews = runtimeService.getVariableInstance(processInstance.getId(), &quot;reviews&quot;);</span>
+
+<span class="nc" id="L211">        assertThat(reviews).isNull();</span>
+
+<span class="nc" id="L213">        assertVariablesNotVisibleForProcessInstance(processInstance);</span>
+
+<span class="nc bnc" id="L215" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L216">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L217">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L218">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L219">                    .singleResult();</span>
+<span class="nc" id="L220">            assertThat(historicReviews).isNull();</span>
+        }
+
+<span class="nc" id="L223">        variables.put(&quot;approved&quot;, true);</span>
+<span class="nc" id="L224">        variables.put(&quot;description&quot;, &quot;description task 1&quot;);</span>
+<span class="nc" id="L225">        taskService.complete(tasks.get(1).getId(), variables);</span>
+
+<span class="nc" id="L227">        variables.put(&quot;approved&quot;, false);</span>
+<span class="nc" id="L228">        variables.put(&quot;description&quot;, &quot;description task 2&quot;);</span>
+<span class="nc" id="L229">        taskService.complete(tasks.get(2).getId(), variables);</span>
+
+<span class="nc" id="L231">        assertVariablesNotVisibleForProcessInstance(processInstance);</span>
+
+<span class="nc" id="L233">        reviews = runtimeService.getVariableInstance(processInstance.getId(), &quot;reviews&quot;);</span>
+
+<span class="nc" id="L235">        assertThat(reviews).isNotNull();</span>
+<span class="nc" id="L236">        assertThat(reviews.getTypeName()).isEqualTo(JsonType.TYPE_NAME);</span>
+<span class="nc" id="L237">        assertThatJson(reviews.getValue())</span>
+<span class="nc" id="L238">            .isEqualTo(</span>
+                &quot;[&quot;
+                + &quot;{ userId: 'userOne', approved : true, description : 'description task 0' },&quot;
+                + &quot;{ userId: 'userTwo', approved : true, description : 'description task 1' },&quot;
+                + &quot;{ userId: 'userThree', approved : false, description : 'description task 2' }&quot;
+                + &quot;]&quot;);
+
+<span class="nc" id="L245">        assertNoAggregatedVariables();</span>
+
+<span class="nc bnc" id="L247" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L248">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L249">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L250">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L251">                    .singleResult();</span>
+<span class="nc" id="L252">            assertThat(historicReviews).isNotNull();</span>
+<span class="nc" id="L253">            assertThat(historicReviews.getVariableTypeName()).isEqualTo(JsonType.TYPE_NAME);</span>
+        }
+<span class="nc" id="L255">    }</span>
+
+    @Test
+    @Deployment
+    public void testParallelMultiInstanceUserTaskStoreAsTransient() {
+<span class="nc" id="L260">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L261">            .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L262">            .variable(&quot;nrOfLoops&quot;, 3)</span>
+<span class="nc" id="L263">            .start();</span>
+
+<span class="nc" id="L265">        VariableInstance reviews = runtimeService.getVariableInstance(processInstance.getId(), &quot;reviews&quot;);</span>
+<span class="nc" id="L266">        assertThat(reviews).isNull();</span>
+
+<span class="nc bnc" id="L268" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L269">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L270">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L271">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L272">                    .singleResult();</span>
+<span class="nc" id="L273">            assertThat(historicReviews).isNull();</span>
+        }
+
+<span class="nc" id="L276">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L277">                .orderByTaskPriority().asc()</span>
+<span class="nc" id="L278">                .list();</span>
+<span class="nc" id="L279">        assertThat(tasks).hasSize(3);</span>
+
+<span class="nc" id="L281">        Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L282">        variables.put(&quot;approved&quot;, true);</span>
+<span class="nc" id="L283">        variables.put(&quot;description&quot;, &quot;description task 0&quot;);</span>
+<span class="nc" id="L284">        taskService.complete(tasks.get(0).getId(), variables);</span>
+
+<span class="nc" id="L286">        assertVariablesNotVisibleForProcessInstance(processInstance);</span>
+
+<span class="nc" id="L288">        variables.put(&quot;approved&quot;, true);</span>
+<span class="nc" id="L289">        variables.put(&quot;description&quot;, &quot;description task 1&quot;);</span>
+<span class="nc" id="L290">        taskService.complete(tasks.get(1).getId(), variables);</span>
+
+<span class="nc" id="L292">        variables.put(&quot;approved&quot;, false);</span>
+<span class="nc" id="L293">        variables.put(&quot;description&quot;, &quot;description task 2&quot;);</span>
+<span class="nc" id="L294">        taskService.complete(tasks.get(2).getId(), variables);</span>
+
+<span class="nc" id="L296">        assertVariablesNotVisibleForProcessInstance(processInstance);</span>
+
+<span class="nc" id="L298">        reviews = runtimeService.getVariableInstance(processInstance.getId(), &quot;reviews&quot;);</span>
+
+<span class="nc" id="L300">        assertThat(reviews).isNull();</span>
+<span class="nc" id="L301">        assertThat(runtimeService.getVariable(processInstance.getId(), &quot;firstDescription&quot;)).isEqualTo(&quot;description task 0&quot;);</span>
+
+<span class="nc" id="L303">        assertNoAggregatedVariables();</span>
+
+<span class="nc bnc" id="L305" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L306">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L307">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L308">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L309">                    .singleResult();</span>
+<span class="nc" id="L310">            assertThat(historicReviews).isNull();</span>
+
+<span class="nc" id="L312">            HistoricVariableInstance historicFirstDescription = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L313">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L314">                    .variableName(&quot;firstDescription&quot;)</span>
+<span class="nc" id="L315">                    .singleResult();</span>
+<span class="nc" id="L316">            assertThat(historicFirstDescription).isNotNull();</span>
+<span class="nc" id="L317">            assertThat(historicFirstDescription.getValue()).isEqualTo(&quot;description task 0&quot;);</span>
+        }
+<span class="nc" id="L319">    }</span>
+
+    @Test
+    @Deployment
+    public void testParallelMultiInstanceUserTaskVariableTypes() {
+<span class="nc" id="L324">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L325">                .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L326">                .variable(&quot;nrOfLoops&quot;, 4)</span>
+<span class="nc" id="L327">                .start();</span>
+
+<span class="nc" id="L329">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L330">                .orderByTaskPriority().asc()</span>
+<span class="nc" id="L331">                .list();</span>
+<span class="nc" id="L332">        assertThat(tasks).hasSize(4);</span>
+
+<span class="nc" id="L334">        Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L335">        variables.put(&quot;description&quot;, &quot;Description for task with LocalDate&quot;);</span>
+<span class="nc" id="L336">        variables.put(&quot;score&quot;, 10);</span>
+<span class="nc" id="L337">        variables.put(&quot;passed&quot;, true);</span>
+<span class="nc" id="L338">        variables.put(&quot;location&quot;, &quot;Springfield&quot;);</span>
+<span class="nc" id="L339">        variables.put(&quot;startTime&quot;, LocalDate.of(2020, Month.DECEMBER, 8));</span>
+<span class="nc" id="L340">        taskService.complete(tasks.get(0).getId(), variables);</span>
+
+<span class="nc" id="L342">        variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L343">        variables.put(&quot;description&quot;, &quot;Description for task with LocalDateTime&quot;);</span>
+<span class="nc" id="L344">        variables.put(&quot;score&quot;, 60.55);</span>
+<span class="nc" id="L345">        variables.put(&quot;passed&quot;, false);</span>
+<span class="nc" id="L346">        variables.put(&quot;location&quot;, null);</span>
+<span class="nc" id="L347">        variables.put(&quot;startTime&quot;, LocalDate.of(2020, Month.DECEMBER, 8).atTime(10, 20, 30));</span>
+<span class="nc" id="L348">        taskService.complete(tasks.get(1).getId(), variables);</span>
+
+<span class="nc" id="L350">        variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L351">        variables.put(&quot;description&quot;, &quot;Description for task with Instant&quot;);</span>
+<span class="nc" id="L352">        variables.put(&quot;score&quot;, (short) 100);</span>
+<span class="nc" id="L353">        variables.put(&quot;passed&quot;, true);</span>
+<span class="nc" id="L354">        variables.put(&quot;location&quot;, &quot;Zurich&quot;);</span>
+<span class="nc" id="L355">        variables.put(&quot;startTime&quot;, Instant.parse(&quot;2020-12-08T08:20:45.585Z&quot;));</span>
+<span class="nc" id="L356">        taskService.complete(tasks.get(2).getId(), variables);</span>
+
+<span class="nc" id="L358">        variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L359">        variables.put(&quot;description&quot;, &quot;Description for task with Date&quot;);</span>
+<span class="nc" id="L360">        variables.put(&quot;score&quot;, 1234L);</span>
+<span class="nc" id="L361">        variables.put(&quot;passed&quot;, true);</span>
+<span class="nc" id="L362">        variables.put(&quot;location&quot;, &quot;Test Valley&quot;);</span>
+<span class="nc" id="L363">        variables.put(&quot;startTime&quot;, Instant.parse(&quot;2020-12-12T12:24:15.155Z&quot;));</span>
+<span class="nc" id="L364">        taskService.complete(tasks.get(3).getId(), variables);</span>
+
+<span class="nc" id="L366">        assertNoAggregatedVariables();</span>
+<span class="nc" id="L367">        assertThatJson(runtimeService.getVariable(processInstance.getId(), &quot;results&quot;))</span>
+<span class="nc" id="L368">                .isEqualTo(&quot;[&quot;</span>
+                        + &quot;  {&quot;
+                        + &quot;    description: 'Description for task with LocalDate',&quot;
+                        + &quot;    score: 10,&quot;
+                        + &quot;    passed: true,&quot;
+                        + &quot;    location: 'Springfield',&quot;
+                        + &quot;    startTime: '2020-12-08'&quot;
+                        + &quot;  },&quot;
+                        + &quot;  {&quot;
+                        + &quot;    description: 'Description for task with LocalDateTime',&quot;
+                        + &quot;    score: 60.55,&quot;
+                        + &quot;    passed: false,&quot;
+                        + &quot;    location: null,&quot;
+                        + &quot;    startTime: '2020-12-08T10:20:30'&quot;
+                        + &quot;  },&quot;
+                        + &quot;  {&quot;
+                        + &quot;    description: 'Description for task with Instant',&quot;
+                        + &quot;    score: 100,&quot;
+                        + &quot;    passed: true,&quot;
+                        + &quot;    location: 'Zurich',&quot;
+                        + &quot;    startTime: '2020-12-08T08:20:45.585Z'&quot;
+                        + &quot;  },&quot;
+                        + &quot;  {&quot;
+                        + &quot;    description: 'Description for task with Date',&quot;
+                        + &quot;    score: 1234,&quot;
+                        + &quot;    passed: true,&quot;
+                        + &quot;    location: 'Test Valley',&quot;
+                        + &quot;    startTime: '2020-12-12T12:24:15.155Z'&quot;
+                        + &quot;  }&quot;
+                        + &quot;]&quot;);
+
+<span class="nc bnc" id="L399" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L400">            HistoricVariableInstance historicResults = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L401">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L402">                    .variableName(&quot;results&quot;)</span>
+<span class="nc" id="L403">                    .singleResult();</span>
+<span class="nc" id="L404">            assertThat(historicResults).isNotNull();</span>
+<span class="nc" id="L405">            assertThatJson(historicResults.getValue())</span>
+<span class="nc" id="L406">                    .isEqualTo(&quot;[&quot;</span>
+                            + &quot;  {&quot;
+                            + &quot;    description: 'Description for task with LocalDate',&quot;
+                            + &quot;    score: 10,&quot;
+                            + &quot;    passed: true,&quot;
+                            + &quot;    location: 'Springfield',&quot;
+                            + &quot;    startTime: '2020-12-08'&quot;
+                            + &quot;  },&quot;
+                            + &quot;  {&quot;
+                            + &quot;    description: 'Description for task with LocalDateTime',&quot;
+                            + &quot;    score: 60.55,&quot;
+                            + &quot;    passed: false,&quot;
+                            + &quot;    location: null,&quot;
+                            + &quot;    startTime: '2020-12-08T10:20:30'&quot;
+                            + &quot;  },&quot;
+                            + &quot;  {&quot;
+                            + &quot;    description: 'Description for task with Instant',&quot;
+                            + &quot;    score: 100,&quot;
+                            + &quot;    passed: true,&quot;
+                            + &quot;    location: 'Zurich',&quot;
+                            + &quot;    startTime: '2020-12-08T08:20:45.585Z'&quot;
+                            + &quot;  },&quot;
+                            + &quot;  {&quot;
+                            + &quot;    description: 'Description for task with Date',&quot;
+                            + &quot;    score: 1234,&quot;
+                            + &quot;    passed: true,&quot;
+                            + &quot;    location: 'Test Valley',&quot;
+                            + &quot;    startTime: '2020-12-12T12:24:15.155Z'&quot;
+                            + &quot;  }&quot;
+                            + &quot;]&quot;);
+        }
+<span class="nc" id="L437">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/bpmn/multiinstance/MultiInstanceVariableAggregationTest.testParallelMultiInstanceUserTaskVariableTypes.bpmn20.xml&quot;)
+    public void testParallelMultiInstanceUserTaskUnsupportedVariableTypes() {
+<span class="nc" id="L442">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L443">                .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L444">                .variable(&quot;nrOfLoops&quot;, 2)</span>
+<span class="nc" id="L445">                .start();</span>
+
+<span class="nc" id="L447">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L448">                .orderByTaskPriority().asc()</span>
+<span class="nc" id="L449">                .list();</span>
+<span class="nc" id="L450">        assertThat(tasks).hasSize(2);</span>
+
+<span class="nc" id="L452">        Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L453">        variables.put(&quot;description&quot;, &quot;Description for task with LocalDate&quot;);</span>
+<span class="nc" id="L454">        variables.put(&quot;score&quot;, 10);</span>
+<span class="nc" id="L455">        variables.put(&quot;passed&quot;, true);</span>
+<span class="nc" id="L456">        variables.put(&quot;location&quot;, &quot;Springfield&quot;);</span>
+<span class="nc" id="L457">        variables.put(&quot;startTime&quot;, new VariablesTest.TestSerializableVariable(19));</span>
+
+<span class="nc" id="L459">        assertThatThrownBy(() -&gt; taskService.complete(tasks.get(0).getId(), variables))</span>
+<span class="nc" id="L460">            .isExactlyInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L461">            .hasMessageContaining(&quot;Cannot aggregate variable: &quot;)</span>
+<span class="nc" id="L462">            .hasMessageContaining(&quot;startTime&quot;);</span>
+<span class="nc" id="L463">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/bpmn/multiinstance/MultiInstanceVariableAggregationTest.testParallelMultiInstanceUserTaskWithBoundaryEvent.bpmn20.xml&quot;)
+    public void testParallelMultiInstanceUserTaskWithBoundaryEventCancel() {
+<span class="nc" id="L468">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L469">            .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L470">            .variable(&quot;nrOfLoops&quot;, 3)</span>
+<span class="nc" id="L471">            .start();</span>
+
+<span class="nc" id="L473">        ArrayNode reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L475">        assertThatJson(reviews)</span>
+<span class="nc" id="L476">            .isEqualTo(&quot;[&quot;</span>
+                    + &quot;{ userId: null },&quot;
+                    + &quot;{ userId: null },&quot;
+                    + &quot;{ userId: null }&quot;
+                    + &quot;]&quot;);
+
+<span class="nc" id="L482">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L483">                .orderByTaskPriority().asc()</span>
+<span class="nc" id="L484">                .list();</span>
+<span class="nc" id="L485">        assertThat(tasks).hasSize(3);</span>
+
+<span class="nc" id="L487">        taskService.setAssignee(tasks.get(0).getId(), &quot;userOne&quot;);</span>
+<span class="nc" id="L488">        taskService.setAssignee(tasks.get(1).getId(), &quot;userTwo&quot;);</span>
+<span class="nc" id="L489">        taskService.setAssignee(tasks.get(2).getId(), &quot;userThree&quot;);</span>
+
+<span class="nc" id="L491">        reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L493">        assertThatJson(reviews)</span>
+<span class="nc" id="L494">            .isEqualTo(</span>
+                &quot;[&quot;
+                    + &quot;{ userId: 'userOne' },&quot;
+                    + &quot;{ userId: 'userTwo' },&quot;
+                    + &quot;{ userId: 'userThree' }&quot;
+                    + &quot;]&quot;);
+
+<span class="nc" id="L501">        Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L502">        variables.put(&quot;approved&quot;, true);</span>
+<span class="nc" id="L503">        variables.put(&quot;description&quot;, &quot;description task 0&quot;);</span>
+<span class="nc" id="L504">        taskService.complete(tasks.get(0).getId(), variables);</span>
+
+<span class="nc" id="L506">        reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L508">        assertThatJson(reviews)</span>
+<span class="nc" id="L509">            .isEqualTo(</span>
+                &quot;[&quot;
+                    + &quot;{ userId: 'userOne', approved : true, description : 'description task 0' },&quot;
+                    + &quot;{ userId: 'userTwo' },&quot;
+                    + &quot;{ userId: 'userThree' }&quot;
+                    + &quot;]&quot;);
+
+<span class="nc" id="L516">        assertVariablesNotVisibleForProcessInstance(processInstance);</span>
+
+<span class="nc bnc" id="L518" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L519">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L520">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L521">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L522">                    .singleResult();</span>
+<span class="nc" id="L523">            assertThat(historicReviews).isNotNull();</span>
+<span class="nc" id="L524">            assertThat(historicReviews.getVariableTypeName()).isEqualTo(BpmnAggregatedVariableType.TYPE_NAME);</span>
+<span class="nc" id="L525">            assertThatJson(historicReviews.getValue())</span>
+<span class="nc" id="L526">                    .isEqualTo(&quot;[&quot;</span>
+                            + &quot;{ userId: 'userOne', approved : true, description : 'description task 0' },&quot;
+                            + &quot;{ userId: 'userTwo' },&quot;
+                            + &quot;{ userId: 'userThree' }&quot;
+                            + &quot;]&quot;);
+        }
+
+<span class="nc" id="L533">        EventSubscription eventSubscription = runtimeService.createEventSubscriptionQuery().singleResult();</span>
+
+<span class="nc" id="L535">        runtimeService.messageEventReceived(&quot;Abort&quot;, eventSubscription.getExecutionId());</span>
+
+<span class="nc" id="L537">        Task afterBoundary = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L538">        assertThat(afterBoundary).isNotNull();</span>
+<span class="nc" id="L539">        assertThat(afterBoundary.getTaskDefinitionKey()).isEqualTo(&quot;afterBoundary&quot;);</span>
+
+<span class="nc" id="L541">        VariableInstance reviewsVarInstance = runtimeService.getVariableInstance(processInstance.getId(), &quot;reviews&quot;);</span>
+<span class="nc" id="L542">        assertThat(reviewsVarInstance).isNull();</span>
+
+<span class="nc bnc" id="L544" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L545">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L546">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L547">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L548">                    .singleResult();</span>
+<span class="nc" id="L549">            assertThat(historicReviews).isNull();</span>
+        }
+<span class="nc" id="L551">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/bpmn/multiinstance/MultiInstanceVariableAggregationTest.testParallelMultiInstanceUserTaskWithBoundaryEvent.bpmn20.xml&quot;)
+    public void testParallelMultiInstanceUserTaskWithBoundaryEventCancelAndPayload() {
+<span class="nc" id="L556">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L557">            .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L558">            .variable(&quot;nrOfLoops&quot;, 3)</span>
+<span class="nc" id="L559">            .start();</span>
+
+<span class="nc" id="L561">        ArrayNode reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L563">        assertThatJson(reviews)</span>
+<span class="nc" id="L564">            .isEqualTo(&quot;[&quot;</span>
+                    + &quot;{ userId: null },&quot;
+                    + &quot;{ userId: null },&quot;
+                    + &quot;{ userId: null }&quot;
+                    + &quot;]&quot;);
+
+<span class="nc" id="L570">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L571">                .orderByTaskPriority().asc()</span>
+<span class="nc" id="L572">                .list();</span>
+<span class="nc" id="L573">        assertThat(tasks).hasSize(3);</span>
+
+<span class="nc" id="L575">        taskService.setAssignee(tasks.get(0).getId(), &quot;userOne&quot;);</span>
+<span class="nc" id="L576">        taskService.setAssignee(tasks.get(1).getId(), &quot;userTwo&quot;);</span>
+<span class="nc" id="L577">        taskService.setAssignee(tasks.get(2).getId(), &quot;userThree&quot;);</span>
+
+<span class="nc" id="L579">        reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L581">        assertThatJson(reviews)</span>
+<span class="nc" id="L582">            .isEqualTo(</span>
+                &quot;[&quot;
+                    + &quot;{ userId: 'userOne' },&quot;
+                    + &quot;{ userId: 'userTwo' },&quot;
+                    + &quot;{ userId: 'userThree' }&quot;
+                    + &quot;]&quot;);
+
+<span class="nc" id="L589">        Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L590">        variables.put(&quot;approved&quot;, true);</span>
+<span class="nc" id="L591">        variables.put(&quot;description&quot;, &quot;description task 0&quot;);</span>
+<span class="nc" id="L592">        taskService.complete(tasks.get(0).getId(), variables);</span>
+
+<span class="nc" id="L594">        reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L596">        assertThatJson(reviews)</span>
+<span class="nc" id="L597">            .isEqualTo(</span>
+                &quot;[&quot;
+                    + &quot;{ userId: 'userOne', approved : true, description : 'description task 0' },&quot;
+                    + &quot;{ userId: 'userTwo' },&quot;
+                    + &quot;{ userId: 'userThree' }&quot;
+                    + &quot;]&quot;);
+
+<span class="nc" id="L604">        assertVariablesNotVisibleForProcessInstance(processInstance);</span>
+
+<span class="nc" id="L606">        EventSubscription eventSubscription = runtimeService.createEventSubscriptionQuery().singleResult();</span>
+
+<span class="nc" id="L608">        runtimeService.messageEventReceived(&quot;Abort&quot;, eventSubscription.getExecutionId(), Collections.singletonMap(&quot;abortReason&quot;, &quot;test&quot;));</span>
+
+<span class="nc" id="L610">        Task afterBoundary = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L611">        assertThat(afterBoundary).isNotNull();</span>
+<span class="nc" id="L612">        assertThat(afterBoundary.getTaskDefinitionKey()).isEqualTo(&quot;afterBoundary&quot;);</span>
+
+<span class="nc" id="L614">        assertThat(runtimeService.getVariableInstance(processInstance.getId(), &quot;reviews&quot;)).isNull();</span>
+<span class="nc" id="L615">        assertThat(runtimeService.getVariable(processInstance.getId(), &quot;abortReason&quot;)).isEqualTo(&quot;test&quot;);</span>
+
+<span class="nc bnc" id="L617" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L618">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L619">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L620">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L621">                    .singleResult();</span>
+<span class="nc" id="L622">            assertThat(historicReviews).isNull();</span>
+        }
+<span class="nc" id="L624">    }</span>
+
+    @Test
+    @Deployment
+    public void testParallelMultiInstanceUserTaskWithTimerBoundaryEvent() {
+<span class="nc" id="L629">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L630">            .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L631">            .variable(&quot;nrOfLoops&quot;, 3)</span>
+<span class="nc" id="L632">            .start();</span>
+
+<span class="nc" id="L634">        ArrayNode reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L636">        assertThatJson(reviews)</span>
+<span class="nc" id="L637">            .isEqualTo(&quot;[&quot;</span>
+                    + &quot;{ userId: null },&quot;
+                    + &quot;{ userId: null },&quot;
+                    + &quot;{ userId: null }&quot;
+                    + &quot;]&quot;);
+
+<span class="nc bnc" id="L643" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L644">            HistoricProcessInstance historicProcessInstance = historyService.createHistoricProcessInstanceQuery()</span>
+<span class="nc" id="L645">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L646">                    .includeProcessVariables()</span>
+<span class="nc" id="L647">                    .singleResult();</span>
+
+<span class="nc" id="L649">            assertThat(historicProcessInstance.getProcessVariables())</span>
+<span class="nc" id="L650">                    .hasEntrySatisfying(&quot;reviews&quot;, variable -&gt; {</span>
+<span class="nc" id="L651">                        assertThat(variable).isInstanceOf(ArrayNode.class);</span>
+<span class="nc" id="L652">                        assertThatJson(variable)</span>
+<span class="nc" id="L653">                                .isEqualTo(</span>
+                                        &quot;[&quot;
+                                                + &quot;{ userId: null },&quot;
+                                                + &quot;{ userId: null },&quot;
+                                                + &quot;{ userId: null }&quot;
+                                                + &quot;]&quot;);
+<span class="nc" id="L659">                    });</span>
+        }
+
+<span class="nc" id="L662">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L663">                .orderByTaskPriority().asc()</span>
+<span class="nc" id="L664">                .list();</span>
+<span class="nc" id="L665">        assertThat(tasks).hasSize(3);</span>
+
+<span class="nc" id="L667">        taskService.setAssignee(tasks.get(0).getId(), &quot;userOne&quot;);</span>
+<span class="nc" id="L668">        taskService.setAssignee(tasks.get(1).getId(), &quot;userTwo&quot;);</span>
+<span class="nc" id="L669">        taskService.setAssignee(tasks.get(2).getId(), &quot;userThree&quot;);</span>
+
+<span class="nc" id="L671">        reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L673">        assertThatJson(reviews)</span>
+<span class="nc" id="L674">            .isEqualTo(</span>
+                &quot;[&quot;
+                    + &quot;{ userId: 'userOne' },&quot;
+                    + &quot;{ userId: 'userTwo' },&quot;
+                    + &quot;{ userId: 'userThree' }&quot;
+                    + &quot;]&quot;);
+
+<span class="nc bnc" id="L681" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L682">            HistoricProcessInstance historicProcessInstance = historyService.createHistoricProcessInstanceQuery()</span>
+<span class="nc" id="L683">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L684">                    .includeProcessVariables()</span>
+<span class="nc" id="L685">                    .singleResult();</span>
+
+<span class="nc" id="L687">            assertThat(historicProcessInstance.getProcessVariables())</span>
+<span class="nc" id="L688">                    .hasEntrySatisfying(&quot;reviews&quot;, variable -&gt; {</span>
+<span class="nc" id="L689">                        assertThat(variable).isInstanceOf(ArrayNode.class);</span>
+<span class="nc" id="L690">                        assertThatJson(variable)</span>
+<span class="nc" id="L691">                                .isEqualTo(</span>
+                                        &quot;[&quot;
+                                                + &quot;{ userId: 'userOne' },&quot;
+                                                + &quot;{ userId: 'userTwo' },&quot;
+                                                + &quot;{ userId: 'userThree' }&quot;
+                                                + &quot;]&quot;);
+<span class="nc" id="L697">                    });</span>
+        }
+
+<span class="nc" id="L700">        Job timerJob = managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L701">        assertThat(timerJob).isNotNull();</span>
+<span class="nc" id="L702">        Job job = managementService.moveTimerToExecutableJob(timerJob.getId());</span>
+<span class="nc" id="L703">        managementService.executeJob(job.getId());</span>
+
+<span class="nc" id="L705">        Task afterBoundary = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L706">        assertThat(afterBoundary).isNotNull();</span>
+<span class="nc" id="L707">        assertThat(afterBoundary.getTaskDefinitionKey()).isEqualTo(&quot;afterBoundary&quot;);</span>
+
+<span class="nc" id="L709">        assertThat(runtimeService.getVariableInstance(processInstance.getId(), &quot;reviews&quot;)).isNull();</span>
+
+<span class="nc bnc" id="L711" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L712">            HistoricProcessInstance historicProcessInstance = historyService.createHistoricProcessInstanceQuery()</span>
+<span class="nc" id="L713">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L714">                    .includeProcessVariables()</span>
+<span class="nc" id="L715">                    .singleResult();</span>
+
+<span class="nc" id="L717">            assertThat(historicProcessInstance.getProcessVariables())</span>
+<span class="nc" id="L718">                    .doesNotContainKey(&quot;reviews&quot;);</span>
+        }
+<span class="nc" id="L720">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/bpmn/multiinstance/MultiInstanceVariableAggregationTest.testParallelMultiInstanceUserTaskWithBoundaryEvent.bpmn20.xml&quot;)
+    public void testParallelMultiInstanceUserTaskWithBoundaryEventComplete() {
+<span class="nc" id="L725">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L726">                .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L727">                .variable(&quot;nrOfLoops&quot;, 3)</span>
+<span class="nc" id="L728">                .start();</span>
+
+<span class="nc" id="L730">        ArrayNode reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L732">        assertThatJson(reviews)</span>
+<span class="nc" id="L733">                .isEqualTo(&quot;[&quot;</span>
+                        + &quot;{ userId: null },&quot;
+                        + &quot;{ userId: null },&quot;
+                        + &quot;{ userId: null }&quot;
+                        + &quot;]&quot;);
+
+<span class="nc" id="L739">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L740">                .orderByTaskPriority().asc()</span>
+<span class="nc" id="L741">                .list();</span>
+<span class="nc" id="L742">        assertThat(tasks).hasSize(3);</span>
+
+<span class="nc" id="L744">        taskService.setAssignee(tasks.get(0).getId(), &quot;userOne&quot;);</span>
+<span class="nc" id="L745">        taskService.setAssignee(tasks.get(1).getId(), &quot;userTwo&quot;);</span>
+<span class="nc" id="L746">        taskService.setAssignee(tasks.get(2).getId(), &quot;userThree&quot;);</span>
+
+<span class="nc" id="L748">        reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L750">        assertThatJson(reviews)</span>
+<span class="nc" id="L751">                .isEqualTo(</span>
+                        &quot;[&quot;
+                                + &quot;{ userId: 'userOne' },&quot;
+                                + &quot;{ userId: 'userTwo' },&quot;
+                                + &quot;{ userId: 'userThree' }&quot;
+                                + &quot;]&quot;);
+
+<span class="nc" id="L758">        Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L759">        variables.put(&quot;approved&quot;, true);</span>
+<span class="nc" id="L760">        variables.put(&quot;description&quot;, &quot;description task 0&quot;);</span>
+<span class="nc" id="L761">        taskService.complete(tasks.get(0).getId(), variables);</span>
+
+<span class="nc" id="L763">        reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L765">        assertThatJson(reviews)</span>
+<span class="nc" id="L766">                .isEqualTo(</span>
+                        &quot;[&quot;
+                                + &quot;{ userId: 'userOne', approved : true, description : 'description task 0' },&quot;
+                                + &quot;{ userId: 'userTwo' },&quot;
+                                + &quot;{ userId: 'userThree' }&quot;
+                                + &quot;]&quot;);
+
+<span class="nc" id="L773">        assertVariablesNotVisibleForProcessInstance(processInstance);</span>
+
+<span class="nc bnc" id="L775" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L776">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L777">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L778">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L779">                    .singleResult();</span>
+<span class="nc" id="L780">            assertThat(historicReviews).isNotNull();</span>
+<span class="nc" id="L781">            assertThat(historicReviews.getVariableTypeName()).isEqualTo(BpmnAggregatedVariableType.TYPE_NAME);</span>
+        }
+
+<span class="nc" id="L784">        variables.put(&quot;approved&quot;, true);</span>
+<span class="nc" id="L785">        variables.put(&quot;description&quot;, &quot;description task 1&quot;);</span>
+<span class="nc" id="L786">        taskService.complete(tasks.get(1).getId(), variables);</span>
+
+<span class="nc" id="L788">        reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L790">        assertThatJson(reviews)</span>
+<span class="nc" id="L791">                .isEqualTo(</span>
+                        &quot;[&quot;
+                                + &quot;{ userId: 'userOne', approved : true, description : 'description task 0' },&quot;
+                                + &quot;{ userId: 'userTwo', approved : true, description : 'description task 1' },&quot;
+                                + &quot;{ userId: 'userThree' }&quot;
+                                + &quot;]&quot;);
+
+<span class="nc" id="L798">        variables.put(&quot;approved&quot;, false);</span>
+<span class="nc" id="L799">        variables.put(&quot;description&quot;, &quot;description task 2&quot;);</span>
+<span class="nc" id="L800">        taskService.complete(tasks.get(2).getId(), variables);</span>
+
+<span class="nc" id="L802">        assertVariablesNotVisibleForProcessInstance(processInstance);</span>
+
+<span class="nc" id="L804">        reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L806">        assertThatJson(reviews)</span>
+<span class="nc" id="L807">                .isEqualTo(</span>
+                        &quot;[&quot;
+                                + &quot;{ userId: 'userOne', approved : true, description : 'description task 0' },&quot;
+                                + &quot;{ userId: 'userTwo', approved : true, description : 'description task 1' },&quot;
+                                + &quot;{ userId: 'userThree', approved : false, description : 'description task 2' }&quot;
+                                + &quot;]&quot;);
+
+<span class="nc" id="L814">        assertNoAggregatedVariables();</span>
+<span class="nc" id="L815">        VariableInstance reviewsVarInstance = runtimeService.getVariableInstance(processInstance.getId(), &quot;reviews&quot;);</span>
+<span class="nc" id="L816">        assertThat(reviewsVarInstance.getTypeName()).isEqualTo(JsonType.TYPE_NAME);</span>
+
+<span class="nc bnc" id="L818" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L819">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L820">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L821">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L822">                    .singleResult();</span>
+<span class="nc" id="L823">            assertThat(historicReviews).isNotNull();</span>
+<span class="nc" id="L824">            assertThat(historicReviews.getVariableTypeName()).isEqualTo(JsonType.TYPE_NAME);</span>
+        }
+
+<span class="nc" id="L827">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/bpmn/multiinstance/MultiInstanceVariableAggregationTest.testParallelMultiInstanceUserTask.bpmn20.xml&quot;)
+    public void testParallelMultiInstanceUserTaskWithExpressionModifyingOverviewVariable() {
+<span class="nc" id="L832">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L833">                .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L834">                .variable(&quot;nrOfLoops&quot;, 3)</span>
+<span class="nc" id="L835">                .start();</span>
+
+<span class="nc" id="L837">        ArrayNode reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L839">        assertThatJson(reviews)</span>
+<span class="nc" id="L840">                .isEqualTo(&quot;[&quot;</span>
+                        + &quot;{ userId: null },&quot;
+                        + &quot;{ userId: null },&quot;
+                        + &quot;{ userId: null }&quot;
+                        + &quot;]&quot;);
+
+<span class="nc" id="L846">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L847">                .orderByTaskPriority().asc()</span>
+<span class="nc" id="L848">                .list();</span>
+<span class="nc" id="L849">        assertThat(tasks).hasSize(3);</span>
+
+<span class="nc" id="L851">        taskService.setAssignee(tasks.get(0).getId(), &quot;userOne&quot;);</span>
+<span class="nc" id="L852">        taskService.setAssignee(tasks.get(1).getId(), &quot;userTwo&quot;);</span>
+<span class="nc" id="L853">        taskService.setAssignee(tasks.get(2).getId(), &quot;userThree&quot;);</span>
+
+<span class="nc" id="L855">        reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L857">        assertThatJson(reviews)</span>
+<span class="nc" id="L858">                .isEqualTo(</span>
+                        &quot;[&quot;
+                                + &quot;{ userId: 'userOne' },&quot;
+                                + &quot;{ userId: 'userTwo' },&quot;
+                                + &quot;{ userId: 'userThree' }&quot;
+                                + &quot;]&quot;);
+
+<span class="nc" id="L865">        Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L866">        variables.put(&quot;approved&quot;, true);</span>
+<span class="nc" id="L867">        variables.put(&quot;description&quot;, &quot;description task 0&quot;);</span>
+<span class="nc" id="L868">        taskService.complete(tasks.get(0).getId(), variables);</span>
+
+<span class="nc" id="L870">        reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L872">        assertThatJson(reviews)</span>
+<span class="nc" id="L873">                .isEqualTo(&quot;[&quot;</span>
+                        + &quot;{ userId: 'userOne', approved : true, description : 'description task 0' },&quot;
+                        + &quot;{ userId: 'userTwo' },&quot;
+                        + &quot;{ userId: 'userThree' }&quot;
+                        + &quot;]&quot;);
+
+<span class="nc bnc" id="L879" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L880">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L881">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L882">                    .singleResult();</span>
+<span class="nc" id="L883">            assertThat(historicReviews).isNotNull();</span>
+<span class="nc" id="L884">            assertThat(historicReviews.getVariableTypeName()).isEqualTo(BpmnAggregatedVariableType.TYPE_NAME);</span>
+<span class="nc" id="L885">            assertThatJson(historicReviews.getValue())</span>
+<span class="nc" id="L886">                    .isEqualTo(&quot;[&quot;</span>
+                            + &quot;{ userId: 'userOne', approved : true, description : 'description task 0' },&quot;
+                            + &quot;{ userId: 'userTwo' },&quot;
+                            + &quot;{ userId: 'userThree' }&quot;
+                            + &quot;]&quot;);
+        }
+
+<span class="nc" id="L893">        managementService.executeCommand(commandContext -&gt; {</span>
+<span class="nc" id="L894">            ExecutionEntity execution = processEngineConfiguration.getExecutionEntityManager().findById(processInstance.getId());</span>
+<span class="nc" id="L895">            processEngineConfiguration.getExpressionManager()</span>
+<span class="nc" id="L896">                    .createExpression(&quot;${reviews}&quot;)</span>
+<span class="nc" id="L897">                    .setValue(&quot;customReviews&quot;, execution);</span>
+
+<span class="nc" id="L899">            return null;</span>
+        });
+
+<span class="nc" id="L902">        VariableInstance reviewsInstance = runtimeService.getVariableInstance(processInstance.getId(), &quot;reviews&quot;);</span>
+
+<span class="nc" id="L904">        assertThat(reviewsInstance.getTypeName()).isEqualTo(BpmnAggregatedVariableType.TYPE_NAME);</span>
+<span class="nc" id="L905">        assertThatJson(reviewsInstance.getValue())</span>
+<span class="nc" id="L906">                .isEqualTo(&quot;[&quot;</span>
+                        + &quot;{ userId: 'userOne', approved : true, description : 'description task 0' },&quot;
+                        + &quot;{ userId: 'userTwo' },&quot;
+                        + &quot;{ userId: 'userThree' }&quot;
+                        + &quot;]&quot;);
+
+<span class="nc" id="L912">        assertThatThrownBy(() -&gt; {</span>
+<span class="nc" id="L913">            managementService.executeCommand(commandContext -&gt; {</span>
+<span class="nc" id="L914">                ExecutionEntity execution = processEngineConfiguration.getExecutionEntityManager().findById(processInstance.getId());</span>
+<span class="nc" id="L915">                processEngineConfiguration.getExpressionManager()</span>
+<span class="nc" id="L916">                        .createExpression(&quot;${reviews[0].userId}&quot;)</span>
+<span class="nc" id="L917">                        .setValue(&quot;testUser&quot;, execution);</span>
+<span class="nc" id="L918">                return null;</span>
+            });
+<span class="nc" id="L920">        }).hasMessageStartingWith(&quot;Error while evaluating expression: ${reviews[0].userId} with ProcessInstance[&quot;)</span>
+<span class="nc" id="L921">            .hasMessageContaining(&quot; - definition 'myProcess:1:&quot;);</span>
+
+<span class="nc" id="L923">        reviewsInstance = runtimeService.getVariableInstance(processInstance.getId(), &quot;reviews&quot;);</span>
+
+<span class="nc" id="L925">        assertThat(reviewsInstance.getTypeName()).isEqualTo(BpmnAggregatedVariableType.TYPE_NAME);</span>
+<span class="nc" id="L926">        assertThatJson(reviewsInstance.getValue())</span>
+<span class="nc" id="L927">                .isEqualTo(&quot;[&quot;</span>
+                        + &quot;{ userId: 'userOne', approved : true, description : 'description task 0' },&quot;
+                        + &quot;{ userId: 'userTwo' },&quot;
+                        + &quot;{ userId: 'userThree' }&quot;
+                        + &quot;]&quot;);
+
+<span class="nc bnc" id="L933" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L934">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L935">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L936">                    .singleResult();</span>
+<span class="nc" id="L937">            assertThat(historicReviews).isNotNull();</span>
+<span class="nc" id="L938">            assertThat(historicReviews.getVariableTypeName()).isEqualTo(BpmnAggregatedVariableType.TYPE_NAME);</span>
+<span class="nc" id="L939">            assertThatJson(historicReviews.getValue())</span>
+<span class="nc" id="L940">                    .isEqualTo(&quot;[&quot;</span>
+                            + &quot;{ userId: 'userOne', approved : true, description : 'description task 0' },&quot;
+                            + &quot;{ userId: 'userTwo' },&quot;
+                            + &quot;{ userId: 'userThree' }&quot;
+                            + &quot;]&quot;);
+        }
+
+<span class="nc" id="L947">    }</span>
+
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/bpmn/multiinstance/MultiInstanceVariableAggregationTest.testParallelMultiInstanceUserTask.bpmn20.xml&quot;)
+    public void testParallelMultiInstanceUserTaskWithZeroCardinality() {
+<span class="nc" id="L953">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L954">            .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L955">            .variable(&quot;nrOfLoops&quot;, 0)</span>
+<span class="nc" id="L956">            .start();</span>
+
+<span class="nc" id="L958">        Task taskAfterMi = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L959">        assertThat(taskAfterMi.getTaskDefinitionKey()).isEqualTo(&quot;afterMiTasks&quot;);</span>
+
+<span class="nc" id="L961">        VariableInstance reviewsVarInstance = runtimeService.getVariableInstance(processInstance.getId(), &quot;reviews&quot;);</span>
+<span class="nc" id="L962">        assertThat(reviewsVarInstance.getTypeName()).isEqualTo(JsonType.TYPE_NAME);</span>
+<span class="nc" id="L963">        assertThatJson(reviewsVarInstance.getValue()).isEqualTo(&quot;[]&quot;);</span>
+
+<span class="nc bnc" id="L965" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L966">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L967">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L968">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L969">                    .singleResult();</span>
+<span class="nc" id="L970">            assertThat(historicReviews).isNotNull();</span>
+<span class="nc" id="L971">            assertThat(historicReviews.getVariableTypeName()).isEqualTo(JsonType.TYPE_NAME);</span>
+        }
+
+<span class="nc" id="L974">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/bpmn/multiinstance/MultiInstanceVariableAggregationTest.testParallelMultiInstanceUserTaskWithBoundaryEvent.bpmn20.xml&quot;)
+    public void testParallelMultiInstanceUserTaskWithProcessDeletion() {
+<span class="nc" id="L979">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L980">                .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L981">                .variable(&quot;nrOfLoops&quot;, 3)</span>
+<span class="nc" id="L982">                .start();</span>
+
+<span class="nc bnc" id="L984" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.AUDIT, processEngineConfiguration)) {</span>
+<span class="nc" id="L985">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L986">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L987">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L988">                    .singleResult();</span>
+<span class="nc" id="L989">            assertThat(historicReviews).isNotNull();</span>
+<span class="nc" id="L990">            assertThatJson(historicReviews.getValue())</span>
+<span class="nc" id="L991">                    .isEqualTo(&quot;[&quot;</span>
+                            + &quot;{ userId: null },&quot;
+                            + &quot;{ userId: null },&quot;
+                            + &quot;{ userId: null }&quot;
+                            + &quot;]&quot;);
+        }
+
+<span class="nc" id="L998">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L999">                .orderByTaskPriority().asc()</span>
+<span class="nc" id="L1000">                .list();</span>
+<span class="nc" id="L1001">        assertThat(tasks).hasSize(3);</span>
+
+<span class="nc" id="L1003">        taskService.setAssignee(tasks.get(0).getId(), &quot;userOne&quot;);</span>
+<span class="nc" id="L1004">        taskService.setAssignee(tasks.get(1).getId(), &quot;userTwo&quot;);</span>
+<span class="nc" id="L1005">        taskService.setAssignee(tasks.get(2).getId(), &quot;userThree&quot;);</span>
+
+<span class="nc" id="L1007">        Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L1008">        variables.put(&quot;approved&quot;, true);</span>
+<span class="nc" id="L1009">        variables.put(&quot;description&quot;, &quot;description task 0&quot;);</span>
+<span class="nc" id="L1010">        taskService.complete(tasks.get(0).getId(), variables);</span>
+
+<span class="nc bnc" id="L1012" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1013">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L1014">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L1015">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L1016">                    .singleResult();</span>
+<span class="nc" id="L1017">            assertThat(historicReviews).isNotNull();</span>
+<span class="nc" id="L1018">            assertThat(historicReviews.getVariableTypeName()).isEqualTo(BpmnAggregatedVariableType.TYPE_NAME);</span>
+<span class="nc" id="L1019">            assertThatJson(historicReviews.getValue())</span>
+<span class="nc" id="L1020">                    .isEqualTo(&quot;[&quot;</span>
+                            + &quot;{ userId: 'userOne', approved : true, description : 'description task 0' },&quot;
+                            + &quot;{ userId: 'userTwo' },&quot;
+                            + &quot;{ userId: 'userThree' }&quot;
+                            + &quot;]&quot;);
+        }
+
+<span class="nc" id="L1027">        runtimeService.deleteProcessInstance(processInstance.getId(), &quot;for testing&quot;);</span>
+
+<span class="nc bnc" id="L1029" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1030">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L1031">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L1032">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L1033">                    .singleResult();</span>
+<span class="nc" id="L1034">            assertThat(historicReviews).isNull();</span>
+        }
+<span class="nc" id="L1036">    }</span>
+
+    @Test
+    @Deployment
+    public void testSequentialMultiInstanceUserTask() {
+<span class="nc" id="L1041">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L1042">            .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L1043">            .variable(&quot;nrOfLoops&quot;, 4)</span>
+<span class="nc" id="L1044">            .start();</span>
+
+<span class="nc" id="L1046">        ArrayNode reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L1048">        assertThatJson(reviews)</span>
+<span class="nc" id="L1049">            .isEqualTo(&quot;[&quot;</span>
+                    + &quot;{ userId: null }&quot;
+                    + &quot;]&quot;);
+
+<span class="nc" id="L1053">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+
+<span class="nc" id="L1055">        Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L1056">        variables.put(&quot;approved&quot;, false);</span>
+<span class="nc" id="L1057">        variables.put(&quot;description&quot;, &quot;a&quot;);</span>
+<span class="nc" id="L1058">        taskService.setAssignee(task.getId(), &quot;userOne&quot;);</span>
+
+<span class="nc" id="L1060">        reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L1062">        assertThatJson(reviews)</span>
+<span class="nc" id="L1063">            .isEqualTo(&quot;[&quot;</span>
+                + &quot;{ userId: 'userOne' }&quot;
+                + &quot;]&quot;);
+
+<span class="nc" id="L1067">        taskService.complete(task.getId(), variables);</span>
+
+<span class="nc" id="L1069">        reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L1071">        assertThatJson(reviews)</span>
+<span class="nc" id="L1072">            .isEqualTo(&quot;[&quot;</span>
+                + &quot;{ userId: 'userOne', approved : false, description : 'a' },&quot;
+                + &quot;{ userId: null }&quot;
+                + &quot;]&quot;);
+
+<span class="nc" id="L1077">        assertVariablesNotVisibleForProcessInstance(processInstance);</span>
+
+<span class="nc bnc" id="L1079" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1080">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L1081">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L1082">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L1083">                    .singleResult();</span>
+<span class="nc" id="L1084">            assertThat(historicReviews).isNotNull();</span>
+<span class="nc" id="L1085">            assertThat(historicReviews.getVariableTypeName()).isEqualTo(BpmnAggregatedVariableType.TYPE_NAME);</span>
+        }
+
+<span class="nc" id="L1088">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1089">        variables.put(&quot;approved&quot;, false);</span>
+<span class="nc" id="L1090">        variables.put(&quot;description&quot;, &quot;b&quot;);</span>
+<span class="nc" id="L1091">        taskService.setAssignee(task.getId(), &quot;userTwo&quot;);</span>
+<span class="nc" id="L1092">        taskService.complete(task.getId(), variables);</span>
+
+<span class="nc" id="L1094">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1095">        variables.put(&quot;approved&quot;, true);</span>
+<span class="nc" id="L1096">        variables.put(&quot;description&quot;, &quot;c&quot;);</span>
+<span class="nc" id="L1097">        taskService.setAssignee(task.getId(), &quot;userThree&quot;);</span>
+<span class="nc" id="L1098">        taskService.complete(task.getId(), variables);</span>
+
+<span class="nc" id="L1100">        reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L1102">        assertThatJson(reviews)</span>
+<span class="nc" id="L1103">            .isEqualTo(&quot;[&quot;</span>
+                + &quot;{ userId: 'userOne', approved : false, description : 'a' },&quot;
+                + &quot;{ userId: 'userTwo', approved : false, description : 'b' },&quot;
+                + &quot;{ userId: 'userThree', approved : true, description : 'c' },&quot;
+                + &quot;{ userId: null }&quot;
+                + &quot;]&quot;);
+
+<span class="nc" id="L1110">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1111">        variables.put(&quot;approved&quot;, true);</span>
+<span class="nc" id="L1112">        variables.put(&quot;description&quot;, &quot;d&quot;);</span>
+<span class="nc" id="L1113">        taskService.setAssignee(task.getId(), &quot;userFour&quot;);</span>
+<span class="nc" id="L1114">        taskService.complete(task.getId(), variables);</span>
+
+<span class="nc" id="L1116">        assertVariablesNotVisibleForProcessInstance(processInstance);</span>
+
+<span class="nc" id="L1118">        reviews = (ArrayNode) runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;);</span>
+
+<span class="nc" id="L1120">        assertThatJson(reviews)</span>
+<span class="nc" id="L1121">            .isEqualTo(</span>
+                &quot;[&quot;
+                    + &quot;{ userId: 'userOne', approved : false, description : 'a' },&quot;
+                    + &quot;{ userId: 'userTwo', approved : false, description : 'b' },&quot;
+                    + &quot;{ userId: 'userThree', approved : true, description : 'c' },&quot;
+                    + &quot;{ userId: 'userFour', approved : true, description : 'd' }&quot;
+                    + &quot;]&quot;);
+
+<span class="nc" id="L1129">        assertNoAggregatedVariables();</span>
+<span class="nc" id="L1130">        VariableInstance reviewsVarInstance = runtimeService.getVariableInstance(processInstance.getId(), &quot;reviews&quot;);</span>
+<span class="nc" id="L1131">        assertThat(reviewsVarInstance.getTypeName()).isEqualTo(JsonType.TYPE_NAME);</span>
+
+<span class="nc bnc" id="L1133" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1134">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L1135">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L1136">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L1137">                    .singleResult();</span>
+<span class="nc" id="L1138">            assertThat(historicReviews).isNotNull();</span>
+<span class="nc" id="L1139">            assertThat(historicReviews.getVariableTypeName()).isEqualTo(JsonType.TYPE_NAME);</span>
+        }
+
+<span class="nc" id="L1142">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/bpmn/multiinstance/MultiInstanceVariableAggregationTest.testSequentialMultiInstanceUserTaskWithBoundaryEvent.bpmn20.xml&quot;)
+    public void testSequentialMultiInstanceUserTaskWithBoundaryEventCancel() {
+<span class="nc" id="L1147">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L1148">            .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L1149">            .variable(&quot;nrOfLoops&quot;, 4)</span>
+<span class="nc" id="L1150">            .start();</span>
+
+<span class="nc" id="L1152">        ArrayNode reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L1154">        assertThatJson(reviews)</span>
+<span class="nc" id="L1155">            .isEqualTo(&quot;[&quot;</span>
+                    + &quot;{ userId: null }&quot;
+                    + &quot;]&quot;);
+
+<span class="nc" id="L1159">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+
+<span class="nc" id="L1161">        Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L1162">        variables.put(&quot;approved&quot;, false);</span>
+<span class="nc" id="L1163">        variables.put(&quot;description&quot;, &quot;a&quot;);</span>
+<span class="nc" id="L1164">        taskService.setAssignee(task.getId(), &quot;userOne&quot;);</span>
+
+<span class="nc" id="L1166">        reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L1168">        assertThatJson(reviews)</span>
+<span class="nc" id="L1169">            .isEqualTo(&quot;[&quot;</span>
+                + &quot;{ userId: 'userOne' }&quot;
+                + &quot;]&quot;);
+
+<span class="nc" id="L1173">        taskService.complete(task.getId(), variables);</span>
+
+<span class="nc" id="L1175">        reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L1177">        assertThatJson(reviews)</span>
+<span class="nc" id="L1178">            .isEqualTo(&quot;[&quot;</span>
+                + &quot;{ userId: 'userOne', approved : false, description : 'a' },&quot;
+                + &quot;{ userId: null }&quot;
+                + &quot;]&quot;);
+
+<span class="nc bnc" id="L1183" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1184">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L1185">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L1186">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L1187">                    .singleResult();</span>
+<span class="nc" id="L1188">            assertThat(historicReviews).isNotNull();</span>
+<span class="nc" id="L1189">            assertThat(historicReviews.getVariableTypeName()).isEqualTo(BpmnAggregatedVariableType.TYPE_NAME);</span>
+        }
+
+<span class="nc" id="L1192">        EventSubscription eventSubscription = runtimeService.createEventSubscriptionQuery().singleResult();</span>
+
+<span class="nc" id="L1194">        runtimeService.messageEventReceived(&quot;Abort&quot;, eventSubscription.getExecutionId());</span>
+
+<span class="nc" id="L1196">        assertVariablesNotVisibleForProcessInstance(processInstance);</span>
+
+<span class="nc" id="L1198">        assertNoAggregatedVariables();</span>
+<span class="nc" id="L1199">        VariableInstance reviewsVarInstance = runtimeService.getVariableInstance(processInstance.getId(), &quot;reviews&quot;);</span>
+<span class="nc" id="L1200">        assertThat(reviewsVarInstance).isNull();</span>
+
+<span class="nc bnc" id="L1202" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1203">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L1204">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L1205">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L1206">                    .singleResult();</span>
+<span class="nc" id="L1207">            assertThat(historicReviews).isNull();</span>
+        }
+<span class="nc" id="L1209">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/bpmn/multiinstance/MultiInstanceVariableAggregationTest.testSequentialMultiInstanceUserTaskWithBoundaryEvent.bpmn20.xml&quot;)
+    public void testSequentialMultiInstanceUserTaskWithBoundaryEventCancelAndPayload() {
+<span class="nc" id="L1214">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L1215">            .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L1216">            .variable(&quot;nrOfLoops&quot;, 4)</span>
+<span class="nc" id="L1217">            .start();</span>
+
+<span class="nc" id="L1219">        ArrayNode reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L1221">        assertThatJson(reviews)</span>
+<span class="nc" id="L1222">            .isEqualTo(&quot;[&quot;</span>
+                    + &quot;{ userId: null }&quot;
+                    + &quot;]&quot;);
+
+<span class="nc" id="L1226">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+
+<span class="nc" id="L1228">        Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L1229">        variables.put(&quot;approved&quot;, false);</span>
+<span class="nc" id="L1230">        variables.put(&quot;description&quot;, &quot;a&quot;);</span>
+<span class="nc" id="L1231">        taskService.setAssignee(task.getId(), &quot;userOne&quot;);</span>
+
+<span class="nc" id="L1233">        reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L1235">        assertThatJson(reviews)</span>
+<span class="nc" id="L1236">            .isEqualTo(&quot;[&quot;</span>
+                + &quot;{ userId: 'userOne' }&quot;
+                + &quot;]&quot;);
+
+<span class="nc" id="L1240">        taskService.complete(task.getId(), variables);</span>
+
+<span class="nc" id="L1242">        reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L1244">        assertThatJson(reviews)</span>
+<span class="nc" id="L1245">            .isEqualTo(&quot;[&quot;</span>
+                + &quot;{ userId: 'userOne', approved : false, description : 'a' },&quot;
+                + &quot;{ userId: null }&quot;
+                + &quot;]&quot;);
+
+<span class="nc bnc" id="L1250" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1251">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L1252">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L1253">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L1254">                    .singleResult();</span>
+<span class="nc" id="L1255">            assertThat(historicReviews).isNotNull();</span>
+<span class="nc" id="L1256">            assertThat(historicReviews.getVariableTypeName()).isEqualTo(BpmnAggregatedVariableType.TYPE_NAME);</span>
+        }
+
+<span class="nc" id="L1259">        EventSubscription eventSubscription = runtimeService.createEventSubscriptionQuery().singleResult();</span>
+
+<span class="nc" id="L1261">        runtimeService.messageEventReceived(&quot;Abort&quot;, eventSubscription.getExecutionId(), Collections.singletonMap(&quot;abortReason&quot;, &quot;test&quot;));</span>
+
+<span class="nc" id="L1263">        assertVariablesNotVisibleForProcessInstance(processInstance);</span>
+
+<span class="nc" id="L1265">        assertNoAggregatedVariables();</span>
+<span class="nc" id="L1266">        assertThat(runtimeService.getVariableInstance(processInstance.getId(), &quot;reviews&quot;)).isNull();</span>
+<span class="nc" id="L1267">        assertThat(runtimeService.getVariable(processInstance.getId(), &quot;abortReason&quot;)).isEqualTo(&quot;test&quot;);</span>
+<span class="nc" id="L1268">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/bpmn/multiinstance/MultiInstanceVariableAggregationTest.testSequentialMultiInstanceUserTaskWithBoundaryEvent.bpmn20.xml&quot;)
+    public void testSequentialMultiInstanceUserTaskWithBoundaryEventComplete() {
+<span class="nc" id="L1273">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L1274">            .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L1275">            .variable(&quot;nrOfLoops&quot;, 4)</span>
+<span class="nc" id="L1276">            .start();</span>
+
+<span class="nc" id="L1278">        ArrayNode reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L1280">        assertThatJson(reviews)</span>
+<span class="nc" id="L1281">            .isEqualTo(&quot;[&quot;</span>
+                    + &quot;{ userId: null }&quot;
+                    + &quot;]&quot;);
+
+<span class="nc" id="L1285">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+
+<span class="nc" id="L1287">        Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L1288">        variables.put(&quot;approved&quot;, false);</span>
+<span class="nc" id="L1289">        variables.put(&quot;description&quot;, &quot;a&quot;);</span>
+<span class="nc" id="L1290">        taskService.setAssignee(task.getId(), &quot;userOne&quot;);</span>
+
+<span class="nc" id="L1292">        reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L1294">        assertThatJson(reviews)</span>
+<span class="nc" id="L1295">            .isEqualTo(&quot;[&quot;</span>
+                + &quot;{ userId: 'userOne' }&quot;
+                + &quot;]&quot;);
+
+<span class="nc" id="L1299">        taskService.complete(task.getId(), variables);</span>
+
+<span class="nc" id="L1301">        reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L1303">        assertThatJson(reviews)</span>
+<span class="nc" id="L1304">            .isEqualTo(&quot;[&quot;</span>
+                + &quot;{ userId: 'userOne', approved : false, description : 'a' },&quot;
+                + &quot;{ userId: null }&quot;
+                + &quot;]&quot;);
+
+<span class="nc" id="L1309">        assertVariablesNotVisibleForProcessInstance(processInstance);</span>
+
+<span class="nc bnc" id="L1311" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1312">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L1313">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L1314">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L1315">                    .singleResult();</span>
+<span class="nc" id="L1316">            assertThat(historicReviews).isNotNull();</span>
+<span class="nc" id="L1317">            assertThat(historicReviews.getVariableTypeName()).isEqualTo(BpmnAggregatedVariableType.TYPE_NAME);</span>
+        }
+
+<span class="nc" id="L1320">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1321">        variables.put(&quot;approved&quot;, false);</span>
+<span class="nc" id="L1322">        variables.put(&quot;description&quot;, &quot;b&quot;);</span>
+<span class="nc" id="L1323">        taskService.setAssignee(task.getId(), &quot;userTwo&quot;);</span>
+<span class="nc" id="L1324">        taskService.complete(task.getId(), variables);</span>
+
+<span class="nc" id="L1326">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1327">        variables.put(&quot;approved&quot;, true);</span>
+<span class="nc" id="L1328">        variables.put(&quot;description&quot;, &quot;c&quot;);</span>
+<span class="nc" id="L1329">        taskService.setAssignee(task.getId(), &quot;userThree&quot;);</span>
+<span class="nc" id="L1330">        taskService.complete(task.getId(), variables);</span>
+
+<span class="nc" id="L1332">        reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L1334">        assertThatJson(reviews)</span>
+<span class="nc" id="L1335">            .isEqualTo(&quot;[&quot;</span>
+                + &quot;{ userId: 'userOne', approved : false, description : 'a' },&quot;
+                + &quot;{ userId: 'userTwo', approved : false, description : 'b' },&quot;
+                + &quot;{ userId: 'userThree', approved : true, description : 'c' },&quot;
+                + &quot;{ userId: null }&quot;
+                + &quot;]&quot;);
+
+<span class="nc" id="L1342">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1343">        variables.put(&quot;approved&quot;, true);</span>
+<span class="nc" id="L1344">        variables.put(&quot;description&quot;, &quot;d&quot;);</span>
+<span class="nc" id="L1345">        taskService.setAssignee(task.getId(), &quot;userFour&quot;);</span>
+<span class="nc" id="L1346">        taskService.complete(task.getId(), variables);</span>
+
+<span class="nc" id="L1348">        assertVariablesNotVisibleForProcessInstance(processInstance);</span>
+
+<span class="nc" id="L1350">        reviews = (ArrayNode) runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;);</span>
+
+<span class="nc" id="L1352">        assertThatJson(reviews)</span>
+<span class="nc" id="L1353">            .isEqualTo(</span>
+                &quot;[&quot;
+                    + &quot;{ userId: 'userOne', approved : false, description : 'a' },&quot;
+                    + &quot;{ userId: 'userTwo', approved : false, description : 'b' },&quot;
+                    + &quot;{ userId: 'userThree', approved : true, description : 'c' },&quot;
+                    + &quot;{ userId: 'userFour', approved : true, description : 'd' }&quot;
+                    + &quot;]&quot;);
+
+<span class="nc" id="L1361">        assertNoAggregatedVariables();</span>
+<span class="nc" id="L1362">        VariableInstance reviewsVarInstance = runtimeService.getVariableInstance(processInstance.getId(), &quot;reviews&quot;);</span>
+<span class="nc" id="L1363">        assertThat(reviewsVarInstance.getTypeName()).isEqualTo(JsonType.TYPE_NAME);</span>
+
+<span class="nc bnc" id="L1365" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1366">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L1367">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L1368">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L1369">                    .singleResult();</span>
+<span class="nc" id="L1370">            assertThat(historicReviews).isNotNull();</span>
+<span class="nc" id="L1371">            assertThat(historicReviews.getVariableTypeName()).isEqualTo(JsonType.TYPE_NAME);</span>
+        }
+
+<span class="nc" id="L1374">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/bpmn/multiinstance/MultiInstanceVariableAggregationTest.testSequentialMultiInstanceUserTask.bpmn20.xml&quot;)
+    public void testSequentialMultiInstanceUserTaskWithZeroCardinality() {
+<span class="nc" id="L1379">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L1380">            .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L1381">            .variable(&quot;nrOfLoops&quot;, 0)</span>
+<span class="nc" id="L1382">            .start();</span>
+
+<span class="nc" id="L1384">        Task taskAfterMi = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1385">        assertThat(taskAfterMi.getTaskDefinitionKey()).isEqualTo(&quot;afterMiTasks&quot;);</span>
+
+<span class="nc" id="L1387">        VariableInstance reviewsVarInstance = runtimeService.getVariableInstance(processInstance.getId(), &quot;reviews&quot;);</span>
+<span class="nc" id="L1388">        assertThat(reviewsVarInstance.getTypeName()).isEqualTo(JsonType.TYPE_NAME);</span>
+<span class="nc" id="L1389">        assertThatJson(reviewsVarInstance.getValue()).isEqualTo(&quot;[]&quot;);</span>
+
+<span class="nc bnc" id="L1391" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1392">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L1393">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L1394">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L1395">                    .singleResult();</span>
+<span class="nc" id="L1396">            assertThat(historicReviews).isNotNull();</span>
+<span class="nc" id="L1397">            assertThat(historicReviews.getVariableTypeName()).isEqualTo(JsonType.TYPE_NAME);</span>
+        }
+
+<span class="nc" id="L1400">    }</span>
+
+    @Test
+    @Deployment
+    public void testDeleteProcessInstanceBeforeAggregationFinished() {
+<span class="nc" id="L1405">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L1406">            .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L1407">            .variable(&quot;nrOfLoops&quot;, 3)</span>
+<span class="nc" id="L1408">            .start();</span>
+
+<span class="nc" id="L1410">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1411">        assertThat(tasks).hasSize(3);</span>
+
+<span class="nc" id="L1413">        Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L1414">        variables.put(&quot;approved&quot;, true);</span>
+<span class="nc" id="L1415">        variables.put(&quot;description&quot;, &quot;description task 0&quot;);</span>
+<span class="nc" id="L1416">        taskService.complete(tasks.get(0).getId(), variables);</span>
+
+<span class="nc" id="L1418">        runtimeService.deleteProcessInstance(processInstance.getId(), null);</span>
+
+        // The aggregated variables should be deleted now too
+
+<span class="nc" id="L1422">        List&lt;VariableInstanceEntity&gt; variableInstanceEntities = managementService.executeCommand(new Command&lt;&gt;() {</span>
+
+            @Override
+            public List&lt;VariableInstanceEntity&gt; execute(CommandContext commandContext) {
+<span class="nc" id="L1426">                return CommandContextUtil.getVariableService().createInternalVariableInstanceQuery().list();</span>
+            }
+        });
+<span class="nc" id="L1429">        assertThat(variableInstanceEntities).isEmpty();</span>
+
+<span class="nc" id="L1431">    }</span>
+
+    @Test
+    @Deployment
+    public void testParallelMultiInstanceSubProcess() {
+<span class="nc" id="L1436">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L1437">            .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L1438">            .variable(&quot;nrOfLoops&quot;, 4)</span>
+<span class="nc" id="L1439">            .start();</span>
+
+<span class="nc" id="L1441">        ArrayNode reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L1443">        assertThatJson(reviews)</span>
+<span class="nc" id="L1444">                .isEqualTo(&quot;[&quot;</span>
+                        + &quot;{ },&quot;
+                        + &quot;{ },&quot;
+                        + &quot;{ },&quot;
+                        + &quot;{ }&quot;
+                        + &quot;]&quot;);
+
+        // User task 'task one':  sets approved variable
+<span class="nc" id="L1452">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L1453">                .orderByCategory().asc()</span>
+<span class="nc" id="L1454">                .list();</span>
+<span class="nc" id="L1455">        assertThat(tasks).extracting(Task::getName).containsOnly(&quot;task one&quot;);</span>
+<span class="nc" id="L1456">        assertThat(tasks).hasSize(4);</span>
+
+<span class="nc bnc" id="L1458" title="All 2 branches missed.">        for (int i = 0; i &lt; tasks.size();  i++) {</span>
+<span class="nc" id="L1459">            Task task = tasks.get(i);</span>
+
+<span class="nc" id="L1461">            Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L1462" title="All 2 branches missed.">            variables.put(&quot;approved&quot;, i % 2 == 0);</span>
+<span class="nc" id="L1463">            taskService.complete(task.getId(), variables);</span>
+        }
+
+<span class="nc" id="L1466">        reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L1468">        assertThatJson(reviews)</span>
+<span class="nc" id="L1469">                .isEqualTo(&quot;[&quot;</span>
+                        + &quot;{ approved : true },&quot;
+                        + &quot;{ approved : false },&quot;
+                        + &quot;{ approved : true },&quot;
+                        + &quot;{ approved : false }&quot;
+                        + &quot;]&quot;);
+
+<span class="nc" id="L1476">        assertVariablesNotVisibleForProcessInstance(processInstance);</span>
+
+        // User task 'task two': sets description variable
+<span class="nc" id="L1479">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L1480">                .orderByCategory().asc()</span>
+<span class="nc" id="L1481">                .list();</span>
+<span class="nc" id="L1482">        assertThat(tasks).extracting(Task::getName).containsOnly(&quot;task two&quot;);</span>
+<span class="nc" id="L1483">        assertThat(tasks).hasSize(4);</span>
+
+<span class="nc bnc" id="L1485" title="All 2 branches missed.">        for (int i = 0; i &lt; tasks.size();  i++) {</span>
+<span class="nc" id="L1486">            Task task = tasks.get(i);</span>
+
+<span class="nc" id="L1488">            Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L1489">            variables.put(&quot;description&quot;, &quot;description task &quot; + i);</span>
+<span class="nc" id="L1490">            taskService.complete(task.getId(), variables);</span>
+        }
+
+<span class="nc" id="L1493">        reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L1495">        assertThatJson(reviews)</span>
+<span class="nc" id="L1496">                .isEqualTo(&quot;[&quot;</span>
+                        + &quot;{ approved : true, description : 'description task 0' },&quot;
+                        + &quot;{ approved : false, description : 'description task 1' },&quot;
+                        + &quot;{ approved : true, description : 'description task 2' },&quot;
+                        + &quot;{ approved : false, description : 'description task 3' }&quot;
+                        + &quot;]&quot;);
+
+<span class="nc" id="L1503">        assertVariablesNotVisibleForProcessInstance(processInstance);</span>
+
+<span class="nc bnc" id="L1505" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1506">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L1507">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L1508">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L1509">                    .singleResult();</span>
+<span class="nc" id="L1510">            assertThat(historicReviews).isNotNull();</span>
+<span class="nc" id="L1511">            assertThat(historicReviews.getVariableTypeName()).isEqualTo(BpmnAggregatedVariableType.TYPE_NAME);</span>
+        }
+
+        // User task 'task three': updates description and adds score
+<span class="nc" id="L1515">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L1516">                .orderByCategory().asc()</span>
+<span class="nc" id="L1517">                .list();</span>
+<span class="nc" id="L1518">        assertThat(tasks).extracting(Task::getName).containsOnly(&quot;task three&quot;);</span>
+<span class="nc" id="L1519">        assertThat(tasks).hasSize(4);</span>
+
+<span class="nc bnc" id="L1521" title="All 2 branches missed.">        for (int i = 0; i &lt; tasks.size();  i++) {</span>
+<span class="nc" id="L1522">            Task task = tasks.get(i);</span>
+
+<span class="nc" id="L1524">            Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L1525">            variables.put(&quot;myScore&quot;, i + 10);</span>
+//            variables.put(&quot;description&quot;, &quot;updated description task &quot; + i);
+<span class="nc" id="L1527">            taskService.complete(task.getId(), variables);</span>
+        }
+
+<span class="nc" id="L1530">        assertVariablesNotVisibleForProcessInstance(processInstance);</span>
+
+<span class="nc" id="L1532">        Task taskAfterMi = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1533">        assertThat(taskAfterMi.getName()).isEqualTo(&quot;Task after Mi&quot;);</span>
+
+<span class="nc" id="L1535">        reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L1537">        assertThatJson(reviews)</span>
+<span class="nc" id="L1538">            .isEqualTo(</span>
+                &quot;[&quot;
+                    + &quot;{ score: 10, approved : true, description : 'description task 0' },&quot;
+                    + &quot;{ score: 11, approved : false, description : 'description task 1' },&quot;
+                    + &quot;{ score: 12, approved : true, description : 'description task 2' },&quot;
+                    + &quot;{ score: 13, approved : false, description : 'description task 3' }&quot;
+                    + &quot;]]&quot;);
+
+<span class="nc" id="L1546">        assertNoAggregatedVariables();</span>
+<span class="nc" id="L1547">        VariableInstance reviewsVarInstance = runtimeService.getVariableInstance(processInstance.getId(), &quot;reviews&quot;);</span>
+<span class="nc" id="L1548">        assertThat(reviewsVarInstance.getTypeName()).isEqualTo(JsonType.TYPE_NAME);</span>
+
+<span class="nc bnc" id="L1550" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1551">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L1552">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L1553">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L1554">                    .singleResult();</span>
+<span class="nc" id="L1555">            assertThat(historicReviews).isNotNull();</span>
+<span class="nc" id="L1556">            assertThat(historicReviews.getVariableTypeName()).isEqualTo(JsonType.TYPE_NAME);</span>
+        }
+
+<span class="nc" id="L1559">    }</span>
+
+    @Test
+    @Deployment
+    public void testSequentialMultiInstanceSubProcess() {
+<span class="nc" id="L1564">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L1565">            .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L1566">            .variable(&quot;nrOfLoops&quot;, 3)</span>
+<span class="nc" id="L1567">            .start();</span>
+
+<span class="nc" id="L1569">        ArrayNode reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L1571">        assertThatJson(reviews)</span>
+<span class="nc" id="L1572">                .isEqualTo(&quot;[&quot;</span>
+                        + &quot;{ }&quot;
+                        + &quot;]&quot;);
+
+<span class="nc bnc" id="L1576" title="All 2 branches missed.">        for (int i = 0; i &lt; 3; i++) {</span>
+
+            // User task 'task one':  sets approved variable
+<span class="nc" id="L1579">            Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1580">            assertThat(task.getName()).isEqualTo(&quot;task one&quot;);</span>
+
+<span class="nc" id="L1582">            Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L1583" title="All 2 branches missed.">            variables.put(&quot;approved&quot;, i % 2 == 0);</span>
+<span class="nc" id="L1584">            taskService.complete(task.getId(), variables);</span>
+<span class="nc" id="L1585">            assertVariablesNotVisibleForProcessInstance(processInstance);</span>
+
+            // User task 'task two': sets description variable
+<span class="nc" id="L1588">            task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1589">            assertThat(task.getName()).isEqualTo(&quot;task two&quot;);</span>
+
+<span class="nc" id="L1591">            variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L1592">            variables.put(&quot;description&quot;, &quot;description task &quot; + i);</span>
+<span class="nc" id="L1593">            taskService.complete(task.getId(), variables);</span>
+<span class="nc" id="L1594">            assertVariablesNotVisibleForProcessInstance(processInstance);</span>
+
+<span class="nc bnc" id="L1596" title="All 2 branches missed.">            if (i == 0) {</span>
+<span class="nc" id="L1597">                reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L1599">                assertThatJson(reviews)</span>
+<span class="nc" id="L1600">                        .isEqualTo(&quot;[&quot;</span>
+                                + &quot;{ approved : true, description : 'description task 0' }&quot;
+                                + &quot;]&quot;);
+
+<span class="nc bnc" id="L1604" title="All 2 branches missed.">                if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1605">                    HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L1606">                            .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L1607">                            .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L1608">                            .singleResult();</span>
+<span class="nc" id="L1609">                    assertThat(historicReviews).isNotNull();</span>
+<span class="nc" id="L1610">                    assertThat(historicReviews.getVariableTypeName()).isEqualTo(BpmnAggregatedVariableType.TYPE_NAME);</span>
+<span class="nc" id="L1611">                }</span>
+
+<span class="nc bnc" id="L1613" title="All 2 branches missed.">            } else if (i == 1) {</span>
+<span class="nc" id="L1614">                reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L1616">                assertThatJson(reviews)</span>
+<span class="nc" id="L1617">                        .isEqualTo(&quot;[&quot;</span>
+                                + &quot;{ score: 10, approved : true, description : 'description task 0' },&quot;
+                                + &quot;{ approved : false, description : 'description task 1' }&quot;
+                                + &quot;]&quot;);
+            }
+
+            // User task 'task three': updates description and adds score
+<span class="nc" id="L1624">            task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1625">            assertThat(task.getName()).isEqualTo(&quot;task three&quot;);</span>
+
+<span class="nc" id="L1627">            variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L1628">            variables.put(&quot;myScore&quot;, i + 10);</span>
+            //            variables.put(&quot;description&quot;, &quot;updated description task &quot; + i);
+<span class="nc" id="L1630">            taskService.complete(task.getId(), variables);</span>
+<span class="nc" id="L1631">            assertVariablesNotVisibleForProcessInstance(processInstance);</span>
+        }
+
+<span class="nc" id="L1634">        Task taskAfterMi = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1635">        assertThat(taskAfterMi.getName()).isEqualTo(&quot;Task after Mi&quot;);</span>
+
+<span class="nc" id="L1637">        reviews = (ArrayNode) runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;);</span>
+
+<span class="nc" id="L1639">        assertThatJson(reviews)</span>
+<span class="nc" id="L1640">            .isEqualTo(</span>
+                &quot;[&quot;
+                    + &quot;{ score: 10, approved : true, description : 'description task 0' },&quot;
+                    + &quot;{ score: 11, approved : false, description : 'description task 1' },&quot;
+                    + &quot;{ score: 12, approved : true, description : 'description task 2' }&quot;
+                    + &quot;]]&quot;);
+
+<span class="nc" id="L1647">        assertNoAggregatedVariables();</span>
+<span class="nc" id="L1648">        VariableInstance reviewsVarInstance = runtimeService.getVariableInstance(processInstance.getId(), &quot;reviews&quot;);</span>
+<span class="nc" id="L1649">        assertThat(reviewsVarInstance.getTypeName()).isEqualTo(JsonType.TYPE_NAME);</span>
+
+<span class="nc bnc" id="L1651" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1652">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L1653">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L1654">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L1655">                    .singleResult();</span>
+<span class="nc" id="L1656">            assertThat(historicReviews).isNotNull();</span>
+<span class="nc" id="L1657">            assertThat(historicReviews.getVariableTypeName()).isEqualTo(JsonType.TYPE_NAME);</span>
+        }
+<span class="nc" id="L1659">    }</span>
+
+    @Test
+    @Deployment
+    public void testParallelMultiInstanceSubProcessWithParallelMultiInstanceUserTask() {
+
+<span class="nc" id="L1665">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L1666">                .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L1667">                .variable(&quot;nrOfLoops&quot;, 2)</span>
+<span class="nc" id="L1668">                .start();</span>
+
+<span class="nc" id="L1670">        ArrayNode reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L1672">        assertThatJson(reviews)</span>
+<span class="nc" id="L1673">                .isEqualTo(&quot;[&quot;</span>
+                        + &quot;{ first: [{ task: 0 }, { task: 1 }] },&quot;
+                        + &quot;{ first: [{ task: 10}, { task: 11 }] }&quot;
+                        + &quot;]&quot;);
+
+        // User task 'task one': sets approved and description variable
+<span class="nc" id="L1679">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L1680">                .orderByCategory().asc()</span>
+<span class="nc" id="L1681">                .list();</span>
+<span class="nc" id="L1682">        assertThat(tasks).extracting(Task::getName).containsOnly(&quot;task one&quot;);</span>
+<span class="nc" id="L1683">        assertThat(tasks).hasSize(4);</span>
+
+<span class="nc bnc" id="L1685" title="All 2 branches missed.">        for (int i = 0; i &lt; tasks.size();  i++) {</span>
+<span class="nc" id="L1686">            Task task = tasks.get(i);</span>
+
+<span class="nc" id="L1688">            Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L1689" title="All 2 branches missed.">            variables.put(&quot;approved&quot;, i % 2 == 0);</span>
+<span class="nc" id="L1690">            variables.put(&quot;description&quot;, &quot;description task &quot; + i);</span>
+<span class="nc" id="L1691">            taskService.complete(task.getId(), variables);</span>
+        }
+
+<span class="nc" id="L1694">        reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L1696">        assertThatJson(reviews)</span>
+<span class="nc" id="L1697">                .isEqualTo(&quot;[&quot;</span>
+                        + &quot;  {&quot;
+                        + &quot;    first: [&quot;
+                        + &quot;      { task: 0, approved : true, description : 'description task 0' },&quot;
+                        + &quot;      { task: 1, approved : false, description : 'description task 1'}&quot;
+                        + &quot;    ],&quot;
+                        + &quot;    second: [&quot;
+                        + &quot;      { score: 0 },&quot;
+                        + &quot;      { score: 0 }&quot;
+                        + &quot;    ]&quot;
+                        + &quot;  },&quot;
+                        + &quot;  {&quot;
+                        + &quot;    first: [&quot;
+                        + &quot;      { task: 10, approved : true, description : 'description task 2' },&quot;
+                        + &quot;      { task: 11, approved : false, description : 'description task 3' }&quot;
+                        + &quot;    ],&quot;
+                        + &quot;    second: [&quot;
+                        + &quot;      { score: 0 },&quot;
+                        + &quot;      { score: 0 }&quot;
+                        + &quot;    ]&quot;
+                        + &quot;  }&quot;
+                        + &quot;]&quot;);
+
+<span class="nc" id="L1720">        assertVariablesNotVisibleForProcessInstance(processInstance);</span>
+
+<span class="nc bnc" id="L1722" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1723">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L1724">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L1725">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L1726">                    .singleResult();</span>
+<span class="nc" id="L1727">            assertThat(historicReviews).isNotNull();</span>
+<span class="nc" id="L1728">            assertThat(historicReviews.getVariableTypeName()).isEqualTo(BpmnAggregatedVariableType.TYPE_NAME);</span>
+        }
+
+        // User task 'task two': sets myScore variable
+<span class="nc" id="L1732">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L1733">                .orderByCategory().asc()</span>
+<span class="nc" id="L1734">                .list();</span>
+<span class="nc" id="L1735">        assertThat(tasks).extracting(Task::getName).containsOnly(&quot;task two&quot;);</span>
+<span class="nc" id="L1736">        assertThat(tasks).hasSize(4);</span>
+
+<span class="nc bnc" id="L1738" title="All 2 branches missed.">        for (int i = 0; i &lt; tasks.size();  i++) {</span>
+<span class="nc" id="L1739">            Task task = tasks.get(i);</span>
+
+<span class="nc" id="L1741">            Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L1742">            variables.put(&quot;myScore&quot;, i + 10);</span>
+<span class="nc" id="L1743">            taskService.complete(task.getId(), variables);</span>
+        }
+
+<span class="nc" id="L1746">        assertVariablesNotVisibleForProcessInstance(processInstance);</span>
+
+<span class="nc" id="L1748">        Task taskAfterMi = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1749">        assertThat(taskAfterMi.getName()).isEqualTo(&quot;Task after Mi&quot;);</span>
+
+<span class="nc" id="L1751">        reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L1753">        assertThatJson(reviews)</span>
+<span class="nc" id="L1754">                .isEqualTo(&quot;[&quot;</span>
+                        + &quot;  {&quot;
+                        + &quot;    first: [&quot;
+                        + &quot;      { task: 0, approved : true, description : 'description task 0' },&quot;
+                        + &quot;      { task: 1, approved : false, description : 'description task 1'}&quot;
+                        + &quot;    ],&quot;
+                        + &quot;    second: [&quot;
+                        + &quot;      { score: 20 },&quot;
+                        + &quot;      { score: 22 }&quot;
+                        + &quot;    ]&quot;
+                        + &quot;  },&quot;
+                        + &quot;  {&quot;
+                        + &quot;    first: [&quot;
+                        + &quot;      { task: 10, approved : true, description : 'description task 2' },&quot;
+                        + &quot;      { task: 11, approved : false, description : 'description task 3' }&quot;
+                        + &quot;    ],&quot;
+                        + &quot;    second: [&quot;
+                        + &quot;      { score: 24 },&quot;
+                        + &quot;      { score: 26 }&quot;
+                        + &quot;    ]&quot;
+                        + &quot;  }&quot;
+                        + &quot;]&quot;);
+
+
+<span class="nc" id="L1778">        assertNoAggregatedVariables();</span>
+<span class="nc" id="L1779">        VariableInstance reviewsVarInstance = runtimeService.getVariableInstance(processInstance.getId(), &quot;reviews&quot;);</span>
+<span class="nc" id="L1780">        assertThat(reviewsVarInstance.getTypeName()).isEqualTo(JsonType.TYPE_NAME);</span>
+
+<span class="nc bnc" id="L1782" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1783">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L1784">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L1785">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L1786">                    .singleResult();</span>
+<span class="nc" id="L1787">            assertThat(historicReviews).isNotNull();</span>
+<span class="nc" id="L1788">            assertThat(historicReviews.getVariableTypeName()).isEqualTo(JsonType.TYPE_NAME);</span>
+        }
+
+<span class="nc" id="L1791">    }</span>
+
+    @Test
+    @Deployment
+    public void testParallelSubProcessWithParallelUserTaskWithCustomAggregator() {
+
+<span class="nc" id="L1797">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L1798">                .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L1799">                .variable(&quot;nrOfLoops&quot;, 2)</span>
+<span class="nc" id="L1800">                .start();</span>
+
+<span class="nc" id="L1802">        ArrayNode reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L1804">        assertThatJson(reviews)</span>
+<span class="nc" id="L1805">                .isEqualTo(&quot;[&quot;</span>
+                        + &quot;{ task: 0 },&quot;
+                        + &quot;{ task: 1 },&quot;
+                        + &quot;{ task: 10 },&quot;
+                        + &quot;{ task: 11 }&quot;
+                        + &quot;]&quot;);
+
+        // User task 'task one': sets approved and description variable
+<span class="nc" id="L1813">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L1814">                .orderByCategory().asc()</span>
+<span class="nc" id="L1815">                .list();</span>
+<span class="nc" id="L1816">        assertThat(tasks).extracting(Task::getName).containsOnly(&quot;task one&quot;);</span>
+<span class="nc" id="L1817">        assertThat(tasks).hasSize(4);</span>
+
+<span class="nc bnc" id="L1819" title="All 2 branches missed.">        for (int i = 0; i &lt; tasks.size();  i++) {</span>
+<span class="nc" id="L1820">            Task task = tasks.get(i);</span>
+
+<span class="nc" id="L1822">            Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L1823" title="All 2 branches missed.">            variables.put(&quot;approved&quot;, i % 2 == 0);</span>
+<span class="nc" id="L1824">            variables.put(&quot;description&quot;, &quot;description task &quot; + i);</span>
+<span class="nc" id="L1825">            taskService.complete(task.getId(), variables);</span>
+        }
+
+<span class="nc" id="L1828">        reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L1830">        assertThatJson(reviews)</span>
+<span class="nc" id="L1831">                .isEqualTo(&quot;[&quot;</span>
+                        + &quot;{ task: 0, approved : true, description : 'description task 0', score: 0 },&quot;
+                        + &quot;{ task: 1, approved : false, description : 'description task 1', score: 0 },&quot;
+                        + &quot;{ task: 10, approved : true, description : 'description task 2', score: 0 },&quot;
+                        + &quot;{ task: 11, approved : false, description : 'description task 3', score: 0 }&quot;
+                        + &quot;]&quot;);
+
+<span class="nc" id="L1838">        assertVariablesNotVisibleForProcessInstance(processInstance);</span>
+
+<span class="nc bnc" id="L1840" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1841">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L1842">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L1843">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L1844">                    .singleResult();</span>
+<span class="nc" id="L1845">            assertThat(historicReviews).isNotNull();</span>
+<span class="nc" id="L1846">            assertThat(historicReviews.getVariableTypeName()).isEqualTo(BpmnAggregatedVariableType.TYPE_NAME);</span>
+        }
+
+        // User task 'task two': sets myScore variable
+<span class="nc" id="L1850">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L1851">                .orderByCategory().asc()</span>
+<span class="nc" id="L1852">                .list();</span>
+<span class="nc" id="L1853">        assertThat(tasks).extracting(Task::getName).containsOnly(&quot;task two&quot;);</span>
+<span class="nc" id="L1854">        assertThat(tasks).hasSize(4);</span>
+
+<span class="nc bnc" id="L1856" title="All 2 branches missed.">        for (int i = 0; i &lt; tasks.size();  i++) {</span>
+<span class="nc" id="L1857">            Task task = tasks.get(i);</span>
+
+<span class="nc" id="L1859">            Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L1860">            variables.put(&quot;myScore&quot;, i + 10);</span>
+<span class="nc" id="L1861">            taskService.complete(task.getId(), variables);</span>
+        }
+
+<span class="nc" id="L1864">        assertVariablesNotVisibleForProcessInstance(processInstance);</span>
+
+<span class="nc" id="L1866">        Task taskAfterMi = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1867">        assertThat(taskAfterMi.getName()).isEqualTo(&quot;Task after Mi&quot;);</span>
+
+<span class="nc" id="L1869">        reviews = runtimeService.getVariable(processInstance.getId(), &quot;reviews&quot;, ArrayNode.class);</span>
+
+<span class="nc" id="L1871">        assertThatJson(reviews)</span>
+<span class="nc" id="L1872">                .isEqualTo(&quot;[&quot;</span>
+                        + &quot;{ task: 0, approved : true, description : 'description task 0', score: 20 },&quot;
+                        + &quot;{ task: 1, approved : false, description : 'description task 1', score: 22 },&quot;
+                        + &quot;{ task: 10, approved : true, description : 'description task 2', score: 24 },&quot;
+                        + &quot;{ task: 11, approved : false, description : 'description task 3', score: 26 }&quot;
+                        + &quot;]&quot;);
+
+<span class="nc" id="L1879">        assertNoAggregatedVariables();</span>
+
+<span class="nc" id="L1881">        VariableInstance reviewsVarInstance = runtimeService.getVariableInstance(processInstance.getId(), &quot;reviews&quot;);</span>
+<span class="nc" id="L1882">        assertThat(reviewsVarInstance.getTypeName()).isEqualTo(JsonType.TYPE_NAME);</span>
+
+<span class="nc bnc" id="L1884" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1885">            HistoricVariableInstance historicReviews = historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L1886">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L1887">                    .variableName(&quot;reviews&quot;)</span>
+<span class="nc" id="L1888">                    .singleResult();</span>
+<span class="nc" id="L1889">            assertThat(historicReviews).isNotNull();</span>
+<span class="nc" id="L1890">            assertThat(historicReviews.getVariableTypeName()).isEqualTo(JsonType.TYPE_NAME);</span>
+        }
+
+<span class="nc" id="L1893">    }</span>
+
+
+    protected void assertVariablesNotVisibleForProcessInstance(ProcessInstance processInstance) {
+
+<span class="nc" id="L1898">        assertThat(runtimeService.getVariable(processInstance.getId(), &quot;nrOfLoops&quot;)).isNotNull();</span>
+
+<span class="nc" id="L1900">        assertThat(runtimeService.getVariable(processInstance.getId(), &quot;approved&quot;)).isNull();</span>
+<span class="nc" id="L1901">        assertThat(runtimeService.getVariable(processInstance.getId(), &quot;description&quot;)).isNull();</span>
+<span class="nc" id="L1902">    }</span>
+
+    protected void assertNoAggregatedVariables() {
+<span class="nc" id="L1905">        List&lt;VariableInstanceEntity&gt; variableInstanceEntities = managementService.executeCommand(commandContext -&gt; CommandContextUtil.getVariableService()</span>
+<span class="nc" id="L1906">                .createInternalVariableInstanceQuery()</span>
+<span class="nc" id="L1907">                .scopeType(ScopeTypes.BPMN_VARIABLE_AGGREGATION)</span>
+<span class="nc" id="L1908">                .list());</span>
+<span class="nc" id="L1909">        assertThat(variableInstanceEntities).isEmpty();</span>
+
+<span class="nc" id="L1911">    }</span>
+
+<span class="nc" id="L1913">    public static class CustomVariableAggregator implements VariableAggregator {</span>
+
+        @Override
+        public Object aggregateSingleVariable(DelegateExecution execution, VariableAggregatorContext context) {
+<span class="nc" id="L1917">            ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration();</span>
+<span class="nc" id="L1918">            ObjectMapper objectMapper = processEngineConfiguration.getObjectMapper();</span>
+
+<span class="nc" id="L1920">            ArrayNode arrayNode = objectMapper.createArrayNode();</span>
+<span class="nc bnc" id="L1921" title="All 2 branches missed.">            for (VariableAggregationDefinition.Variable variable : context.getDefinition().getDefinitions()) {</span>
+<span class="nc" id="L1922">                Object sourceVariable = execution.getVariable(variable.getSource());</span>
+<span class="nc bnc" id="L1923" title="All 2 branches missed.">                if (sourceVariable instanceof ArrayNode) {</span>
+<span class="nc" id="L1924">                    ArrayNode sourceArrayNode = (ArrayNode) sourceVariable;</span>
+<span class="nc bnc" id="L1925" title="All 2 branches missed.">                    for (int i = 0; i &lt; sourceArrayNode.size(); i++) {</span>
+<span class="nc" id="L1926">                        JsonNode node = arrayNode.get(i);</span>
+<span class="nc" id="L1927">                        JsonNode sourceNode = sourceArrayNode.get(i);</span>
+<span class="nc bnc" id="L1928" title="All 2 branches missed.">                        if (node == null) {</span>
+<span class="nc" id="L1929">                            arrayNode.add(sourceNode.deepCopy());</span>
+<span class="nc bnc" id="L1930" title="All 2 branches missed.">                        } else if (node.isObject()) {</span>
+<span class="nc" id="L1931">                            ObjectNode objectNode = (ObjectNode) node;</span>
+<span class="nc" id="L1932">                            Iterator&lt;Map.Entry&lt;String, JsonNode&gt;&gt; fieldsIterator = sourceNode.fields();</span>
+<span class="nc bnc" id="L1933" title="All 2 branches missed.">                            while (fieldsIterator.hasNext()) {</span>
+<span class="nc" id="L1934">                                Map.Entry&lt;String, JsonNode&gt; field = fieldsIterator.next();</span>
+<span class="nc" id="L1935">                                objectNode.set(field.getKey(), field.getValue());</span>
+<span class="nc" id="L1936">                            }</span>
+                        }
+                    }
+                }
+<span class="nc" id="L1940">            }</span>
+
+<span class="nc" id="L1942">            return arrayNode;</span>
+        }
+
+        @Override
+        public Object aggregateMultiVariables(DelegateExecution execution, List&lt;? extends VariableInstance&gt; instances, VariableAggregatorContext context) {
+<span class="nc" id="L1947">            ArrayNode arrayNode = CommandContextUtil.getProcessEngineConfiguration().getObjectMapper().createArrayNode();</span>
+<span class="nc bnc" id="L1948" title="All 2 branches missed.">            for (VariableInstance instance : instances) {</span>
+<span class="nc" id="L1949">                arrayNode.addAll((ArrayNode) instance.getValue());</span>
+<span class="nc" id="L1950">            }</span>
+
+<span class="nc" id="L1952">            return arrayNode;</span>
+        }
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

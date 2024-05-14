@@ -1,0 +1,285 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DmnActivityBehavior.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.bpmn.behavior</a> &gt; <span class="el_source">DmnActivityBehavior.java</span></div><h1>DmnActivityBehavior.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.impl.bpmn.behavior;
+
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.bpmn.model.FieldExtension;
+import org.flowable.bpmn.model.Task;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.FlowableIllegalArgumentException;
+import org.flowable.common.engine.api.delegate.Expression;
+import org.flowable.common.engine.impl.el.ExpressionManager;
+import org.flowable.dmn.api.DecisionExecutionAuditContainer;
+import org.flowable.dmn.api.DecisionServiceExecutionAuditContainer;
+import org.flowable.dmn.api.DmnDecisionService;
+import org.flowable.dmn.api.ExecuteDecisionBuilder;
+import org.flowable.engine.DynamicBpmnConstants;
+import org.flowable.engine.delegate.DelegateExecution;
+import org.flowable.engine.delegate.DelegateHelper;
+import org.flowable.engine.impl.bpmn.helper.DynamicPropertyUtil;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.context.BpmnOverrideContext;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.engine.impl.util.ProcessDefinitionUtil;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+public class DmnActivityBehavior extends TaskActivityBehavior {
+
+    private static final long serialVersionUID = 1L;
+
+    protected static final String EXPRESSION_DECISION_TABLE_REFERENCE_KEY = &quot;decisionTableReferenceKey&quot;;
+    protected static final String EXPRESSION_DECISION_TABLE_THROW_ERROR_FLAG = &quot;decisionTaskThrowErrorOnNoHits&quot;;
+    protected static final String EXPRESSION_DECISION_TABLE_FALLBACK_TO_DEFAULT_TENANT = &quot;fallbackToDefaultTenant&quot;;
+    protected static final String EXPRESSION_DECISION_TABLE_SAME_DEPLOYMENT = &quot;sameDeployment&quot;;
+
+    protected Task task;
+
+<span class="nc" id="L54">    public DmnActivityBehavior(Task task) {</span>
+<span class="nc" id="L55">        this.task = task;</span>
+<span class="nc" id="L56">    }</span>
+
+    @Override
+    public void execute(DelegateExecution execution) {
+<span class="nc" id="L60">        FieldExtension fieldExtension = DelegateHelper.getFlowElementField(execution, EXPRESSION_DECISION_TABLE_REFERENCE_KEY);</span>
+<span class="nc bnc" id="L61" title="All 6 branches missed.">        if (fieldExtension == null || ((fieldExtension.getStringValue() == null || fieldExtension.getStringValue().length() == 0) &amp;&amp;</span>
+<span class="nc bnc" id="L62" title="All 4 branches missed.">                (fieldExtension.getExpression() == null || fieldExtension.getExpression().length() == 0))) {</span>
+
+<span class="nc" id="L64">            throw new FlowableException(&quot;decisionTableReferenceKey is a required field extension for the dmn task &quot; + task.getId() + &quot; in &quot; + execution);</span>
+        }
+
+<span class="nc" id="L67">        String activeDecisionKey = null;</span>
+<span class="nc bnc" id="L68" title="All 4 branches missed.">        if (fieldExtension.getExpression() != null &amp;&amp; fieldExtension.getExpression().length() &gt; 0) {</span>
+<span class="nc" id="L69">            activeDecisionKey = fieldExtension.getExpression();</span>
+
+        } else {
+<span class="nc" id="L72">            activeDecisionKey = fieldExtension.getStringValue();</span>
+        }
+
+<span class="nc" id="L75">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration();</span>
+<span class="nc" id="L76">        ExpressionManager expressionManager = processEngineConfiguration.getExpressionManager();</span>
+
+<span class="nc bnc" id="L78" title="All 2 branches missed.">        if (processEngineConfiguration.isEnableProcessDefinitionInfoCache()) {</span>
+<span class="nc" id="L79">            ObjectNode taskElementProperties = BpmnOverrideContext.getBpmnOverrideElementProperties(task.getId(), execution.getProcessDefinitionId());</span>
+<span class="nc" id="L80">            activeDecisionKey = DynamicPropertyUtil.getActiveValue(activeDecisionKey, DynamicBpmnConstants.DMN_TASK_DECISION_TABLE_KEY, taskElementProperties);</span>
+        }
+
+<span class="nc" id="L83">        String finalDecisionKeyValue = null;</span>
+<span class="nc" id="L84">        Object decisionKeyValue = expressionManager.createExpression(activeDecisionKey).getValue(execution);</span>
+<span class="nc bnc" id="L85" title="All 2 branches missed.">        if (decisionKeyValue != null) {</span>
+<span class="nc bnc" id="L86" title="All 2 branches missed.">            if (decisionKeyValue instanceof String) {</span>
+<span class="nc" id="L87">                finalDecisionKeyValue = (String) decisionKeyValue;</span>
+            } else {
+<span class="nc" id="L89">                throw new FlowableIllegalArgumentException(&quot;decisionTableReferenceKey expression does not resolve to a string: &quot; + decisionKeyValue);</span>
+            }
+        }
+
+<span class="nc bnc" id="L93" title="All 4 branches missed.">        if (finalDecisionKeyValue == null || finalDecisionKeyValue.length() == 0) {</span>
+<span class="nc" id="L94">            throw new FlowableIllegalArgumentException(&quot;decisionTableReferenceKey expression resolves to an empty value: &quot; + decisionKeyValue);</span>
+        }
+
+<span class="nc" id="L97">        DmnDecisionService ruleService = CommandContextUtil.getDmnRuleService();</span>
+
+<span class="nc" id="L99">        ExecuteDecisionBuilder executeDecisionBuilder = ruleService.createExecuteDecisionBuilder()</span>
+<span class="nc" id="L100">            .decisionKey(finalDecisionKeyValue)</span>
+<span class="nc" id="L101">            .instanceId(execution.getProcessInstanceId())</span>
+<span class="nc" id="L102">            .executionId(execution.getId())</span>
+<span class="nc" id="L103">            .activityId(task.getId())</span>
+<span class="nc" id="L104">            .variables(execution.getVariables())</span>
+<span class="nc" id="L105">            .tenantId(execution.getTenantId());</span>
+
+<span class="nc" id="L107">        applyFallbackToDefaultTenant(execution, executeDecisionBuilder);</span>
+<span class="nc" id="L108">        applyParentDeployment(execution, executeDecisionBuilder, processEngineConfiguration);</span>
+
+<span class="nc" id="L110">        DecisionExecutionAuditContainer decisionExecutionAuditContainer = executeDecisionBuilder.executeWithAuditTrail();</span>
+
+<span class="nc bnc" id="L112" title="All 2 branches missed.">        if (decisionExecutionAuditContainer.isFailed()) {</span>
+<span class="nc" id="L113">            throw new FlowableException(&quot;DMN decision with key &quot; + finalDecisionKeyValue + &quot; execution failed. Cause: &quot; + decisionExecutionAuditContainer.getExceptionMessage() + &quot; in &quot; + execution);</span>
+        }
+
+        /*Throw error if there were no rules hit when the flag indicates to do this.*/
+<span class="nc" id="L117">        FieldExtension throwErrorFieldExtension = DelegateHelper.getFlowElementField(execution, EXPRESSION_DECISION_TABLE_THROW_ERROR_FLAG);</span>
+<span class="nc bnc" id="L118" title="All 2 branches missed.">        if (throwErrorFieldExtension != null) {</span>
+<span class="nc" id="L119">            String throwErrorString = null;</span>
+<span class="nc bnc" id="L120" title="All 2 branches missed.">            if (StringUtils.isNotEmpty(throwErrorFieldExtension.getStringValue())) {</span>
+<span class="nc" id="L121">                throwErrorString = throwErrorFieldExtension.getStringValue();</span>
+                
+<span class="nc bnc" id="L123" title="All 2 branches missed.">            } else if (StringUtils.isNotEmpty(throwErrorFieldExtension.getExpression())) {</span>
+<span class="nc" id="L124">                throwErrorString = throwErrorFieldExtension.getExpression();</span>
+            }
+            
+<span class="nc bnc" id="L127" title="All 4 branches missed.">            if (decisionExecutionAuditContainer.getDecisionResult().isEmpty() &amp;&amp; throwErrorString != null) {</span>
+<span class="nc bnc" id="L128" title="All 2 branches missed.">                if (&quot;true&quot;.equalsIgnoreCase(throwErrorString)) {</span>
+<span class="nc" id="L129">                    throw new FlowableException(&quot;DMN decision with key &quot; + finalDecisionKeyValue + &quot; did not hit any rules for the provided input. In &quot; + execution);</span>
+                    
+<span class="nc bnc" id="L131" title="All 2 branches missed.">                } else if (!&quot;false&quot;.equalsIgnoreCase(throwErrorString)) {</span>
+<span class="nc" id="L132">                    Expression expression = expressionManager.createExpression(throwErrorString);</span>
+<span class="nc" id="L133">                    Object expressionValue = expression.getValue(execution);</span>
+                    
+<span class="nc bnc" id="L135" title="All 4 branches missed.">                    if (expressionValue instanceof Boolean &amp;&amp; ((Boolean) expressionValue)) {</span>
+<span class="nc" id="L136">                        throw new FlowableException(&quot;DMN decision with key &quot; + finalDecisionKeyValue + &quot; did not hit any rules for the provided input. In &quot; + execution);</span>
+                    }
+                }
+            }
+        }
+
+<span class="nc bnc" id="L142" title="All 2 branches missed.">        if (processEngineConfiguration.getDecisionTableVariableManager() != null) {</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">            if (decisionExecutionAuditContainer instanceof DecisionServiceExecutionAuditContainer) {</span>
+<span class="nc" id="L144">                DecisionServiceExecutionAuditContainer decisionServiceExecutionAuditContainer = (DecisionServiceExecutionAuditContainer) decisionExecutionAuditContainer;</span>
+<span class="nc" id="L145">                processEngineConfiguration.getDecisionTableVariableManager().setDecisionServiceVariablesOnExecution(decisionServiceExecutionAuditContainer.getDecisionServiceResult(),</span>
+<span class="nc" id="L146">                    finalDecisionKeyValue, execution, processEngineConfiguration.getObjectMapper(), decisionExecutionAuditContainer.isMultipleResults());</span>
+<span class="nc" id="L147">            } else {</span>
+<span class="nc" id="L148">                processEngineConfiguration.getDecisionTableVariableManager().setVariablesOnExecution(decisionExecutionAuditContainer.getDecisionResult(),</span>
+<span class="nc" id="L149">                    finalDecisionKeyValue, execution, processEngineConfiguration.getObjectMapper(), decisionExecutionAuditContainer.isMultipleResults());</span>
+            }
+            
+        } else {
+<span class="nc bnc" id="L153" title="All 4 branches missed.">            boolean multipleResults = decisionExecutionAuditContainer.isMultipleResults() &amp;&amp; processEngineConfiguration.isAlwaysUseArraysForDmnMultiHitPolicies();</span>
+
+<span class="nc bnc" id="L155" title="All 2 branches missed.">            if (decisionExecutionAuditContainer instanceof DecisionServiceExecutionAuditContainer) {</span>
+<span class="nc" id="L156">                DecisionServiceExecutionAuditContainer decisionServiceExecutionAuditContainer = (DecisionServiceExecutionAuditContainer) decisionExecutionAuditContainer;</span>
+<span class="nc" id="L157">                setDecisionServiceVariablesOnExecution(decisionServiceExecutionAuditContainer.getDecisionServiceResult(), finalDecisionKeyValue,</span>
+<span class="nc" id="L158">                    execution, processEngineConfiguration.getObjectMapper(), multipleResults);</span>
+<span class="nc" id="L159">            } else {</span>
+<span class="nc" id="L160">                setVariablesOnExecution(decisionExecutionAuditContainer.getDecisionResult(), finalDecisionKeyValue,</span>
+<span class="nc" id="L161">                    execution, processEngineConfiguration.getObjectMapper(), multipleResults);</span>
+            }
+        }
+
+<span class="nc" id="L165">        leave(execution);</span>
+<span class="nc" id="L166">    }</span>
+
+    protected void applyFallbackToDefaultTenant(DelegateExecution execution, ExecuteDecisionBuilder executeDecisionBuilder) {
+<span class="nc" id="L169">        FieldExtension fallbackfieldExtension = DelegateHelper.getFlowElementField(execution, EXPRESSION_DECISION_TABLE_FALLBACK_TO_DEFAULT_TENANT);</span>
+<span class="nc bnc" id="L170" title="All 6 branches missed.">        if (fallbackfieldExtension != null &amp;&amp; ((fallbackfieldExtension.getStringValue() != null &amp;&amp; fallbackfieldExtension.getStringValue().length() != 0))) {</span>
+<span class="nc" id="L171">            String fallbackToDefaultTenant = fallbackfieldExtension.getStringValue();</span>
+<span class="nc bnc" id="L172" title="All 4 branches missed.">            if (StringUtils.isNotEmpty(fallbackToDefaultTenant) &amp;&amp; Boolean.parseBoolean(fallbackToDefaultTenant)) {</span>
+<span class="nc" id="L173">                executeDecisionBuilder.fallbackToDefaultTenant();</span>
+            }
+        }
+<span class="nc" id="L176">    }</span>
+
+    protected void applyParentDeployment(DelegateExecution execution, ExecuteDecisionBuilder executeDecisionBuilder,
+            ProcessEngineConfigurationImpl processEngineConfiguration) {
+
+<span class="nc" id="L181">        FieldExtension sameDeploymentFieldExtension = DelegateHelper.getFlowElementField(execution, EXPRESSION_DECISION_TABLE_SAME_DEPLOYMENT);</span>
+        String parentDeploymentId;
+<span class="nc bnc" id="L183" title="All 2 branches missed.">        if (sameDeploymentFieldExtension != null) {</span>
+<span class="nc bnc" id="L184" title="All 2 branches missed.">            if (Boolean.parseBoolean(sameDeploymentFieldExtension.getStringValue())) {</span>
+<span class="nc" id="L185">                parentDeploymentId = ProcessDefinitionUtil.getDefinitionDeploymentId(execution.getProcessDefinitionId(), processEngineConfiguration);</span>
+            } else {
+                // If same deployment has not been requested then don't pass parentDeploymentId
+<span class="nc" id="L188">                parentDeploymentId = null;</span>
+            }
+        } else {
+            // backwards compatibility (always apply parent deployment id)
+<span class="nc" id="L192">            parentDeploymentId = ProcessDefinitionUtil.getDefinitionDeploymentId(execution.getProcessDefinitionId(), processEngineConfiguration);</span>
+
+        }
+<span class="nc" id="L195">        executeDecisionBuilder.parentDeploymentId(parentDeploymentId);</span>
+<span class="nc" id="L196">    }</span>
+
+    protected void setDecisionServiceVariablesOnExecution(Map&lt;String, List&lt;Map&lt;String, Object&gt;&gt;&gt; executionResult, String decisionServiceKey, DelegateExecution execution, ObjectMapper objectMapper, boolean multipleResults) {
+<span class="nc bnc" id="L199" title="All 6 branches missed.">        if (executionResult == null || (executionResult.isEmpty() &amp;&amp; !multipleResults)) {</span>
+<span class="nc" id="L200">            return;</span>
+        }
+
+        // multiple rule results
+        // put on execution as JSON array; each entry contains output id (key) and output value (value)
+        // this should be always done for decision tables of type rule order and output order
+<span class="nc bnc" id="L206" title="All 4 branches missed.">        if (hasMultipleResults(executionResult) || multipleResults) {</span>
+<span class="nc" id="L207">            ObjectNode decisionResultNode = objectMapper.createObjectNode();</span>
+
+<span class="nc bnc" id="L209" title="All 2 branches missed.">            for (Map.Entry&lt;String, List&lt;Map&lt;String, Object&gt;&gt;&gt; decisionExecutionResult : executionResult.entrySet()) {</span>
+<span class="nc" id="L210">                ArrayNode ruleResultNode = objectMapper.createArrayNode();</span>
+<span class="nc bnc" id="L211" title="All 2 branches missed.">                for (Map&lt;String, Object&gt; ruleResult : decisionExecutionResult.getValue()) {</span>
+<span class="nc" id="L212">                    ObjectNode outputResultNode = objectMapper.createObjectNode();</span>
+<span class="nc bnc" id="L213" title="All 2 branches missed.">                    for (Map.Entry&lt;String, Object&gt; outputResult : ruleResult.entrySet()) {</span>
+<span class="nc" id="L214">                        outputResultNode.set(outputResult.getKey(), objectMapper.convertValue(outputResult.getValue(), JsonNode.class));</span>
+<span class="nc" id="L215">                    }</span>
+<span class="nc" id="L216">                    ruleResultNode.add(outputResultNode);</span>
+<span class="nc" id="L217">                }</span>
+
+<span class="nc" id="L219">                decisionResultNode.set(decisionExecutionResult.getKey(), ruleResultNode);</span>
+<span class="nc" id="L220">            }</span>
+
+<span class="nc" id="L222">            execution.setVariable(decisionServiceKey, decisionResultNode);</span>
+<span class="nc" id="L223">        } else {</span>
+            // single rule result (also in multiple decisions)
+            // put on execution output id (key) and output value (value)
+            // mind: when using the same variable multiple times (f.e. in multiple decisions)
+            // the last value will be set on the execution.
+<span class="nc" id="L228">                executionResult.values().forEach(decisionResult -&gt; {</span>
+<span class="nc bnc" id="L229" title="All 2 branches missed.">                for (Map.Entry&lt;String, Object&gt; outputResult : decisionResult.get(0).entrySet()) {</span>
+<span class="nc" id="L230">                    execution.setVariable(outputResult.getKey(), outputResult.getValue());</span>
+<span class="nc" id="L231">                }</span>
+<span class="nc" id="L232">            });</span>
+
+        }
+<span class="nc" id="L235">    }</span>
+
+    protected void setVariablesOnExecution(List&lt;Map&lt;String, Object&gt;&gt; executionResult, String decisionKey, DelegateExecution execution, ObjectMapper objectMapper, boolean multipleResults) {
+<span class="nc bnc" id="L238" title="All 6 branches missed.">        if (executionResult == null || (executionResult.isEmpty() &amp;&amp; !multipleResults)) {</span>
+<span class="nc" id="L239">            return;</span>
+        }
+
+        // multiple rule results
+        // put on execution as JSON array; each entry contains output id (key) and output value (value)
+        // this should be always done for decision tables of type rule order and output order
+<span class="nc bnc" id="L245" title="All 4 branches missed.">        if (executionResult.size() &gt; 1 || multipleResults) {</span>
+<span class="nc" id="L246">            ArrayNode ruleResultNode = objectMapper.createArrayNode();</span>
+
+<span class="nc bnc" id="L248" title="All 2 branches missed.">            for (Map&lt;String, Object&gt; ruleResult : executionResult) {</span>
+<span class="nc" id="L249">                ObjectNode outputResultNode = objectMapper.createObjectNode();</span>
+
+<span class="nc bnc" id="L251" title="All 2 branches missed.">                for (Map.Entry&lt;String, Object&gt; outputResult : ruleResult.entrySet()) {</span>
+<span class="nc" id="L252">                    outputResultNode.set(outputResult.getKey(), objectMapper.convertValue(outputResult.getValue(), JsonNode.class));</span>
+<span class="nc" id="L253">                }</span>
+
+<span class="nc" id="L255">                ruleResultNode.add(outputResultNode);</span>
+<span class="nc" id="L256">            }</span>
+
+<span class="nc" id="L258">            execution.setVariable(decisionKey, ruleResultNode);</span>
+<span class="nc" id="L259">        } else {</span>
+            // single rule result
+            // put on execution output id (key) and output value (value)
+<span class="nc" id="L262">            Map&lt;String, Object&gt; ruleResult = executionResult.get(0);</span>
+
+<span class="nc bnc" id="L264" title="All 2 branches missed.">            for (Map.Entry&lt;String, Object&gt; outputResult : ruleResult.entrySet()) {</span>
+<span class="nc" id="L265">                execution.setVariable(outputResult.getKey(), outputResult.getValue());</span>
+<span class="nc" id="L266">            }</span>
+        }
+<span class="nc" id="L268">    }</span>
+
+    protected boolean hasMultipleResults(Map&lt;String, List&lt;Map&lt;String, Object&gt;&gt;&gt; executionResult) {
+<span class="nc" id="L271">        boolean hasMultipleResults = false;</span>
+
+        // check if at least one of the decisions in the decision service result has more than 1 rule result.
+<span class="nc bnc" id="L274" title="All 2 branches missed.">        for (Map.Entry&lt;String, List&lt;Map&lt;String, Object&gt;&gt;&gt; entry : executionResult.entrySet()) {</span>
+<span class="nc" id="L275">            List&lt;Map&lt;String, Object&gt;&gt; decisionResult = entry.getValue();</span>
+<span class="nc bnc" id="L276" title="All 2 branches missed.">            if (decisionResult.size() &gt; 1) {</span>
+<span class="nc" id="L277">                hasMultipleResults = true;</span>
+<span class="nc" id="L278">                break;</span>
+            }
+<span class="nc" id="L280">        }</span>
+
+<span class="nc" id="L282">        return hasMultipleResults;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,313 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BpmnAggregation.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.variable</a> &gt; <span class="el_source">BpmnAggregation.java</span></div><h1>BpmnAggregation.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.impl.variable;
+
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.bpmn.model.Activity;
+import org.flowable.bpmn.model.BoundaryEvent;
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.ImplementationType;
+import org.flowable.bpmn.model.MultiInstanceLoopCharacteristics;
+import org.flowable.bpmn.model.VariableAggregationDefinition;
+import org.flowable.bpmn.model.VariableAggregationDefinitions;
+import org.flowable.common.engine.api.FlowableIllegalArgumentException;
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.engine.delegate.DelegateExecution;
+import org.flowable.engine.delegate.variable.VariableAggregator;
+import org.flowable.engine.delegate.variable.VariableAggregatorContext;
+import org.flowable.engine.impl.bpmn.helper.ClassDelegateUtil;
+import org.flowable.engine.impl.bpmn.helper.DelegateExpressionUtil;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.delegate.BaseVariableAggregatorContext;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntity;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.variable.api.persistence.entity.VariableInstance;
+import org.flowable.variable.service.VariableService;
+import org.flowable.variable.service.VariableServiceConfiguration;
+import org.flowable.variable.service.impl.persistence.entity.VariableInstanceEntity;
+
+/**
+ * @author Filip Hrisafov
+ */
+public class BpmnAggregation {
+
+    public static final String COUNTER_VAR_PREFIX = &quot;__flowableCounter__&quot;;
+    public static final String COUNTER_VAR_VALUE_SEPARATOR = &quot;###&quot;;
+
+    protected final String executionId;
+
+<span class="nc" id="L59">    public BpmnAggregation(String executionId) {</span>
+<span class="nc" id="L60">        this.executionId = executionId;</span>
+<span class="nc" id="L61">    }</span>
+
+    public String getExecutionId() {
+<span class="nc" id="L64">        return executionId;</span>
+    }
+
+    /**
+     * Create an aggregated variable instance for a completed execution.
+     *
+     * @param execution the execution which completed
+     * @param parentExecution the parent execution
+     * @param aggregation the aggregation definition
+     * @param processEngineConfiguration the process engine configuration
+     * @return the created variables (not yet saved), or {@code null} if no name could be resolved for the variable
+     */
+    public static VariableInstanceEntity aggregateComplete(DelegateExecution execution, DelegateExecution parentExecution,
+            VariableAggregationDefinition aggregation, ProcessEngineConfigurationImpl processEngineConfiguration) {
+<span class="nc" id="L78">        return aggregate(execution, parentExecution, BaseVariableAggregatorContext.complete(aggregation), processEngineConfiguration);</span>
+    }
+
+    /**
+     * Create an aggregated variable instance for the given aggregation context.
+     *
+     * @param execution the execution
+     * @param parentExecution the parent execution
+     * @param aggregationContext the aggregation context
+     * @param processEngineConfiguration the process engine configuration
+     * @return the created variables (not yet saved), or {@code null} if no name could be resolved for the variable
+     */
+    public static VariableInstanceEntity aggregate(DelegateExecution execution, DelegateExecution parentExecution,
+            VariableAggregatorContext aggregationContext, ProcessEngineConfigurationImpl processEngineConfiguration) {
+<span class="nc" id="L92">        VariableAggregationDefinition aggregation = aggregationContext.getDefinition();</span>
+<span class="nc" id="L93">        VariableAggregator aggregator = resolveVariableAggregator(aggregation, execution);</span>
+<span class="nc" id="L94">        String targetVarName = getAggregationTargetVarName(aggregation, execution, processEngineConfiguration);</span>
+
+<span class="nc bnc" id="L96" title="All 2 branches missed.">        if (targetVarName != null) {</span>
+<span class="nc" id="L97">            return aggregate(execution, parentExecution, aggregationContext, processEngineConfiguration, aggregator, targetVarName);</span>
+        }
+
+<span class="nc" id="L100">        return null;</span>
+    }
+
+    /**
+     * @param execution the execution
+     * @param parentExecution the parent execution
+     * @param aggregationContext the aggregation context
+     * @param processEngineConfiguration the process engine configuration
+     * @param aggregator the aggregator that should be used to perform the aggregation
+     * @param targetVarName the name of the variable, never {@code null}
+     * @return the created variables (not yet saved), or {@code null} if no name could be resolved for the variable
+     */
+    public static VariableInstanceEntity aggregate(DelegateExecution execution, DelegateExecution parentExecution,
+            VariableAggregatorContext aggregationContext, ProcessEngineConfigurationImpl processEngineConfiguration, VariableAggregator aggregator,
+            String targetVarName) {
+
+<span class="nc" id="L116">        VariableServiceConfiguration variableServiceConfiguration = processEngineConfiguration.getVariableServiceConfiguration();</span>
+
+<span class="nc" id="L118">        Object aggregatedValue = aggregator.aggregateSingleVariable(execution, aggregationContext);</span>
+
+<span class="nc" id="L120">        String processInstanceId = execution.getProcessInstanceId();</span>
+<span class="nc" id="L121">        String parentExecutionId = parentExecution.getId();</span>
+
+<span class="nc" id="L123">        return createScopedVariableAggregationVariableInstance(execution.getTenantId(), targetVarName, processInstanceId, parentExecutionId,</span>
+                aggregatedValue, variableServiceConfiguration);
+    }
+
+    /**
+     * Aggregate an overview value for the execution and variable name
+     *
+     * @param parentExecutionId the execution for which the overview needs to be done
+     * @param targetVarName the name of the variable
+     * @return the aggregated variable value
+     */
+    public static Object aggregateOverview(String parentExecutionId, String targetVarName, CommandContext commandContext) {
+<span class="nc" id="L135">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc" id="L136">        ExecutionEntity parentExecution = processEngineConfiguration.getExecutionEntityManager()</span>
+<span class="nc" id="L137">                .findById(parentExecutionId);</span>
+
+<span class="nc bnc" id="L139" title="All 2 branches missed.">        if (parentExecution.isMultiInstanceRoot()) {</span>
+<span class="nc" id="L140">            return aggregateOverviewForMultiInstance(parentExecution, targetVarName, processEngineConfiguration);</span>
+        }
+
+        // TODO aggregation overview for non multi instance
+<span class="nc" id="L144">        return null;</span>
+
+    }
+
+    /**
+     * Create an overview value for a multi instance execution
+     *
+     * @param parentExecution the multi instance root execution
+     * @param targetVarName the name of the variable
+     * @param processEngineConfiguration the process engine configuration
+     * @return the overview value for the multi instance execution
+     */
+    public static Object aggregateOverviewForMultiInstance(ExecutionEntity parentExecution, String targetVarName,
+            ProcessEngineConfigurationImpl processEngineConfiguration) {
+<span class="nc" id="L158">        FlowElement currentFlowElement = parentExecution.getCurrentFlowElement();</span>
+<span class="nc bnc" id="L159" title="All 2 branches missed.">        if (!(currentFlowElement instanceof Activity)) {</span>
+            // This should never happen as the parent execution is a multi instance root, but we are being extra safe
+<span class="nc" id="L161">            return null;</span>
+        }
+
+<span class="nc" id="L164">        Activity activity = (Activity) currentFlowElement;</span>
+<span class="nc" id="L165">        MultiInstanceLoopCharacteristics loopCharacteristics = activity.getLoopCharacteristics();</span>
+<span class="nc bnc" id="L166" title="All 2 branches missed.">        if (loopCharacteristics == null) {</span>
+            // This should never happen as the parent execution is a multi instance root, but we are being extra safe
+<span class="nc" id="L168">            return null;</span>
+        }
+
+<span class="nc" id="L171">        VariableAggregationDefinitions aggregations = loopCharacteristics.getAggregations();</span>
+<span class="nc bnc" id="L172" title="All 2 branches missed.">        if (aggregations == null) {</span>
+            // This should never happen as the parent execution is a multi instance root and we are doing an aggregation, but we are being extra safe
+<span class="nc" id="L174">            return null;</span>
+        }
+
+<span class="nc" id="L177">        VariableServiceConfiguration variableServiceConfiguration = processEngineConfiguration.getVariableServiceConfiguration();</span>
+<span class="nc" id="L178">        VariableService variableService = variableServiceConfiguration.getVariableService();</span>
+        // Find all variable instances for already completed children flows of the multi instance execution
+<span class="nc" id="L180">        List&lt;VariableInstanceEntity&gt; instances = variableService.createInternalVariableInstanceQuery()</span>
+<span class="nc" id="L181">                .subScopeId(parentExecution.getId())</span>
+<span class="nc" id="L182">                .scopeType(ScopeTypes.BPMN_VARIABLE_AGGREGATION)</span>
+<span class="nc" id="L183">                .names(Arrays.asList(targetVarName, COUNTER_VAR_PREFIX + targetVarName))</span>
+<span class="nc" id="L184">                .list();</span>
+
+<span class="nc" id="L186">        String elementIndexVariable = StringUtils.defaultIfBlank(loopCharacteristics.getElementIndexVariable(), &quot;loopCounter&quot;);</span>
+
+<span class="nc" id="L188">        Map&lt;String, VariableAggregationDefinition&gt; aggregationsByTarget = groupAggregationsByTarget(parentExecution, aggregations.getOverviewAggregations(), processEngineConfiguration);</span>
+<span class="nc" id="L189">        VariableAggregationDefinition aggregation = aggregationsByTarget.get(targetVarName);</span>
+<span class="nc" id="L190">        VariableAggregator aggregator = resolveVariableAggregator(aggregation, parentExecution);</span>
+
+<span class="nc" id="L192">        VariableAggregatorContext aggregationContext = BaseVariableAggregatorContext.overview(aggregation);</span>
+
+<span class="nc bnc" id="L194" title="All 2 branches missed.">        for (ExecutionEntity childExecution : parentExecution.getExecutions()) {</span>
+            // We need to create overview values for every single active child execution
+<span class="nc bnc" id="L196" title="All 4 branches missed.">            if (childExecution.isActive() &amp;&amp; !(childExecution.getCurrentFlowElement() instanceof BoundaryEvent)) {</span>
+
+<span class="nc" id="L198">                VariableInstanceEntity aggregatedVarInstance = aggregate(childExecution, parentExecution,</span>
+                        aggregationContext, processEngineConfiguration, aggregator, targetVarName);
+<span class="nc" id="L200">                aggregatedVarInstance.setId(childExecution.getId() + targetVarName);</span>
+<span class="nc" id="L201">                instances.add(aggregatedVarInstance);</span>
+
+<span class="nc" id="L203">                Integer elementIndexValue = childExecution.getVariable(elementIndexVariable, Integer.class);</span>
+<span class="nc bnc" id="L204" title="All 2 branches missed.">                if (elementIndexValue == null) {</span>
+<span class="nc" id="L205">                    elementIndexValue = 0;</span>
+                }
+<span class="nc" id="L207">                String counterValue = aggregatedVarInstance.getId() + COUNTER_VAR_VALUE_SEPARATOR + elementIndexValue;</span>
+<span class="nc" id="L208">                VariableInstanceEntity counterVarInstance = createScopedVariableAggregationVariableInstance(childExecution.getTenantId(), COUNTER_VAR_PREFIX + targetVarName,</span>
+<span class="nc" id="L209">                        aggregatedVarInstance.getScopeId(), aggregatedVarInstance.getSubScopeId(), counterValue, variableServiceConfiguration);</span>
+<span class="nc" id="L210">                instances.add(counterVarInstance);</span>
+            }
+<span class="nc" id="L212">        }</span>
+
+<span class="nc bnc" id="L214" title="All 2 branches missed.">        if (!instances.isEmpty()) {</span>
+<span class="nc" id="L215">            Map&lt;String, List&lt;VariableInstance&gt;&gt; instancesByName = groupVariableInstancesByName(instances);</span>
+
+<span class="nc" id="L217">            List&lt;VariableInstance&gt; targetVariableInstances = instancesByName.get(targetVarName);</span>
+<span class="nc" id="L218">            List&lt;VariableInstance&gt; counterVariables = instancesByName.getOrDefault(COUNTER_VAR_PREFIX + targetVarName, Collections</span>
+<span class="nc" id="L219">                    .emptyList());</span>
+
+<span class="nc" id="L221">            sortVariablesByCounter(targetVariableInstances, counterVariables);</span>
+
+<span class="nc" id="L223">            return aggregator.aggregateMultiVariables(parentExecution, targetVariableInstances, aggregationContext);</span>
+        }
+
+<span class="nc" id="L226">        return null;</span>
+    }
+
+    public static VariableInstanceEntity createScopedVariableAggregationVariableInstance(String tenantId, String varName, String scopeId, String subScopeId, Object value,
+            VariableServiceConfiguration variableServiceConfiguration) {
+
+<span class="nc" id="L232">        VariableService variableService = variableServiceConfiguration.getVariableService();</span>
+
+<span class="nc" id="L234">        VariableInstanceEntity variableInstance = variableService.createVariableInstance(varName);</span>
+<span class="nc" id="L235">        variableInstance.setScopeId(scopeId);</span>
+<span class="nc" id="L236">        variableInstance.setSubScopeId(subScopeId);</span>
+<span class="nc" id="L237">        variableInstance.setScopeType(ScopeTypes.BPMN_VARIABLE_AGGREGATION);</span>
+<span class="nc" id="L238">        variableServiceConfiguration.getVariableInstanceValueModifier().setVariableValue(variableInstance, value, tenantId);</span>
+<span class="nc" id="L239">        return variableInstance;</span>
+    }
+
+    public static Map&lt;String, List&lt;VariableInstance&gt;&gt; groupVariableInstancesByName(List&lt;? extends VariableInstance&gt; instances) {
+<span class="nc" id="L243">        return instances.stream().collect(Collectors.groupingBy(VariableInstance::getName));</span>
+    }
+
+    public static VariableAggregator resolveVariableAggregator(VariableAggregationDefinition aggregation, DelegateExecution execution) {
+<span class="nc bnc" id="L247" title="All 2 branches missed.">        if (ImplementationType.IMPLEMENTATION_TYPE_CLASS.equalsIgnoreCase(aggregation.getImplementationType())) {</span>
+<span class="nc" id="L248">            Object delegate = ClassDelegateUtil.instantiateDelegate(aggregation.getImplementation(), null);</span>
+<span class="nc bnc" id="L249" title="All 2 branches missed.">            if (delegate instanceof VariableAggregator) {</span>
+<span class="nc" id="L250">                return (VariableAggregator) delegate;</span>
+            }
+
+<span class="nc" id="L253">            throw new FlowableIllegalArgumentException(&quot;Class &quot; + aggregation.getImplementation() + &quot; does not implement &quot; + VariableAggregator.class);</span>
+<span class="nc bnc" id="L254" title="All 2 branches missed.">        } else if (ImplementationType.IMPLEMENTATION_TYPE_DELEGATEEXPRESSION.equalsIgnoreCase(aggregation.getImplementationType())) {</span>
+<span class="nc" id="L255">            Object delegate = DelegateExpressionUtil.resolveDelegateExpression(</span>
+<span class="nc" id="L256">                    CommandContextUtil.getProcessEngineConfiguration().getExpressionManager().createExpression(aggregation.getImplementation()), execution);</span>
+
+<span class="nc bnc" id="L258" title="All 2 branches missed.">            if (delegate instanceof VariableAggregator) {</span>
+<span class="nc" id="L259">                return (VariableAggregator) delegate;</span>
+            }
+
+<span class="nc" id="L262">            throw new FlowableIllegalArgumentException(</span>
+<span class="nc" id="L263">                    &quot;Delegate expression &quot; + aggregation.getImplementation() + &quot; did not resolve to an implementation of &quot; + VariableAggregator.class);</span>
+        } else {
+<span class="nc" id="L265">            return CommandContextUtil.getProcessEngineConfiguration().getVariableAggregator();</span>
+        }
+    }
+
+    public static void sortVariablesByCounter(List&lt;VariableInstance&gt; variableInstances, List&lt;VariableInstance&gt; counterVariableInstances) {
+<span class="nc bnc" id="L270" title="All 4 branches missed.">        if (counterVariableInstances == null || counterVariableInstances.isEmpty()) {</span>
+<span class="nc" id="L271">            return;</span>
+        }
+<span class="nc" id="L273">        Map&lt;String, Integer&gt; sortOrder = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L274" title="All 2 branches missed.">        for (VariableInstance counterVariable : counterVariableInstances) {</span>
+<span class="nc" id="L275">            Object value = counterVariable.getValue();</span>
+<span class="nc" id="L276">            String[] values = value.toString().split(COUNTER_VAR_VALUE_SEPARATOR);</span>
+<span class="nc" id="L277">            String variableInstanceId = values[0];</span>
+<span class="nc" id="L278">            int order = Integer.parseInt(values[1]);</span>
+<span class="nc" id="L279">            sortOrder.put(variableInstanceId, order);</span>
+<span class="nc" id="L280">        }</span>
+
+<span class="nc" id="L282">        variableInstances.sort(Comparator.comparingInt(o -&gt; sortOrder.getOrDefault(o.getId(), 0)));</span>
+<span class="nc" id="L283">    }</span>
+
+    public static Map&lt;String, VariableAggregationDefinition&gt; groupAggregationsByTarget(DelegateExecution multiInstanceRootExecution,
+            Collection&lt;VariableAggregationDefinition&gt; aggregations, ProcessEngineConfigurationImpl processEngineConfiguration) {
+
+<span class="nc" id="L288">        Map&lt;String, VariableAggregationDefinition&gt; aggregationsByTarget = new HashMap&lt;&gt;();</span>
+
+<span class="nc bnc" id="L290" title="All 2 branches missed.">        for (VariableAggregationDefinition aggregation : aggregations) {</span>
+<span class="nc" id="L291">            String targetVarName = getAggregationTargetVarName(aggregation, multiInstanceRootExecution, processEngineConfiguration);</span>
+<span class="nc" id="L292">            aggregationsByTarget.put(targetVarName, aggregation);</span>
+<span class="nc" id="L293">        }</span>
+<span class="nc" id="L294">        return aggregationsByTarget;</span>
+    }
+
+    public static String getAggregationTargetVarName(VariableAggregationDefinition aggregation, DelegateExecution execution,
+            ProcessEngineConfigurationImpl processEngineConfiguration) {
+<span class="nc" id="L299">        String targetVarName = null;</span>
+<span class="nc bnc" id="L300" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(aggregation.getTargetExpression())) {</span>
+<span class="nc" id="L301">            Object value = processEngineConfiguration.getExpressionManager()</span>
+<span class="nc" id="L302">                    .createExpression(aggregation.getTargetExpression())</span>
+<span class="nc" id="L303">                    .getValue(execution);</span>
+<span class="nc bnc" id="L304" title="All 2 branches missed.">            if (value != null) {</span>
+<span class="nc" id="L305">                targetVarName = value.toString();</span>
+            }
+<span class="nc bnc" id="L307" title="All 2 branches missed.">        } else if (StringUtils.isNotEmpty(aggregation.getTarget())) {</span>
+<span class="nc" id="L308">            targetVarName = aggregation.getTarget();</span>
+        }
+<span class="nc" id="L310">        return targetVarName;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

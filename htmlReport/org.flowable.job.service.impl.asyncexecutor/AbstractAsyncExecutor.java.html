@@ -1,0 +1,514 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AbstractAsyncExecutor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.job.service.impl.asyncexecutor</a> &gt; <span class="el_source">AbstractAsyncExecutor.java</span></div><h1>AbstractAsyncExecutor.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.job.service.impl.asyncexecutor;
+
+import java.time.Duration;
+import java.util.LinkedList;
+
+import org.flowable.job.api.JobInfo;
+import org.flowable.job.service.JobServiceConfiguration;
+import org.flowable.job.service.impl.cmd.UnacquireOwnedJobsCmd;
+import org.flowable.job.service.impl.persistence.entity.JobInfoEntity;
+import org.flowable.job.service.impl.persistence.entity.JobInfoEntityManager;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * @author Joram Barrez
+ * @author Tijs Rademakers
+ * @author Marcus Klimstra
+ */
+public abstract class AbstractAsyncExecutor implements AsyncExecutor {
+
+<span class="nc" id="L33">    private static final Logger LOGGER = LoggerFactory.getLogger(AbstractAsyncExecutor.class);</span>
+
+    protected AsyncJobExecutorConfiguration configuration;
+
+    protected AcquireTimerJobsRunnable timerJobRunnable;
+    protected AcquireTimerLifecycleListener timerLifecycleListener;
+    protected JobInfoEntityManager&lt;? extends JobInfoEntity&gt; jobEntityManager;
+    protected AcquireAsyncJobsDueRunnable asyncJobsDueRunnable;
+    protected AcquireAsyncJobsDueLifecycleListener asyncJobsDueLifecycleListener;
+    protected ResetExpiredJobsRunnable resetExpiredJobsRunnable;
+
+    protected ExecuteAsyncRunnableFactory executeAsyncRunnableFactory;
+    
+    protected AsyncRunnableExecutionExceptionHandler asyncRunnableExecutionExceptionHandler;
+
+    protected boolean isAutoActivate;
+    protected boolean isActive;
+
+    // Job queue used when async executor is not yet started and jobs are already added.
+    // This is mainly used for testing purpose.
+<span class="nc" id="L53">    protected LinkedList&lt;JobInfo&gt; temporaryJobQueue = new LinkedList&lt;&gt;();</span>
+
+    protected JobServiceConfiguration jobServiceConfiguration;
+
+    public AbstractAsyncExecutor() {
+<span class="nc" id="L58">        this(new AsyncJobExecutorConfiguration());</span>
+<span class="nc" id="L59">    }</span>
+
+<span class="nc" id="L61">    public AbstractAsyncExecutor(AsyncJobExecutorConfiguration configuration) {</span>
+<span class="nc" id="L62">        this.configuration = configuration;</span>
+<span class="nc" id="L63">    }</span>
+
+    @Override
+    public boolean executeAsyncJob(final JobInfo job) {
+<span class="nc" id="L67">        Runnable runnable = null;</span>
+<span class="nc bnc" id="L68" title="All 2 branches missed.">        if (isActive) {</span>
+<span class="nc" id="L69">            runnable = createRunnableForJob(job);</span>
+<span class="nc" id="L70">            return executeAsyncJob(job, runnable);</span>
+        } else {
+<span class="nc" id="L72">            temporaryJobQueue.add(job);</span>
+        }
+
+<span class="nc" id="L75">        return true;</span>
+    }
+
+    protected abstract boolean executeAsyncJob(final JobInfo job, Runnable runnable);
+
+    protected void unlockOwnedJobs() {
+<span class="nc" id="L81">        jobServiceConfiguration.getCommandExecutor().execute(new UnacquireOwnedJobsCmd(configuration.getLockOwner(), configuration.getTenantId(), jobServiceConfiguration));</span>
+<span class="nc" id="L82">    }</span>
+
+    protected Runnable createRunnableForJob(final JobInfo job) {
+<span class="nc bnc" id="L85" title="All 2 branches missed.">        if (executeAsyncRunnableFactory == null) {</span>
+<span class="nc" id="L86">            return new ExecuteAsyncRunnable(job, jobServiceConfiguration, jobEntityManager, asyncRunnableExecutionExceptionHandler);</span>
+        } else {
+<span class="nc" id="L88">            return executeAsyncRunnableFactory.createExecuteAsyncRunnable(job, jobServiceConfiguration);</span>
+        }
+    }
+
+    /** Starts the async executor */
+    @Override
+    public void start() {
+<span class="nc bnc" id="L95" title="All 2 branches missed.">        if (isActive) {</span>
+<span class="nc" id="L96">            return;</span>
+        }
+
+<span class="nc" id="L99">        isActive = true;</span>
+
+<span class="nc" id="L101">        LOGGER.info(&quot;Starting up the async job executor [{}] for engine {}&quot;, getClass().getName(), getJobServiceConfiguration().getEngineName());</span>
+
+<span class="nc" id="L103">        initializeJobEntityManager();</span>
+<span class="nc" id="L104">        initializeRunnables();</span>
+<span class="nc" id="L105">        startAdditionalComponents();</span>
+<span class="nc" id="L106">        executeTemporaryJobs();</span>
+<span class="nc" id="L107">    }</span>
+    
+    protected void initializeJobEntityManager() {
+<span class="nc bnc" id="L110" title="All 2 branches missed.">        if (jobEntityManager == null) {</span>
+<span class="nc" id="L111">            jobEntityManager = jobServiceConfiguration.getJobEntityManager();</span>
+        }
+<span class="nc" id="L113">    }</span>
+
+    protected void initializeRunnables() {
+<span class="nc bnc" id="L116" title="All 4 branches missed.">        if (configuration.isTimerRunnableNeeded() &amp;&amp; timerJobRunnable == null) {</span>
+<span class="nc" id="L117">            timerJobRunnable = new AcquireTimerJobsRunnable(this, jobServiceConfiguration.getJobManager(),</span>
+<span class="nc" id="L118">                timerLifecycleListener, new AcquireTimerRunnableConfiguration(), configuration.getMoveTimerExecutorPoolSize());</span>
+        }
+
+<span class="nc bnc" id="L121" title="All 2 branches missed.">        JobInfoEntityManager&lt;? extends JobInfoEntity&gt; jobEntityManagerToUse = jobEntityManager != null</span>
+<span class="nc" id="L122">                ? jobEntityManager : jobServiceConfiguration.getJobEntityManager();</span>
+
+<span class="nc bnc" id="L124" title="All 2 branches missed.">        if (resetExpiredJobsRunnable == null) {</span>
+<span class="nc" id="L125">            String resetExpiredRunnableName = configuration.getResetExpiredRunnableName();</span>
+<span class="nc bnc" id="L126" title="All 2 branches missed.">            String resetRunnableName = resetExpiredRunnableName != null ?</span>
+<span class="nc" id="L127">                    resetExpiredRunnableName : &quot;flowable-&quot; + getJobServiceConfiguration().getEngineName() + &quot;-reset-expired-jobs&quot;;</span>
+<span class="nc" id="L128">            resetExpiredJobsRunnable = createResetExpiredJobsRunnable(resetRunnableName);</span>
+        }
+
+<span class="nc bnc" id="L131" title="All 2 branches missed.">        if (asyncJobsDueRunnable == null) {</span>
+<span class="nc" id="L132">            String acquireRunnableThreadName = configuration.getAcquireRunnableThreadName();</span>
+<span class="nc bnc" id="L133" title="All 2 branches missed.">            String acquireJobsRunnableName = acquireRunnableThreadName != null ?</span>
+<span class="nc" id="L134">                    acquireRunnableThreadName : &quot;flowable-&quot; + getJobServiceConfiguration().getEngineName() + &quot;-acquire-async-jobs&quot;;</span>
+<span class="nc" id="L135">            asyncJobsDueRunnable = new AcquireAsyncJobsDueRunnable(acquireJobsRunnableName, this, jobEntityManagerToUse,</span>
+                asyncJobsDueLifecycleListener, new AcquireAsyncJobsDueRunnableConfiguration());
+
+        }
+<span class="nc" id="L139">    }</span>
+
+    protected abstract ResetExpiredJobsRunnable createResetExpiredJobsRunnable(String resetRunnableName);
+
+    protected abstract void startAdditionalComponents();
+
+    protected void executeTemporaryJobs() {
+<span class="nc bnc" id="L146" title="All 2 branches missed.">        while (!temporaryJobQueue.isEmpty()) {</span>
+<span class="nc" id="L147">            JobInfo job = temporaryJobQueue.pop();</span>
+<span class="nc" id="L148">            executeAsyncJob(job);</span>
+<span class="nc" id="L149">        }</span>
+<span class="nc" id="L150">    }</span>
+
+    /** Shuts down the whole job executor */
+    @Override
+    public synchronized void shutdown() {
+<span class="nc bnc" id="L155" title="All 2 branches missed.">        if (!isActive) {</span>
+<span class="nc" id="L156">            return;</span>
+        }
+<span class="nc" id="L158">        LOGGER.info(&quot;Shutting down the async job executor [{}] for engine {}&quot;, getClass().getName(), getJobServiceConfiguration().getEngineName());</span>
+
+<span class="nc" id="L160">        stopRunnables();</span>
+<span class="nc" id="L161">        shutdownAdditionalComponents();</span>
+
+<span class="nc" id="L163">        isActive = false;</span>
+<span class="nc" id="L164">    }</span>
+
+    protected void stopRunnables() {
+<span class="nc bnc" id="L167" title="All 2 branches missed.">        if (timerJobRunnable != null) {</span>
+<span class="nc" id="L168">            timerJobRunnable.stop();</span>
+        }
+<span class="nc bnc" id="L170" title="All 2 branches missed.">        if (asyncJobsDueRunnable != null) {</span>
+<span class="nc" id="L171">            asyncJobsDueRunnable.stop();</span>
+        }
+<span class="nc bnc" id="L173" title="All 2 branches missed.">        if (resetExpiredJobsRunnable != null) {</span>
+<span class="nc" id="L174">            resetExpiredJobsRunnable.stop();</span>
+        }
+
+<span class="nc" id="L177">        timerJobRunnable = null;</span>
+<span class="nc" id="L178">        asyncJobsDueRunnable = null;</span>
+<span class="nc" id="L179">        resetExpiredJobsRunnable = null;</span>
+<span class="nc" id="L180">    }</span>
+
+    protected abstract void shutdownAdditionalComponents();
+
+    /* getters and setters */
+
+    @Override
+    public JobServiceConfiguration getJobServiceConfiguration() {
+<span class="nc" id="L188">        return jobServiceConfiguration;</span>
+    }
+
+    @Override
+    public void setJobServiceConfiguration(JobServiceConfiguration jobServiceConfiguration) {
+<span class="nc" id="L193">        this.jobServiceConfiguration = jobServiceConfiguration;</span>
+<span class="nc" id="L194">    }</span>
+
+    @Override
+    public boolean isAutoActivate() {
+<span class="nc" id="L198">        return isAutoActivate;</span>
+    }
+
+    @Override
+    public void setAutoActivate(boolean isAutoActivate) {
+<span class="nc" id="L203">        this.isAutoActivate = isAutoActivate;</span>
+<span class="nc" id="L204">    }</span>
+
+    @Override
+    public boolean isActive() {
+<span class="nc" id="L208">        return isActive;</span>
+    }
+
+    @Override
+    public String getLockOwner() {
+<span class="nc" id="L213">        return configuration.getLockOwner();</span>
+    }
+
+    public void setLockOwner(String lockOwner) {
+<span class="nc" id="L217">        configuration.setLockOwner(lockOwner);</span>
+<span class="nc" id="L218">    }</span>
+
+    @Override
+    public int getTimerLockTimeInMillis() {
+<span class="nc" id="L222">        return (int) configuration.getTimerLockTime().toMillis();</span>
+    }
+
+    @Override
+    public void setTimerLockTimeInMillis(int timerLockTimeInMillis) {
+<span class="nc" id="L227">        configuration.setTimerLockTime(Duration.ofMillis(timerLockTimeInMillis));</span>
+<span class="nc" id="L228">    }</span>
+
+    @Override
+    public int getAsyncJobLockTimeInMillis() {
+<span class="nc" id="L232">        return (int) configuration.getAsyncJobLockTime().toMillis();</span>
+    }
+
+    @Override
+    public void setAsyncJobLockTimeInMillis(int asyncJobLockTimeInMillis) {
+<span class="nc" id="L237">        configuration.setAsyncJobLockTime(Duration.ofMillis(asyncJobLockTimeInMillis));</span>
+<span class="nc" id="L238">    }</span>
+
+    public int getMoveTimerExecutorPoolSize() {
+<span class="nc" id="L241">        return configuration.getMoveTimerExecutorPoolSize();</span>
+    }
+
+    public void setMoveTimerExecutorPoolSize(int moveTimerExecutorPoolSize) {
+<span class="nc" id="L245">        configuration.setMoveTimerExecutorPoolSize(moveTimerExecutorPoolSize);</span>
+<span class="nc" id="L246">    }</span>
+
+    @Override
+    public int getMaxTimerJobsPerAcquisition() {
+<span class="nc" id="L250">        return configuration.getMaxTimerJobsPerAcquisition();</span>
+    }
+
+    @Override
+    public void setMaxTimerJobsPerAcquisition(int maxTimerJobsPerAcquisition) {
+<span class="nc" id="L255">        configuration.setMaxTimerJobsPerAcquisition(maxTimerJobsPerAcquisition);</span>
+<span class="nc" id="L256">    }</span>
+
+    @Override
+    public int getMaxAsyncJobsDuePerAcquisition() {
+<span class="nc" id="L260">        return configuration.getMaxAsyncJobsDuePerAcquisition();</span>
+    }
+
+    @Override
+    public void setMaxAsyncJobsDuePerAcquisition(int maxAsyncJobsDuePerAcquisition) {
+<span class="nc" id="L265">        this.configuration.setMaxAsyncJobsDuePerAcquisition(maxAsyncJobsDuePerAcquisition);</span>
+<span class="nc" id="L266">    }</span>
+
+    @Override
+    public int getDefaultTimerJobAcquireWaitTimeInMillis() {
+<span class="nc" id="L270">        return (int) configuration.getDefaultTimerJobAcquireWaitTime().toMillis();</span>
+    }
+
+    @Override
+    public void setDefaultTimerJobAcquireWaitTimeInMillis(int defaultTimerJobAcquireWaitTimeInMillis) {
+<span class="nc" id="L275">        configuration.setDefaultTimerJobAcquireWaitTime(Duration.ofMillis(defaultTimerJobAcquireWaitTimeInMillis));</span>
+<span class="nc" id="L276">    }</span>
+
+    @Override
+    public int getDefaultAsyncJobAcquireWaitTimeInMillis() {
+<span class="nc" id="L280">        return (int) configuration.getDefaultAsyncJobAcquireWaitTime().toMillis();</span>
+    }
+
+    @Override
+    public void setDefaultAsyncJobAcquireWaitTimeInMillis(int defaultAsyncJobAcquireWaitTimeInMillis) {
+<span class="nc" id="L285">        configuration.setDefaultAsyncJobAcquireWaitTime(Duration.ofMillis(defaultAsyncJobAcquireWaitTimeInMillis));</span>
+<span class="nc" id="L286">    }</span>
+
+    public void setTimerJobRunnable(AcquireTimerJobsRunnable timerJobRunnable) {
+<span class="nc" id="L289">        this.timerJobRunnable = timerJobRunnable;</span>
+<span class="nc" id="L290">    }</span>
+
+    @Override
+    public int getDefaultQueueSizeFullWaitTimeInMillis() {
+<span class="nc" id="L294">        return (int) configuration.getDefaultQueueSizeFullWaitTime().toMillis();</span>
+    }
+
+    @Override
+    public void setDefaultQueueSizeFullWaitTimeInMillis(int defaultQueueSizeFullWaitTime) {
+<span class="nc" id="L299">        configuration.setDefaultQueueSizeFullWaitTime(Duration.ofMillis(defaultQueueSizeFullWaitTime));</span>
+<span class="nc" id="L300">    }</span>
+
+    public void setAsyncJobsDueRunnable(AcquireAsyncJobsDueRunnable asyncJobsDueRunnable) {
+<span class="nc" id="L303">        this.asyncJobsDueRunnable = asyncJobsDueRunnable;</span>
+<span class="nc" id="L304">    }</span>
+
+    public AcquireAsyncJobsDueLifecycleListener getAsyncJobsDueLifecycleListener() {
+<span class="nc" id="L307">        return asyncJobsDueLifecycleListener;</span>
+    }
+
+    public void setAsyncJobsDueLifecycleListener(AcquireAsyncJobsDueLifecycleListener asyncJobsDueLifecycleListener) {
+<span class="nc" id="L311">        this.asyncJobsDueLifecycleListener = asyncJobsDueLifecycleListener;</span>
+<span class="nc" id="L312">    }</span>
+
+    public boolean isTimerRunnableNeeded() {
+<span class="nc" id="L315">        return configuration.isTimerRunnableNeeded();</span>
+    }
+
+    public void setTimerRunnableNeeded(boolean timerRunnableNeeded) {
+<span class="nc" id="L319">        configuration.setTimerRunnableNeeded(timerRunnableNeeded);</span>
+<span class="nc" id="L320">    }</span>
+
+    public AcquireTimerLifecycleListener getTimerLifecycleListener() {
+<span class="nc" id="L323">        return timerLifecycleListener;</span>
+    }
+
+    public void setTimerLifecycleListener(AcquireTimerLifecycleListener timerLifecycleListener) {
+<span class="nc" id="L327">        this.timerLifecycleListener = timerLifecycleListener;</span>
+<span class="nc" id="L328">    }</span>
+
+    public boolean isGlobalAcquireLockEnabled() {
+<span class="nc" id="L331">        return configuration.isGlobalAcquireLockEnabled();</span>
+    }
+
+    public void setGlobalAcquireLockEnabled(boolean globalAcquireLockEnabled) {
+<span class="nc" id="L335">        configuration.setGlobalAcquireLockEnabled(globalAcquireLockEnabled);</span>
+<span class="nc" id="L336">    }</span>
+
+    public String getGlobalAcquireLockPrefix() {
+<span class="nc" id="L339">        return configuration.getGlobalAcquireLockPrefix();</span>
+    }
+
+    public void setGlobalAcquireLockPrefix(String globalAcquireLockPrefix) {
+<span class="nc" id="L343">        configuration.setGlobalAcquireLockPrefix(globalAcquireLockPrefix);</span>
+<span class="nc" id="L344">    }</span>
+
+    public Duration getAsyncJobsGlobalLockWaitTime() {
+<span class="nc" id="L347">        return configuration.getAsyncJobsGlobalLockWaitTime();</span>
+    }
+
+    public void setAsyncJobsGlobalLockWaitTime(Duration asyncJobsGlobalLockWaitTime) {
+<span class="nc" id="L351">        configuration.setAsyncJobsGlobalLockWaitTime(asyncJobsGlobalLockWaitTime);</span>
+<span class="nc" id="L352">    }</span>
+
+    public Duration getAsyncJobsGlobalLockPollRate() {
+<span class="nc" id="L355">        return configuration.getAsyncJobsGlobalLockPollRate();</span>
+    }
+
+    public void setAsyncJobsGlobalLockPollRate(Duration asyncJobsGlobalLockPollRate) {
+<span class="nc" id="L359">        configuration.setAsyncJobsGlobalLockPollRate(asyncJobsGlobalLockPollRate);</span>
+<span class="nc" id="L360">    }</span>
+
+    public Duration getTimerLockWaitTime() {
+<span class="nc" id="L363">        return configuration.getTimerLockWaitTime();</span>
+    }
+
+    public void setTimerLockWaitTime(Duration timerLockWaitTime) {
+<span class="nc" id="L367">        configuration.setTimerLockWaitTime(timerLockWaitTime);</span>
+<span class="nc" id="L368">    }</span>
+
+    public Duration getTimerLockPollRate() {
+<span class="nc" id="L371">        return configuration.getTimerLockPollRate();</span>
+    }
+
+    public void setTimerLockPollRate(Duration timerLockPollRate) {
+<span class="nc" id="L375">        configuration.setTimerLockPollRate(timerLockPollRate);</span>
+<span class="nc" id="L376">    }</span>
+
+    public void setAcquireRunnableThreadName(String acquireRunnableThreadName) {
+<span class="nc" id="L379">        configuration.setAcquireRunnableThreadName(acquireRunnableThreadName);</span>
+<span class="nc" id="L380">    }</span>
+
+    public void setJobEntityManager(JobInfoEntityManager&lt;? extends JobInfoEntity&gt; jobEntityManager) {
+<span class="nc" id="L383">        this.jobEntityManager = jobEntityManager;</span>
+<span class="nc" id="L384">    }</span>
+    
+    public void setResetExpiredRunnableName(String resetExpiredRunnableName) {
+<span class="nc" id="L387">        configuration.setResetExpiredRunnableName(resetExpiredRunnableName);</span>
+<span class="nc" id="L388">    }</span>
+
+    public void setResetExpiredJobsRunnable(ResetExpiredJobsRunnable resetExpiredJobsRunnable) {
+<span class="nc" id="L391">        this.resetExpiredJobsRunnable = resetExpiredJobsRunnable;</span>
+<span class="nc" id="L392">    }</span>
+
+    @Override
+    public int getResetExpiredJobsInterval() {
+<span class="nc" id="L396">        return (int) configuration.getResetExpiredJobsInterval().toMillis();</span>
+    }
+
+    @Override
+    public void setResetExpiredJobsInterval(int resetExpiredJobsInterval) {
+<span class="nc" id="L401">        configuration.setResetExpiredJobsInterval(Duration.ofMillis(resetExpiredJobsInterval));</span>
+<span class="nc" id="L402">    }</span>
+
+    @Override
+    public int getResetExpiredJobsPageSize() {
+<span class="nc" id="L406">        return configuration.getResetExpiredJobsPageSize();</span>
+    }
+
+    @Override
+    public void setResetExpiredJobsPageSize(int resetExpiredJobsPageSize) {
+<span class="nc" id="L411">        configuration.setResetExpiredJobsPageSize(resetExpiredJobsPageSize);</span>
+<span class="nc" id="L412">    }</span>
+
+    public ExecuteAsyncRunnableFactory getExecuteAsyncRunnableFactory() {
+<span class="nc" id="L415">        return executeAsyncRunnableFactory;</span>
+    }
+
+    public void setExecuteAsyncRunnableFactory(ExecuteAsyncRunnableFactory executeAsyncRunnableFactory) {
+<span class="nc" id="L419">        this.executeAsyncRunnableFactory = executeAsyncRunnableFactory;</span>
+<span class="nc" id="L420">    }</span>
+
+    public AsyncRunnableExecutionExceptionHandler getAsyncRunnableExecutionExceptionHandler() {
+<span class="nc" id="L423">        return asyncRunnableExecutionExceptionHandler;</span>
+    }
+
+    public void setAsyncRunnableExecutionExceptionHandler(AsyncRunnableExecutionExceptionHandler asyncRunnableExecutionExceptionHandler) {
+<span class="nc" id="L427">        this.asyncRunnableExecutionExceptionHandler = asyncRunnableExecutionExceptionHandler;</span>
+<span class="nc" id="L428">    }</span>
+
+    public AcquireTimerJobsRunnable getTimerJobRunnable() {
+<span class="nc" id="L431">        return timerJobRunnable;</span>
+    }
+
+    public AcquireAsyncJobsDueRunnable getAsyncJobsDueRunnable() {
+<span class="nc" id="L435">        return asyncJobsDueRunnable;</span>
+    }
+
+    public ResetExpiredJobsRunnable getResetExpiredJobsRunnable() {
+<span class="nc" id="L439">        return resetExpiredJobsRunnable;</span>
+    }
+
+    public String getTenantId() {
+<span class="nc" id="L443">        return configuration.getTenantId();</span>
+    }
+
+    public void setTenantId(String tenantId) {
+<span class="nc" id="L447">        configuration.setTenantId(tenantId);</span>
+<span class="nc" id="L448">    }</span>
+
+    public AsyncJobExecutorConfiguration getConfiguration() {
+<span class="nc" id="L451">        return configuration;</span>
+    }
+
+    public void setConfiguration(AsyncJobExecutorConfiguration configuration) {
+<span class="nc" id="L455">        this.configuration = configuration;</span>
+<span class="nc" id="L456">    }</span>
+
+<span class="nc" id="L458">    public class AcquireTimerRunnableConfiguration implements AcquireJobsRunnableConfiguration {</span>
+
+        @Override
+        public boolean isGlobalAcquireLockEnabled() {
+<span class="nc" id="L462">            return configuration.isGlobalAcquireLockEnabled();</span>
+        }
+
+        @Override
+        public String getGlobalAcquireLockPrefix() {
+<span class="nc" id="L467">            return configuration.getGlobalAcquireLockPrefix();</span>
+        }
+
+        @Override
+        public Duration getLockWaitTime() {
+<span class="nc" id="L472">            return configuration.getTimerLockWaitTime();</span>
+        }
+
+        @Override
+        public Duration getLockPollRate() {
+<span class="nc" id="L477">            return configuration.getTimerLockPollRate();</span>
+        }
+
+        @Override
+        public Duration getLockForceAcquireAfter() {
+<span class="nc" id="L482">            return configuration.getTimerLockForceAcquireAfter();</span>
+        }
+    }
+
+<span class="nc" id="L486">    public class AcquireAsyncJobsDueRunnableConfiguration implements AcquireJobsRunnableConfiguration {</span>
+
+        @Override
+        public boolean isGlobalAcquireLockEnabled() {
+<span class="nc" id="L490">            return configuration.isGlobalAcquireLockEnabled();</span>
+        }
+
+        @Override
+        public String getGlobalAcquireLockPrefix() {
+<span class="nc" id="L495">            return configuration.getGlobalAcquireLockPrefix();</span>
+        }
+
+        @Override
+        public Duration getLockWaitTime() {
+<span class="nc" id="L500">            return configuration.getAsyncJobsGlobalLockWaitTime();</span>
+        }
+
+        @Override
+        public Duration getLockPollRate() {
+<span class="nc" id="L505">            return configuration.getAsyncJobsGlobalLockPollRate();</span>
+        }
+
+        @Override
+        public Duration getLockForceAcquireAfter() {
+<span class="nc" id="L510">            return configuration.getAsyncJobsGlobalLockForceAcquireAfter();</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

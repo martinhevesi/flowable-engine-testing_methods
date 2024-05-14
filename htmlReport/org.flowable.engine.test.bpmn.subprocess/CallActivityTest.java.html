@@ -1,0 +1,570 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CallActivityTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.bpmn.subprocess</a> &gt; <span class="el_source">CallActivityTest.java</span></div><h1>CallActivityTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.flowable.engine.test.bpmn.subprocess;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
+
+import java.io.InputStream;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.flowable.bpmn.converter.BpmnXMLConverter;
+import org.flowable.bpmn.model.BpmnModel;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.impl.util.io.InputStreamSource;
+import org.flowable.common.engine.impl.util.io.StreamSource;
+import org.flowable.engine.history.HistoricActivityInstance;
+import org.flowable.engine.history.HistoricActivityInstanceQuery;
+import org.flowable.engine.history.HistoricProcessInstance;
+import org.flowable.engine.impl.test.ResourceFlowableTestCase;
+import org.flowable.engine.interceptor.StartProcessInstanceAfterContext;
+import org.flowable.engine.interceptor.StartProcessInstanceBeforeContext;
+import org.flowable.engine.interceptor.StartProcessInstanceInterceptor;
+import org.flowable.engine.interceptor.StartSubProcessInstanceAfterContext;
+import org.flowable.engine.interceptor.StartSubProcessInstanceBeforeContext;
+import org.flowable.engine.repository.Deployment;
+import org.flowable.engine.repository.ProcessDefinition;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.task.api.Task;
+import org.flowable.variable.api.history.HistoricVariableInstance;
+import org.flowable.variable.api.history.HistoricVariableInstanceQuery;
+import org.flowable.variable.api.persistence.entity.VariableInstance;
+import org.flowable.variable.api.runtime.VariableInstanceQuery;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+
+public class CallActivityTest extends ResourceFlowableTestCase {
+
+    private static final String MAIN_PROCESS_RESOURCE = &quot;org/flowable/engine/test/bpmn/subprocess/SubProcessTest.testSuspendedProcessCallActivity_mainProcess.bpmn.xml&quot;;
+    private static final String CHILD_PROCESS_RESOURCE = &quot;org/flowable/engine/test/bpmn/subprocess/SubProcessTest.testSuspendedProcessCallActivity_childProcess.bpmn.xml&quot;;
+    private static final String MESSAGE_TRIGGERED_PROCESS_RESOURCE = &quot;org/flowable/engine/test/bpmn/subprocess/SubProcessTest.testSuspendedProcessCallActivity_messageTriggeredProcess.bpmn.xml&quot;;
+    private static final String INHERIT_VARIABLES_MAIN_PROCESS_RESOURCE = &quot;org/flowable/engine/test/bpmn/subprocess/SubProcessTest.testInheritVariablesCallActivity_mainProcess.bpmn20.xml&quot;;
+    private static final String INHERIT_VARIABLES_CHILD_PROCESS_RESOURCE = &quot;org/flowable/engine/test/bpmn/subprocess/SubProcessTest.testSameDeploymentCallActivity_childProcess.bpmn20.xml&quot;;
+    private static final String INHERIT_VARIABLES_CHILD_PROCESS_TRANSIENT_VAR_RESOURCE = &quot;org/flowable/engine/test/bpmn/subprocess/SubProcessTest.childProcess_transient_var.bpmn20.xml&quot;;
+    private static final String SAME_DEPLOYMENT_MAIN_PROCESS_RESOURCE = &quot;org/flowable/engine/test/bpmn/subprocess/SubProcessTest.testSameDeploymentCallActivity_mainProcess.bpmn20.xml&quot;;
+    private static final String SAME_DEPLOYMENT_CHILD_PROCESS_RESOURCE = &quot;org/flowable/engine/test/bpmn/subprocess/SubProcessTest.testSameDeploymentCallActivity_childProcess.bpmn20.xml&quot;;
+    private static final String SAME_DEPLOYMENT_CHILD_V2_PROCESS_RESOURCE = &quot;org/flowable/engine/test/bpmn/subprocess/SubProcessTest.testSameDeploymentCallActivity_childProcess_v2.bpmn20.xml&quot;;
+    private static final String NOT_SAME_DEPLOYMENT_MAIN_PROCESS_RESOURCE = &quot;org/flowable/engine/test/bpmn/subprocess/SubProcessTest.testNotSameDeploymentCallActivity_mainProcess.bpmn20.xml&quot;;
+    private static final String NOT_INHERIT_VARIABLES_MAIN_PROCESS_RESOURCE = &quot;org/flowable/engine/test/bpmn/subprocess/SubProcessTest.testNotInheritVariablesCallActivity_mainProcess.bpmn20.xml&quot;;
+
+    public CallActivityTest() {
+<span class="nc" id="L65">        super(&quot;org/flowable/standalone/parsing/encoding.flowable.cfg.xml&quot;);</span>
+<span class="nc" id="L66">    }</span>
+
+    @Test
+    public void testInstantiateProcessByMessage() throws Exception {
+<span class="nc" id="L70">        BpmnModel messageTriggeredBpmnModel = loadBPMNModel(MESSAGE_TRIGGERED_PROCESS_RESOURCE);</span>
+
+<span class="nc" id="L72">        processEngine.getRepositoryService().createDeployment().name(&quot;messageTriggeredProcessDeployment&quot;)</span>
+<span class="nc" id="L73">                .addBpmnModel(&quot;messageTriggered.bpmn20.xml&quot;, messageTriggeredBpmnModel).deploy();</span>
+
+<span class="nc" id="L75">        ProcessInstance childProcessInstance = runtimeService.startProcessInstanceByMessage(&quot;TRIGGER_PROCESS_MESSAGE&quot;);</span>
+<span class="nc" id="L76">        assertThat(childProcessInstance).isNotNull();</span>
+<span class="nc" id="L77">    }</span>
+
+    @Test
+    public void testInstantiateSuspendedProcessByMessage() throws Exception {
+<span class="nc" id="L81">        BpmnModel messageTriggeredBpmnModel = loadBPMNModel(MESSAGE_TRIGGERED_PROCESS_RESOURCE);</span>
+
+<span class="nc" id="L83">        Deployment messageTriggeredBpmnDeployment = processEngine.getRepositoryService().createDeployment().name(&quot;messageTriggeredProcessDeployment&quot;)</span>
+<span class="nc" id="L84">                .addBpmnModel(&quot;messageTriggered.bpmn20.xml&quot;, messageTriggeredBpmnModel).deploy();</span>
+
+<span class="nc" id="L86">        suspendProcessDefinitions(messageTriggeredBpmnDeployment);</span>
+
+<span class="nc" id="L88">        assertThatThrownBy(() -&gt; runtimeService.startProcessInstanceByMessage(&quot;TRIGGER_PROCESS_MESSAGE&quot;))</span>
+<span class="nc" id="L89">                .isInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L90">                .hasMessageContaining(&quot;Cannot start process instance. Process definition Message Triggered Process&quot;);</span>
+<span class="nc" id="L91">    }</span>
+
+    @Test
+    public void testInstantiateChildProcess() throws Exception {
+<span class="nc" id="L95">        BpmnModel childBpmnModel = loadBPMNModel(CHILD_PROCESS_RESOURCE);</span>
+
+<span class="nc" id="L97">        processEngine.getRepositoryService().createDeployment().name(&quot;childProcessDeployment&quot;).addBpmnModel(&quot;childProcess.bpmn20.xml&quot;, childBpmnModel).deploy();</span>
+
+<span class="nc" id="L99">        ProcessInstance childProcessInstance = runtimeService.startProcessInstanceByKey(&quot;childProcess&quot;);</span>
+<span class="nc" id="L100">        assertThat(childProcessInstance).isNotNull();</span>
+<span class="nc" id="L101">    }</span>
+
+    @Test
+    public void testInstantiateSuspendedChildProcess() throws Exception {
+<span class="nc" id="L105">        BpmnModel childBpmnModel = loadBPMNModel(CHILD_PROCESS_RESOURCE);</span>
+
+<span class="nc" id="L107">        Deployment childDeployment = processEngine.getRepositoryService().createDeployment().name(&quot;childProcessDeployment&quot;).addBpmnModel(&quot;childProcess.bpmn20.xml&quot;, childBpmnModel).deploy();</span>
+
+<span class="nc" id="L109">        suspendProcessDefinitions(childDeployment);</span>
+
+<span class="nc" id="L111">        assertThatThrownBy(() -&gt; runtimeService.startProcessInstanceByKey(&quot;childProcess&quot;))</span>
+<span class="nc" id="L112">                .isInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L113">                .hasMessageContaining(&quot;Cannot start process instance. Process definition Child Process&quot;);</span>
+<span class="nc" id="L114">    }</span>
+
+    @Test
+    public void testInstantiateSubprocess() throws Exception {
+<span class="nc" id="L118">        BpmnModel mainBpmnModel = loadBPMNModel(MAIN_PROCESS_RESOURCE);</span>
+<span class="nc" id="L119">        BpmnModel childBpmnModel = loadBPMNModel(CHILD_PROCESS_RESOURCE);</span>
+
+<span class="nc" id="L121">        Deployment childDeployment = processEngine.getRepositoryService().createDeployment().name(&quot;childProcessDeployment&quot;).addBpmnModel(&quot;childProcess.bpmn20.xml&quot;, childBpmnModel).deploy();</span>
+
+<span class="nc" id="L123">        processEngine.getRepositoryService().createDeployment().name(&quot;masterProcessDeployment&quot;).addBpmnModel(&quot;masterProcess.bpmn20.xml&quot;, mainBpmnModel).deploy();</span>
+
+<span class="nc" id="L125">        suspendProcessDefinitions(childDeployment);</span>
+
+<span class="nc" id="L127">        assertThatThrownBy(() -&gt; runtimeService.startProcessInstanceByKey(&quot;masterProcess&quot;))</span>
+<span class="nc" id="L128">                .isInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L129">                .hasMessageContaining(&quot;Cannot start process instance. Process definition Child Process&quot;);</span>
+<span class="nc" id="L130">    }</span>
+
+    @Test
+    public void testInheritVariablesSubprocess() throws Exception {
+<span class="nc" id="L134">        BpmnModel mainBpmnModel = loadBPMNModel(INHERIT_VARIABLES_MAIN_PROCESS_RESOURCE);</span>
+<span class="nc" id="L135">        BpmnModel childBpmnModel = loadBPMNModel(INHERIT_VARIABLES_CHILD_PROCESS_RESOURCE);</span>
+
+<span class="nc" id="L137">        processEngine.getRepositoryService()</span>
+<span class="nc" id="L138">                .createDeployment()</span>
+<span class="nc" id="L139">                .name(&quot;mainProcessDeployment&quot;)</span>
+<span class="nc" id="L140">                .addBpmnModel(&quot;mainProcess.bpmn20.xml&quot;, mainBpmnModel).deploy();</span>
+
+<span class="nc" id="L142">        processEngine.getRepositoryService()</span>
+<span class="nc" id="L143">                .createDeployment()</span>
+<span class="nc" id="L144">                .name(&quot;childProcessDeployment&quot;)</span>
+<span class="nc" id="L145">                .addBpmnModel(&quot;childProcess.bpmn20.xml&quot;, childBpmnModel).deploy();</span>
+
+<span class="nc" id="L147">        Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L148">        variables.put(&quot;var1&quot;, &quot;String test value&quot;);</span>
+<span class="nc" id="L149">        variables.put(&quot;var2&quot;, true);</span>
+<span class="nc" id="L150">        variables.put(&quot;var3&quot;, 12345);</span>
+<span class="nc" id="L151">        variables.put(&quot;var4&quot;, 67890);</span>
+
+<span class="nc" id="L153">        ProcessInstance mainProcessInstance = runtimeService.startProcessInstanceByKey(&quot;mainProcess&quot;, variables);</span>
+
+<span class="nc" id="L155">        HistoricActivityInstanceQuery activityInstanceQuery = historyService.createHistoricActivityInstanceQuery();</span>
+<span class="nc" id="L156">        activityInstanceQuery.processInstanceId(mainProcessInstance.getId());</span>
+<span class="nc" id="L157">        activityInstanceQuery.activityId(&quot;childProcessCall&quot;);</span>
+<span class="nc" id="L158">        HistoricActivityInstance activityInstance = activityInstanceQuery.singleResult();</span>
+<span class="nc" id="L159">        String calledInstanceId = activityInstance.getCalledProcessInstanceId();</span>
+        
+<span class="nc" id="L161">        List&lt;VariableInstance&gt; variableInstances = runtimeService.createVariableInstanceQuery().processInstanceId(calledInstanceId).list();</span>
+<span class="nc" id="L162">        assertThat(variableInstances).hasSize(4);</span>
+<span class="nc bnc" id="L163" title="All 2 branches missed.">        for (VariableInstance variable : variableInstances) {</span>
+<span class="nc" id="L164">            assertThat(variable.getValue()).isEqualTo(variables.get(variable.getName()));</span>
+<span class="nc" id="L165">        }</span>
+        
+<span class="nc" id="L167">        HistoricVariableInstanceQuery variableInstanceQuery = historyService.createHistoricVariableInstanceQuery();</span>
+<span class="nc" id="L168">        List&lt;HistoricVariableInstance&gt; historicVariableInstances = variableInstanceQuery.processInstanceId(calledInstanceId).list();</span>
+
+<span class="nc" id="L170">        assertThat(historicVariableInstances).hasSize(4);</span>
+<span class="nc bnc" id="L171" title="All 2 branches missed.">        for (HistoricVariableInstance variable : historicVariableInstances) {</span>
+<span class="nc" id="L172">            assertThat(variable.getValue()).isEqualTo(variables.get(variable.getVariableName()));</span>
+<span class="nc" id="L173">        }</span>
+<span class="nc" id="L174">    }</span>
+
+    @Test
+    public void testNotInheritVariablesSubprocess() throws Exception {
+<span class="nc" id="L178">        BpmnModel mainBpmnModel = loadBPMNModel(NOT_INHERIT_VARIABLES_MAIN_PROCESS_RESOURCE);</span>
+<span class="nc" id="L179">        BpmnModel childBpmnModel = loadBPMNModel(INHERIT_VARIABLES_CHILD_PROCESS_RESOURCE);</span>
+
+<span class="nc" id="L181">        processEngine.getRepositoryService()</span>
+<span class="nc" id="L182">                .createDeployment()</span>
+<span class="nc" id="L183">                .name(&quot;childProcessDeployment&quot;)</span>
+<span class="nc" id="L184">                .addBpmnModel(&quot;childProcess.bpmn20.xml&quot;, childBpmnModel).deploy();</span>
+
+<span class="nc" id="L186">        processEngine.getRepositoryService()</span>
+<span class="nc" id="L187">                .createDeployment()</span>
+<span class="nc" id="L188">                .name(&quot;mainProcessDeployment&quot;)</span>
+<span class="nc" id="L189">                .addBpmnModel(&quot;mainProcess.bpmn20.xml&quot;, mainBpmnModel).deploy();</span>
+
+<span class="nc" id="L191">        Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L192">        variables.put(&quot;var1&quot;, &quot;String test value&quot;);</span>
+<span class="nc" id="L193">        variables.put(&quot;var2&quot;, true);</span>
+<span class="nc" id="L194">        variables.put(&quot;var3&quot;, 12345);</span>
+<span class="nc" id="L195">        variables.put(&quot;var4&quot;, 67890);</span>
+
+<span class="nc" id="L197">        ProcessInstance mainProcessInstance = runtimeService.startProcessInstanceByKey(&quot;mainProcess&quot;, variables);</span>
+
+<span class="nc" id="L199">        HistoricActivityInstanceQuery activityInstanceQuery = historyService.createHistoricActivityInstanceQuery();</span>
+<span class="nc" id="L200">        activityInstanceQuery.processInstanceId(mainProcessInstance.getId());</span>
+<span class="nc" id="L201">        activityInstanceQuery.activityId(&quot;childProcessCall&quot;);</span>
+<span class="nc" id="L202">        HistoricActivityInstance activityInstance = activityInstanceQuery.singleResult();</span>
+<span class="nc" id="L203">        String calledInstanceId = activityInstance.getCalledProcessInstanceId();</span>
+
+<span class="nc" id="L205">        HistoricVariableInstanceQuery variableInstanceQuery = historyService.createHistoricVariableInstanceQuery();</span>
+<span class="nc" id="L206">        variableInstanceQuery.processInstanceId(calledInstanceId);</span>
+<span class="nc" id="L207">        List&lt;HistoricVariableInstance&gt; variableInstances = variableInstanceQuery.list();</span>
+
+<span class="nc" id="L209">        assertThat(variableInstances).isEmpty();</span>
+<span class="nc" id="L210">    }</span>
+
+    @Test
+    public void testInheritTransientVariablesAsTransient() throws Exception {
+<span class="nc" id="L214">        BpmnModel mainBpmnModel = loadBPMNModel(INHERIT_VARIABLES_MAIN_PROCESS_RESOURCE);</span>
+<span class="nc" id="L215">        BpmnModel childBpmnModel = loadBPMNModel(INHERIT_VARIABLES_CHILD_PROCESS_TRANSIENT_VAR_RESOURCE);</span>
+
+<span class="nc" id="L217">        processEngine.getRepositoryService()</span>
+<span class="nc" id="L218">            .createDeployment()</span>
+<span class="nc" id="L219">            .name(&quot;mainProcessDeployment&quot;)</span>
+<span class="nc" id="L220">            .addBpmnModel(&quot;mainProcess.bpmn20.xml&quot;, mainBpmnModel).deploy();</span>
+
+<span class="nc" id="L222">        processEngine.getRepositoryService()</span>
+<span class="nc" id="L223">            .createDeployment()</span>
+<span class="nc" id="L224">            .name(&quot;childProcessDeployment&quot;)</span>
+<span class="nc" id="L225">            .addBpmnModel(&quot;childProcess.bpmn20.xml&quot;, childBpmnModel).deploy();</span>
+
+<span class="nc" id="L227">        ProcessInstance mainProcessInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L228">            .processDefinitionKey(&quot;mainProcess&quot;)</span>
+<span class="nc" id="L229">            .variable(&quot;persistentVar1&quot;, &quot;hello world&quot;)</span>
+<span class="nc" id="L230">            .variable(&quot;persistentVar2&quot;, 123)</span>
+<span class="nc" id="L231">            .transientVariable(&quot;transientVar1&quot;, &quot;transient hello world&quot;)</span>
+<span class="nc" id="L232">            .transientVariable(&quot;transientVar2&quot;, 1234)</span>
+<span class="nc" id="L233">            .transientVariable(&quot;transientVar3&quot;, false)</span>
+<span class="nc" id="L234">            .start();</span>
+
+<span class="nc" id="L236">        ProcessInstance calledProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(mainProcessInstance.getId()).singleResult();</span>
+<span class="nc" id="L237">        assertThat(runtimeService.getVariables(calledProcessInstance.getId())).containsOnlyKeys(&quot;persistentVar1&quot;, &quot;persistentVar2&quot;);</span>
+
+<span class="nc" id="L239">        assertThat(taskService.createTaskQuery().processInstanceId(calledProcessInstance.getId()).singleResult().getName()).isEqualTo(&quot;transient hello world&quot;);</span>
+<span class="nc" id="L240">    }</span>
+
+    @Test
+    public void testSameDeploymentSubprocess() throws Exception {
+<span class="nc" id="L244">        BpmnModel mainBpmnModel = loadBPMNModel(SAME_DEPLOYMENT_MAIN_PROCESS_RESOURCE);</span>
+<span class="nc" id="L245">        BpmnModel childBpmnModel = loadBPMNModel(SAME_DEPLOYMENT_CHILD_PROCESS_RESOURCE);</span>
+<span class="nc" id="L246">        BpmnModel childV2BpmnModel = loadBPMNModel(SAME_DEPLOYMENT_CHILD_V2_PROCESS_RESOURCE);</span>
+
+        // deploy the main and child process within one deployment
+<span class="nc" id="L249">        processEngine.getRepositoryService()</span>
+<span class="nc" id="L250">                .createDeployment()</span>
+<span class="nc" id="L251">                .name(&quot;mainProcessDeployment&quot;)</span>
+<span class="nc" id="L252">                .addBpmnModel(&quot;mainProcess.bpmn20.xml&quot;, mainBpmnModel)</span>
+<span class="nc" id="L253">                .addBpmnModel(&quot;childProcess.bpmn20.xml&quot;, childBpmnModel).deploy();</span>
+
+        // deploy a new version of the child process in which the user task has an updated name
+<span class="nc" id="L256">        processEngine.getRepositoryService()</span>
+<span class="nc" id="L257">                .createDeployment()</span>
+<span class="nc" id="L258">                .name(&quot;childProcessDeployment&quot;)</span>
+<span class="nc" id="L259">                .addBpmnModel(&quot;childProcessV2.bpmn20.xml&quot;, childV2BpmnModel).deploy();</span>
+
+<span class="nc" id="L261">        runtimeService.startProcessInstanceByKey(&quot;mainProcess&quot;);</span>
+
+<span class="nc" id="L263">        List&lt;Task&gt; list = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L264">        assertThat(list).as(&quot;There must be one task from the child process&quot;).hasSize(1);</span>
+
+<span class="nc" id="L266">        Task task = list.get(0);</span>
+<span class="nc" id="L267">        assertThat(task.getName()).as(&quot;The child process must have the name of the child process within the same deployment&quot;).isEqualTo(&quot;User Task&quot;);</span>
+<span class="nc" id="L268">    }</span>
+    
+    @Test
+    public void testSameDeploymentSubprocessWithTenant() throws Exception {
+<span class="nc" id="L272">        BpmnModel mainBpmnModel = loadBPMNModel(SAME_DEPLOYMENT_MAIN_PROCESS_RESOURCE);</span>
+<span class="nc" id="L273">        BpmnModel childBpmnModel = loadBPMNModel(SAME_DEPLOYMENT_CHILD_PROCESS_RESOURCE);</span>
+<span class="nc" id="L274">        BpmnModel childV2BpmnModel = loadBPMNModel(SAME_DEPLOYMENT_CHILD_V2_PROCESS_RESOURCE);</span>
+
+        // deploy the main and child process within one deployment
+<span class="nc" id="L277">        processEngine.getRepositoryService()</span>
+<span class="nc" id="L278">                .createDeployment()</span>
+<span class="nc" id="L279">                .name(&quot;mainProcessDeployment&quot;)</span>
+<span class="nc" id="L280">                .tenantId(&quot;myTenant&quot;)</span>
+<span class="nc" id="L281">                .addBpmnModel(&quot;mainProcess.bpmn20.xml&quot;, mainBpmnModel)</span>
+<span class="nc" id="L282">                .addBpmnModel(&quot;childProcess.bpmn20.xml&quot;, childBpmnModel).deploy();</span>
+
+        // deploy a new version of the child process in which the user task has an updated name
+<span class="nc" id="L285">        processEngine.getRepositoryService()</span>
+<span class="nc" id="L286">                .createDeployment()</span>
+<span class="nc" id="L287">                .name(&quot;childProcessDeployment&quot;)</span>
+<span class="nc" id="L288">                .tenantId(&quot;myTenant&quot;)</span>
+<span class="nc" id="L289">                .addBpmnModel(&quot;childProcessV2.bpmn20.xml&quot;, childV2BpmnModel).deploy();</span>
+
+<span class="nc" id="L291">        runtimeService.startProcessInstanceByKeyAndTenantId(&quot;mainProcess&quot;, &quot;myTenant&quot;);</span>
+
+<span class="nc" id="L293">        List&lt;Task&gt; list = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L294">        assertThat(list).as(&quot;There must be one task from the child process&quot;).hasSize(1);</span>
+
+<span class="nc" id="L296">        Task task = list.get(0);</span>
+<span class="nc" id="L297">        assertThat(task.getName()).as(&quot;The child process must have the name of the child process within the same deployment&quot;).isEqualTo(&quot;User Task&quot;);</span>
+<span class="nc" id="L298">    }</span>
+
+    @Test
+    public void testNotSameDeploymentSubprocess() throws Exception {
+<span class="nc" id="L302">        BpmnModel mainBpmnModel = loadBPMNModel(NOT_SAME_DEPLOYMENT_MAIN_PROCESS_RESOURCE);</span>
+<span class="nc" id="L303">        BpmnModel childBpmnModel = loadBPMNModel(SAME_DEPLOYMENT_CHILD_PROCESS_RESOURCE);</span>
+<span class="nc" id="L304">        BpmnModel childV2BpmnModel = loadBPMNModel(SAME_DEPLOYMENT_CHILD_V2_PROCESS_RESOURCE);</span>
+
+        // deploy the main and child process within one deployment
+<span class="nc" id="L307">        processEngine.getRepositoryService()</span>
+<span class="nc" id="L308">                .createDeployment()</span>
+<span class="nc" id="L309">                .name(&quot;mainProcessDeployment&quot;)</span>
+<span class="nc" id="L310">                .addBpmnModel(&quot;mainProcess.bpmn20.xml&quot;, mainBpmnModel)</span>
+<span class="nc" id="L311">                .addBpmnModel(&quot;childProcess.bpmn20.xml&quot;, childBpmnModel).deploy();</span>
+
+        // deploy a new version of the child process in which the user task has an updated name
+<span class="nc" id="L314">        processEngine.getRepositoryService()</span>
+<span class="nc" id="L315">                .createDeployment()</span>
+<span class="nc" id="L316">                .name(&quot;childProcessDeployment&quot;)</span>
+<span class="nc" id="L317">                .addBpmnModel(&quot;childProcessV2.bpmn20.xml&quot;, childV2BpmnModel).deploy();</span>
+
+<span class="nc" id="L319">        runtimeService.startProcessInstanceByKey(&quot;mainProcess&quot;);</span>
+
+<span class="nc" id="L321">        List&lt;Task&gt; list = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L322">        assertThat(list).as(&quot;There must be one task from the child process&quot;).hasSize(1);</span>
+
+<span class="nc" id="L324">        Task task = list.get(0);</span>
+<span class="nc" id="L325">        assertThat(task.getName()).as(&quot;The child process must have the name of the newest child process deployment&quot;).isEqualTo(&quot;User Task V2&quot;);</span>
+<span class="nc" id="L326">    }</span>
+    
+    @Test
+    public void testNotSameDeploymentSubprocessWithTenant() throws Exception {
+<span class="nc" id="L330">        BpmnModel mainBpmnModel = loadBPMNModel(NOT_SAME_DEPLOYMENT_MAIN_PROCESS_RESOURCE);</span>
+<span class="nc" id="L331">        BpmnModel childBpmnModel = loadBPMNModel(SAME_DEPLOYMENT_CHILD_PROCESS_RESOURCE);</span>
+<span class="nc" id="L332">        BpmnModel childV2BpmnModel = loadBPMNModel(SAME_DEPLOYMENT_CHILD_V2_PROCESS_RESOURCE);</span>
+
+        // deploy the main and child process within one deployment
+<span class="nc" id="L335">        processEngine.getRepositoryService()</span>
+<span class="nc" id="L336">                .createDeployment()</span>
+<span class="nc" id="L337">                .name(&quot;mainProcessDeployment&quot;)</span>
+<span class="nc" id="L338">                .tenantId(&quot;myTenant&quot;)</span>
+<span class="nc" id="L339">                .addBpmnModel(&quot;mainProcess.bpmn20.xml&quot;, mainBpmnModel)</span>
+<span class="nc" id="L340">                .addBpmnModel(&quot;childProcess.bpmn20.xml&quot;, childBpmnModel).deploy();</span>
+
+        // deploy a new version of the child process in which the user task has an updated name
+<span class="nc" id="L343">        processEngine.getRepositoryService()</span>
+<span class="nc" id="L344">                .createDeployment()</span>
+<span class="nc" id="L345">                .name(&quot;childProcessDeployment&quot;)</span>
+<span class="nc" id="L346">                .tenantId(&quot;myTenant&quot;)</span>
+<span class="nc" id="L347">                .addBpmnModel(&quot;childProcessV2.bpmn20.xml&quot;, childV2BpmnModel).deploy();</span>
+
+<span class="nc" id="L349">        runtimeService.startProcessInstanceByKeyAndTenantId(&quot;mainProcess&quot;, &quot;myTenant&quot;);</span>
+
+<span class="nc" id="L351">        List&lt;Task&gt; list = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L352">        assertThat(list).as(&quot;There must be one task from the child process&quot;).hasSize(1);</span>
+
+<span class="nc" id="L354">        Task task = list.get(0);</span>
+<span class="nc" id="L355">        assertThat(task.getName()).as(&quot;The child process must have the name of the newest child process deployment&quot;).isEqualTo(&quot;User Task V2&quot;);</span>
+<span class="nc" id="L356">    }</span>
+
+    @Test
+    public void testSameDeploymentSubprocessNotInSameDeployment() throws Exception {
+<span class="nc" id="L360">        BpmnModel mainBpmnModel = loadBPMNModel(SAME_DEPLOYMENT_MAIN_PROCESS_RESOURCE);</span>
+<span class="nc" id="L361">        BpmnModel childBpmnModel = loadBPMNModel(SAME_DEPLOYMENT_CHILD_PROCESS_RESOURCE);</span>
+<span class="nc" id="L362">        BpmnModel childV2BpmnModel = loadBPMNModel(SAME_DEPLOYMENT_CHILD_V2_PROCESS_RESOURCE);</span>
+
+        // deploy the main and child process within one deployment
+<span class="nc" id="L365">        processEngine.getRepositoryService()</span>
+<span class="nc" id="L366">                .createDeployment()</span>
+<span class="nc" id="L367">                .name(&quot;mainProcessDeployment&quot;)</span>
+<span class="nc" id="L368">                .addBpmnModel(&quot;mainProcess.bpmn20.xml&quot;, mainBpmnModel).deploy();</span>
+
+<span class="nc" id="L370">        processEngine.getRepositoryService()</span>
+<span class="nc" id="L371">                .createDeployment()</span>
+<span class="nc" id="L372">                .name(&quot;mainProcessDeployment&quot;)</span>
+<span class="nc" id="L373">                .addBpmnModel(&quot;childProcess.bpmn20.xml&quot;, childBpmnModel).deploy();</span>
+
+        // deploy a new version of the child process in which the user task has an updated name
+<span class="nc" id="L376">        processEngine.getRepositoryService()</span>
+<span class="nc" id="L377">                .createDeployment()</span>
+<span class="nc" id="L378">                .name(&quot;childProcessDeployment&quot;)</span>
+<span class="nc" id="L379">                .addBpmnModel(&quot;childProcessV2.bpmn20.xml&quot;, childV2BpmnModel).deploy();</span>
+
+<span class="nc" id="L381">        runtimeService.startProcessInstanceByKey(&quot;mainProcess&quot;);</span>
+
+<span class="nc" id="L383">        List&lt;Task&gt; list = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L384">        assertThat(list).as(&quot;There must be one task from the child process&quot;).hasSize(1);</span>
+
+<span class="nc" id="L386">        Task task = list.get(0);</span>
+<span class="nc" id="L387">        assertThat(task.getName())</span>
+<span class="nc" id="L388">                .as(&quot;The child process must have the name of the newest child process deployment as it there is no deployed child process in the same deployment&quot;)</span>
+<span class="nc" id="L389">                .isEqualTo(&quot;User Task V2&quot;);</span>
+<span class="nc" id="L390">    }</span>
+    
+    @Test
+    public void testSameDeploymentSubprocessNotInSameDeploymentWithTenant() throws Exception {
+<span class="nc" id="L394">        BpmnModel mainBpmnModel = loadBPMNModel(SAME_DEPLOYMENT_MAIN_PROCESS_RESOURCE);</span>
+<span class="nc" id="L395">        BpmnModel childBpmnModel = loadBPMNModel(SAME_DEPLOYMENT_CHILD_PROCESS_RESOURCE);</span>
+<span class="nc" id="L396">        BpmnModel childV2BpmnModel = loadBPMNModel(SAME_DEPLOYMENT_CHILD_V2_PROCESS_RESOURCE);</span>
+
+        // deploy the main and child process within one deployment
+<span class="nc" id="L399">        processEngine.getRepositoryService()</span>
+<span class="nc" id="L400">                .createDeployment()</span>
+<span class="nc" id="L401">                .name(&quot;mainProcessDeployment&quot;)</span>
+<span class="nc" id="L402">                .tenantId(&quot;myTenant&quot;)</span>
+<span class="nc" id="L403">                .addBpmnModel(&quot;mainProcess.bpmn20.xml&quot;, mainBpmnModel).deploy();</span>
+
+<span class="nc" id="L405">        processEngine.getRepositoryService()</span>
+<span class="nc" id="L406">                .createDeployment()</span>
+<span class="nc" id="L407">                .name(&quot;mainProcessDeployment&quot;)</span>
+<span class="nc" id="L408">                .tenantId(&quot;myTenant&quot;)</span>
+<span class="nc" id="L409">                .addBpmnModel(&quot;childProcess.bpmn20.xml&quot;, childBpmnModel).deploy();</span>
+
+        // deploy a new version of the child process in which the user task has an updated name
+<span class="nc" id="L412">        processEngine.getRepositoryService()</span>
+<span class="nc" id="L413">                .createDeployment()</span>
+<span class="nc" id="L414">                .name(&quot;childProcessDeployment&quot;)</span>
+<span class="nc" id="L415">                .tenantId(&quot;myTenant&quot;)</span>
+<span class="nc" id="L416">                .addBpmnModel(&quot;childProcessV2.bpmn20.xml&quot;, childV2BpmnModel).deploy();</span>
+
+<span class="nc" id="L418">        runtimeService.startProcessInstanceByKeyAndTenantId(&quot;mainProcess&quot;, &quot;myTenant&quot;);</span>
+
+<span class="nc" id="L420">        List&lt;Task&gt; list = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L421">        assertThat(list).as(&quot;There must be one task from the child process&quot;).hasSize(1);</span>
+
+<span class="nc" id="L423">        Task task = list.get(0);</span>
+<span class="nc" id="L424">        assertThat(task.getName())</span>
+<span class="nc" id="L425">                .as(&quot;The child process must have the name of the newest child process deployment as it there is no deployed child process in the same deployment&quot;)</span>
+<span class="nc" id="L426">                .isEqualTo(&quot;User Task V2&quot;);</span>
+<span class="nc" id="L427">    }</span>
+    
+    @Test
+    public void testStartSubProcessInstanceInterceptor() throws Exception {
+<span class="nc" id="L431">        BpmnModel mainBpmnModel = loadBPMNModel(NOT_INHERIT_VARIABLES_MAIN_PROCESS_RESOURCE);</span>
+<span class="nc" id="L432">        BpmnModel childBpmnModel = loadBPMNModel(INHERIT_VARIABLES_CHILD_PROCESS_RESOURCE);</span>
+        
+<span class="nc" id="L434">        TestStartProcessInstanceInterceptor testStartProcessInstanceInterceptor = new TestStartProcessInstanceInterceptor();</span>
+<span class="nc" id="L435">        processEngineConfiguration.setStartProcessInstanceInterceptor(testStartProcessInstanceInterceptor);</span>
+        
+        try {
+<span class="nc" id="L438">            processEngine.getRepositoryService()</span>
+<span class="nc" id="L439">                    .createDeployment()</span>
+<span class="nc" id="L440">                    .name(&quot;mainProcessDeployment&quot;)</span>
+<span class="nc" id="L441">                    .addBpmnModel(&quot;mainProcess.bpmn20.xml&quot;, mainBpmnModel).deploy();</span>
+    
+<span class="nc" id="L443">            processEngine.getRepositoryService()</span>
+<span class="nc" id="L444">                    .createDeployment()</span>
+<span class="nc" id="L445">                    .name(&quot;childProcessDeployment&quot;)</span>
+<span class="nc" id="L446">                    .addBpmnModel(&quot;childProcess.bpmn20.xml&quot;, childBpmnModel).deploy();</span>
+    
+<span class="nc" id="L448">            Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L449">            variables.put(&quot;var1&quot;, &quot;test value&quot;);</span>
+    
+<span class="nc" id="L451">            ProcessInstance mainProcessInstance = runtimeService.startProcessInstanceByKey(&quot;mainProcess&quot;, variables);</span>
+<span class="nc" id="L452">            assertThat(mainProcessInstance.getBusinessKey()).isEqualTo(&quot;testKey&quot;);</span>
+            
+<span class="nc" id="L454">            HistoricProcessInstance subProcessInstance = historyService.createHistoricProcessInstanceQuery().superProcessInstanceId(mainProcessInstance.getId()).singleResult();</span>
+<span class="nc" id="L455">            assertThat(subProcessInstance.getBusinessKey()).isEqualTo(&quot;testSubKey&quot;);</span>
+            
+<span class="nc" id="L457">            VariableInstanceQuery variableInstanceQuery = runtimeService.createVariableInstanceQuery();</span>
+<span class="nc" id="L458">            List&lt;VariableInstance&gt; variableInstances = variableInstanceQuery.processInstanceId(mainProcessInstance.getId()).list();</span>
+<span class="nc" id="L459">            assertThat(variableInstances)</span>
+<span class="nc" id="L460">                    .extracting(VariableInstance::getName, VariableInstance::getValue)</span>
+<span class="nc" id="L461">                    .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L462">                            tuple(&quot;var1&quot;, &quot;test value&quot;),</span>
+<span class="nc" id="L463">                            tuple(&quot;beforeContextVar&quot;, &quot;test&quot;)</span>
+                    );
+            
+<span class="nc" id="L466">            variableInstances = variableInstanceQuery.processInstanceId(subProcessInstance.getId()).list();</span>
+<span class="nc" id="L467">            assertThat(variableInstances)</span>
+<span class="nc" id="L468">                    .extracting(VariableInstance::getName, VariableInstance::getValue)</span>
+<span class="nc" id="L469">                    .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L470">                            tuple(&quot;var1&quot;, &quot;test value&quot;),</span>
+<span class="nc" id="L471">                            tuple(&quot;beforeContextVar&quot;, &quot;test&quot;),</span>
+<span class="nc" id="L472">                            tuple(&quot;beforeSubContextVar&quot;, &quot;subtest&quot;)</span>
+                    );
+            
+<span class="nc" id="L475">            HistoricVariableInstanceQuery historicVariableInstanceQuery = historyService.createHistoricVariableInstanceQuery();</span>
+<span class="nc" id="L476">            List&lt;HistoricVariableInstance&gt; historicVariableInstances = historicVariableInstanceQuery.processInstanceId(mainProcessInstance.getId()).list();</span>
+<span class="nc" id="L477">            assertThat(historicVariableInstances)</span>
+<span class="nc" id="L478">                    .extracting(HistoricVariableInstance::getVariableName, HistoricVariableInstance::getValue)</span>
+<span class="nc" id="L479">                    .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L480">                            tuple(&quot;var1&quot;, &quot;test value&quot;),</span>
+<span class="nc" id="L481">                            tuple(&quot;beforeContextVar&quot;, &quot;test&quot;)</span>
+                    );
+            
+<span class="nc" id="L484">            historicVariableInstances = historicVariableInstanceQuery.processInstanceId(subProcessInstance.getId()).list();</span>
+<span class="nc" id="L485">            assertThat(historicVariableInstances)</span>
+<span class="nc" id="L486">                    .extracting(HistoricVariableInstance::getVariableName, HistoricVariableInstance::getValue)</span>
+<span class="nc" id="L487">                    .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L488">                            tuple(&quot;var1&quot;, &quot;test value&quot;),</span>
+<span class="nc" id="L489">                            tuple(&quot;beforeContextVar&quot;, &quot;test&quot;),</span>
+<span class="nc" id="L490">                            tuple(&quot;beforeSubContextVar&quot;, &quot;subtest&quot;)</span>
+                    );
+
+        } finally {
+<span class="nc" id="L494">            processEngineConfiguration.setStartProcessInstanceInterceptor(null);</span>
+        }
+<span class="nc" id="L496">    }</span>
+
+    private void suspendProcessDefinitions(Deployment childDeployment) {
+<span class="nc" id="L499">        List&lt;ProcessDefinition&gt; childProcessDefinitionList = repositoryService.createProcessDefinitionQuery().deploymentId(childDeployment.getId()).list();</span>
+
+<span class="nc bnc" id="L501" title="All 2 branches missed.">        for (ProcessDefinition processDefinition : childProcessDefinitionList) {</span>
+<span class="nc" id="L502">            repositoryService.suspendProcessDefinitionById(processDefinition.getId());</span>
+<span class="nc" id="L503">        }</span>
+<span class="nc" id="L504">    }</span>
+
+    @AfterEach
+    protected void tearDown() throws Exception {
+<span class="nc bnc" id="L508" title="All 2 branches missed.">        for (Deployment deployment : repositoryService.createDeploymentQuery().list()) {</span>
+<span class="nc" id="L509">            repositoryService.deleteDeployment(deployment.getId(), true);</span>
+<span class="nc" id="L510">        }</span>
+<span class="nc" id="L511">    }</span>
+
+    protected BpmnModel loadBPMNModel(String bpmnModelFilePath) throws Exception {
+<span class="nc" id="L514">        InputStream xmlStream = this.getClass().getClassLoader().getResourceAsStream(bpmnModelFilePath);</span>
+<span class="nc" id="L515">        StreamSource xmlSource = new InputStreamSource(xmlStream);</span>
+<span class="nc" id="L516">        BpmnModel bpmnModel = new BpmnXMLConverter().convertToBpmnModel(xmlSource, false, false, processEngineConfiguration.getXmlEncoding());</span>
+<span class="nc" id="L517">        return bpmnModel;</span>
+    }
+    
+<span class="nc" id="L520">    protected class TestStartProcessInstanceInterceptor implements StartProcessInstanceInterceptor {</span>
+        
+<span class="nc" id="L522">        protected int beforeStartProcessInstanceCounter = 0;</span>
+<span class="nc" id="L523">        protected int afterStartProcessInstanceCounter = 0;</span>
+<span class="nc" id="L524">        protected int beforeStartSubProcessInstanceCounter = 0;</span>
+<span class="nc" id="L525">        protected int afterStartSubProcessInstanceCounter = 0;</span>
+
+        @Override
+        public void beforeStartProcessInstance(StartProcessInstanceBeforeContext instanceContext) {
+<span class="nc" id="L529">            beforeStartProcessInstanceCounter++;</span>
+<span class="nc" id="L530">            instanceContext.getVariables().put(&quot;beforeContextVar&quot;, &quot;test&quot;);</span>
+<span class="nc" id="L531">            instanceContext.setBusinessKey(&quot;testKey&quot;);</span>
+<span class="nc" id="L532">        }</span>
+
+        @Override
+        public void afterStartProcessInstance(StartProcessInstanceAfterContext instanceContext) {
+<span class="nc" id="L536">            afterStartProcessInstanceCounter++;</span>
+<span class="nc" id="L537">        }</span>
+
+        @Override
+        public void beforeStartSubProcessInstance(StartSubProcessInstanceBeforeContext instanceContext) {
+<span class="nc" id="L541">            beforeStartSubProcessInstanceCounter++;</span>
+<span class="nc" id="L542">            instanceContext.getVariables().put(&quot;beforeSubContextVar&quot;, &quot;subtest&quot;);</span>
+<span class="nc" id="L543">            instanceContext.setBusinessKey(&quot;testSubKey&quot;);</span>
+<span class="nc" id="L544">            instanceContext.setInheritVariables(true);</span>
+<span class="nc" id="L545">        }</span>
+
+        @Override
+        public void afterStartSubProcessInstance(StartSubProcessInstanceAfterContext instanceContext) {
+<span class="nc" id="L549">            afterStartSubProcessInstanceCounter++;</span>
+<span class="nc" id="L550">        }</span>
+
+        public int getBeforeStartProcessInstanceCounter() {
+<span class="nc" id="L553">            return beforeStartProcessInstanceCounter;</span>
+        }
+
+        public int getAfterStartProcessInstanceCounter() {
+<span class="nc" id="L557">            return afterStartProcessInstanceCounter;</span>
+        }
+
+        public int getBeforeStartSubProcessInstanceCounter() {
+<span class="nc" id="L561">            return beforeStartSubProcessInstanceCounter;</span>
+        }
+
+        public int getAfterStartSubProcessInstanceCounter() {
+<span class="nc" id="L565">            return afterStartSubProcessInstanceCounter;</span>
+        }
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

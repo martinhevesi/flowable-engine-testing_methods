@@ -1,0 +1,595 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CaseInstanceHelperImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.cmmn.engine.impl.runtime</a> &gt; <span class="el_source">CaseInstanceHelperImpl.java</span></div><h1>CaseInstanceHelperImpl.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.cmmn.engine.impl.runtime;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.cmmn.api.CallbackTypes;
+import org.flowable.cmmn.api.history.HistoricCaseInstance;
+import org.flowable.cmmn.api.history.HistoricPlanItemInstance;
+import org.flowable.cmmn.api.repository.CaseDefinition;
+import org.flowable.cmmn.api.runtime.CaseInstanceBuilder;
+import org.flowable.cmmn.api.runtime.CaseInstanceState;
+import org.flowable.cmmn.engine.CmmnEngineConfiguration;
+import org.flowable.cmmn.engine.impl.deployer.CmmnDeploymentManager;
+import org.flowable.cmmn.engine.impl.event.FlowableCmmnEventBuilder;
+import org.flowable.cmmn.engine.impl.job.AsyncInitializePlanModelJobHandler;
+import org.flowable.cmmn.engine.impl.listener.CaseInstanceLifeCycleListenerUtil;
+import org.flowable.cmmn.engine.impl.persistence.entity.CaseDefinitionEntityManager;
+import org.flowable.cmmn.engine.impl.persistence.entity.CaseInstanceEntity;
+import org.flowable.cmmn.engine.impl.persistence.entity.CaseInstanceEntityManager;
+import org.flowable.cmmn.engine.impl.persistence.entity.HistoricPlanItemInstanceEntityManager;
+import org.flowable.cmmn.engine.impl.persistence.entity.PlanItemInstanceEntity;
+import org.flowable.cmmn.engine.impl.persistence.entity.PlanItemInstanceEntityManager;
+import org.flowable.cmmn.engine.impl.repository.CaseDefinitionUtil;
+import org.flowable.cmmn.engine.impl.task.TaskHelper;
+import org.flowable.cmmn.engine.impl.util.CmmnLoggingSessionUtil;
+import org.flowable.cmmn.engine.impl.util.CommandContextUtil;
+import org.flowable.cmmn.engine.impl.util.EntityLinkUtil;
+import org.flowable.cmmn.engine.impl.util.EventInstanceCmmnUtil;
+import org.flowable.cmmn.engine.impl.util.IdentityLinkUtil;
+import org.flowable.cmmn.engine.impl.util.JobUtil;
+import org.flowable.cmmn.engine.interceptor.StartCaseInstanceAfterContext;
+import org.flowable.cmmn.engine.interceptor.StartCaseInstanceBeforeContext;
+import org.flowable.cmmn.model.Case;
+import org.flowable.cmmn.model.CmmnModel;
+import org.flowable.cmmn.model.ReactivateEventListener;
+import org.flowable.cmmn.model.Stage;
+import org.flowable.common.engine.api.FlowableIllegalArgumentException;
+import org.flowable.common.engine.api.FlowableIllegalStateException;
+import org.flowable.common.engine.api.FlowableObjectNotFoundException;
+import org.flowable.common.engine.api.delegate.event.FlowableEventDispatcher;
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.impl.callback.CallbackData;
+import org.flowable.common.engine.impl.callback.RuntimeInstanceStateChangeCallback;
+import org.flowable.common.engine.impl.identity.Authentication;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.common.engine.impl.interceptor.EngineConfigurationConstants;
+import org.flowable.common.engine.impl.logging.CmmnLoggingSessionConstants;
+import org.flowable.eventregistry.api.runtime.EventInstance;
+import org.flowable.eventregistry.impl.constant.EventConstants;
+import org.flowable.form.api.FormFieldHandler;
+import org.flowable.form.api.FormInfo;
+import org.flowable.form.api.FormRepositoryService;
+import org.flowable.form.api.FormService;
+import org.flowable.identitylink.api.IdentityLinkType;
+import org.flowable.job.service.JobService;
+import org.flowable.job.service.impl.persistence.entity.JobEntity;
+import org.flowable.variable.api.history.HistoricVariableInstance;
+import org.flowable.variable.service.VariableService;
+import org.flowable.variable.service.impl.el.NoExecutionVariableScope;
+import org.flowable.variable.service.impl.persistence.entity.VariableInstanceEntity;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * @author Joram Barrez
+ * @author Micha Kiener
+ */
+public class CaseInstanceHelperImpl implements CaseInstanceHelper {
+
+<span class="nc" id="L86">    private static final Logger LOGGER = LoggerFactory.getLogger(CaseInstanceHelperImpl.class);</span>
+    
+    protected CmmnEngineConfiguration cmmnEngineConfiguration;
+    
+<span class="nc" id="L90">    public CaseInstanceHelperImpl(CmmnEngineConfiguration cmmnEngineConfiguration) {</span>
+<span class="nc" id="L91">        this.cmmnEngineConfiguration = cmmnEngineConfiguration;</span>
+<span class="nc" id="L92">    }</span>
+
+    @Override
+    public CaseInstanceEntity startCaseInstance(CaseInstanceBuilder caseInstanceBuilder) {
+<span class="nc" id="L96">        CommandContext commandContext = CommandContextUtil.getCommandContext();</span>
+<span class="nc" id="L97">        return startCaseInstance(commandContext, getCaseDefinition(caseInstanceBuilder, commandContext), caseInstanceBuilder);</span>
+    }
+
+    @Override
+    public CaseInstanceEntity startCaseInstanceAsync(CaseInstanceBuilder caseInstanceBuilder) {
+<span class="nc" id="L102">        CommandContext commandContext = CommandContextUtil.getCommandContext();</span>
+<span class="nc" id="L103">        return startCaseInstanceAsync(commandContext, getCaseDefinition(caseInstanceBuilder, commandContext), caseInstanceBuilder);</span>
+    }
+
+    @Override
+    public CaseInstanceEntity copyHistoricCaseInstanceToRuntime(HistoricCaseInstance caseInstance) {
+<span class="nc" id="L108">        CommandContext commandContext = CommandContextUtil.getCommandContext();</span>
+<span class="nc" id="L109">        CaseDefinitionEntityManager caseDefinitionEntityManager = cmmnEngineConfiguration.getCaseDefinitionEntityManager();</span>
+<span class="nc" id="L110">        CaseDefinition caseDefinition = caseDefinitionEntityManager.findById(caseInstance.getCaseDefinitionId());</span>
+<span class="nc" id="L111">        CaseInstanceEntity caseInstanceEntity = copyHistoricCaseInstanceToRuntime(commandContext, caseDefinition, caseInstance);</span>
+<span class="nc" id="L112">        return caseInstanceEntity;</span>
+    }
+
+    protected CaseDefinition getCaseDefinition(CaseInstanceBuilder caseInstanceBuilder, CommandContext commandContext) {
+<span class="nc" id="L116">        CaseDefinition caseDefinition = null;</span>
+<span class="nc bnc" id="L117" title="All 2 branches missed.">        if (caseInstanceBuilder.getCaseDefinitionId() != null) {</span>
+<span class="nc" id="L118">            String caseDefinitionId = caseInstanceBuilder.getCaseDefinitionId();</span>
+<span class="nc" id="L119">            CmmnDeploymentManager deploymentManager = cmmnEngineConfiguration.getDeploymentManager();</span>
+<span class="nc" id="L120">            caseDefinition = deploymentManager.findDeployedCaseDefinitionById(caseDefinitionId);</span>
+
+<span class="nc bnc" id="L122" title="All 2 branches missed.">        } else if (caseInstanceBuilder.getCaseDefinitionKey() != null) {</span>
+<span class="nc" id="L123">            String caseDefinitionKey = caseInstanceBuilder.getCaseDefinitionKey();</span>
+<span class="nc" id="L124">            CaseDefinitionEntityManager caseDefinitionEntityManager = cmmnEngineConfiguration.getCaseDefinitionEntityManager();</span>
+<span class="nc" id="L125">            String tenantId = caseInstanceBuilder.getTenantId();</span>
+<span class="nc" id="L126">            String parentDeploymentId = caseInstanceBuilder.getCaseDefinitionParentDeploymentId();</span>
+<span class="nc bnc" id="L127" title="All 4 branches missed.">            if (tenantId == null || CmmnEngineConfiguration.NO_TENANT_ID.equals(tenantId)) {</span>
+
+<span class="nc bnc" id="L129" title="All 2 branches missed.">                if (parentDeploymentId != null) {</span>
+<span class="nc" id="L130">                    caseDefinition = caseDefinitionEntityManager.findCaseDefinitionByParentDeploymentAndKey(parentDeploymentId, caseDefinitionKey);</span>
+                }
+
+<span class="nc bnc" id="L133" title="All 2 branches missed.">                if (caseDefinition == null) {</span>
+<span class="nc" id="L134">                    caseDefinition = caseDefinitionEntityManager.findLatestCaseDefinitionByKey(caseDefinitionKey);</span>
+                }
+
+<span class="nc bnc" id="L137" title="All 2 branches missed.">                if (caseDefinition == null) {</span>
+<span class="nc" id="L138">                    throw new FlowableObjectNotFoundException(&quot;No case definition found for key &quot; + caseDefinitionKey, CaseDefinition.class);</span>
+                }
+                
+<span class="nc bnc" id="L141" title="All 2 branches missed.">            } else if (!CmmnEngineConfiguration.NO_TENANT_ID.equals(tenantId)) {</span>
+<span class="nc bnc" id="L142" title="All 2 branches missed.">                if (parentDeploymentId != null) {</span>
+<span class="nc" id="L143">                    caseDefinition = caseDefinitionEntityManager</span>
+<span class="nc" id="L144">                            .findCaseDefinitionByParentDeploymentAndKeyAndTenantId(parentDeploymentId, caseDefinitionKey, tenantId);</span>
+                }
+
+<span class="nc bnc" id="L147" title="All 2 branches missed.">                if (caseDefinition == null) {</span>
+<span class="nc" id="L148">                    caseDefinition = caseDefinitionEntityManager.findLatestCaseDefinitionByKeyAndTenantId(caseDefinitionKey, tenantId);</span>
+                }
+
+<span class="nc bnc" id="L151" title="All 2 branches missed.">                if (caseDefinition == null) {</span>
+<span class="nc bnc" id="L152" title="All 4 branches missed.">                    if (caseInstanceBuilder.isFallbackToDefaultTenant() || cmmnEngineConfiguration.isFallbackToDefaultTenant()) {</span>
+<span class="nc" id="L153">                        String defaultTenant = cmmnEngineConfiguration.getDefaultTenantProvider().getDefaultTenant(tenantId, ScopeTypes.CMMN, caseDefinitionKey);</span>
+<span class="nc bnc" id="L154" title="All 2 branches missed.">                        if (StringUtils.isNotEmpty(defaultTenant)) {</span>
+<span class="nc" id="L155">                            caseDefinition = caseDefinitionEntityManager.findLatestCaseDefinitionByKeyAndTenantId(caseDefinitionKey, defaultTenant);</span>
+<span class="nc" id="L156">                            caseInstanceBuilder.overrideCaseDefinitionTenantId(tenantId);</span>
+                            
+                        } else {
+<span class="nc" id="L159">                            caseDefinition = caseDefinitionEntityManager.findLatestCaseDefinitionByKey(caseDefinitionKey);</span>
+                        }
+                        
+<span class="nc bnc" id="L162" title="All 2 branches missed.">                        if (caseDefinition == null) {</span>
+<span class="nc" id="L163">                            throw new FlowableObjectNotFoundException(</span>
+                                &quot;Case definition was not found by key '&quot; + caseDefinitionKey + &quot;'. Fallback to default tenant was also used.&quot;);
+                        }
+<span class="nc" id="L166">                    } else {</span>
+<span class="nc" id="L167">                        throw new FlowableObjectNotFoundException(</span>
+                            &quot;Case definition was not found by key '&quot; + caseDefinitionKey + &quot;' and tenant '&quot; + tenantId + &quot;'&quot;);
+                    }
+                }
+            }
+<span class="nc" id="L172">        } else {</span>
+<span class="nc" id="L173">            throw new FlowableIllegalArgumentException(&quot;caseDefinitionKey and caseDefinitionId are null&quot;);</span>
+        }
+<span class="nc" id="L175">        return caseDefinition;</span>
+    }
+
+    protected CaseInstanceEntity startCaseInstance(CommandContext commandContext, CaseDefinition caseDefinition, CaseInstanceBuilder caseInstanceBuilder) {
+<span class="nc" id="L179">        CmmnModel cmmnModel = getCmmnModel(commandContext, caseDefinition);</span>
+<span class="nc" id="L180">        Case caseModel = getCaseModel(caseDefinition, cmmnModel);</span>
+<span class="nc" id="L181">        CaseInstanceEntity caseInstanceEntity = initializeCaseInstanceEntity(commandContext, caseDefinition, </span>
+                cmmnModel, caseModel, caseInstanceBuilder);
+
+<span class="nc bnc" id="L184" title="All 2 branches missed.">        if (!caseModel.isAsync()) {</span>
+            // The InitPlanModelOperation will take care of initializing all the child plan items of that stage
+<span class="nc" id="L186">            CommandContextUtil.getAgenda(commandContext).planInitPlanModelOperation(caseInstanceEntity);</span>
+
+<span class="nc" id="L188">            CaseInstanceLifeCycleListenerUtil.callLifecycleListeners(commandContext, caseInstanceEntity, &quot;&quot;, CaseInstanceState.ACTIVE);</span>
+
+<span class="nc" id="L190">            FlowableEventDispatcher eventDispatcher = cmmnEngineConfiguration.getEventDispatcher();</span>
+<span class="nc bnc" id="L191" title="All 4 branches missed.">            if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L192">                eventDispatcher.dispatchEvent(FlowableCmmnEventBuilder.createCaseStartedEvent(caseInstanceEntity), EngineConfigurationConstants.KEY_CMMN_ENGINE_CONFIG);</span>
+            }
+
+<span class="nc bnc" id="L195" title="All 2 branches missed.">            if (cmmnEngineConfiguration.isLoggingSessionEnabled()) {</span>
+<span class="nc" id="L196">                CmmnLoggingSessionUtil.addLoggingData(CmmnLoggingSessionConstants.TYPE_CASE_STARTED, &quot;Started case instance with id &quot; +</span>
+<span class="nc" id="L197">                        caseInstanceEntity.getId(), caseInstanceEntity, cmmnEngineConfiguration.getObjectMapper());</span>
+            }
+<span class="nc" id="L199">        } else {</span>
+            // create a job to execute InitPlanModelOperation, which will take care of initializing all the child plan items of that stage
+<span class="nc" id="L201">            JobService jobService = cmmnEngineConfiguration.getJobServiceConfiguration().getJobService();</span>
+<span class="nc" id="L202">            createAsyncInitJob(caseInstanceEntity, caseDefinition, caseModel, jobService, commandContext);</span>
+        }
+
+<span class="nc" id="L205">        return caseInstanceEntity;</span>
+    }
+
+    protected CaseInstanceEntity startCaseInstanceAsync(CommandContext commandContext, CaseDefinition caseDefinition, CaseInstanceBuilder caseInstanceBuilder) {
+<span class="nc" id="L209">        CmmnModel cmmnModel = getCmmnModel(commandContext, caseDefinition);</span>
+<span class="nc" id="L210">        Case caseModel = getCaseModel(caseDefinition, cmmnModel);</span>
+<span class="nc" id="L211">        CaseInstanceEntity caseInstanceEntity = initializeCaseInstanceEntity(commandContext, caseDefinition, </span>
+                cmmnModel, caseModel, caseInstanceBuilder);
+
+        // create a job to execute InitPlanModelOperation, which will take care of initializing all the child plan items of that stage
+<span class="nc" id="L215">        JobService jobService = cmmnEngineConfiguration.getJobServiceConfiguration().getJobService();</span>
+<span class="nc" id="L216">        createAsyncInitJob(caseInstanceEntity, caseDefinition, caseModel, jobService, commandContext);</span>
+
+<span class="nc" id="L218">        return caseInstanceEntity;</span>
+    }
+
+    /**
+     * This is the first part of reactivating a case instance from the history. It copies the historic data back to the runtime which is the case instance,
+     * its plan items and the variables. This method does not trigger the reactivation listener, just checks, if it is there, but there is no reactivation
+     * of plan items, etc. Just the copy of the historic data back to the runtime.
+     *
+     * @param commandContext the command context to execute within
+     * @param caseDefinition the case definition to get the case model from
+     * @param caseInstance the historic case instance to copy back to the runtime
+     * @return the copied runtime case instance entity for further processing
+     */
+    protected CaseInstanceEntity copyHistoricCaseInstanceToRuntime(CommandContext commandContext, CaseDefinition caseDefinition, HistoricCaseInstance caseInstance) {
+<span class="nc" id="L232">        CmmnModel cmmnModel = getCmmnModel(commandContext, caseDefinition);</span>
+<span class="nc" id="L233">        Case caseModel = getCaseModel(caseDefinition, cmmnModel);</span>
+
+<span class="nc" id="L235">        ReactivateEventListener listener = caseModel.getReactivateEventListener();</span>
+<span class="nc bnc" id="L236" title="All 2 branches missed.">        if (listener == null) {</span>
+            // the reactivation event listener must be present in order to reactivate the case, there is no generic way as it is always business driven
+            // on what happens during reactivation
+<span class="nc" id="L239">            throw new FlowableIllegalStateException(&quot;The historic case instance &quot; + caseInstance.getId()</span>
+                + &quot; cannot be reactivated as there is no reactivation event in its CMMN model. You need to explicitly model the reactivation event in order to support case reactivation.&quot;);
+        }
+
+        // recreate the case instance in the runtime data table from the historic one
+<span class="nc" id="L244">        return createCaseInstanceEntityFromHistoricCaseInstance(commandContext, caseInstance);</span>
+    }
+
+    protected void createAsyncInitJob(CaseInstanceEntity caseInstance, CaseDefinition caseDefinition, 
+            Case caseModel, JobService jobService, CommandContext commandContext) {
+        
+<span class="nc" id="L250">        JobEntity job = JobUtil.createJob(caseInstance, caseModel, AsyncInitializePlanModelJobHandler.TYPE, cmmnEngineConfiguration);</span>
+<span class="nc" id="L251">        job.setElementId(caseDefinition.getId());</span>
+<span class="nc" id="L252">        job.setElementName(caseDefinition.getName());</span>
+<span class="nc" id="L253">        job.setJobHandlerConfiguration(caseInstance.getId());</span>
+        
+<span class="nc" id="L255">        jobService.createAsyncJob(job, false);</span>
+<span class="nc" id="L256">        jobService.scheduleAsyncJob(job);</span>
+<span class="nc" id="L257">    }</span>
+    
+    protected CmmnModel getCmmnModel(CommandContext commandContext, CaseDefinition caseDefinition) {
+<span class="nc" id="L260">        CmmnEngineConfiguration cmmnEngineConfiguration = CommandContextUtil.getCmmnEngineConfiguration(commandContext);</span>
+<span class="nc" id="L261">        CmmnDeploymentManager deploymentManager = cmmnEngineConfiguration.getDeploymentManager();</span>
+<span class="nc" id="L262">        return deploymentManager.resolveCaseDefinition(caseDefinition).getCmmnModel();</span>
+    }
+    
+    protected Case getCaseModel(CaseDefinition caseDefinition, CmmnModel cmmnModel) {
+<span class="nc" id="L266">        return cmmnModel.getCaseById(caseDefinition.getKey());</span>
+    }
+
+    protected CaseInstanceEntity initializeCaseInstanceEntity(CommandContext commandContext, CaseDefinition caseDefinition, 
+            CmmnModel cmmnModel, Case caseModel, CaseInstanceBuilder caseInstanceBuilder) {
+
+<span class="nc" id="L272">        StartCaseInstanceBeforeContext instanceBeforeContext = new StartCaseInstanceBeforeContext(caseInstanceBuilder.getBusinessKey(),</span>
+<span class="nc" id="L273">                caseInstanceBuilder.getBusinessStatus(), caseInstanceBuilder.getName(), caseInstanceBuilder.getCallbackId(),</span>
+<span class="nc" id="L274">                caseInstanceBuilder.getCallbackType(), caseInstanceBuilder.getReferenceId(), caseInstanceBuilder.getReferenceType(),</span>
+<span class="nc" id="L275">                caseInstanceBuilder.getParentId(), caseInstanceBuilder.getVariables(), caseInstanceBuilder.getTransientVariables(),</span>
+<span class="nc" id="L276">                caseInstanceBuilder.getTenantId(), caseInstanceBuilder.getOwner(), caseInstanceBuilder.getAssignee(),</span>
+<span class="nc" id="L277">                caseModel.getInitiatorVariableName(), caseModel, caseDefinition, cmmnModel,</span>
+<span class="nc" id="L278">                caseInstanceBuilder.getOverrideDefinitionTenantId(), caseInstanceBuilder.getPredefinedCaseInstanceId());</span>
+
+<span class="nc bnc" id="L280" title="All 2 branches missed.">        if (cmmnEngineConfiguration.getStartCaseInstanceInterceptor() != null) {</span>
+<span class="nc" id="L281">            cmmnEngineConfiguration.getStartCaseInstanceInterceptor().beforeStartCaseInstance(instanceBeforeContext);</span>
+        }
+        
+<span class="nc" id="L284">        CaseInstanceEntity caseInstanceEntity = createCaseInstanceEntityFromDefinition(commandContext, caseDefinition, instanceBeforeContext);</span>
+<span class="nc" id="L285">        applyCaseInstanceBuilder(cmmnEngineConfiguration, caseInstanceBuilder, caseModel, caseInstanceEntity, caseDefinition, instanceBeforeContext, commandContext);</span>
+
+<span class="nc bnc" id="L287" title="All 2 branches missed.">        if (cmmnEngineConfiguration.isEnableEntityLinks()) {</span>
+<span class="nc bnc" id="L288" title="All 2 branches missed.">            if (CallbackTypes.PLAN_ITEM_CHILD_CASE.equals(caseInstanceEntity.getCallbackType())) {</span>
+<span class="nc" id="L289">                PlanItemInstanceEntity planItemInstanceEntity = cmmnEngineConfiguration.getPlanItemInstanceEntityManager()</span>
+<span class="nc" id="L290">                        .findById(caseInstanceEntity.getCallbackId());</span>
+<span class="nc" id="L291">                EntityLinkUtil.createEntityLinks(planItemInstanceEntity.getCaseInstanceId(), planItemInstanceEntity.getId(),</span>
+<span class="nc" id="L292">                        planItemInstanceEntity.getPlanItemDefinitionId(), caseInstanceEntity.getId(), ScopeTypes.CMMN, cmmnEngineConfiguration);</span>
+            }
+        }
+
+<span class="nc bnc" id="L296" title="All 2 branches missed.">        if (cmmnEngineConfiguration.getStartCaseInstanceInterceptor() != null) {</span>
+<span class="nc" id="L297">            StartCaseInstanceAfterContext instanceAfterContext = new StartCaseInstanceAfterContext(caseInstanceEntity,</span>
+<span class="nc" id="L298">                caseInstanceBuilder.getVariables(), caseInstanceBuilder.getTransientVariables(), caseModel, caseDefinition, cmmnModel);</span>
+
+<span class="nc" id="L300">            cmmnEngineConfiguration.getStartCaseInstanceInterceptor().afterStartCaseInstance(instanceAfterContext);</span>
+        }
+
+<span class="nc" id="L303">        CallbackData callbackData = new CallbackData(caseInstanceEntity.getCallbackId(), caseInstanceEntity.getCallbackType(),</span>
+<span class="nc" id="L304">            caseInstanceEntity.getId(), null, CaseInstanceState.ACTIVE);</span>
+<span class="nc" id="L305">        callCaseInstanceStateChangeCallbacks(callbackData);</span>
+<span class="nc" id="L306">        cmmnEngineConfiguration.getCmmnHistoryManager().recordCaseInstanceStart(caseInstanceEntity);</span>
+
+<span class="nc" id="L308">        return caseInstanceEntity;</span>
+    }
+
+    protected void applyCaseInstanceBuilder(CmmnEngineConfiguration cmmnEngineConfiguration, CaseInstanceBuilder caseInstanceBuilder, Case caseModel,
+            CaseInstanceEntity caseInstanceEntity, CaseDefinition caseDefinition, StartCaseInstanceBeforeContext instanceBeforeContext, CommandContext commandContext) {
+        
+<span class="nc bnc" id="L314" title="All 2 branches missed.">        if (instanceBeforeContext.getCaseInstanceName() != null) {</span>
+<span class="nc" id="L315">            caseInstanceEntity.setName(instanceBeforeContext.getCaseInstanceName());</span>
+        }
+
+<span class="nc bnc" id="L318" title="All 2 branches missed.">        if (instanceBeforeContext.getBusinessKey() != null) {</span>
+<span class="nc" id="L319">            caseInstanceEntity.setBusinessKey(instanceBeforeContext.getBusinessKey());</span>
+        }
+<span class="nc bnc" id="L321" title="All 2 branches missed.">        if (instanceBeforeContext.getBusinessStatus() != null) {</span>
+<span class="nc" id="L322">            caseInstanceEntity.setBusinessStatus(instanceBeforeContext.getBusinessStatus());</span>
+        }
+
+<span class="nc bnc" id="L325" title="All 2 branches missed.">        if (instanceBeforeContext.getOverrideDefinitionTenantId() != null) {</span>
+<span class="nc" id="L326">            caseInstanceEntity.setTenantId(instanceBeforeContext.getOverrideDefinitionTenantId());</span>
+        }
+
+<span class="nc bnc" id="L329" title="All 2 branches missed.">        if (instanceBeforeContext.getParentId() != null) {</span>
+<span class="nc" id="L330">            caseInstanceEntity.setParentId(instanceBeforeContext.getParentId());</span>
+        }
+
+<span class="nc bnc" id="L333" title="All 2 branches missed.">        if (instanceBeforeContext.getCallbackId() != null) {</span>
+<span class="nc" id="L334">            caseInstanceEntity.setCallbackId(instanceBeforeContext.getCallbackId());</span>
+        }
+
+<span class="nc bnc" id="L337" title="All 2 branches missed.">        if (instanceBeforeContext.getCallbackType() != null) {</span>
+<span class="nc" id="L338">            caseInstanceEntity.setCallbackType(instanceBeforeContext.getCallbackType());</span>
+        }
+
+<span class="nc bnc" id="L341" title="All 2 branches missed.">        if (instanceBeforeContext.getReferenceId() != null) {</span>
+<span class="nc" id="L342">            caseInstanceEntity.setReferenceId(instanceBeforeContext.getReferenceId());</span>
+        }
+
+<span class="nc bnc" id="L345" title="All 2 branches missed.">        if (instanceBeforeContext.getReferenceType() != null) {</span>
+<span class="nc" id="L346">            caseInstanceEntity.setReferenceType(instanceBeforeContext.getReferenceType());</span>
+        }
+
+<span class="nc bnc" id="L349" title="All 2 branches missed.">        if (cmmnEngineConfiguration.getIdentityLinkInterceptor() != null) {</span>
+<span class="nc" id="L350">            cmmnEngineConfiguration.getIdentityLinkInterceptor().handleCreateCaseInstance(caseInstanceEntity);</span>
+        }
+<span class="nc bnc" id="L352" title="All 2 branches missed.">        if (instanceBeforeContext.getInitiatorVariableName() != null) {</span>
+<span class="nc" id="L353">            caseInstanceEntity.setVariable(instanceBeforeContext.getInitiatorVariableName(), Authentication.getAuthenticatedUserId());</span>
+        }
+
+<span class="nc" id="L356">        Map&lt;String, Object&gt; variables = instanceBeforeContext.getVariables();</span>
+<span class="nc bnc" id="L357" title="All 2 branches missed.">        if (variables != null) {</span>
+<span class="nc bnc" id="L358" title="All 2 branches missed.">            for (String variableName : variables.keySet()) {</span>
+<span class="nc" id="L359">                caseInstanceEntity.setVariable(variableName, variables.get(variableName));</span>
+<span class="nc" id="L360">            }</span>
+        }
+
+<span class="nc" id="L363">        Map&lt;String, Object&gt; transientVariables = instanceBeforeContext.getTransientVariables();</span>
+<span class="nc bnc" id="L364" title="All 2 branches missed.">        if (transientVariables != null) {</span>
+<span class="nc bnc" id="L365" title="All 2 branches missed.">            for (String variableName : transientVariables.keySet()) {</span>
+<span class="nc" id="L366">                caseInstanceEntity.setTransientVariable(variableName, transientVariables.get(variableName));</span>
+<span class="nc" id="L367">            }</span>
+
+<span class="nc" id="L369">            Object eventInstance = caseInstanceEntity.getTransientVariable(EventConstants.EVENT_INSTANCE);</span>
+<span class="nc bnc" id="L370" title="All 2 branches missed.">            if (eventInstance instanceof EventInstance) {</span>
+<span class="nc" id="L371">                EventInstanceCmmnUtil.handleEventInstanceOutParameters(caseInstanceEntity, caseModel, (EventInstance) eventInstance);</span>
+            }
+        }
+
+<span class="nc bnc" id="L375" title="All 4 branches missed.">        if (caseInstanceBuilder.isStartWithForm() || caseInstanceBuilder.getOutcome() != null) {</span>
+<span class="nc" id="L376">            Map&lt;String, Object&gt; startFormVariables = caseInstanceBuilder.getStartFormVariables();</span>
+
+<span class="nc" id="L378">            FormService formService = CommandContextUtil.getFormService(commandContext);</span>
+
+<span class="nc" id="L380">            CmmnModel cmmnModel = CaseDefinitionUtil.getCmmnModel(caseDefinition.getId());</span>
+<span class="nc" id="L381">            Case caze = cmmnModel.getCaseById(caseDefinition.getKey());</span>
+<span class="nc" id="L382">            Stage planModel = caze.getPlanModel();</span>
+<span class="nc bnc" id="L383" title="All 4 branches missed.">            if (planModel != null &amp;&amp; StringUtils.isNotEmpty(planModel.getFormKey())) {</span>
+<span class="nc" id="L384">                FormRepositoryService formRepositoryService = CommandContextUtil.getFormRepositoryService(commandContext);</span>
+<span class="nc bnc" id="L385" title="All 2 branches missed.">                if (formRepositoryService != null) {</span>
+
+<span class="nc" id="L387">                    FormInfo formInfo = resolveFormInfo(planModel, caseDefinition, caseInstanceEntity.getTenantId(),</span>
+                            formRepositoryService, cmmnEngineConfiguration);
+
+<span class="nc bnc" id="L390" title="All 2 branches missed.">                    if (formInfo != null) {</span>
+<span class="nc" id="L391">                        FormFieldHandler formFieldHandler = cmmnEngineConfiguration.getFormFieldHandler();</span>
+                        // validate input before anything else
+<span class="nc bnc" id="L393" title="All 2 branches missed.">                        if (isFormFieldValidationEnabled(cmmnEngineConfiguration, planModel)) {</span>
+<span class="nc" id="L394">                            formService.validateFormFields(null, &quot;planModel&quot;, null, caseDefinition.getId(), </span>
+                                    ScopeTypes.CMMN, formInfo, startFormVariables);
+                        }
+                        // Extract the caseVariables from the form submission variables and pass them to the case
+<span class="nc" id="L398">                        Map&lt;String, Object&gt; caseVariables = formService.getVariablesFromFormSubmission(null, &quot;planModel&quot;, null, </span>
+<span class="nc" id="L399">                                caseDefinition.getId(), ScopeTypes.CMMN, formInfo, startFormVariables, caseInstanceBuilder.getOutcome());</span>
+
+<span class="nc bnc" id="L401" title="All 2 branches missed.">                        if (caseVariables != null) {</span>
+<span class="nc bnc" id="L402" title="All 2 branches missed.">	                        for (String variableName : caseVariables.keySet()) {</span>
+<span class="nc" id="L403">	                            caseInstanceEntity.setVariable(variableName, caseVariables.get(variableName));</span>
+<span class="nc" id="L404">	                        }</span>
+                        }
+
+                        // The caseVariables are the variables that should be used when starting the case
+                        // the actual variables should instead be used when creating the form instances
+<span class="nc" id="L409">                        formService.createFormInstanceWithScopeId(startFormVariables, formInfo, null, caseInstanceEntity.getId(),</span>
+<span class="nc" id="L410">                            ScopeTypes.CMMN, caseInstanceEntity.getCaseDefinitionId(), caseInstanceEntity.getTenantId(), caseInstanceBuilder.getOutcome());</span>
+<span class="nc" id="L411">                        formFieldHandler.handleFormFieldsOnSubmit(formInfo, null, null,</span>
+<span class="nc" id="L412">                            caseInstanceEntity.getId(), ScopeTypes.CMMN, caseVariables, caseInstanceEntity.getTenantId());</span>
+                    }
+
+<span class="nc" id="L415">                } else {</span>
+<span class="nc" id="L416">                    LOGGER.warn(&quot;Requesting form model {} without configured formRepositoryService&quot;, planModel.getFormKey());</span>
+                }
+            }
+        }
+
+<span class="nc" id="L421">    }</span>
+
+    protected FormInfo resolveFormInfo(Stage planModel, CaseDefinition caseDefinition, String tenantId, FormRepositoryService formRepositoryService,
+            CmmnEngineConfiguration cmmnEngineConfiguration) {
+<span class="nc" id="L425">        String formKey = planModel.getFormKey();</span>
+        FormInfo formInfo;
+<span class="nc bnc" id="L427" title="All 4 branches missed.">        if (tenantId == null || CmmnEngineConfiguration.NO_TENANT_ID.equals(tenantId)) {</span>
+<span class="nc bnc" id="L428" title="All 2 branches missed.">            if (planModel.isSameDeployment()) {</span>
+<span class="nc" id="L429">                String parentDeploymentId = CaseDefinitionUtil.getDefinitionDeploymentId(caseDefinition, cmmnEngineConfiguration);</span>
+<span class="nc" id="L430">                formInfo = formRepositoryService.getFormModelByKeyAndParentDeploymentId(formKey, parentDeploymentId);</span>
+<span class="nc" id="L431">            } else {</span>
+<span class="nc" id="L432">                formInfo = formRepositoryService.getFormModelByKey(formKey);</span>
+            }
+        } else {
+<span class="nc bnc" id="L435" title="All 2 branches missed.">            if (planModel.isSameDeployment()) {</span>
+<span class="nc" id="L436">                String parentDeploymentId = CaseDefinitionUtil.getDefinitionDeploymentId(caseDefinition, cmmnEngineConfiguration);</span>
+<span class="nc" id="L437">                formInfo = formRepositoryService.getFormModelByKeyAndParentDeploymentId(formKey, parentDeploymentId, tenantId,</span>
+<span class="nc" id="L438">                        cmmnEngineConfiguration.isFallbackToDefaultTenant());</span>
+<span class="nc" id="L439">            } else {</span>
+<span class="nc" id="L440">                formInfo = formRepositoryService.getFormModelByKey(formKey, tenantId, cmmnEngineConfiguration.isFallbackToDefaultTenant());</span>
+            }
+        }
+
+<span class="nc" id="L444">        return formInfo;</span>
+    }
+
+    protected boolean isFormFieldValidationEnabled(CmmnEngineConfiguration cmmnEngineConfiguration, Stage stage) {
+<span class="nc bnc" id="L448" title="All 2 branches missed.">        if (cmmnEngineConfiguration.isFormFieldValidationEnabled()) {</span>
+<span class="nc" id="L449">            return TaskHelper.isFormFieldValidationEnabled(NoExecutionVariableScope.getSharedInstance(), // case instance does not exist yet</span>
+<span class="nc" id="L450">                cmmnEngineConfiguration, stage.getValidateFormFields()</span>
+            );
+        }
+<span class="nc" id="L453">        return false;</span>
+    }
+
+    protected CaseInstanceEntity createCaseInstanceEntityFromDefinition(CommandContext commandContext, 
+                    CaseDefinition caseDefinition, StartCaseInstanceBeforeContext instanceBeforeContext) {
+        
+<span class="nc" id="L459">        CaseInstanceEntityManager caseInstanceEntityManager = cmmnEngineConfiguration.getCaseInstanceEntityManager();</span>
+<span class="nc" id="L460">        CaseInstanceEntity caseInstanceEntity = caseInstanceEntityManager.create();</span>
+        
+<span class="nc bnc" id="L462" title="All 2 branches missed.">        if (instanceBeforeContext.getPredefinedCaseInstanceId() != null) {</span>
+<span class="nc" id="L463">            caseInstanceEntity.setId(instanceBeforeContext.getPredefinedCaseInstanceId());</span>
+        }
+        
+<span class="nc" id="L466">        caseInstanceEntity.setCaseDefinitionId(caseDefinition.getId());</span>
+<span class="nc" id="L467">        caseInstanceEntity.setCaseDefinitionKey(caseDefinition.getKey());</span>
+<span class="nc" id="L468">        caseInstanceEntity.setCaseDefinitionName(caseDefinition.getName());</span>
+<span class="nc" id="L469">        caseInstanceEntity.setCaseDefinitionVersion(caseDefinition.getVersion());</span>
+<span class="nc" id="L470">        caseInstanceEntity.setCaseDefinitionDeploymentId(caseDefinition.getDeploymentId());</span>
+<span class="nc" id="L471">        caseInstanceEntity.setStartTime(cmmnEngineConfiguration.getClock().getCurrentTime());</span>
+<span class="nc" id="L472">        caseInstanceEntity.setState(CaseInstanceState.ACTIVE);</span>
+<span class="nc" id="L473">        caseInstanceEntity.setTenantId(caseDefinition.getTenantId());</span>
+
+<span class="nc" id="L475">        String authenticatedUserId = Authentication.getAuthenticatedUserId();</span>
+<span class="nc" id="L476">        caseInstanceEntity.setStartUserId(authenticatedUserId);</span>
+        
+<span class="nc" id="L478">        caseInstanceEntityManager.insert(caseInstanceEntity);</span>
+<span class="nc" id="L479">        caseInstanceEntity.setSatisfiedSentryPartInstances(new ArrayList&lt;&gt;(1));</span>
+
+        // initialize owner / assignee, if provided
+<span class="nc bnc" id="L482" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(instanceBeforeContext.getOwnerId())) {</span>
+<span class="nc" id="L483">            IdentityLinkUtil.createCaseInstanceIdentityLink(caseInstanceEntity, instanceBeforeContext.getOwnerId(), null,</span>
+                IdentityLinkType.OWNER, cmmnEngineConfiguration);
+        }
+<span class="nc bnc" id="L486" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(instanceBeforeContext.getAssigneeId())) {</span>
+<span class="nc" id="L487">            IdentityLinkUtil.createCaseInstanceIdentityLink(caseInstanceEntity, instanceBeforeContext.getAssigneeId(), null,</span>
+                IdentityLinkType.ASSIGNEE, cmmnEngineConfiguration);
+        }
+
+<span class="nc" id="L491">        return caseInstanceEntity;</span>
+    }
+
+    /**
+     * Creates a new runtime case instance based on the given historic one by copying all of its data, but setting its state to active again. Plan items as
+     * well as variables are copied to the runtime as well. The historic instance is reflecting the same state as well as it is no longer terminated.
+     *
+     * @param commandContext the command context to execute within
+     * @param historicCaseInstance the historic case instance to be copied back to the runtime
+     * @return the newly created runtime case instance, initialized from the historic one
+     */
+    protected CaseInstanceEntity createCaseInstanceEntityFromHistoricCaseInstance(CommandContext commandContext, HistoricCaseInstance historicCaseInstance) {
+<span class="nc" id="L503">        CaseInstanceEntityManager caseInstanceEntityManager = cmmnEngineConfiguration.getCaseInstanceEntityManager();</span>
+
+        // copy the case variables first so we can directly set it on the new case instance so they don't get reloaded later
+<span class="nc" id="L506">        Map&lt;String, VariableInstanceEntity&gt; variables = createCaseVariablesFromHistoricCaseInstance(historicCaseInstance);</span>
+<span class="nc" id="L507">        CaseInstanceEntity caseInstanceEntity = caseInstanceEntityManager.create(historicCaseInstance, variables);</span>
+<span class="nc" id="L508">        caseInstanceEntityManager.insert(caseInstanceEntity);</span>
+
+        // create runtime plan items from the history and set them as the new child plan item list
+<span class="nc" id="L511">        caseInstanceEntity.setChildPlanItemInstances(createCasePlanItemsFromHistoricCaseInstance(historicCaseInstance, caseInstanceEntity));</span>
+
+<span class="nc" id="L513">        return caseInstanceEntity;</span>
+    }
+
+    /**
+     * Creates new plan item instances for the runtime according the historic ones, even though they are all completed, ended or terminated. Later on, they
+     * might be reactivated according the case model, but this is not part of this method.
+     *
+     * @param historicCaseInstance the historic case instance to copy the plan items from
+     * @param newCaseInstance the newly created runtime copy of the historic case instance where the new plan items are attached to
+     * @return the list of newly copied plan item instances in the runtime
+     */
+    protected List&lt;PlanItemInstanceEntity&gt; createCasePlanItemsFromHistoricCaseInstance(HistoricCaseInstance historicCaseInstance, CaseInstanceEntity newCaseInstance) {
+<span class="nc" id="L525">        HistoricPlanItemInstanceEntityManager planItemInstanceEntityManager = cmmnEngineConfiguration.getHistoricPlanItemInstanceEntityManager();</span>
+<span class="nc" id="L526">        PlanItemInstanceEntityManager historicPlanItemInstanceEntityManager = cmmnEngineConfiguration.getPlanItemInstanceEntityManager();</span>
+
+        // move plan items back to runtime data, all of them as we will loop through them later to see which ones need to be reactivated according the
+        // reactivation sentry modeling, but this will be done as part of the reactivation operation on the agenda
+<span class="nc" id="L530">        List&lt;HistoricPlanItemInstance&gt; historicPlanItemInstances = planItemInstanceEntityManager.createHistoricPlanItemInstanceQuery()</span>
+<span class="nc" id="L531">            .planItemInstanceCaseInstanceId(historicCaseInstance.getId())</span>
+<span class="nc" id="L532">            .list();</span>
+
+<span class="nc" id="L534">        List&lt;PlanItemInstanceEntity&gt; planItemInstances = new ArrayList&lt;&gt;(historicPlanItemInstances.size());</span>
+<span class="nc bnc" id="L535" title="All 2 branches missed.">        for (HistoricPlanItemInstance historicPlanItemInstance : historicPlanItemInstances) {</span>
+            // create a new plan item instance in the runtime table with exactly the same data as in the history (even the id, this way we don't even have to
+            // rebuild the tree of stages and its child plan items and later on, they get updated from the runtime as well)
+<span class="nc" id="L538">            PlanItemInstanceEntity newPlanItemInstance = historicPlanItemInstanceEntityManager.create(historicPlanItemInstance);</span>
+<span class="nc" id="L539">            historicPlanItemInstanceEntityManager.insert(newPlanItemInstance);</span>
+<span class="nc" id="L540">            planItemInstances.add(newPlanItemInstance);</span>
+<span class="nc" id="L541">        }</span>
+
+<span class="nc" id="L543">        return planItemInstances;</span>
+    }
+
+    /**
+     * Creates new variables in the runtime according the history of the provided case instance.
+     *
+     * @param historicCaseInstance the historic case instance to copy its variables back to the runtime
+     * @return the map of the created variables
+     */
+    protected Map&lt;String, VariableInstanceEntity&gt; createCaseVariablesFromHistoricCaseInstance(HistoricCaseInstance historicCaseInstance) {
+<span class="nc" id="L553">        VariableService variableService = cmmnEngineConfiguration.getVariableServiceConfiguration().getVariableService();</span>
+<span class="nc" id="L554">        List&lt;HistoricVariableInstance&gt; variables = cmmnEngineConfiguration.getCmmnHistoryService()</span>
+<span class="nc" id="L555">            .createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L556">            .caseInstanceId(historicCaseInstance.getId())</span>
+<span class="nc" id="L557">            .list();</span>
+
+<span class="nc bnc" id="L559" title="All 2 branches missed.">        if (variables != null) {</span>
+<span class="nc" id="L560">            Map&lt;String, VariableInstanceEntity&gt; newVars = new HashMap&lt;&gt;(variables.size());</span>
+<span class="nc bnc" id="L561" title="All 2 branches missed.">            for (HistoricVariableInstance variable : variables) {</span>
+                // only make a copy, if it is a case variable, we don't copy locally scoped ones (e.g. from stages), as those plan items are practically
+                // finished
+<span class="nc bnc" id="L564" title="All 2 branches missed.">                if (variable.getSubScopeId() == null) {</span>
+<span class="nc" id="L565">                    VariableInstanceEntity newVariable = variableService.createVariableInstance(variable.getVariableName());</span>
+
+<span class="nc" id="L567">                    newVariable.setId(variable.getId());</span>
+<span class="nc" id="L568">                    newVariable.setScopeId(historicCaseInstance.getId());</span>
+<span class="nc" id="L569">                    newVariable.setScopeType(variable.getScopeType());</span>
+
+<span class="nc" id="L571">                    variableService.insertVariableInstanceWithValue(newVariable, variable.getValue(), historicCaseInstance.getTenantId());</span>
+<span class="nc" id="L572">                    newVars.put(newVariable.getName(), newVariable);</span>
+                }
+<span class="nc" id="L574">            }</span>
+<span class="nc" id="L575">            return newVars;</span>
+        }
+<span class="nc" id="L577">        return Collections.emptyMap();</span>
+    }
+
+    @Override
+    public void callCaseInstanceStateChangeCallbacks(CallbackData callbackData) {
+<span class="nc" id="L582">        String callbackId = callbackData.getCallbackId();</span>
+<span class="nc" id="L583">        String callbackType = callbackData.getCallbackType();</span>
+<span class="nc bnc" id="L584" title="All 4 branches missed.">        if (callbackId != null &amp;&amp; callbackType != null) {</span>
+<span class="nc" id="L585">            Map&lt;String, List&lt;RuntimeInstanceStateChangeCallback&gt;&gt; caseInstanceCallbacks = cmmnEngineConfiguration.getCaseInstanceStateChangeCallbacks();</span>
+<span class="nc bnc" id="L586" title="All 4 branches missed.">            if (caseInstanceCallbacks != null &amp;&amp; caseInstanceCallbacks.containsKey(callbackType)) {</span>
+<span class="nc bnc" id="L587" title="All 2 branches missed.">                for (RuntimeInstanceStateChangeCallback caseInstanceCallback : caseInstanceCallbacks.get(callbackType)) {</span>
+<span class="nc" id="L588">                    caseInstanceCallback.stateChanged(callbackData);</span>
+<span class="nc" id="L589">                }</span>
+            }
+        }
+<span class="nc" id="L592">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

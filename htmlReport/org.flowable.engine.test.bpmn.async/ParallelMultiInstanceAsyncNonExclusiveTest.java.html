@@ -1,0 +1,192 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ParallelMultiInstanceAsyncNonExclusiveTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.bpmn.async</a> &gt; <span class="el_source">ParallelMultiInstanceAsyncNonExclusiveTest.java</span></div><h1>ParallelMultiInstanceAsyncNonExclusiveTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.test.bpmn.async;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.util.Collections;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+
+import org.flowable.common.engine.api.delegate.event.FlowableEngineEventType;
+import org.flowable.common.engine.api.delegate.event.FlowableEntityEvent;
+import org.flowable.common.engine.api.delegate.event.FlowableEvent;
+import org.flowable.common.engine.api.delegate.event.FlowableEventListener;
+import org.flowable.common.engine.impl.interceptor.Command;
+import org.flowable.common.engine.impl.interceptor.CommandConfig;
+import org.flowable.common.engine.impl.interceptor.CommandExecutor;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.interceptor.CommandInvoker;
+import org.flowable.engine.impl.jobexecutor.AsyncContinuationJobHandler;
+import org.flowable.engine.impl.jobexecutor.ParallelMultiInstanceActivityCompletionJobHandler;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.test.Deployment;
+import org.flowable.engine.test.impl.CustomConfigurationFlowableTestCase;
+import org.flowable.job.api.FlowableUnrecoverableJobException;
+import org.flowable.job.api.Job;
+import org.flowable.job.service.impl.cmd.LockExclusiveJobCmd;
+import org.flowable.job.service.impl.persistence.entity.JobEntity;
+import org.junit.jupiter.api.Test;
+
+/**
+ * @author Filip Hrisafov
+ */
+class ParallelMultiInstanceAsyncNonExclusiveTest extends CustomConfigurationFlowableTestCase {
+
+    protected CustomCommandInvoker customCommandInvoker;
+    protected CustomEventListener customEventListener;
+    protected CollectingAsyncRunnableExecutionExceptionHandler executionExceptionHandler;
+
+    public ParallelMultiInstanceAsyncNonExclusiveTest() {
+<span class="nc" id="L53">        super(&quot;parallelMultiInstanceAsyncNonExclusiveTest&quot;);</span>
+<span class="nc" id="L54">    }</span>
+
+    @Override
+    protected void configureConfiguration(ProcessEngineConfigurationImpl processEngineConfiguration) {
+<span class="nc" id="L58">        customCommandInvoker = new CustomCommandInvoker();</span>
+<span class="nc" id="L59">        processEngineConfiguration.setCommandInvoker(customCommandInvoker);</span>
+<span class="nc" id="L60">        processEngineConfiguration.getAsyncExecutorConfiguration().setGlobalAcquireLockEnabled(true);</span>
+<span class="nc" id="L61">        executionExceptionHandler = new CollectingAsyncRunnableExecutionExceptionHandler();</span>
+<span class="nc" id="L62">        processEngineConfiguration.setCustomAsyncRunnableExecutionExceptionHandlers(Collections.singletonList(executionExceptionHandler));</span>
+<span class="nc" id="L63">        customEventListener = new CustomEventListener();</span>
+<span class="nc" id="L64">        processEngineConfiguration.setEventListeners(Collections.singletonList(customEventListener));</span>
+
+<span class="nc" id="L66">    }</span>
+
+    @Test
+    @Deployment
+    public void parallelMultiInstanceNonExclusiveJobs() {
+        // This test is trying to cause an optimistic locking exception when using non-exclusive parallel multi instance jobs.
+        // This is mimicking the following scenario:
+        // 4 async jobs complete in the same time, and thus they create 4 parallel-multi-instance-complete exclusive jobs
+        // 3 of those jobs will fail to get the exclusive lock and unacquire their jobs and 1 will get the lock
+        // the one that will get the lock will continue to the next step of the process and perform the multi instance cleanup
+        // the cleanup of the multi instance should not fail.
+
+<span class="nc" id="L78">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L79">                .processDefinitionKey(&quot;parallelScriptTask&quot;)</span>
+<span class="nc" id="L80">                .start();</span>
+
+<span class="nc" id="L82">        List&lt;Job&gt; jobs = managementService.createJobQuery().list();</span>
+<span class="nc" id="L83">        assertThat(jobs).hasSize(4);</span>
+<span class="nc" id="L84">        assertThat(jobs)</span>
+<span class="nc" id="L85">                .extracting(Job::getJobHandlerType)</span>
+<span class="nc" id="L86">                .containsOnly(AsyncContinuationJobHandler.TYPE);</span>
+<span class="nc" id="L87">        customCommandInvoker.lockExclusiveCounter = new AtomicLong(0L);</span>
+
+<span class="nc" id="L89">        customCommandInvoker.executeLockReleaseLatch = new CountDownLatch(1);</span>
+<span class="nc" id="L90">        customEventListener.parallelMultiInstanceCompleteLatch = customCommandInvoker.executeLockReleaseLatch;</span>
+
+<span class="nc" id="L92">        customCommandInvoker.executeAsyncRunnableLatch = new CountDownLatch(4);</span>
+<span class="nc" id="L93">        customEventListener.asyncContinuationLatch = new CountDownLatch(4);</span>
+
+<span class="nc" id="L95">        customCommandInvoker.executeLockCountLatch = new CountDownLatch(3);</span>
+<span class="nc" id="L96">        customEventListener.parallelMultiInstanceWaitCompleteLatch = customCommandInvoker.executeLockCountLatch;</span>
+
+<span class="nc" id="L98">        waitForJobExecutorToProcessAllJobs(15_000, 200);</span>
+
+<span class="nc" id="L100">        assertThat(executionExceptionHandler.getExceptions()).isEmpty();</span>
+<span class="nc" id="L101">        assertThat(managementService.createJobQuery().processInstanceId(processInstance.getId()).list()).isEmpty();</span>
+<span class="nc" id="L102">        assertThat(managementService.createDeadLetterJobQuery().processInstanceId(processInstance.getId()).list()).isEmpty();</span>
+<span class="nc" id="L103">    }</span>
+
+    protected static class CustomCommandInvoker extends CommandInvoker {
+
+<span class="nc" id="L107">        protected AtomicLong lockExclusiveCounter = new AtomicLong();</span>
+        protected CountDownLatch executeLockCountLatch;
+        protected CountDownLatch executeLockReleaseLatch;
+        protected CountDownLatch executeAsyncRunnableLatch;
+
+        protected CustomCommandInvoker() {
+<span class="nc" id="L113">            super(((commandContext, runnable) -&gt; runnable.run()), null);</span>
+<span class="nc" id="L114">        }</span>
+
+        @Override
+        public &lt;T&gt; T execute(CommandConfig config, Command&lt;T&gt; command, CommandExecutor commandExecutor) {
+<span class="nc bnc" id="L118" title="All 2 branches missed.">            if (command instanceof LockExclusiveJobCmd) {</span>
+<span class="nc bnc" id="L119" title="All 2 branches missed.">                if (lockExclusiveCounter.incrementAndGet() &gt; 1) {</span>
+                    // We let the first exclusive to run without waiting
+                    // we then wait to complete this transaction until the execute lock exclusive is released
+                    try {
+<span class="nc" id="L123">                        executeLockCountLatch.countDown();</span>
+<span class="nc" id="L124">                        executeLockReleaseLatch.await(4, TimeUnit.SECONDS);</span>
+<span class="nc" id="L125">                    } catch (InterruptedException e) {</span>
+<span class="nc" id="L126">                        Thread.currentThread().interrupt();</span>
+<span class="nc" id="L127">                        throw new RuntimeException(e);</span>
+<span class="nc" id="L128">                    }</span>
+                }
+            }
+<span class="nc" id="L131">            return super.execute(config, command, commandExecutor);</span>
+        }
+    }
+
+<span class="nc" id="L135">    protected static class CustomEventListener implements FlowableEventListener {</span>
+
+        protected CountDownLatch asyncContinuationLatch;
+        protected CountDownLatch parallelMultiInstanceCompleteLatch;
+        protected CountDownLatch parallelMultiInstanceWaitCompleteLatch;
+
+        @Override
+        public void onEvent(FlowableEvent event) {
+<span class="nc bnc" id="L143" title="All 4 branches missed.">            if (FlowableEngineEventType.JOB_EXECUTION_SUCCESS.equals(event.getType()) &amp;&amp; event instanceof FlowableEntityEvent) {</span>
+<span class="nc" id="L144">                JobEntity entity = (JobEntity) ((FlowableEntityEvent) event).getEntity();</span>
+<span class="nc" id="L145">                String jobHandlerType = entity.getJobHandlerType();</span>
+<span class="nc bnc" id="L146" title="All 2 branches missed.">                if (AsyncContinuationJobHandler.TYPE.equals(jobHandlerType)) {</span>
+                    // We are going to wait for all the async jobs to complete in the same time
+<span class="nc" id="L148">                    asyncContinuationLatch.countDown();</span>
+                    try {
+<span class="nc bnc" id="L150" title="All 2 branches missed.">                        if (!asyncContinuationLatch.await(4, TimeUnit.SECONDS)) {</span>
+<span class="nc" id="L151">                            throw new FlowableUnrecoverableJobException(&quot;asyncContinuationLatch did not reach 0&quot;);</span>
+                        }
+<span class="nc" id="L153">                    } catch (InterruptedException e) {</span>
+<span class="nc" id="L154">                        Thread.currentThread().interrupt();</span>
+<span class="nc" id="L155">                        throw new RuntimeException(e);</span>
+<span class="nc" id="L156">                    }</span>
+<span class="nc bnc" id="L157" title="All 2 branches missed.">                } else if (ParallelMultiInstanceActivityCompletionJobHandler.TYPE.equals(jobHandlerType)) {</span>
+                    // There will be one multi instance complete job, so we count it down to release the rest of the lock exclusive commands
+<span class="nc" id="L159">                    parallelMultiInstanceCompleteLatch.countDown();</span>
+
+                    try {
+                        // Wait for the rest of the lock exclusive commands to complete before resuming this transaction
+<span class="nc bnc" id="L163" title="All 2 branches missed.">                        if (!parallelMultiInstanceWaitCompleteLatch.await(4, TimeUnit.SECONDS)) {</span>
+<span class="nc" id="L164">                            throw new FlowableUnrecoverableJobException(&quot;parallelMultiInstanceWaitLatch did not reach 0&quot;);</span>
+                        }
+<span class="nc" id="L166">                    } catch (InterruptedException e) {</span>
+<span class="nc" id="L167">                        Thread.currentThread().interrupt();</span>
+<span class="nc" id="L168">                        throw new RuntimeException(e);</span>
+<span class="nc" id="L169">                    }</span>
+                }
+
+            }
+
+<span class="nc" id="L174">        }</span>
+
+        @Override
+        public boolean isFailOnException() {
+<span class="nc" id="L178">            return true;</span>
+        }
+
+        @Override
+        public boolean isFireOnTransactionLifecycleEvent() {
+<span class="nc" id="L183">            return false;</span>
+        }
+
+        @Override
+        public String getOnTransaction() {
+<span class="nc" id="L188">            return null;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

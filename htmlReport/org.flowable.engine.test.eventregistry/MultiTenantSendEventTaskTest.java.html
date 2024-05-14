@@ -1,0 +1,310 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MultiTenantSendEventTaskTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.eventregistry</a> &gt; <span class="el_source">MultiTenantSendEventTaskTest.java</span></div><h1>MultiTenantSendEventTaskTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.test.eventregistry;
+
+import static net.javacrumbs.jsonunit.assertj.JsonAssertions.assertThatJson;
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.flowable.common.engine.impl.interceptor.EngineConfigurationConstants;
+import org.flowable.engine.impl.jobexecutor.AsyncSendEventJobHandler;
+import org.flowable.engine.impl.test.JobTestHelper;
+import org.flowable.engine.repository.DeploymentBuilder;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.eventregistry.api.EventRegistry;
+import org.flowable.eventregistry.api.EventRepositoryService;
+import org.flowable.eventregistry.api.InboundEventChannelAdapter;
+import org.flowable.eventregistry.api.OutboundEventChannelAdapter;
+import org.flowable.eventregistry.api.model.EventPayloadTypes;
+import org.flowable.eventregistry.impl.EventRegistryEngineConfiguration;
+import org.flowable.eventregistry.model.InboundChannelModel;
+import org.flowable.eventsubscription.api.EventSubscription;
+import org.flowable.job.api.Job;
+import org.flowable.task.api.Task;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+<span class="nc" id="L48">public class MultiTenantSendEventTaskTest extends FlowableEventRegistryBpmnTestCase {</span>
+
+    private static final String TENANT_A = &quot;tenantA&quot;;
+
+    private static final String TENANT_B = &quot;tenantB&quot;;
+
+    protected TestOutboundEventChannelAdapter outboundEventChannelAdapter;
+    protected TestInboundEventChannelAdapter inboundEventChannelAdapter;
+
+<span class="nc" id="L57">    private Set&lt;String&gt; cleanupDeploymentIds = new HashSet&lt;&gt;();</span>
+
+    @BeforeEach
+    protected void setUp() throws Exception {
+<span class="nc" id="L61">        getEventRegistryEngineConfiguration().setFallbackToDefaultTenant(true);</span>
+<span class="nc" id="L62">        outboundEventChannelAdapter = setupTestChannel();</span>
+<span class="nc" id="L63">        inboundEventChannelAdapter = setupTestInboundChannel();</span>
+
+<span class="nc" id="L65">        getEventRepositoryService().createEventModelBuilder()</span>
+<span class="nc" id="L66">            .key(&quot;myEvent&quot;)</span>
+<span class="nc" id="L67">            .resourceName(&quot;myEvent.event&quot;)</span>
+<span class="nc" id="L68">            .payload(&quot;tenantAProperty&quot;, EventPayloadTypes.STRING)</span>
+<span class="nc" id="L69">            .payload(&quot;customerId&quot;, EventPayloadTypes.STRING)</span>
+<span class="nc" id="L70">            .payload(&quot;eventProperty&quot;, EventPayloadTypes.STRING)</span>
+<span class="nc" id="L71">            .deploymentTenantId(TENANT_A)</span>
+<span class="nc" id="L72">            .deploy();</span>
+
+<span class="nc" id="L74">        getEventRepositoryService().createEventModelBuilder()</span>
+<span class="nc" id="L75">            .key(&quot;myEvent&quot;)</span>
+<span class="nc" id="L76">            .resourceName(&quot;myEvent.event&quot;)</span>
+<span class="nc" id="L77">            .payload(&quot;tenantBProperty&quot;, EventPayloadTypes.STRING)</span>
+<span class="nc" id="L78">            .payload(&quot;customerId&quot;, EventPayloadTypes.STRING)</span>
+<span class="nc" id="L79">            .payload(&quot;eventProperty&quot;, EventPayloadTypes.STRING)</span>
+<span class="nc" id="L80">            .deploymentTenantId(TENANT_B)</span>
+<span class="nc" id="L81">            .deploy();</span>
+
+<span class="nc" id="L83">        getEventRepositoryService().createEventModelBuilder()</span>
+<span class="nc" id="L84">            .key(&quot;myTriggerEvent&quot;)</span>
+<span class="nc" id="L85">            .resourceName(&quot;myTriggerEvent.event&quot;)</span>
+<span class="nc" id="L86">            .correlationParameter(&quot;customerId&quot;, EventPayloadTypes.STRING)</span>
+<span class="nc" id="L87">            .deploymentTenantId(TENANT_A)</span>
+<span class="nc" id="L88">            .deploy();</span>
+
+<span class="nc" id="L90">        getEventRepositoryService().createEventModelBuilder()</span>
+<span class="nc" id="L91">            .key(&quot;myTriggerEvent&quot;)</span>
+<span class="nc" id="L92">            .resourceName(&quot;myTriggerEvent.event&quot;)</span>
+<span class="nc" id="L93">            .correlationParameter(&quot;customerId&quot;, EventPayloadTypes.STRING)</span>
+<span class="nc" id="L94">            .deploymentTenantId(TENANT_B)</span>
+<span class="nc" id="L95">            .deploy();</span>
+<span class="nc" id="L96">    }</span>
+
+    protected TestOutboundEventChannelAdapter setupTestChannel() {
+<span class="nc" id="L99">        TestOutboundEventChannelAdapter outboundEventChannelAdapter = new TestOutboundEventChannelAdapter();</span>
+
+<span class="nc" id="L101">        getEventRegistryEngineConfiguration().getExpressionManager().getBeans()</span>
+<span class="nc" id="L102">            .put(&quot;outboundEventChannelAdapter&quot;, outboundEventChannelAdapter);</span>
+
+<span class="nc" id="L104">        getEventRepositoryService().createOutboundChannelModelBuilder()</span>
+<span class="nc" id="L105">            .key(&quot;out-channel&quot;)</span>
+<span class="nc" id="L106">            .resourceName(&quot;testOut.channel&quot;)</span>
+<span class="nc" id="L107">            .channelAdapter(&quot;${outboundEventChannelAdapter}&quot;)</span>
+<span class="nc" id="L108">            .jsonSerializer()</span>
+<span class="nc" id="L109">            .deploy();</span>
+
+<span class="nc" id="L111">        return outboundEventChannelAdapter;</span>
+    }
+
+    protected TestInboundEventChannelAdapter setupTestInboundChannel() {
+<span class="nc" id="L115">        TestInboundEventChannelAdapter inboundEventChannelAdapter = new TestInboundEventChannelAdapter();</span>
+<span class="nc" id="L116">        getEventRegistryEngineConfiguration().getExpressionManager().getBeans()</span>
+<span class="nc" id="L117">            .put(&quot;inboundEventChannelAdapter&quot;, inboundEventChannelAdapter);</span>
+
+<span class="nc" id="L119">        getEventRepositoryService().createInboundChannelModelBuilder()</span>
+<span class="nc" id="L120">            .key(&quot;test-channel&quot;)</span>
+<span class="nc" id="L121">            .resourceName(&quot;testIn.channel&quot;)</span>
+<span class="nc" id="L122">            .channelAdapter(&quot;${inboundEventChannelAdapter}&quot;)</span>
+<span class="nc" id="L123">            .jsonDeserializer()</span>
+<span class="nc" id="L124">            .detectEventKeyUsingJsonField(&quot;type&quot;)</span>
+<span class="nc" id="L125">            .detectEventTenantUsingJsonPointerExpression(&quot;/tenantId&quot;)</span>
+<span class="nc" id="L126">            .jsonFieldsMapDirectlyToPayload()</span>
+<span class="nc" id="L127">            .deploy();</span>
+
+<span class="nc" id="L129">        return inboundEventChannelAdapter;</span>
+    }
+
+    @AfterEach
+    protected void tearDown() throws Exception {
+<span class="nc" id="L134">        getEventRepositoryService().createDeploymentQuery().list()</span>
+<span class="nc" id="L135">            .forEach(eventDeployment -&gt; getEventRepositoryService().deleteDeployment(eventDeployment.getId()));</span>
+
+<span class="nc bnc" id="L137" title="All 2 branches missed.">        for (String cleanupDeploymentId : cleanupDeploymentIds) {</span>
+<span class="nc" id="L138">            repositoryService.deleteDeployment(cleanupDeploymentId, true);</span>
+<span class="nc" id="L139">        }</span>
+<span class="nc" id="L140">        cleanupDeploymentIds.clear();</span>
+
+<span class="nc" id="L142">        getEventRegistryEngineConfiguration().setFallbackToDefaultTenant(false);</span>
+<span class="nc" id="L143">    }</span>
+
+    private void deployProcessModel(String modelResource, String tenantId) {
+<span class="nc" id="L146">        String resource = getClass().getPackage().toString().replace(&quot;package &quot;, &quot;&quot;).replace(&quot;.&quot;, &quot;/&quot;);</span>
+<span class="nc" id="L147">        resource += &quot;/MultiTenantSendEventTaskTest.&quot; + modelResource;</span>
+<span class="nc" id="L148">        DeploymentBuilder deploymentBuilder = repositoryService.createDeployment().addClasspathResource(resource);</span>
+<span class="nc bnc" id="L149" title="All 2 branches missed.">        if (tenantId != null) {</span>
+<span class="nc" id="L150">            deploymentBuilder.tenantId(tenantId);</span>
+        }
+
+<span class="nc" id="L153">        String deploymentId = deploymentBuilder.deploy().getId();</span>
+<span class="nc" id="L154">        cleanupDeploymentIds.add(deploymentId);</span>
+
+<span class="nc" id="L156">        assertThat(repositoryService.createProcessDefinitionQuery().deploymentId(deploymentId).singleResult()).isNotNull();</span>
+<span class="nc" id="L157">    }</span>
+
+    @Test
+    public void testSendEvent() throws Exception {
+<span class="nc" id="L161">        deployProcessModel(&quot;sendEventTenantA.bpmn20.xml&quot;, TENANT_A);</span>
+<span class="nc" id="L162">        deployProcessModel(&quot;sendEventTenantB.bpmn20.xml&quot;, TENANT_B);</span>
+
+<span class="nc" id="L164">        ProcessInstance instanceA = runtimeService.createProcessInstanceBuilder().processDefinitionKey(&quot;process&quot;).tenantId(TENANT_A).start();</span>
+<span class="nc" id="L165">        validateEventSent(instanceA, &quot;tenantAProperty&quot;);</span>
+
+<span class="nc" id="L167">        ProcessInstance instanceB = runtimeService.createProcessInstanceBuilder().processDefinitionKey(&quot;process&quot;).tenantId(TENANT_B).start();</span>
+<span class="nc" id="L168">        validateEventSent(instanceB, &quot;tenantBProperty&quot;);</span>
+<span class="nc" id="L169">    }</span>
+
+    private void validateEventSent(ProcessInstance processInstance, String property) throws JsonProcessingException {
+<span class="nc" id="L172">        assertThat(outboundEventChannelAdapter.receivedEvents).isEmpty();</span>
+<span class="nc" id="L173">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L174">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L176">        Job job = managementService.createJobQuery().jobTenantId(processInstance.getTenantId()).singleResult();</span>
+<span class="nc" id="L177">        assertThat(job.getTenantId()).isEqualTo(processInstance.getTenantId());</span>
+<span class="nc" id="L178">        assertThat(job.getJobHandlerType()).isEqualTo(AsyncSendEventJobHandler.TYPE);</span>
+<span class="nc" id="L179">        assertThat(job.getElementId()).isEqualTo(&quot;sendEventTask&quot;);</span>
+
+<span class="nc" id="L181">        assertThat(outboundEventChannelAdapter.receivedEvents).isEmpty();</span>
+<span class="nc" id="L182">        JobTestHelper.waitForJobExecutorToProcessAllJobs(processEngineConfiguration, managementService, 5000, 200);</span>
+<span class="nc" id="L183">        assertThat(outboundEventChannelAdapter.receivedEvents).hasSize(1);</span>
+
+<span class="nc" id="L185">        JsonNode jsonNode = processEngineConfiguration.getObjectMapper().readTree(outboundEventChannelAdapter.receivedEvents.get(0));</span>
+<span class="nc" id="L186">        assertThat(jsonNode).hasSize(1);</span>
+<span class="nc" id="L187">        assertThat(jsonNode.get(property).asText()).isEqualTo(&quot;test&quot;);</span>
+<span class="nc" id="L188">        outboundEventChannelAdapter.receivedEvents.clear();</span>
+<span class="nc" id="L189">    }</span>
+
+    @Test
+    public void testTriggerableSendEventWithCorrelation() throws Exception {
+        // Model deployed to the default tenant, but event model is in the specific tenants
+<span class="nc" id="L194">        deployProcessModel(&quot;sendEventWithTrigger.bpmn20.xml&quot;, null);</span>
+
+<span class="nc" id="L196">        assertThat(outboundEventChannelAdapter.receivedEvents).isEmpty();</span>
+
+        // One instance in tenant A, one in tenant B
+<span class="nc" id="L199">        ProcessInstance instanceA = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L200">            .processDefinitionKey(&quot;process&quot;)</span>
+<span class="nc" id="L201">            .fallbackToDefaultTenant()</span>
+<span class="nc" id="L202">            .variable(&quot;customerId&quot;, &quot;customerForTenantA&quot;)</span>
+<span class="nc" id="L203">            .overrideProcessDefinitionTenantId(TENANT_A)</span>
+<span class="nc" id="L204">            .start();</span>
+<span class="nc" id="L205">        ProcessInstance instanceB = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L206">            .processDefinitionKey(&quot;process&quot;)</span>
+<span class="nc" id="L207">            .fallbackToDefaultTenant()</span>
+<span class="nc" id="L208">            .variable(&quot;customerId&quot;, &quot;customerForTenantB&quot;)</span>
+<span class="nc" id="L209">            .overrideProcessDefinitionTenantId(TENANT_B)</span>
+<span class="nc" id="L210">            .start();</span>
+
+<span class="nc" id="L212">        EventSubscription eventSubscription = runtimeService.createEventSubscriptionQuery().processInstanceId(instanceA.getId()).singleResult();</span>
+<span class="nc" id="L213">        assertThat(eventSubscription.getEventType()).isEqualTo(&quot;myTriggerEvent&quot;);</span>
+<span class="nc" id="L214">        assertThat(eventSubscription.getProcessInstanceId()).isEqualTo(instanceA.getId());</span>
+<span class="nc" id="L215">        assertThat(eventSubscription.getTenantId()).isEqualTo(TENANT_A);</span>
+
+<span class="nc" id="L217">        eventSubscription = runtimeService.createEventSubscriptionQuery().processInstanceId(instanceB.getId()).singleResult();</span>
+<span class="nc" id="L218">        assertThat(eventSubscription.getEventType()).isEqualTo(&quot;myTriggerEvent&quot;);</span>
+<span class="nc" id="L219">        assertThat(eventSubscription.getProcessInstanceId()).isEqualTo(instanceB.getId());</span>
+<span class="nc" id="L220">        assertThat(eventSubscription.getTenantId()).isEqualTo(TENANT_B);</span>
+
+        // Sending
+<span class="nc" id="L223">        assertThat(outboundEventChannelAdapter.receivedEvents).isEmpty();</span>
+<span class="nc" id="L224">        assertThat(managementService.createJobQuery().list())</span>
+<span class="nc" id="L225">                .extracting(Job::getTenantId)</span>
+<span class="nc" id="L226">                .containsOnly(TENANT_A, TENANT_B);</span>
+<span class="nc" id="L227">        managementService.createJobQuery().list().forEach(job -&gt; managementService.executeJob(job.getId()));</span>
+<span class="nc" id="L228">        assertThat(outboundEventChannelAdapter.receivedEvents).hasSize(2);</span>
+
+<span class="nc" id="L230">        JsonNode jsonNode = processEngineConfiguration.getObjectMapper().readTree(outboundEventChannelAdapter.receivedEvents.get(0));</span>
+<span class="nc" id="L231">        assertThatJson(jsonNode)</span>
+<span class="nc" id="L232">                .isEqualTo(&quot;{&quot;</span>
+                        + &quot;   eventProperty: 'customerForTenantA'&quot;
+                        + &quot; }&quot;);
+<span class="nc" id="L235">        jsonNode = processEngineConfiguration.getObjectMapper().readTree(outboundEventChannelAdapter.receivedEvents.get(1));</span>
+<span class="nc" id="L236">        assertThatJson(jsonNode)</span>
+<span class="nc" id="L237">                .isEqualTo(&quot;{&quot;</span>
+                        + &quot;   eventProperty: 'customerForTenantB'&quot;
+                        + &quot; }&quot;);
+
+        // Triggering
+<span class="nc" id="L242">        InboundChannelModel inboundChannel = (InboundChannelModel) getEventRepositoryService().getChannelModelByKey(&quot;test-channel&quot;);</span>
+<span class="nc" id="L243">        ObjectMapper objectMapper = new ObjectMapper();</span>
+
+<span class="nc" id="L245">        ObjectNode json = objectMapper.createObjectNode();</span>
+<span class="nc" id="L246">        json.put(&quot;type&quot;, &quot;myTriggerEvent&quot;);</span>
+<span class="nc" id="L247">        json.put(&quot;customerId&quot;, &quot;customerForTenantA&quot;);</span>
+<span class="nc" id="L248">        json.put(&quot;tenantId&quot;, TENANT_A);</span>
+<span class="nc" id="L249">        getEventRegistry().eventReceived(inboundChannel, objectMapper.writeValueAsString(json));</span>
+
+<span class="nc" id="L251">        assertThat(taskService.createTaskQuery().processInstanceId(instanceA.getId()).singleResult().getName()).isEqualTo(&quot;tenantA Task&quot;);</span>
+<span class="nc" id="L252">        assertThat(taskService.createTaskQuery().processInstanceId(instanceB.getId()).singleResult()).isNull();</span>
+
+<span class="nc" id="L254">        json.put(&quot;customerId&quot;, &quot;customerForTenantB&quot;);</span>
+<span class="nc" id="L255">        json.put(&quot;tenantId&quot;, TENANT_B);</span>
+<span class="nc" id="L256">        getEventRegistry().eventReceived(inboundChannel, objectMapper.writeValueAsString(json));</span>
+
+<span class="nc" id="L258">        assertThat(taskService.createTaskQuery().processInstanceId(instanceA.getId()).singleResult().getName()).isEqualTo(&quot;tenantA Task&quot;);</span>
+<span class="nc" id="L259">        assertThat(taskService.createTaskQuery().processInstanceId(instanceB.getId()).singleResult().getName()).isEqualTo(&quot;tenantB Task&quot;);</span>
+
+        // Sending the event again shouldn't do anything, as there are no eventsubscriptions anymore
+<span class="nc" id="L262">        assertThat(taskService.createTaskQuery().count()).isEqualTo(2);</span>
+<span class="nc" id="L263">        getEventRegistry().eventReceived(inboundChannel, objectMapper.writeValueAsString(json));</span>
+<span class="nc" id="L264">        assertThat(taskService.createTaskQuery().count()).isEqualTo(2);</span>
+<span class="nc" id="L265">    }</span>
+
+<span class="nc" id="L267">    public static class TestOutboundEventChannelAdapter implements OutboundEventChannelAdapter&lt;String&gt; {</span>
+
+<span class="nc" id="L269">        public List&lt;String&gt; receivedEvents = new ArrayList&lt;&gt;();</span>
+
+        @Override
+        public void sendEvent(String rawEvent, Map&lt;String, Object&gt; headerMap) {
+<span class="nc" id="L273">            receivedEvents.add(rawEvent);</span>
+<span class="nc" id="L274">        }</span>
+    }
+    
+<span class="nc" id="L277">    public static class TestInboundEventChannelAdapter implements InboundEventChannelAdapter {</span>
+
+        public InboundChannelModel inboundChannelModel;
+        public EventRegistry eventRegistry;
+
+        @Override
+        public void setInboundChannelModel(InboundChannelModel inboundChannelModel) {
+<span class="nc" id="L284">            this.inboundChannelModel = inboundChannelModel;</span>
+<span class="nc" id="L285">        }</span>
+
+        @Override
+        public void setEventRegistry(EventRegistry eventRegistry) {
+<span class="nc" id="L289">            this.eventRegistry = eventRegistry;</span>
+<span class="nc" id="L290">        }</span>
+        
+    }
+
+    @Override
+    protected EventRepositoryService getEventRepositoryService() {
+<span class="nc" id="L296">        return getEventRegistryEngineConfiguration().getEventRepositoryService();</span>
+    }
+
+    @Override
+    protected EventRegistry getEventRegistry() {
+<span class="nc" id="L301">        return getEventRegistryEngineConfiguration().getEventRegistry();</span>
+    }
+
+    @Override
+    protected EventRegistryEngineConfiguration getEventRegistryEngineConfiguration() {
+<span class="nc" id="L306">        return (EventRegistryEngineConfiguration) processEngineConfiguration.getEngineConfigurations()</span>
+<span class="nc" id="L307">            .get(EngineConfigurationConstants.KEY_EVENT_REGISTRY_CONFIG);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

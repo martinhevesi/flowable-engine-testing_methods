@@ -1,0 +1,216 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LiquibaseBasedSchemaManager.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.common.engine.impl.db</a> &gt; <span class="el_source">LiquibaseBasedSchemaManager.java</span></div><h1>LiquibaseBasedSchemaManager.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.common.engine.impl.db;
+
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.logging.Level;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.impl.AbstractEngineConfiguration;
+import org.flowable.common.engine.impl.context.Context;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.util.ClassUtils;
+
+import liquibase.Liquibase;
+import liquibase.Scope;
+import liquibase.database.Database;
+import liquibase.database.DatabaseConnection;
+import liquibase.database.DatabaseFactory;
+import liquibase.database.jvm.JdbcConnection;
+import liquibase.exception.DatabaseException;
+import liquibase.resource.ClassLoaderResourceAccessor;
+import liquibase.ui.LoggerUIService;
+
+/**
+ * @author Filip Hrisafov
+ */
+public abstract class LiquibaseBasedSchemaManager implements SchemaManager {
+
+<span class="nc" id="L45">    protected static final Map&lt;String, Object&gt; LIQUIBASE_SCOPE_VALUES = new HashMap&lt;&gt;();</span>
+
+    static {
+<span class="nc" id="L48">        LoggerUIService uiService = new LoggerUIService();</span>
+<span class="nc" id="L49">        uiService.setStandardLogLevel(Level.FINE);</span>
+<span class="nc" id="L50">        LIQUIBASE_SCOPE_VALUES.put(Scope.Attr.ui.name(), uiService);</span>
+<span class="nc" id="L51">    }</span>
+
+<span class="nc" id="L53">    protected final Logger logger = LoggerFactory.getLogger(getClass());</span>
+
+    protected final String context;
+    protected final String changeLogFile;
+    protected final String changeLogPrefix;
+
+<span class="nc" id="L59">    public LiquibaseBasedSchemaManager(String context, String changeLogFile, String changeLogPrefix) {</span>
+<span class="nc" id="L60">        this.context = context;</span>
+<span class="nc" id="L61">        this.changeLogFile = changeLogFile;</span>
+<span class="nc" id="L62">        this.changeLogPrefix = changeLogPrefix;</span>
+<span class="nc" id="L63">    }</span>
+
+    public void initSchema(String databaseSchemaUpdate) {
+        try {
+<span class="nc bnc" id="L67" title="All 2 branches missed.">            if (AbstractEngineConfiguration.DB_SCHEMA_UPDATE_CREATE.equals(databaseSchemaUpdate)) {</span>
+<span class="nc" id="L68">                runForLiquibase(this::schemaCreate);</span>
+            }
+<span class="nc bnc" id="L70" title="All 2 branches missed.">            else if (AbstractEngineConfiguration.DB_SCHEMA_UPDATE_CREATE_DROP.equals(databaseSchemaUpdate)) {</span>
+<span class="nc" id="L71">                runForLiquibase(this::schemaCreate);</span>
+
+<span class="nc bnc" id="L73" title="All 2 branches missed.">            } else if (AbstractEngineConfiguration.DB_SCHEMA_UPDATE_DROP_CREATE.equals(databaseSchemaUpdate)) {</span>
+<span class="nc" id="L74">                runForLiquibase(() -&gt; {</span>
+<span class="nc" id="L75">                    schemaDrop();</span>
+<span class="nc" id="L76">                    schemaCreate();</span>
+<span class="nc" id="L77">                });</span>
+
+<span class="nc bnc" id="L79" title="All 2 branches missed.">            } else if (AbstractEngineConfiguration.DB_SCHEMA_UPDATE_TRUE.equals(databaseSchemaUpdate)) {</span>
+<span class="nc" id="L80">                runForLiquibase(this::schemaUpdate);</span>
+
+<span class="nc bnc" id="L82" title="All 2 branches missed.">            } else if (AbstractEngineConfiguration.DB_SCHEMA_UPDATE_FALSE.equals(databaseSchemaUpdate)) {</span>
+<span class="nc" id="L83">                runForLiquibase(this::schemaCheckVersion);</span>
+
+            }
+<span class="nc" id="L86">        } catch (Exception e) {</span>
+<span class="nc" id="L87">            throw new FlowableException(&quot;Error initialising &quot; + context + &quot; data model&quot;, e);</span>
+<span class="nc" id="L88">        }</span>
+<span class="nc" id="L89">    }</span>
+
+    protected void runForLiquibase(Runnable runnable) throws Exception {
+<span class="nc" id="L92">        Scope.child(LIQUIBASE_SCOPE_VALUES, runnable::run);</span>
+<span class="nc" id="L93">    }</span>
+
+    @Override
+    public void schemaCreate() {
+<span class="nc" id="L97">        Liquibase liquibase = null;</span>
+        try {
+<span class="nc" id="L99">            liquibase = createLiquibaseInstance(getDatabaseConfiguration());</span>
+<span class="nc" id="L100">            liquibase.update(context);</span>
+<span class="nc" id="L101">        } catch (Exception e) {</span>
+<span class="nc" id="L102">            throw new FlowableException(&quot;Error creating &quot; + context + &quot; engine tables&quot;, e);</span>
+        } finally {
+<span class="nc" id="L104">            closeDatabase(liquibase);</span>
+        }
+<span class="nc" id="L106">    }</span>
+
+    @Override
+    public void schemaDrop() {
+<span class="nc" id="L110">        Liquibase liquibase = null;</span>
+        try {
+<span class="nc" id="L112">            liquibase = createLiquibaseInstance(getDatabaseConfiguration());</span>
+<span class="nc" id="L113">            liquibase.dropAll();</span>
+<span class="nc" id="L114">        } catch (Exception e) {</span>
+<span class="nc" id="L115">            throw new FlowableException(&quot;Error dropping &quot; + context + &quot; engine tables&quot;, e);</span>
+        } finally {
+<span class="nc" id="L117">            closeDatabase(liquibase);</span>
+        }
+<span class="nc" id="L119">    }</span>
+
+    @Override
+    public String schemaUpdate() {
+<span class="nc" id="L123">        Liquibase liquibase = null;</span>
+        try {
+<span class="nc" id="L125">            liquibase = createLiquibaseInstance(getDatabaseConfiguration());</span>
+<span class="nc" id="L126">            liquibase.update(context);</span>
+<span class="nc" id="L127">        } catch (Exception e) {</span>
+<span class="nc" id="L128">            throw new FlowableException(&quot;Error updating &quot; + context + &quot; engine tables&quot;, e);</span>
+        } finally {
+<span class="nc" id="L130">            closeDatabase(liquibase);</span>
+        }
+<span class="nc" id="L132">        return null;</span>
+    }
+
+    @Override
+    public void schemaCheckVersion() {
+<span class="nc" id="L137">        Liquibase liquibase = null;</span>
+        try {
+<span class="nc" id="L139">            liquibase = createLiquibaseInstance(getDatabaseConfiguration());</span>
+<span class="nc" id="L140">            liquibase.validate();</span>
+<span class="nc" id="L141">        } catch (Exception e) {</span>
+<span class="nc" id="L142">            throw new FlowableException(&quot;Error validating &quot; + context + &quot; engine schema&quot;, e);</span>
+        } finally {
+<span class="nc" id="L144">            closeDatabase(liquibase);</span>
+        }
+<span class="nc" id="L146">    }</span>
+
+    protected abstract LiquibaseDatabaseConfiguration getDatabaseConfiguration();
+
+    protected Liquibase createLiquibaseInstance(LiquibaseDatabaseConfiguration databaseConfiguration) throws SQLException {
+<span class="nc" id="L151">        Connection jdbcConnection = null;</span>
+<span class="nc" id="L152">        boolean closeConnection = false;</span>
+        try {
+<span class="nc" id="L154">            CommandContext commandContext = Context.getCommandContext();</span>
+<span class="nc bnc" id="L155" title="All 2 branches missed.">            if (commandContext == null) {</span>
+<span class="nc" id="L156">                jdbcConnection = databaseConfiguration.getDataSource().getConnection();</span>
+<span class="nc" id="L157">                closeConnection = true;</span>
+            } else {
+<span class="nc" id="L159">                jdbcConnection = commandContext.getSession(DbSqlSession.class).getSqlSession().getConnection();</span>
+            }
+
+            // A commit is needed here, because one of the things that Liquibase does when acquiring its lock
+            // is doing a rollback, which removes all changes done so far.
+            // For most databases, this is not a problem as DDL statements are not transactional.
+            // However for some (e.g. sql server), this would remove all previous statements, which is not wanted,
+            // hence the extra commit here.
+<span class="nc bnc" id="L167" title="All 2 branches missed.">            if (!jdbcConnection.getAutoCommit()) {</span>
+<span class="nc" id="L168">                jdbcConnection.commit();</span>
+            }
+
+<span class="nc" id="L171">            DatabaseConnection connection = new JdbcConnection(jdbcConnection);</span>
+<span class="nc" id="L172">            Database database = DatabaseFactory.getInstance().findCorrectDatabaseImplementation(connection);</span>
+<span class="nc" id="L173">            database.setDatabaseChangeLogTableName(changeLogPrefix + database.getDatabaseChangeLogTableName());</span>
+<span class="nc" id="L174">            database.setDatabaseChangeLogLockTableName(changeLogPrefix + database.getDatabaseChangeLogLockTableName());</span>
+
+<span class="nc" id="L176">            String databaseSchema = databaseConfiguration.getDatabaseSchema();</span>
+<span class="nc bnc" id="L177" title="All 2 branches missed.">            if (StringUtils.isNotEmpty(databaseSchema)) {</span>
+<span class="nc" id="L178">                database.setDefaultSchemaName(databaseSchema);</span>
+<span class="nc" id="L179">                database.setLiquibaseSchemaName(databaseSchema);</span>
+            }
+
+<span class="nc" id="L182">            String databaseCatalog = databaseConfiguration.getDatabaseCatalog();</span>
+<span class="nc bnc" id="L183" title="All 2 branches missed.">            if (StringUtils.isNotEmpty(databaseCatalog)) {</span>
+<span class="nc" id="L184">                database.setDefaultCatalogName(databaseCatalog);</span>
+<span class="nc" id="L185">                database.setLiquibaseCatalogName(databaseCatalog);</span>
+            }
+
+<span class="nc" id="L188">            return new Liquibase(changeLogFile, new ClassLoaderResourceAccessor(), database);</span>
+
+<span class="nc" id="L190">        } catch (Exception e) {</span>
+            // We only close the connection if an exception occurred, otherwise the Liquibase instance cannot be used
+<span class="nc bnc" id="L192" title="All 4 branches missed.">            if (jdbcConnection != null &amp;&amp; closeConnection) {</span>
+<span class="nc" id="L193">                jdbcConnection.close();</span>
+            }
+<span class="nc" id="L195">            throw new FlowableException(&quot;Error creating &quot; + context + &quot; liquibase instance&quot;, e);</span>
+        }
+    }
+
+    protected void closeDatabase(Liquibase liquibase) {
+<span class="nc bnc" id="L200" title="All 2 branches missed.">        if (liquibase != null) {</span>
+<span class="nc" id="L201">            Database database = liquibase.getDatabase();</span>
+<span class="nc bnc" id="L202" title="All 2 branches missed.">            if (database != null) {</span>
+                // do not close the shared connection if a command context is currently active
+<span class="nc bnc" id="L204" title="All 2 branches missed.">                if (Context.getCommandContext() == null) {</span>
+                    try {
+<span class="nc" id="L206">                        database.close();</span>
+<span class="nc" id="L207">                    } catch (DatabaseException e) {</span>
+<span class="nc" id="L208">                        logger.warn(&quot;Error closing database for {}&quot;, context, e);</span>
+<span class="nc" id="L209">                    }</span>
+                }
+            }
+        }
+<span class="nc" id="L213">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

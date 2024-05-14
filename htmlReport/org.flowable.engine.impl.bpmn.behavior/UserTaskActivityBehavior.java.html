@@ -1,0 +1,537 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>UserTaskActivityBehavior.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.bpmn.behavior</a> &gt; <span class="el_source">UserTaskActivityBehavior.java</span></div><h1>UserTaskActivityBehavior.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.impl.bpmn.behavior;
+
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Date;
+import java.util.List;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.bpmn.model.UserTask;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.FlowableIllegalArgumentException;
+import org.flowable.common.engine.api.delegate.Expression;
+import org.flowable.common.engine.api.delegate.event.FlowableEngineEventType;
+import org.flowable.common.engine.api.delegate.event.FlowableEventDispatcher;
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.impl.calendar.BusinessCalendar;
+import org.flowable.common.engine.impl.calendar.DueDateBusinessCalendar;
+import org.flowable.common.engine.impl.el.ExpressionManager;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.common.engine.impl.logging.LoggingSessionConstants;
+import org.flowable.common.engine.impl.logging.LoggingSessionUtil;
+import org.flowable.engine.DynamicBpmnConstants;
+import org.flowable.engine.delegate.BpmnError;
+import org.flowable.engine.delegate.DelegateExecution;
+import org.flowable.engine.delegate.TaskListener;
+import org.flowable.engine.impl.bpmn.helper.DynamicPropertyUtil;
+import org.flowable.engine.impl.bpmn.helper.ErrorPropagation;
+import org.flowable.engine.impl.bpmn.helper.SkipExpressionUtil;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.context.BpmnOverrideContext;
+import org.flowable.engine.impl.delegate.ActivityWithMigrationContextBehavior;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntity;
+import org.flowable.engine.impl.util.BpmnLoggingSessionUtil;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.engine.impl.util.IdentityLinkUtil;
+import org.flowable.engine.impl.util.TaskHelper;
+import org.flowable.engine.interceptor.CreateUserTaskAfterContext;
+import org.flowable.engine.interceptor.CreateUserTaskBeforeContext;
+import org.flowable.engine.interceptor.MigrationContext;
+import org.flowable.identitylink.service.impl.persistence.entity.IdentityLinkEntity;
+import org.flowable.task.service.TaskService;
+import org.flowable.task.service.event.impl.FlowableTaskEventBuilder;
+import org.flowable.task.service.impl.persistence.entity.TaskEntity;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+/**
+ * @author Joram Barrez
+ */
+public class UserTaskActivityBehavior extends TaskActivityBehavior implements ActivityWithMigrationContextBehavior {
+
+    private static final long serialVersionUID = 1L;
+
+<span class="nc" id="L76">    private static final Logger LOGGER = LoggerFactory.getLogger(UserTaskActivityBehavior.class);</span>
+
+    protected UserTask userTask;
+
+<span class="nc" id="L80">    public UserTaskActivityBehavior(UserTask userTask) {</span>
+<span class="nc" id="L81">        this.userTask = userTask;</span>
+<span class="nc" id="L82">    }</span>
+
+    @Override
+    public void execute(DelegateExecution execution) {
+<span class="nc" id="L86">        execute(execution, null);</span>
+<span class="nc" id="L87">    }</span>
+    
+    @Override
+    public void execute(DelegateExecution execution, MigrationContext migrationContext) {
+<span class="nc" id="L91">        CommandContext commandContext = CommandContextUtil.getCommandContext();</span>
+<span class="nc" id="L92">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration();</span>
+<span class="nc" id="L93">        TaskService taskService = processEngineConfiguration.getTaskServiceConfiguration().getTaskService();</span>
+
+<span class="nc" id="L95">        TaskEntity task = taskService.createTask();</span>
+<span class="nc" id="L96">        task.setExecutionId(execution.getId());</span>
+<span class="nc" id="L97">        task.setTaskDefinitionKey(userTask.getId());</span>
+<span class="nc" id="L98">        task.setPropagatedStageInstanceId(execution.getPropagatedStageInstanceId());</span>
+
+<span class="nc" id="L100">        String activeTaskName = null;</span>
+<span class="nc" id="L101">        String activeTaskDescription = null;</span>
+<span class="nc" id="L102">        String activeTaskDueDate = null;</span>
+<span class="nc" id="L103">        String activeTaskPriority = null;</span>
+<span class="nc" id="L104">        String activeTaskCategory = null;</span>
+<span class="nc" id="L105">        String activeTaskFormKey = null;</span>
+<span class="nc" id="L106">        String activeTaskSkipExpression = null;</span>
+<span class="nc" id="L107">        String activeTaskAssignee = null;</span>
+<span class="nc" id="L108">        String activeTaskOwner = null;</span>
+<span class="nc" id="L109">        String activeTaskIdVariableName = null;</span>
+<span class="nc" id="L110">        List&lt;String&gt; activeTaskCandidateUsers = null;</span>
+<span class="nc" id="L111">        List&lt;String&gt; activeTaskCandidateGroups = null;</span>
+
+<span class="nc" id="L113">        ExpressionManager expressionManager = processEngineConfiguration.getExpressionManager();</span>
+
+<span class="nc bnc" id="L115" title="All 2 branches missed.">        if (processEngineConfiguration.isEnableProcessDefinitionInfoCache()) {</span>
+<span class="nc" id="L116">            ObjectNode taskElementProperties = BpmnOverrideContext.getBpmnOverrideElementProperties(userTask.getId(), execution.getProcessDefinitionId());</span>
+<span class="nc" id="L117">            activeTaskName = DynamicPropertyUtil.getActiveValue(userTask.getName(), DynamicBpmnConstants.USER_TASK_NAME, taskElementProperties);</span>
+<span class="nc" id="L118">            activeTaskDescription = DynamicPropertyUtil.getActiveValue(userTask.getDocumentation(), DynamicBpmnConstants.USER_TASK_DESCRIPTION, taskElementProperties);</span>
+<span class="nc" id="L119">            activeTaskDueDate = DynamicPropertyUtil.getActiveValue(userTask.getDueDate(), DynamicBpmnConstants.USER_TASK_DUEDATE, taskElementProperties);</span>
+<span class="nc" id="L120">            activeTaskPriority = DynamicPropertyUtil.getActiveValue(userTask.getPriority(), DynamicBpmnConstants.USER_TASK_PRIORITY, taskElementProperties);</span>
+<span class="nc" id="L121">            activeTaskCategory = DynamicPropertyUtil.getActiveValue(userTask.getCategory(), DynamicBpmnConstants.USER_TASK_CATEGORY, taskElementProperties);</span>
+<span class="nc" id="L122">            activeTaskFormKey = DynamicPropertyUtil.getActiveValue(userTask.getFormKey(), DynamicBpmnConstants.USER_TASK_FORM_KEY, taskElementProperties);</span>
+<span class="nc" id="L123">            activeTaskSkipExpression = DynamicPropertyUtil.getActiveValue(userTask.getSkipExpression(), DynamicBpmnConstants.TASK_SKIP_EXPRESSION, taskElementProperties);</span>
+<span class="nc" id="L124">            activeTaskAssignee = getAssigneeValue(userTask, migrationContext, taskElementProperties);</span>
+<span class="nc" id="L125">            activeTaskOwner = getOwnerValue(userTask, migrationContext, taskElementProperties);</span>
+<span class="nc" id="L126">            activeTaskCandidateUsers = getActiveValueList(userTask.getCandidateUsers(), DynamicBpmnConstants.USER_TASK_CANDIDATE_USERS, taskElementProperties);</span>
+<span class="nc" id="L127">            activeTaskCandidateGroups = getActiveValueList(userTask.getCandidateGroups(), DynamicBpmnConstants.USER_TASK_CANDIDATE_GROUPS, taskElementProperties);</span>
+<span class="nc" id="L128">            activeTaskIdVariableName = DynamicPropertyUtil.getActiveValue(userTask.getTaskIdVariableName(), DynamicBpmnConstants.USER_TASK_TASK_ID_VARIABLE_NAME, taskElementProperties);</span>
+<span class="nc" id="L129">        } else {</span>
+<span class="nc" id="L130">            activeTaskName = userTask.getName();</span>
+<span class="nc" id="L131">            activeTaskDescription = userTask.getDocumentation();</span>
+<span class="nc" id="L132">            activeTaskDueDate = userTask.getDueDate();</span>
+<span class="nc" id="L133">            activeTaskPriority = userTask.getPriority();</span>
+<span class="nc" id="L134">            activeTaskCategory = userTask.getCategory();</span>
+<span class="nc" id="L135">            activeTaskFormKey = userTask.getFormKey();</span>
+<span class="nc" id="L136">            activeTaskSkipExpression = userTask.getSkipExpression();</span>
+<span class="nc" id="L137">            activeTaskAssignee = getAssigneeValue(userTask, migrationContext, null);</span>
+<span class="nc" id="L138">            activeTaskOwner = getOwnerValue(userTask, migrationContext, null);</span>
+<span class="nc" id="L139">            activeTaskCandidateUsers = userTask.getCandidateUsers();</span>
+<span class="nc" id="L140">            activeTaskCandidateGroups = userTask.getCandidateGroups();</span>
+<span class="nc" id="L141">            activeTaskIdVariableName = userTask.getTaskIdVariableName();</span>
+        }
+<span class="nc bnc" id="L143" title="All 2 branches missed.">        if (execution.getCurrentActivityName() != null) {</span>
+<span class="nc" id="L144">            activeTaskName = execution.getCurrentActivityName();</span>
+        }
+        
+<span class="nc" id="L147">        CreateUserTaskBeforeContext beforeContext = new CreateUserTaskBeforeContext(userTask, execution, activeTaskName, activeTaskDescription, activeTaskDueDate, </span>
+                        activeTaskPriority, activeTaskCategory, activeTaskFormKey, activeTaskSkipExpression, activeTaskAssignee, activeTaskOwner, 
+                        activeTaskCandidateUsers, activeTaskCandidateGroups);
+        
+<span class="nc bnc" id="L151" title="All 2 branches missed.">        if (processEngineConfiguration.getCreateUserTaskInterceptor() != null) {</span>
+<span class="nc" id="L152">            processEngineConfiguration.getCreateUserTaskInterceptor().beforeCreateUserTask(beforeContext);</span>
+        }
+
+<span class="nc" id="L155">        handleName(beforeContext, expressionManager, task, execution);</span>
+<span class="nc" id="L156">        handleDescription(beforeContext, expressionManager, task, execution);</span>
+<span class="nc" id="L157">        handleDueDate(beforeContext, expressionManager, task, execution, processEngineConfiguration, activeTaskDueDate);</span>
+<span class="nc" id="L158">        handlePriority(beforeContext, expressionManager, task, execution, activeTaskPriority);</span>
+<span class="nc" id="L159">        handleCategory(beforeContext, expressionManager, task, execution);</span>
+<span class="nc" id="L160">        handleFormKey(beforeContext, expressionManager, task, execution);</span>
+        
+<span class="nc bnc" id="L162" title="All 2 branches missed.">        boolean skipUserTask = SkipExpressionUtil.isSkipExpressionEnabled(beforeContext.getSkipExpression(), userTask.getId(), execution, commandContext)</span>
+<span class="nc bnc" id="L163" title="All 2 branches missed.">                    &amp;&amp; SkipExpressionUtil.shouldSkipFlowElement(beforeContext.getSkipExpression(), userTask.getId(), execution, commandContext);</span>
+
+<span class="nc bnc" id="L165" title="All 6 branches missed.">        TaskHelper.insertTask(task, (ExecutionEntity) execution, !skipUserTask, (!skipUserTask &amp;&amp; processEngineConfiguration.isEnableEntityLinks()));</span>
+
+        // Handling assignments need to be done after the task is inserted, to have an id
+<span class="nc bnc" id="L168" title="All 2 branches missed.">        if (!skipUserTask) {</span>
+<span class="nc bnc" id="L169" title="All 2 branches missed.">            if (processEngineConfiguration.isLoggingSessionEnabled()) {</span>
+<span class="nc" id="L170">                BpmnLoggingSessionUtil.addLoggingData(LoggingSessionConstants.TYPE_USER_TASK_CREATE, &quot;User task '&quot; + </span>
+<span class="nc" id="L171">                                task.getName() + &quot;' created&quot;, task, execution);</span>
+            }
+            
+<span class="nc" id="L174">            handleAssignments(taskService, beforeContext.getAssignee(), beforeContext.getOwner(), beforeContext.getCandidateUsers(), </span>
+<span class="nc" id="L175">                            beforeContext.getCandidateGroups(), task, expressionManager, execution, processEngineConfiguration);</span>
+            
+<span class="nc bnc" id="L177" title="All 2 branches missed.">            if (processEngineConfiguration.getCreateUserTaskInterceptor() != null) {</span>
+<span class="nc" id="L178">                CreateUserTaskAfterContext afterContext = new CreateUserTaskAfterContext(userTask, task, execution);</span>
+<span class="nc" id="L179">                processEngineConfiguration.getCreateUserTaskInterceptor().afterCreateUserTask(afterContext);</span>
+            }
+
+            try {
+<span class="nc" id="L183">                processEngineConfiguration.getListenerNotificationHelper().executeTaskListeners(task, TaskListener.EVENTNAME_CREATE);</span>
+<span class="nc" id="L184">            } catch (BpmnError bpmnError) {</span>
+<span class="nc" id="L185">                ErrorPropagation.propagateError(bpmnError, execution);</span>
+<span class="nc" id="L186">                return;</span>
+<span class="nc" id="L187">            }</span>
+
+            // All properties set, now firing 'create' events
+<span class="nc" id="L190">            FlowableEventDispatcher eventDispatcher = processEngineConfiguration.getTaskServiceConfiguration().getEventDispatcher();</span>
+<span class="nc bnc" id="L191" title="All 4 branches missed.">            if (eventDispatcher != null  &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L192">                eventDispatcher.dispatchEvent(FlowableTaskEventBuilder.createEntityEvent(FlowableEngineEventType.TASK_CREATED, task),</span>
+<span class="nc" id="L193">                        processEngineConfiguration.getEngineCfgKey());</span>
+            }
+            
+<span class="nc bnc" id="L196" title="All 2 branches missed.">            if (StringUtils.isNotEmpty(activeTaskIdVariableName)) {</span>
+<span class="nc" id="L197">                Expression expression = expressionManager.createExpression(userTask.getTaskIdVariableName());</span>
+<span class="nc" id="L198">                String idVariableName = (String) expression.getValue(execution);</span>
+<span class="nc bnc" id="L199" title="All 2 branches missed.">                if (StringUtils.isNotEmpty(idVariableName)) {</span>
+<span class="nc" id="L200">                    execution.setVariable(idVariableName, task.getId());</span>
+                }
+            }
+<span class="nc" id="L203">        } else {</span>
+<span class="nc" id="L204">            TaskHelper.deleteTask(task, null, false, false, false); // false: no events fired for skipped user task</span>
+<span class="nc" id="L205">            leave(execution);</span>
+        }
+
+<span class="nc" id="L208">    }</span>
+
+    protected void handleName(CreateUserTaskBeforeContext beforeContext, ExpressionManager expressionManager, TaskEntity task, DelegateExecution execution) {
+<span class="nc bnc" id="L211" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(beforeContext.getName())) {</span>
+<span class="nc" id="L212">            String name = null;</span>
+            try {
+<span class="nc" id="L214">                Object nameValue = expressionManager.createExpression(beforeContext.getName()).getValue(execution);</span>
+<span class="nc bnc" id="L215" title="All 2 branches missed.">                if (nameValue != null) {</span>
+<span class="nc" id="L216">                    name = nameValue.toString();</span>
+                }
+<span class="nc" id="L218">            } catch (FlowableException e) {</span>
+<span class="nc" id="L219">                name = beforeContext.getName();</span>
+<span class="nc" id="L220">                LOGGER.warn(&quot;property not found in task name expression {}&quot;, e.getMessage());</span>
+<span class="nc" id="L221">            }</span>
+<span class="nc" id="L222">            task.setName(name);</span>
+        }
+<span class="nc" id="L224">    }</span>
+
+    protected void handleDescription(CreateUserTaskBeforeContext beforeContext, ExpressionManager expressionManager, TaskEntity task,
+            DelegateExecution execution) {
+<span class="nc bnc" id="L228" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(beforeContext.getDescription())) {</span>
+<span class="nc" id="L229">            String description = null;</span>
+            try {
+<span class="nc" id="L231">                Object descriptionValue = expressionManager.createExpression(beforeContext.getDescription()).getValue(execution);</span>
+<span class="nc bnc" id="L232" title="All 2 branches missed.">                if (descriptionValue != null) {</span>
+<span class="nc" id="L233">                    description = descriptionValue.toString();</span>
+                }
+<span class="nc" id="L235">            } catch (FlowableException e) {</span>
+<span class="nc" id="L236">                description = beforeContext.getDescription();</span>
+<span class="nc" id="L237">                LOGGER.warn(&quot;property not found in task description expression {}&quot;, e.getMessage());</span>
+<span class="nc" id="L238">            }</span>
+<span class="nc" id="L239">            task.setDescription(description);</span>
+        }
+<span class="nc" id="L241">    }</span>
+
+    protected void handleDueDate(CreateUserTaskBeforeContext beforeContext, ExpressionManager expressionManager, TaskEntity task, DelegateExecution execution,
+            ProcessEngineConfigurationImpl processEngineConfiguration, String activeTaskDueDate) {
+<span class="nc bnc" id="L245" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(beforeContext.getDueDate())) {</span>
+<span class="nc" id="L246">            Object dueDate = expressionManager.createExpression(beforeContext.getDueDate()).getValue(execution);</span>
+<span class="nc bnc" id="L247" title="All 2 branches missed.">            if (dueDate != null) {</span>
+<span class="nc bnc" id="L248" title="All 2 branches missed.">                if (dueDate instanceof Date) {</span>
+<span class="nc" id="L249">                    task.setDueDate((Date) dueDate);</span>
+<span class="nc bnc" id="L250" title="All 2 branches missed.">                } else if (dueDate instanceof String) {</span>
+<span class="nc" id="L251">                    String businessCalendarName = null;</span>
+<span class="nc bnc" id="L252" title="All 2 branches missed.">                    if (StringUtils.isNotEmpty(userTask.getBusinessCalendarName())) {</span>
+<span class="nc" id="L253">                        businessCalendarName = expressionManager.createExpression(userTask.getBusinessCalendarName()).getValue(execution).toString();</span>
+                    } else {
+<span class="nc" id="L255">                        businessCalendarName = DueDateBusinessCalendar.NAME;</span>
+                    }
+
+<span class="nc" id="L258">                    BusinessCalendar businessCalendar = processEngineConfiguration.getBusinessCalendarManager()</span>
+<span class="nc" id="L259">                            .getBusinessCalendar(businessCalendarName);</span>
+<span class="nc" id="L260">                    task.setDueDate(businessCalendar.resolveDuedate((String) dueDate));</span>
+<span class="nc bnc" id="L261" title="All 2 branches missed.">                } else if (dueDate instanceof Instant) {</span>
+<span class="nc" id="L262">                    task.setDueDate(Date.from((Instant) dueDate));</span>
+<span class="nc bnc" id="L263" title="All 2 branches missed.">                } else if (dueDate instanceof LocalDate) {</span>
+<span class="nc" id="L264">                    Date localDueDate = Date.from(((LocalDate) dueDate).atStartOfDay().atZone(ZoneId.systemDefault()).toInstant());</span>
+<span class="nc" id="L265">                    task.setDueDate(localDueDate);</span>
+<span class="nc bnc" id="L266" title="All 2 branches missed.">                } else if (dueDate instanceof LocalDateTime) {</span>
+<span class="nc" id="L267">                    Date localDueDate = Date.from(((LocalDateTime) dueDate).atZone(ZoneId.systemDefault()).toInstant());</span>
+<span class="nc" id="L268">                    task.setDueDate(localDueDate);</span>
+<span class="nc" id="L269">                } else {</span>
+<span class="nc" id="L270">                    throw new FlowableIllegalArgumentException(&quot;Due date expression does not resolve to a Date, Instant, LocalDate, LocalDateTime or Date string: &quot; + beforeContext.getDueDate());</span>
+                }
+            }
+        }
+<span class="nc" id="L274">    }</span>
+
+    protected void handlePriority(CreateUserTaskBeforeContext beforeContext, ExpressionManager expressionManager, TaskEntity task, DelegateExecution execution,
+            String activeTaskPriority) {
+<span class="nc bnc" id="L278" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(beforeContext.getPriority())) {</span>
+<span class="nc" id="L279">            final Object priority = expressionManager.createExpression(beforeContext.getPriority()).getValue(execution);</span>
+<span class="nc bnc" id="L280" title="All 2 branches missed.">            if (priority != null) {</span>
+<span class="nc bnc" id="L281" title="All 2 branches missed.">                if (priority instanceof String) {</span>
+                    try {
+<span class="nc" id="L283">                        task.setPriority(Integer.valueOf((String) priority));</span>
+<span class="nc" id="L284">                    } catch (NumberFormatException e) {</span>
+<span class="nc" id="L285">                        throw new FlowableIllegalArgumentException(&quot;Priority does not resolve to a number: &quot; + priority, e);</span>
+<span class="nc" id="L286">                    }</span>
+<span class="nc bnc" id="L287" title="All 2 branches missed.">                } else if (priority instanceof Number) {</span>
+<span class="nc" id="L288">                    task.setPriority(((Number) priority).intValue());</span>
+                } else {
+<span class="nc" id="L290">                    throw new FlowableIllegalArgumentException(&quot;Priority expression does not resolve to a number: &quot; + activeTaskPriority);</span>
+                }
+            }
+        }
+<span class="nc" id="L294">    }</span>
+
+    protected void handleCategory(CreateUserTaskBeforeContext beforeContext, ExpressionManager expressionManager, TaskEntity task,
+            DelegateExecution execution) {
+<span class="nc bnc" id="L298" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(beforeContext.getCategory())) {</span>
+<span class="nc" id="L299">            String category = null;</span>
+            try {
+<span class="nc" id="L301">                Object categoryValue = expressionManager.createExpression(beforeContext.getCategory()).getValue(execution);</span>
+<span class="nc bnc" id="L302" title="All 2 branches missed.">                if (categoryValue != null) {</span>
+<span class="nc" id="L303">                    category = categoryValue.toString();</span>
+                }
+<span class="nc" id="L305">            } catch (FlowableException e) {</span>
+<span class="nc" id="L306">                category = beforeContext.getCategory();</span>
+<span class="nc" id="L307">                LOGGER.warn(&quot;property not found in task category expression {}&quot;, e.getMessage());</span>
+<span class="nc" id="L308">            }</span>
+<span class="nc" id="L309">            task.setCategory(category);</span>
+        }
+<span class="nc" id="L311">    }</span>
+
+    protected void handleFormKey(CreateUserTaskBeforeContext beforeContext, ExpressionManager expressionManager, TaskEntity task, DelegateExecution execution) {
+<span class="nc bnc" id="L314" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(beforeContext.getFormKey())) {</span>
+<span class="nc" id="L315">            String formKey = null;</span>
+            try {
+<span class="nc" id="L317">                Object formKeyValue = expressionManager.createExpression(beforeContext.getFormKey()).getValue(execution);</span>
+<span class="nc bnc" id="L318" title="All 2 branches missed.">                if (formKeyValue != null) {</span>
+<span class="nc" id="L319">                    formKey = formKeyValue.toString();</span>
+                }
+<span class="nc" id="L321">            } catch (FlowableException e) {</span>
+<span class="nc" id="L322">                formKey = beforeContext.getFormKey();</span>
+<span class="nc" id="L323">                LOGGER.warn(&quot;property not found in task formKey expression {}&quot;, e.getMessage());</span>
+<span class="nc" id="L324">            }</span>
+<span class="nc" id="L325">            task.setFormKey(formKey);</span>
+        }
+<span class="nc" id="L327">    }</span>
+
+    @Override
+    public void trigger(DelegateExecution execution, String signalName, Object signalData) {
+<span class="nc" id="L331">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration();</span>
+<span class="nc" id="L332">        List&lt;TaskEntity&gt; taskEntities = processEngineConfiguration.getTaskServiceConfiguration().getTaskService()</span>
+<span class="nc" id="L333">                .findTasksByExecutionId(execution.getId()); // Should be only one</span>
+<span class="nc bnc" id="L334" title="All 2 branches missed.">        for (TaskEntity taskEntity : taskEntities) {</span>
+<span class="nc bnc" id="L335" title="All 2 branches missed.">            if (!taskEntity.isDeleted()) {</span>
+<span class="nc" id="L336">                throw new FlowableException(&quot;UserTask should not be signalled before complete for &quot; + taskEntity);</span>
+            }
+<span class="nc" id="L338">        }</span>
+
+<span class="nc" id="L340">        leave(execution);</span>
+<span class="nc" id="L341">    }</span>
+
+    @SuppressWarnings({ &quot;unchecked&quot;, &quot;rawtypes&quot; })
+    protected void handleAssignments(TaskService taskService, String assignee, String owner, List&lt;String&gt; candidateUsers,
+            List&lt;String&gt; candidateGroups, TaskEntity task, ExpressionManager expressionManager, DelegateExecution execution, 
+            ProcessEngineConfigurationImpl processEngineConfiguration) {
+
+<span class="nc bnc" id="L348" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(assignee)) {</span>
+<span class="nc" id="L349">            Object assigneeExpressionValue = expressionManager.createExpression(assignee).getValue(execution);</span>
+<span class="nc" id="L350">            String assigneeValue = null;</span>
+<span class="nc bnc" id="L351" title="All 2 branches missed.">            if (assigneeExpressionValue != null) {</span>
+<span class="nc" id="L352">                assigneeValue = assigneeExpressionValue.toString();</span>
+            }
+
+<span class="nc bnc" id="L355" title="All 2 branches missed.">            if (StringUtils.isNotEmpty(assigneeValue)) {</span>
+<span class="nc" id="L356">                TaskHelper.changeTaskAssignee(task, assigneeValue);</span>
+<span class="nc bnc" id="L357" title="All 2 branches missed.">                if (processEngineConfiguration.isLoggingSessionEnabled()) {</span>
+<span class="nc" id="L358">                    ObjectNode loggingNode = BpmnLoggingSessionUtil.fillBasicTaskLoggingData(&quot;Set task assignee value to &quot; + assigneeValue, task, execution);</span>
+<span class="nc" id="L359">                    loggingNode.put(&quot;taskAssignee&quot;, assigneeValue);</span>
+<span class="nc" id="L360">                    LoggingSessionUtil.addLoggingData(LoggingSessionConstants.TYPE_USER_TASK_SET_ASSIGNEE, loggingNode, ScopeTypes.BPMN);</span>
+                }
+            }
+        }
+
+<span class="nc bnc" id="L365" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(owner)) {</span>
+<span class="nc" id="L366">            Object ownerExpressionValue = expressionManager.createExpression(owner).getValue(execution);</span>
+<span class="nc" id="L367">            String ownerValue = null;</span>
+<span class="nc bnc" id="L368" title="All 2 branches missed.">            if (ownerExpressionValue != null) {</span>
+<span class="nc" id="L369">                ownerValue = ownerExpressionValue.toString();</span>
+            }
+
+<span class="nc bnc" id="L372" title="All 2 branches missed.">            if (StringUtils.isNotEmpty(ownerValue)) {</span>
+<span class="nc" id="L373">                TaskHelper.changeTaskOwner(task, ownerValue);</span>
+<span class="nc bnc" id="L374" title="All 2 branches missed.">                if (processEngineConfiguration.isLoggingSessionEnabled()) {</span>
+<span class="nc" id="L375">                    ObjectNode loggingNode = BpmnLoggingSessionUtil.fillBasicTaskLoggingData(&quot;Set task owner value to &quot; + ownerValue, task, execution);</span>
+<span class="nc" id="L376">                    loggingNode.put(&quot;taskOwner&quot;, ownerValue);</span>
+<span class="nc" id="L377">                    LoggingSessionUtil.addLoggingData(LoggingSessionConstants.TYPE_USER_TASK_SET_OWNER, loggingNode, ScopeTypes.BPMN);</span>
+                }
+            }
+        }
+
+<span class="nc bnc" id="L382" title="All 4 branches missed.">        if (candidateGroups != null &amp;&amp; !candidateGroups.isEmpty()) {</span>
+<span class="nc" id="L383">            List&lt;IdentityLinkEntity&gt; allIdentityLinkEntities = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L384" title="All 2 branches missed.">            for (String candidateGroup : candidateGroups) {</span>
+<span class="nc" id="L385">                Expression groupIdExpr = expressionManager.createExpression(candidateGroup);</span>
+<span class="nc" id="L386">                Object value = groupIdExpr.getValue(execution);</span>
+<span class="nc bnc" id="L387" title="All 2 branches missed.">                if (value != null) {</span>
+<span class="nc" id="L388">                    Collection&lt;String&gt; candidates = extractCandidates(value);</span>
+<span class="nc" id="L389">                    List&lt;IdentityLinkEntity&gt; identityLinkEntities = processEngineConfiguration.getIdentityLinkServiceConfiguration()</span>
+<span class="nc" id="L390">                            .getIdentityLinkService().addCandidateGroups(task.getId(), candidates);</span>
+
+<span class="nc bnc" id="L392" title="All 4 branches missed.">                    if (identityLinkEntities != null &amp;&amp; !identityLinkEntities.isEmpty()) {</span>
+<span class="nc" id="L393">                        IdentityLinkUtil.handleTaskIdentityLinkAdditions(task, identityLinkEntities);</span>
+<span class="nc" id="L394">                        allIdentityLinkEntities.addAll(identityLinkEntities);</span>
+                    }
+                }
+<span class="nc" id="L397">            }</span>
+            
+<span class="nc bnc" id="L399" title="All 2 branches missed.">            if (!allIdentityLinkEntities.isEmpty()) {</span>
+<span class="nc bnc" id="L400" title="All 2 branches missed.">                if (processEngineConfiguration.isLoggingSessionEnabled()) {</span>
+<span class="nc" id="L401">                    BpmnLoggingSessionUtil.addTaskIdentityLinkData(LoggingSessionConstants.TYPE_USER_TASK_SET_GROUP_IDENTITY_LINKS, </span>
+<span class="nc" id="L402">                            &quot;Added &quot; + allIdentityLinkEntities.size() + &quot; candidate group identity links to task&quot;, false,</span>
+                            allIdentityLinkEntities, task, execution);
+                }
+            }
+        }
+
+<span class="nc bnc" id="L408" title="All 4 branches missed.">        if (candidateUsers != null &amp;&amp; !candidateUsers.isEmpty()) {</span>
+<span class="nc" id="L409">            List&lt;IdentityLinkEntity&gt; allIdentityLinkEntities = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L410" title="All 2 branches missed.">            for (String candidateUser : candidateUsers) {</span>
+<span class="nc" id="L411">                Expression userIdExpr = expressionManager.createExpression(candidateUser);</span>
+<span class="nc" id="L412">                Object value = userIdExpr.getValue(execution);</span>
+<span class="nc bnc" id="L413" title="All 2 branches missed.">                if (value != null) {</span>
+<span class="nc" id="L414">                    Collection&lt;String&gt; candidates = extractCandidates(value);</span>
+<span class="nc" id="L415">                    List&lt;IdentityLinkEntity&gt; identityLinkEntities = processEngineConfiguration.getIdentityLinkServiceConfiguration()</span>
+<span class="nc" id="L416">                            .getIdentityLinkService().addCandidateUsers(task.getId(), candidates);</span>
+
+<span class="nc bnc" id="L418" title="All 4 branches missed.">                    if (identityLinkEntities != null &amp;&amp; !identityLinkEntities.isEmpty()) {</span>
+<span class="nc" id="L419">                        IdentityLinkUtil.handleTaskIdentityLinkAdditions(task, identityLinkEntities);</span>
+<span class="nc" id="L420">                        allIdentityLinkEntities.addAll(identityLinkEntities);</span>
+                    }
+                }
+<span class="nc" id="L423">            }</span>
+            
+<span class="nc bnc" id="L425" title="All 2 branches missed.">            if (!allIdentityLinkEntities.isEmpty()) {</span>
+<span class="nc bnc" id="L426" title="All 2 branches missed.">                if (processEngineConfiguration.isLoggingSessionEnabled()) {</span>
+<span class="nc" id="L427">                    BpmnLoggingSessionUtil.addTaskIdentityLinkData(LoggingSessionConstants.TYPE_USER_TASK_SET_USER_IDENTITY_LINKS, </span>
+<span class="nc" id="L428">                                    &quot;Added &quot; + allIdentityLinkEntities.size() + &quot; candidate user identity links to task&quot;, true,</span>
+                                    allIdentityLinkEntities, task, execution);
+                }
+            }
+        }
+
+<span class="nc bnc" id="L434" title="All 4 branches missed.">        if (userTask.getCustomUserIdentityLinks() != null &amp;&amp; !userTask.getCustomUserIdentityLinks().isEmpty()) {</span>
+
+<span class="nc" id="L436">            List&lt;IdentityLinkEntity&gt; customIdentityLinkEntities = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L437" title="All 2 branches missed.">            for (String customUserIdentityLinkType : userTask.getCustomUserIdentityLinks().keySet()) {</span>
+<span class="nc bnc" id="L438" title="All 2 branches missed.">                for (String userIdentityLink : userTask.getCustomUserIdentityLinks().get(customUserIdentityLinkType)) {</span>
+<span class="nc" id="L439">                    Expression idExpression = expressionManager.createExpression(userIdentityLink);</span>
+<span class="nc" id="L440">                    Object value = idExpression.getValue(execution);</span>
+
+<span class="nc" id="L442">                    Collection&lt;String&gt; userIds = extractCandidates(value);</span>
+<span class="nc bnc" id="L443" title="All 2 branches missed.">                    for (String userId : userIds) {</span>
+<span class="nc" id="L444">                        IdentityLinkEntity identityLinkEntity = processEngineConfiguration.getIdentityLinkServiceConfiguration()</span>
+<span class="nc" id="L445">                                .getIdentityLinkService().createTaskIdentityLink(task.getId(), userId, null, customUserIdentityLinkType);</span>
+<span class="nc" id="L446">                        IdentityLinkUtil.handleTaskIdentityLinkAddition(task, identityLinkEntity);</span>
+<span class="nc" id="L447">                        customIdentityLinkEntities.add(identityLinkEntity);</span>
+<span class="nc" id="L448">                    }</span>
+<span class="nc" id="L449">                }</span>
+<span class="nc" id="L450">            }</span>
+
+<span class="nc bnc" id="L452" title="All 2 branches missed.">            if (!customIdentityLinkEntities.isEmpty()) {</span>
+<span class="nc bnc" id="L453" title="All 2 branches missed.">                if (processEngineConfiguration.isLoggingSessionEnabled()) {</span>
+<span class="nc" id="L454">                    BpmnLoggingSessionUtil.addTaskIdentityLinkData(LoggingSessionConstants.TYPE_USER_TASK_SET_USER_IDENTITY_LINKS, </span>
+<span class="nc" id="L455">                                    &quot;Added &quot; + customIdentityLinkEntities.size() + &quot; custom user identity links to task&quot;, true,</span>
+                                    customIdentityLinkEntities, task, execution);
+                }
+            }
+        }
+
+<span class="nc bnc" id="L461" title="All 4 branches missed.">        if (userTask.getCustomGroupIdentityLinks() != null &amp;&amp; !userTask.getCustomGroupIdentityLinks().isEmpty()) {</span>
+
+<span class="nc" id="L463">            List&lt;IdentityLinkEntity&gt; customIdentityLinkEntities = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L464" title="All 2 branches missed.">            for (String customGroupIdentityLinkType : userTask.getCustomGroupIdentityLinks().keySet()) {</span>
+<span class="nc bnc" id="L465" title="All 2 branches missed.">                for (String groupIdentityLink : userTask.getCustomGroupIdentityLinks().get(customGroupIdentityLinkType)) {</span>
+
+<span class="nc" id="L467">                    Expression idExpression = expressionManager.createExpression(groupIdentityLink);</span>
+<span class="nc" id="L468">                    Object value = idExpression.getValue(execution);</span>
+<span class="nc" id="L469">                    Collection&lt;String&gt; groupIds = extractCandidates(value);</span>
+<span class="nc bnc" id="L470" title="All 2 branches missed.">                    for (String groupId : groupIds) {</span>
+<span class="nc" id="L471">                        IdentityLinkEntity identityLinkEntity = processEngineConfiguration.getIdentityLinkServiceConfiguration()</span>
+<span class="nc" id="L472">                                .getIdentityLinkService().createTaskIdentityLink(</span>
+<span class="nc" id="L473">                                task.getId(), null, groupId, customGroupIdentityLinkType);</span>
+<span class="nc" id="L474">                        IdentityLinkUtil.handleTaskIdentityLinkAddition(task, identityLinkEntity);</span>
+<span class="nc" id="L475">                        customIdentityLinkEntities.add(identityLinkEntity);</span>
+<span class="nc" id="L476">                    }</span>
+<span class="nc" id="L477">                }</span>
+<span class="nc" id="L478">            }</span>
+
+<span class="nc bnc" id="L480" title="All 2 branches missed.">            if (!customIdentityLinkEntities.isEmpty()) {</span>
+<span class="nc bnc" id="L481" title="All 2 branches missed.">                if (processEngineConfiguration.isLoggingSessionEnabled()) {</span>
+<span class="nc" id="L482">                    BpmnLoggingSessionUtil.addTaskIdentityLinkData(LoggingSessionConstants.TYPE_USER_TASK_SET_GROUP_IDENTITY_LINKS, </span>
+<span class="nc" id="L483">                                    &quot;Added &quot; + customIdentityLinkEntities.size() + &quot; custom group identity links to task&quot;, false,</span>
+                                    customIdentityLinkEntities, task, execution);
+                }
+            }
+        }
+
+<span class="nc" id="L489">    }</span>
+
+    protected Collection&lt;String&gt; extractCandidates(Object value) {
+<span class="nc bnc" id="L492" title="All 2 branches missed.">        if (value instanceof Collection) {</span>
+<span class="nc" id="L493">            return (Collection&lt;String&gt;) value;</span>
+<span class="nc bnc" id="L494" title="All 2 branches missed.">        } else if (value instanceof ArrayNode) {</span>
+<span class="nc" id="L495">            ArrayNode valueArrayNode = (ArrayNode) value;</span>
+<span class="nc" id="L496">            Collection&lt;String&gt; candidates = new ArrayList&lt;&gt;(valueArrayNode.size());</span>
+<span class="nc bnc" id="L497" title="All 2 branches missed.">            for (JsonNode node : valueArrayNode) {</span>
+<span class="nc" id="L498">                candidates.add(node.asText());</span>
+<span class="nc" id="L499">            }</span>
+
+<span class="nc" id="L501">            return candidates;</span>
+<span class="nc bnc" id="L502" title="All 2 branches missed.">        } else if (value != null) {</span>
+<span class="nc" id="L503">            String str = value.toString();</span>
+<span class="nc bnc" id="L504" title="All 2 branches missed.">            if (StringUtils.isNotEmpty(str)) {</span>
+<span class="nc" id="L505">                return Arrays.asList(value.toString().split(&quot;[\\s]*,[\\s]*&quot;));</span>
+            }
+        }
+
+<span class="nc" id="L509">        return Collections.emptyList();</span>
+
+    }
+    
+    protected String getAssigneeValue(UserTask userTask, MigrationContext migrationContext, ObjectNode taskElementProperties) {
+<span class="nc bnc" id="L514" title="All 4 branches missed.">        if (migrationContext != null &amp;&amp; migrationContext.getAssignee() != null) {</span>
+<span class="nc" id="L515">            return migrationContext.getAssignee();</span>
+            
+<span class="nc bnc" id="L517" title="All 2 branches missed.">        } else if (taskElementProperties != null) {</span>
+<span class="nc" id="L518">            return DynamicPropertyUtil.getActiveValue(userTask.getAssignee(), DynamicBpmnConstants.USER_TASK_ASSIGNEE, taskElementProperties);</span>
+        
+        } else {
+<span class="nc" id="L521">            return userTask.getAssignee();</span>
+        }
+    }
+
+    protected String getOwnerValue(UserTask userTask, MigrationContext migrationContext, ObjectNode taskElementProperties) {
+<span class="nc bnc" id="L526" title="All 4 branches missed.">        if (migrationContext != null &amp;&amp; migrationContext.getOwner() != null) {</span>
+<span class="nc" id="L527">            return migrationContext.getOwner();</span>
+
+<span class="nc bnc" id="L529" title="All 2 branches missed.">        } else if (taskElementProperties != null) {</span>
+<span class="nc" id="L530">            return DynamicPropertyUtil.getActiveValue(userTask.getOwner(), DynamicBpmnConstants.USER_TASK_OWNER, taskElementProperties);</span>
+
+        } else {
+<span class="nc" id="L533">            return userTask.getOwner();</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

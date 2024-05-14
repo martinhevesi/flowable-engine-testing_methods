@@ -1,0 +1,368 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RuleEngineExecutorImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.dmn.engine.impl</a> &gt; <span class="el_source">RuleEngineExecutorImpl.java</span></div><h1>RuleEngineExecutorImpl.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.dmn.engine.impl;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.impl.el.ExpressionManager;
+import org.flowable.dmn.api.DecisionExecutionAuditContainer;
+import org.flowable.dmn.api.ExecuteDecisionContext;
+import org.flowable.dmn.engine.DmnEngineConfiguration;
+import org.flowable.dmn.engine.RuleEngineExecutor;
+import org.flowable.dmn.engine.impl.el.ELExecutionContext;
+import org.flowable.dmn.engine.impl.el.ELExecutionContextBuilder;
+import org.flowable.dmn.engine.impl.el.ELExpressionExecutor;
+import org.flowable.dmn.engine.impl.el.ExecutionVariableFactory;
+import org.flowable.dmn.engine.impl.hitpolicy.AbstractHitPolicy;
+import org.flowable.dmn.engine.impl.hitpolicy.ComposeDecisionResultBehavior;
+import org.flowable.dmn.engine.impl.hitpolicy.ComposeRuleResultBehavior;
+import org.flowable.dmn.engine.impl.hitpolicy.ContinueEvaluatingBehavior;
+import org.flowable.dmn.engine.impl.hitpolicy.EvaluateRuleValidityBehavior;
+import org.flowable.dmn.model.Decision;
+import org.flowable.dmn.model.DecisionRule;
+import org.flowable.dmn.model.DecisionTable;
+import org.flowable.dmn.model.HitPolicy;
+import org.flowable.dmn.model.LiteralExpression;
+import org.flowable.dmn.model.RuleInputClauseContainer;
+import org.flowable.dmn.model.RuleOutputClauseContainer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+/**
+ * @author Yvo Swillens
+ */
+public class RuleEngineExecutorImpl implements RuleEngineExecutor {
+
+<span class="nc" id="L52">    private static final Logger LOGGER = LoggerFactory.getLogger(RuleEngineExecutorImpl.class);</span>
+
+    protected Map&lt;String, AbstractHitPolicy&gt; hitPolicyBehaviors;
+    protected ExpressionManager expressionManager;
+    protected ObjectMapper objectMapper;
+    protected DmnEngineConfiguration dmnEngineConfiguration;
+
+    public RuleEngineExecutorImpl(Map&lt;String, AbstractHitPolicy&gt; hitPolicyBehaviors, ExpressionManager expressionManager, 
+<span class="nc" id="L60">            ObjectMapper objectMapper, DmnEngineConfiguration dmnEngineConfiguration) {</span>
+        
+<span class="nc" id="L62">        this.hitPolicyBehaviors = hitPolicyBehaviors;</span>
+<span class="nc" id="L63">        this.expressionManager = expressionManager;</span>
+<span class="nc" id="L64">        this.objectMapper = objectMapper;</span>
+<span class="nc" id="L65">        this.dmnEngineConfiguration = dmnEngineConfiguration;</span>
+<span class="nc" id="L66">    }</span>
+
+    /**
+     * Executes the given decision and creates the outcome results
+     *
+     * @param decision            the DMN decision
+     * @param executeDecisionInfo
+     * @return updated execution variables map
+     */
+    @Override
+    public DecisionExecutionAuditContainer execute(Decision decision, ExecuteDecisionContext executeDecisionInfo) {
+<span class="nc bnc" id="L77" title="All 2 branches missed.">        if (decision == null) {</span>
+<span class="nc" id="L78">            throw new IllegalArgumentException(&quot;no decision provided&quot;);</span>
+        }
+
+<span class="nc bnc" id="L81" title="All 4 branches missed.">        if (decision.getExpression() == null || !(decision.getExpression() instanceof DecisionTable)) {</span>
+<span class="nc" id="L82">            throw new IllegalArgumentException(&quot;no decision table present in decision&quot;);</span>
+        }
+
+<span class="nc" id="L85">        DecisionTable currentDecisionTable = (DecisionTable) decision.getExpression();</span>
+
+        // create execution context and audit trail
+<span class="nc" id="L88">        ELExecutionContext executionContext = ELExecutionContextBuilder.build(decision, executeDecisionInfo);</span>
+
+        try {
+<span class="nc" id="L91">            sanityCheckDecisionTable(currentDecisionTable);</span>
+
+            // evaluate decision table
+<span class="nc" id="L94">            evaluateDecisionTable(currentDecisionTable, executionContext);</span>
+
+<span class="nc" id="L96">        } catch (FlowableException fe) {</span>
+<span class="nc" id="L97">            LOGGER.error(&quot;decision table execution sanity check failed&quot;, fe);</span>
+<span class="nc" id="L98">            executionContext.getAuditContainer().setFailed();</span>
+<span class="nc" id="L99">            executionContext.getAuditContainer().setExceptionMessage(getExceptionMessage(fe));</span>
+
+        } finally {
+            // end audit trail
+<span class="nc" id="L103">            executionContext.getAuditContainer().stopAudit(dmnEngineConfiguration.getClock().getCurrentTime());</span>
+        }
+
+<span class="nc" id="L106">        return executionContext.getAuditContainer();</span>
+    }
+
+    protected void evaluateDecisionTable(DecisionTable decisionTable, ELExecutionContext executionContext) {
+<span class="nc bnc" id="L110" title="All 4 branches missed.">        if (decisionTable == null || decisionTable.getRules().isEmpty()) {</span>
+<span class="nc" id="L111">            throw new IllegalArgumentException(&quot;no rules present in table&quot;);</span>
+        }
+
+<span class="nc" id="L114">        LOGGER.debug(&quot;Start table evaluation: {}&quot;, decisionTable.getId());</span>
+
+<span class="nc bnc" id="L116" title="All 2 branches missed.">        if (executionContext == null) {</span>
+<span class="nc" id="L117">            throw new FlowableException(&quot;no execution context available&quot;);</span>
+        }
+
+        try {
+            // evaluate rule conditions
+<span class="nc" id="L122">            Map&lt;Integer, List&lt;RuleOutputClauseContainer&gt;&gt; validRuleOutputEntries = new HashMap&lt;&gt;();</span>
+
+<span class="nc bnc" id="L124" title="All 2 branches missed.">            for (DecisionRule rule : decisionTable.getRules()) {</span>
+<span class="nc" id="L125">                boolean ruleResult = executeRule(rule, executionContext);</span>
+
+<span class="nc bnc" id="L127" title="All 2 branches missed.">                if (ruleResult) {</span>
+                    // evaluate decision table hit policy validity
+<span class="nc bnc" id="L129" title="All 2 branches missed.">                    if (getHitPolicyBehavior(decisionTable.getHitPolicy()) instanceof EvaluateRuleValidityBehavior) {</span>
+<span class="nc" id="L130">                        ((EvaluateRuleValidityBehavior) getHitPolicyBehavior(decisionTable.getHitPolicy())).evaluateRuleValidity(rule.getRuleNumber(), executionContext);</span>
+                    }
+
+                    // add valid rule output(s)
+<span class="nc" id="L134">                    validRuleOutputEntries.put(rule.getRuleNumber(), rule.getOutputEntries());</span>
+                }
+
+                // should continue evaluating
+<span class="nc bnc" id="L138" title="All 2 branches missed.">                if (getHitPolicyBehavior(decisionTable.getHitPolicy()) instanceof ContinueEvaluatingBehavior) {</span>
+<span class="nc bnc" id="L139" title="All 2 branches missed.">                    if (getHitPolicyBehavior(decisionTable.getHitPolicy()).shouldContinueEvaluating(ruleResult) == false) {</span>
+<span class="nc" id="L140">                        LOGGER.debug(&quot;Stopping execution; hit policy {} specific behaviour&quot;, decisionTable.getHitPolicy());</span>
+<span class="nc" id="L141">                        break;</span>
+                    }
+                }
+<span class="nc" id="L144">            }</span>
+
+            // compose rule conclusions
+<span class="nc bnc" id="L147" title="All 2 branches missed.">            for (Map.Entry&lt;Integer, List&lt;RuleOutputClauseContainer&gt;&gt; entry : validRuleOutputEntries.entrySet()) {</span>
+<span class="nc" id="L148">                executeOutputEntryAction(entry.getKey(), entry.getValue(), decisionTable.getHitPolicy(), executionContext);</span>
+<span class="nc" id="L149">            }</span>
+
+            // post rule conclusion actions
+<span class="nc bnc" id="L152" title="All 2 branches missed.">            if (getHitPolicyBehavior(decisionTable.getHitPolicy()) instanceof ComposeDecisionResultBehavior) {</span>
+<span class="nc" id="L153">                getHitPolicyBehavior(decisionTable.getHitPolicy()).composeDecisionResults(executionContext);</span>
+            }
+
+<span class="nc" id="L156">        } catch (FlowableException ade) {</span>
+<span class="nc" id="L157">            LOGGER.error(&quot;decision table execution failed&quot;, ade);</span>
+<span class="nc" id="L158">            executionContext.getRuleResults().clear();</span>
+<span class="nc" id="L159">            executionContext.getAuditContainer().setFailed();</span>
+<span class="nc" id="L160">            executionContext.getAuditContainer().setExceptionMessage(getExceptionMessage(ade));</span>
+<span class="nc" id="L161">        }</span>
+
+<span class="nc" id="L163">        LOGGER.debug(&quot;End table evaluation: {}&quot;, decisionTable.getId());</span>
+<span class="nc" id="L164">    }</span>
+
+    protected boolean executeRule(DecisionRule rule, ELExecutionContext executionContext) {
+<span class="nc bnc" id="L167" title="All 2 branches missed.">        if (rule == null) {</span>
+<span class="nc" id="L168">            throw new FlowableException(&quot;rule cannot be null&quot;);</span>
+        }
+
+<span class="nc" id="L171">        LOGGER.debug(&quot;Start rule {} evaluation&quot;, rule.getRuleNumber());</span>
+
+        // add audit entry
+<span class="nc" id="L174">        executionContext.getAuditContainer().addRuleEntry(rule);</span>
+
+<span class="nc" id="L176">        boolean conditionResult = false;</span>
+
+        // go through conditions
+<span class="nc bnc" id="L179" title="All 2 branches missed.">        for (RuleInputClauseContainer conditionContainer : rule.getInputEntries()) {</span>
+
+            // resetting value
+<span class="nc" id="L182">            String inputEntryId = conditionContainer.getInputEntry().getId();</span>
+<span class="nc" id="L183">            conditionResult = false;</span>
+
+            try {
+                // if condition is empty condition or has dash symbol result is TRUE
+<span class="nc" id="L187">                String inputEntryText = conditionContainer.getInputEntry().getText();</span>
+<span class="nc bnc" id="L188" title="All 4 branches missed.">                if (StringUtils.isEmpty(inputEntryText) || &quot;-&quot;.equals(inputEntryText)) {</span>
+<span class="nc" id="L189">                    conditionResult = true;</span>
+                } else {
+<span class="nc" id="L191">                    conditionResult = executeInputExpressionEvaluation(conditionContainer, executionContext);</span>
+                }
+
+                // add audit entry
+<span class="nc" id="L195">                executionContext.getAuditContainer().addInputEntry(rule.getRuleNumber(), inputEntryId, conditionResult);</span>
+
+<span class="nc" id="L197">                LOGGER.debug(&quot;input entry {} ( {} {} ): {}&quot;, inputEntryId,</span>
+<span class="nc" id="L198">                        conditionContainer.getInputClause().getInputExpression().getText(),</span>
+<span class="nc" id="L199">                        inputEntryText, conditionResult);</span>
+
+<span class="nc" id="L201">            } catch (FlowableException ade) {</span>
+                // add failed audit entry and rethrow
+<span class="nc" id="L203">                executionContext.getAuditContainer().addInputEntry(rule.getRuleNumber(), inputEntryId, getExceptionMessage(ade), null);</span>
+<span class="nc" id="L204">                throw ade;</span>
+
+<span class="nc" id="L206">            } catch (Exception e) {</span>
+                // add failed audit entry and rethrow
+<span class="nc" id="L208">                executionContext.getAuditContainer().addInputEntry(rule.getRuleNumber(), inputEntryId, getExceptionMessage(e), null);</span>
+<span class="nc" id="L209">                throw new FlowableException(getExceptionMessage(e), e);</span>
+<span class="nc" id="L210">            }</span>
+
+            // exit evaluation loop if a condition is evaluated false
+<span class="nc bnc" id="L213" title="All 2 branches missed.">            if (!conditionResult) {</span>
+<span class="nc" id="L214">                break;</span>
+            }
+<span class="nc" id="L216">        }</span>
+
+<span class="nc bnc" id="L218" title="All 2 branches missed.">        if (conditionResult) {</span>
+            // mark rule valid
+<span class="nc" id="L220">            executionContext.getAuditContainer().markRuleValid(rule.getRuleNumber());</span>
+        }
+
+        // mark rule end
+<span class="nc" id="L224">        executionContext.getAuditContainer().markRuleEnd(rule.getRuleNumber());</span>
+
+<span class="nc" id="L226">        LOGGER.debug(&quot;End rule {} evaluation&quot;, rule.getRuleNumber());</span>
+<span class="nc" id="L227">        return conditionResult;</span>
+    }
+
+    protected Boolean executeInputExpressionEvaluation(RuleInputClauseContainer ruleContainer, ELExecutionContext executionContext) {
+<span class="nc" id="L231">        return ELExpressionExecutor.executeInputExpression(ruleContainer.getInputClause(), ruleContainer.getInputEntry(), expressionManager, executionContext);</span>
+    }
+
+    protected void executeOutputEntryAction(int ruleNumber, List&lt;RuleOutputClauseContainer&gt; ruleOutputContainers, HitPolicy hitPolicy, ELExecutionContext executionContext) {
+<span class="nc" id="L235">        LOGGER.debug(&quot;Start conclusion processing&quot;);</span>
+
+<span class="nc bnc" id="L237" title="All 2 branches missed.">        for (RuleOutputClauseContainer clauseContainer : ruleOutputContainers) {</span>
+<span class="nc" id="L238">            composeOutputEntryResult(ruleNumber, clauseContainer, hitPolicy, executionContext);</span>
+<span class="nc" id="L239">        }</span>
+
+<span class="nc" id="L241">        LOGGER.debug(&quot;End conclusion processing&quot;);</span>
+<span class="nc" id="L242">    }</span>
+
+    protected void composeOutputEntryResult(int ruleNumber, RuleOutputClauseContainer ruleClauseContainer, HitPolicy hitPolicy, ELExecutionContext executionContext) {
+<span class="nc" id="L245">        LOGGER.debug(&quot;Start evaluation conclusion {} of valid rule {}&quot;, ruleClauseContainer.getOutputClause().getOutputNumber(), ruleNumber);</span>
+
+<span class="nc" id="L247">        String outputVariableId = ruleClauseContainer.getOutputClause().getName();</span>
+<span class="nc" id="L248">        String outputVariableType = ruleClauseContainer.getOutputClause().getTypeRef();</span>
+
+<span class="nc" id="L250">        LiteralExpression outputEntryExpression = ruleClauseContainer.getOutputEntry();</span>
+
+<span class="nc bnc" id="L252" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(outputEntryExpression.getText())) {</span>
+<span class="nc" id="L253">            Object executionVariable = null;</span>
+            try {
+<span class="nc" id="L255">                Object resultValue = ELExpressionExecutor.executeOutputExpression(ruleClauseContainer.getOutputClause(), outputEntryExpression, expressionManager, executionContext);</span>
+<span class="nc" id="L256">                executionVariable = ExecutionVariableFactory.getExecutionVariable(outputVariableType, resultValue);</span>
+
+                // update execution context
+<span class="nc" id="L259">                executionContext.getStackVariables().put(outputVariableId, executionVariable);</span>
+
+                // create result
+<span class="nc bnc" id="L262" title="All 2 branches missed.">                if (getHitPolicyBehavior(hitPolicy) instanceof ComposeRuleResultBehavior) {</span>
+<span class="nc" id="L263">                    ((ComposeRuleResultBehavior) getHitPolicyBehavior(hitPolicy)).composeRuleResult(ruleNumber, outputVariableId, executionVariable, executionContext);</span>
+                }
+
+                // add audit entry
+<span class="nc" id="L267">                executionContext.getAuditContainer().addOutputEntry(ruleNumber, outputEntryExpression.getId(), executionVariable);</span>
+<span class="nc" id="L268">                executionContext.getAuditContainer().addDecisionResultType(outputVariableId, outputVariableType);</span>
+
+<span class="nc bnc" id="L270" title="All 2 branches missed.">                if (executionVariable != null) {</span>
+<span class="nc" id="L271">                    LOGGER.debug(&quot;Created conclusion result: {} of type: {} with value {}&quot;, outputVariableId, resultValue.getClass(), resultValue);</span>
+                } else {
+<span class="nc" id="L273">                    LOGGER.warn(&quot;Could not create conclusion result&quot;);</span>
+                }
+
+<span class="nc" id="L276">            } catch (FlowableException ade) {</span>
+                // clear result variables
+<span class="nc" id="L278">                executionContext.getRuleResults().clear();</span>
+
+                // add failed audit entry and rethrow
+<span class="nc" id="L281">                executionContext.getAuditContainer().addOutputEntry(ruleNumber, outputEntryExpression.getId(), getExceptionMessage(ade), executionVariable);</span>
+<span class="nc" id="L282">                throw ade;</span>
+
+<span class="nc" id="L284">            } catch (Exception e) {</span>
+                // clear result variables
+<span class="nc" id="L286">                executionContext.getRuleResults().clear();</span>
+
+                // add failed audit entry and rethrow
+<span class="nc" id="L289">                executionContext.getAuditContainer().addOutputEntry(ruleNumber, outputEntryExpression.getId(), getExceptionMessage(e), executionVariable);</span>
+<span class="nc" id="L290">                throw new FlowableException(getExceptionMessage(e), e);</span>
+<span class="nc" id="L291">            }</span>
+
+<span class="nc" id="L293">        } else {</span>
+<span class="nc" id="L294">            LOGGER.debug(&quot;Expression is empty&quot;);</span>
+
+            // add empty audit entry
+<span class="nc" id="L297">            executionContext.getAuditContainer().addOutputEntry(ruleNumber, outputEntryExpression.getId(), null);</span>
+        }
+
+<span class="nc" id="L300">        LOGGER.debug(&quot;End evaluation conclusion {} of valid rule {}&quot;, ruleClauseContainer.getOutputClause().getOutputNumber(), ruleNumber);</span>
+<span class="nc" id="L301">    }</span>
+
+    protected String getExceptionMessage(Exception exception) {
+        String exceptionMessage;
+<span class="nc bnc" id="L305" title="All 4 branches missed.">        if (exception.getCause() != null &amp;&amp; exception.getCause().getMessage() != null) {</span>
+<span class="nc" id="L306">            exceptionMessage = exception.getCause().getMessage();</span>
+        } else {
+<span class="nc" id="L308">            exceptionMessage = exception.getMessage();</span>
+        }
+<span class="nc" id="L310">        return exceptionMessage;</span>
+    }
+
+    protected AbstractHitPolicy getHitPolicyBehavior(HitPolicy hitPolicy) {
+<span class="nc" id="L314">        AbstractHitPolicy hitPolicyBehavior = hitPolicyBehaviors.get(hitPolicy.getValue());</span>
+
+<span class="nc bnc" id="L316" title="All 2 branches missed.">        if (hitPolicyBehavior == null) {</span>
+<span class="nc" id="L317">            String hitPolicyBehaviorNotFoundMessage = String.format(&quot;HitPolicy behavior: %s not configured&quot;, hitPolicy.getValue());</span>
+
+<span class="nc" id="L319">            LOGGER.error(hitPolicyBehaviorNotFoundMessage);</span>
+
+<span class="nc" id="L321">            throw new FlowableException(hitPolicyBehaviorNotFoundMessage);</span>
+        }
+
+<span class="nc" id="L324">        return hitPolicyBehavior;</span>
+    }
+
+    protected void sanityCheckDecisionTable(DecisionTable decisionTable) {
+<span class="nc bnc" id="L328" title="All 6 branches missed.">        if (decisionTable.getHitPolicy() == HitPolicy.COLLECT &amp;&amp; decisionTable.getAggregation() != null &amp;&amp; decisionTable.getOutputs() != null) {</span>
+<span class="nc bnc" id="L329" title="All 2 branches missed.">            if (decisionTable.getOutputs().size() &gt; 1) {</span>
+<span class="nc" id="L330">                throw new FlowableException(String.format(&quot;HitPolicy: %s has aggregation: %s and multiple outputs. This is not supported&quot;, decisionTable.getHitPolicy(), decisionTable.getAggregation()));</span>
+            }
+<span class="nc bnc" id="L332" title="All 2 branches missed.">            if (!&quot;number&quot;.equals(decisionTable.getOutputs().get(0).getTypeRef())) {</span>
+<span class="nc" id="L333">                throw new FlowableException(String.format(&quot;HitPolicy: %s has aggregation: %s needs output type number&quot;, decisionTable.getHitPolicy(), decisionTable.getAggregation()));</span>
+            }
+        }
+<span class="nc" id="L336">    }</span>
+
+    @Override
+    public Map&lt;String, AbstractHitPolicy&gt; getHitPolicyBehaviors() {
+<span class="nc" id="L340">        return hitPolicyBehaviors;</span>
+    }
+
+    @Override
+    public void setHitPolicyBehaviors(Map&lt;String, AbstractHitPolicy&gt; hitPolicyBehaviors) {
+<span class="nc" id="L345">        this.hitPolicyBehaviors = hitPolicyBehaviors;</span>
+<span class="nc" id="L346">    }</span>
+
+    @Override
+    public ExpressionManager getExpressionManager() {
+<span class="nc" id="L350">        return expressionManager;</span>
+    }
+
+    @Override
+    public void setExpressionManager(ExpressionManager expressionManager) {
+<span class="nc" id="L355">        this.expressionManager = expressionManager;</span>
+<span class="nc" id="L356">    }</span>
+
+    @Override
+    public ObjectMapper getObjectMapper() {
+<span class="nc" id="L360">        return objectMapper;</span>
+    }
+
+    @Override
+    public void setObjectMapper(ObjectMapper objectMapper) {
+<span class="nc" id="L365">        this.objectMapper = objectMapper;</span>
+<span class="nc" id="L366">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

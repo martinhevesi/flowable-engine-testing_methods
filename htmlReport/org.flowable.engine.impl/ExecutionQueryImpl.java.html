@@ -1,0 +1,1203 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ExecutionQueryImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl</a> &gt; <span class="el_source">ExecutionQueryImpl.java</span></div><h1>ExecutionQueryImpl.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.impl;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+import java.util.Set;
+
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.FlowableIllegalArgumentException;
+import org.flowable.common.engine.api.query.CacheAwareQuery;
+import org.flowable.common.engine.impl.db.SuspensionState;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.common.engine.impl.interceptor.CommandExecutor;
+import org.flowable.engine.DynamicBpmnConstants;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.context.BpmnOverrideContext;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntity;
+import org.flowable.engine.repository.ProcessDefinition;
+import org.flowable.engine.runtime.Execution;
+import org.flowable.engine.runtime.ExecutionQuery;
+import org.flowable.eventsubscription.service.impl.EventSubscriptionQueryValue;
+import org.flowable.variable.service.impl.AbstractVariableQueryImpl;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+/**
+ * @author Joram Barrez
+ * @author Frederik Heremans
+ * @author Daniel Meyer
+ */
+public class ExecutionQueryImpl extends AbstractVariableQueryImpl&lt;ExecutionQuery, Execution&gt; implements ExecutionQuery, CacheAwareQuery&lt;ExecutionEntity&gt; {
+
+    private static final long serialVersionUID = 1L;
+    
+    protected ProcessEngineConfigurationImpl processEngineConfiguration;
+    
+    protected String processDefinitionId;
+    protected String processDefinitionKey;
+    protected String processDefinitionCategory;
+    protected String processDefinitionName;
+    protected Integer processDefinitionVersion;
+    protected String processDefinitionEngineVersion;
+    protected String activityId;
+    protected String executionId;
+    protected String parentId;
+    protected boolean onlyChildExecutions;
+    protected boolean onlySubProcessExecutions;
+    protected boolean onlyProcessInstanceExecutions;
+    protected String processInstanceId;
+    protected String rootProcessInstanceId;
+    protected List&lt;EventSubscriptionQueryValue&gt; eventSubscriptions;
+
+    protected String tenantId;
+    protected String tenantIdLike;
+    protected boolean withoutTenantId;
+    protected String locale;
+    protected boolean withLocalizationFallback;
+
+    protected Date startedBefore;
+    protected Date startedAfter;
+    protected String startedBy;
+
+    // Not used by end-users, but needed for dynamic ibatis query
+    protected String superProcessInstanceId;
+    protected String subProcessInstanceId;
+    protected boolean excludeSubprocesses;
+    protected SuspensionState suspensionState;
+    protected String businessKey;
+    protected String businessKeyLike;
+    protected boolean includeChildExecutionsWithBusinessKeyQuery;
+    protected boolean isActive;
+    protected String involvedUser;
+    protected Set&lt;String&gt; involvedGroups;
+    private List&lt;List&lt;String&gt;&gt; safeInvolvedGroups;
+    protected Set&lt;String&gt; processDefinitionKeys;
+    protected Set&lt;String&gt; processDefinitionIds;
+
+    // Not exposed in API, but here for the ProcessInstanceQuery support, since
+    // the name lives on the
+    // Execution entity/table
+    protected String name;
+    protected String nameLike;
+    protected String nameLikeIgnoreCase;
+    protected String deploymentId;
+    protected List&lt;String&gt; deploymentIds;
+    protected String activeActivityId;
+    protected Set&lt;String&gt; activeActivityIds;
+    protected String callbackId;
+    protected String callbackType;
+    protected String referenceId;
+    protected String referenceType;
+    
+<span class="nc" id="L106">    protected List&lt;ExecutionQueryImpl&gt; orQueryObjects = new ArrayList&lt;&gt;();</span>
+    protected ExecutionQueryImpl currentOrQueryObject;
+    protected boolean inOrStatement;
+
+<span class="nc" id="L110">    public ExecutionQueryImpl() {</span>
+<span class="nc" id="L111">    }</span>
+
+    public ExecutionQueryImpl(CommandContext commandContext, ProcessEngineConfigurationImpl processEngineConfiguration) {
+<span class="nc" id="L114">        super(commandContext, processEngineConfiguration.getVariableServiceConfiguration());</span>
+<span class="nc" id="L115">        this.processEngineConfiguration = processEngineConfiguration;</span>
+<span class="nc" id="L116">    }</span>
+
+    public ExecutionQueryImpl(CommandExecutor commandExecutor, ProcessEngineConfigurationImpl processEngineConfiguration) {
+<span class="nc" id="L119">        super(commandExecutor, processEngineConfiguration.getVariableServiceConfiguration());</span>
+<span class="nc" id="L120">        this.processEngineConfiguration = processEngineConfiguration;</span>
+<span class="nc" id="L121">    }</span>
+
+    public boolean isProcessInstancesOnly() {
+<span class="nc" id="L124">        return false; // see dynamic query</span>
+    }
+
+    @Override
+    public ExecutionQueryImpl processDefinitionId(String processDefinitionId) {
+<span class="nc bnc" id="L129" title="All 2 branches missed.">        if (processDefinitionId == null) {</span>
+<span class="nc" id="L130">            throw new FlowableIllegalArgumentException(&quot;Process definition id is null&quot;);</span>
+        }
+<span class="nc bnc" id="L132" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L133">            this.currentOrQueryObject.processDefinitionId = processDefinitionId;</span>
+        } else {
+<span class="nc" id="L135">            this.processDefinitionId = processDefinitionId;</span>
+        }
+<span class="nc" id="L137">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQueryImpl processDefinitionKey(String processDefinitionKey) {
+<span class="nc bnc" id="L142" title="All 2 branches missed.">        if (processDefinitionKey == null) {</span>
+<span class="nc" id="L143">            throw new FlowableIllegalArgumentException(&quot;Process definition key is null&quot;);</span>
+        }
+<span class="nc bnc" id="L145" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L146">            this.currentOrQueryObject.processDefinitionKey = processDefinitionKey;</span>
+        } else {
+<span class="nc" id="L148">            this.processDefinitionKey = processDefinitionKey;</span>
+        }
+<span class="nc" id="L150">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQuery processDefinitionCategory(String processDefinitionCategory) {
+<span class="nc bnc" id="L155" title="All 2 branches missed.">        if (processDefinitionCategory == null) {</span>
+<span class="nc" id="L156">            throw new FlowableIllegalArgumentException(&quot;Process definition category is null&quot;);</span>
+        }
+<span class="nc bnc" id="L158" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L159">            this.currentOrQueryObject.processDefinitionCategory = processDefinitionCategory;</span>
+        } else {
+<span class="nc" id="L161">            this.processDefinitionCategory = processDefinitionCategory;</span>
+        }
+<span class="nc" id="L163">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQuery processDefinitionName(String processDefinitionName) {
+<span class="nc bnc" id="L168" title="All 2 branches missed.">        if (processDefinitionName == null) {</span>
+<span class="nc" id="L169">            throw new FlowableIllegalArgumentException(&quot;Process definition name is null&quot;);</span>
+        }
+<span class="nc bnc" id="L171" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L172">            this.currentOrQueryObject.processDefinitionName = processDefinitionName;</span>
+        } else {
+<span class="nc" id="L174">            this.processDefinitionName = processDefinitionName;</span>
+        }
+<span class="nc" id="L176">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQuery processDefinitionVersion(Integer processDefinitionVersion) {
+<span class="nc bnc" id="L181" title="All 2 branches missed.">        if (processDefinitionVersion == null) {</span>
+<span class="nc" id="L182">            throw new FlowableIllegalArgumentException(&quot;Process definition version is null&quot;);</span>
+        }
+<span class="nc bnc" id="L184" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L185">            this.currentOrQueryObject.processDefinitionVersion = processDefinitionVersion;</span>
+        } else {
+<span class="nc" id="L187">            this.processDefinitionVersion = processDefinitionVersion;</span>
+        }
+<span class="nc" id="L189">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQuery processDefinitionEngineVersion(String processDefinitionEngineVersion) {
+<span class="nc bnc" id="L194" title="All 2 branches missed.">        if (processDefinitionEngineVersion == null) {</span>
+<span class="nc" id="L195">            throw new FlowableIllegalArgumentException(&quot;Process definition engine version is null&quot;);</span>
+        }
+<span class="nc bnc" id="L197" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L198">            this.currentOrQueryObject.processDefinitionEngineVersion = processDefinitionEngineVersion;</span>
+        } else {
+<span class="nc" id="L200">            this.processDefinitionEngineVersion = processDefinitionEngineVersion;</span>
+        }
+<span class="nc" id="L202">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQueryImpl processInstanceId(String processInstanceId) {
+<span class="nc bnc" id="L207" title="All 2 branches missed.">        if (processInstanceId == null) {</span>
+<span class="nc" id="L208">            throw new FlowableIllegalArgumentException(&quot;Process instance id is null&quot;);</span>
+        }
+<span class="nc bnc" id="L210" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L211">            this.currentOrQueryObject.processInstanceId = processInstanceId;</span>
+        } else {
+<span class="nc" id="L213">            this.processInstanceId = processInstanceId;</span>
+        }
+<span class="nc" id="L215">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQueryImpl rootProcessInstanceId(String rootProcessInstanceId) {
+<span class="nc bnc" id="L220" title="All 2 branches missed.">        if (rootProcessInstanceId == null) {</span>
+<span class="nc" id="L221">            throw new FlowableIllegalArgumentException(&quot;Root process instance id is null&quot;);</span>
+        }
+<span class="nc bnc" id="L223" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L224">            this.currentOrQueryObject.rootProcessInstanceId = rootProcessInstanceId;</span>
+        } else {
+<span class="nc" id="L226">            this.rootProcessInstanceId = rootProcessInstanceId;</span>
+        }
+<span class="nc" id="L228">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQuery processInstanceBusinessKey(String businessKey) {
+<span class="nc bnc" id="L233" title="All 2 branches missed.">        if (businessKey == null) {</span>
+<span class="nc" id="L234">            throw new FlowableIllegalArgumentException(&quot;Business key is null&quot;);</span>
+        }
+<span class="nc bnc" id="L236" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L237">            this.currentOrQueryObject.businessKey = businessKey;</span>
+        } else {
+<span class="nc" id="L239">            this.businessKey = businessKey;</span>
+        }
+<span class="nc" id="L241">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQuery processInstanceBusinessKey(String processInstanceBusinessKey, boolean includeChildExecutions) {
+<span class="nc bnc" id="L246" title="All 2 branches missed.">        if (!includeChildExecutions) {</span>
+<span class="nc" id="L247">            return processInstanceBusinessKey(processInstanceBusinessKey);</span>
+        } else {
+<span class="nc bnc" id="L249" title="All 2 branches missed.">            if (processInstanceBusinessKey == null) {</span>
+<span class="nc" id="L250">                throw new FlowableIllegalArgumentException(&quot;Business key is null&quot;);</span>
+            }
+            
+<span class="nc bnc" id="L253" title="All 2 branches missed.">            if (inOrStatement) {</span>
+<span class="nc" id="L254">                this.currentOrQueryObject.businessKey = processInstanceBusinessKey;</span>
+<span class="nc" id="L255">                this.currentOrQueryObject.includeChildExecutionsWithBusinessKeyQuery = includeChildExecutions;</span>
+            } else {
+<span class="nc" id="L257">                this.businessKey = processInstanceBusinessKey;</span>
+<span class="nc" id="L258">                this.includeChildExecutionsWithBusinessKeyQuery = includeChildExecutions;</span>
+            }
+            
+<span class="nc" id="L261">            return this;</span>
+        }
+    }
+
+    @Override
+    public ExecutionQuery processDefinitionKeys(Set&lt;String&gt; processDefinitionKeys) {
+<span class="nc bnc" id="L267" title="All 2 branches missed.">        if (processDefinitionKeys == null) {</span>
+<span class="nc" id="L268">            throw new FlowableIllegalArgumentException(&quot;Process definition keys is null&quot;);</span>
+        }
+<span class="nc bnc" id="L270" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L271">            this.currentOrQueryObject.processDefinitionKeys = processDefinitionKeys;</span>
+        } else {
+<span class="nc" id="L273">            this.processDefinitionKeys = processDefinitionKeys;</span>
+        }
+<span class="nc" id="L275">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQueryImpl executionId(String executionId) {
+<span class="nc bnc" id="L280" title="All 2 branches missed.">        if (executionId == null) {</span>
+<span class="nc" id="L281">            throw new FlowableIllegalArgumentException(&quot;Execution id is null&quot;);</span>
+        }
+<span class="nc bnc" id="L283" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L284">            this.currentOrQueryObject.executionId = executionId;</span>
+        } else {
+<span class="nc" id="L286">            this.executionId = executionId;</span>
+        }
+<span class="nc" id="L288">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQueryImpl activityId(String activityId) {
+<span class="nc bnc" id="L293" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L294">            this.currentOrQueryObject.activityId = activityId;</span>
+<span class="nc bnc" id="L295" title="All 2 branches missed.">            if (activityId != null) {</span>
+<span class="nc" id="L296">                this.currentOrQueryObject.isActive = true;</span>
+            }
+            
+        } else {
+<span class="nc" id="L300">            this.activityId = activityId;</span>
+
+<span class="nc bnc" id="L302" title="All 2 branches missed.">            if (activityId != null) {</span>
+<span class="nc" id="L303">                this.isActive = true;</span>
+            }
+        }
+        
+<span class="nc" id="L307">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQueryImpl parentId(String parentId) {
+<span class="nc bnc" id="L312" title="All 2 branches missed.">        if (parentId == null) {</span>
+<span class="nc" id="L313">            throw new FlowableIllegalArgumentException(&quot;Parent id is null&quot;);</span>
+        }
+<span class="nc bnc" id="L315" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L316">            this.currentOrQueryObject.parentId = parentId;</span>
+        } else {
+<span class="nc" id="L318">            this.parentId = parentId;</span>
+        }
+<span class="nc" id="L320">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQuery onlyChildExecutions() {
+<span class="nc bnc" id="L325" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L326">            this.currentOrQueryObject.onlyChildExecutions = true;</span>
+        } else {
+<span class="nc" id="L328">            this.onlyChildExecutions = true;</span>
+        }
+<span class="nc" id="L330">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQuery onlySubProcessExecutions() {
+<span class="nc bnc" id="L335" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L336">            this.currentOrQueryObject.onlySubProcessExecutions = true;</span>
+        } else {
+<span class="nc" id="L338">            this.onlySubProcessExecutions = true;</span>
+        }
+<span class="nc" id="L340">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQuery onlyProcessInstanceExecutions() {
+<span class="nc bnc" id="L345" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L346">            this.currentOrQueryObject.onlyProcessInstanceExecutions = true;</span>
+        } else {
+<span class="nc" id="L348">            this.onlyProcessInstanceExecutions = true;</span>
+        }
+<span class="nc" id="L350">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQueryImpl executionTenantId(String tenantId) {
+<span class="nc bnc" id="L355" title="All 2 branches missed.">        if (tenantId == null) {</span>
+<span class="nc" id="L356">            throw new FlowableIllegalArgumentException(&quot;execution tenant id is null&quot;);</span>
+        }
+<span class="nc bnc" id="L358" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L359">            this.currentOrQueryObject.tenantId = tenantId;</span>
+        } else {
+<span class="nc" id="L361">            this.tenantId = tenantId;</span>
+        }
+<span class="nc" id="L363">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQueryImpl executionTenantIdLike(String tenantIdLike) {
+<span class="nc bnc" id="L368" title="All 2 branches missed.">        if (tenantIdLike == null) {</span>
+<span class="nc" id="L369">            throw new FlowableIllegalArgumentException(&quot;execution tenant id is null&quot;);</span>
+        }
+<span class="nc bnc" id="L371" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L372">            this.currentOrQueryObject.tenantIdLike = tenantIdLike;</span>
+        } else {
+<span class="nc" id="L374">            this.tenantIdLike = tenantIdLike;</span>
+        }
+<span class="nc" id="L376">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQueryImpl executionWithoutTenantId() {
+<span class="nc bnc" id="L381" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L382">            this.currentOrQueryObject.withoutTenantId = true;</span>
+        } else {
+<span class="nc" id="L384">            this.withoutTenantId = true;</span>
+        }
+        
+<span class="nc" id="L387">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQuery executionReferenceId(String referenceId) {
+<span class="nc bnc" id="L392" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L393">            this.currentOrQueryObject.referenceId = referenceId;</span>
+        } else {
+<span class="nc" id="L395">            this.referenceId = referenceId;</span>
+        }
+<span class="nc" id="L397">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQuery executionReferenceType(String referenceType) {
+<span class="nc bnc" id="L402" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L403">            this.currentOrQueryObject.referenceType = referenceType;</span>
+        } else {
+<span class="nc" id="L405">            this.referenceType = referenceType;</span>
+        }
+<span class="nc" id="L407">        return this;</span>
+    }
+
+    public ExecutionQuery signalEventSubscription(String signalName) {
+<span class="nc" id="L411">        return eventSubscription(&quot;signal&quot;, signalName);</span>
+    }
+
+    @Override
+    public ExecutionQuery signalEventSubscriptionName(String signalName) {
+<span class="nc" id="L416">        return eventSubscription(&quot;signal&quot;, signalName);</span>
+    }
+
+    @Override
+    public ExecutionQuery messageEventSubscriptionName(String messageName) {
+<span class="nc" id="L421">        return eventSubscription(&quot;message&quot;, messageName);</span>
+    }
+
+    public ExecutionQuery eventSubscription(String eventType, String eventName) {
+<span class="nc bnc" id="L425" title="All 2 branches missed.">        if (eventName == null) {</span>
+<span class="nc" id="L426">            throw new FlowableIllegalArgumentException(&quot;event name is null&quot;);</span>
+        }
+<span class="nc bnc" id="L428" title="All 2 branches missed.">        if (eventType == null) {</span>
+<span class="nc" id="L429">            throw new FlowableIllegalArgumentException(&quot;event type is null&quot;);</span>
+        }
+        
+<span class="nc bnc" id="L432" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc bnc" id="L433" title="All 2 branches missed.">            if (this.currentOrQueryObject.eventSubscriptions == null) {</span>
+<span class="nc" id="L434">                this.currentOrQueryObject.eventSubscriptions = new ArrayList&lt;&gt;();</span>
+            }
+<span class="nc" id="L436">            this.currentOrQueryObject.eventSubscriptions.add(new EventSubscriptionQueryValue(eventName, eventType));</span>
+           
+        } else {
+<span class="nc bnc" id="L439" title="All 2 branches missed.">            if (eventSubscriptions == null) {</span>
+<span class="nc" id="L440">                eventSubscriptions = new ArrayList&lt;&gt;();</span>
+            }
+<span class="nc" id="L442">            eventSubscriptions.add(new EventSubscriptionQueryValue(eventName, eventType));</span>
+        }
+        
+<span class="nc" id="L445">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQuery processVariableValueEquals(String variableName, Object variableValue) {
+<span class="nc bnc" id="L450" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L451">            currentOrQueryObject.variableValueEquals(variableName, variableValue, false);</span>
+<span class="nc" id="L452">            return this;</span>
+        } else {
+<span class="nc" id="L454">            return variableValueEquals(variableName, variableValue, false);</span>
+        }
+    }
+
+    @Override
+    public ExecutionQuery processVariableValueEquals(Object variableValue) {
+<span class="nc bnc" id="L460" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L461">            currentOrQueryObject.variableValueEquals(variableValue, false);</span>
+<span class="nc" id="L462">            return this;</span>
+        } else {
+<span class="nc" id="L464">            return variableValueEquals(variableValue, false);</span>
+        }
+    }
+
+    @Override
+    public ExecutionQuery processVariableValueNotEquals(String variableName, Object variableValue) {
+<span class="nc bnc" id="L470" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L471">            currentOrQueryObject.variableValueNotEquals(variableName, variableValue, false);</span>
+<span class="nc" id="L472">            return this;</span>
+        } else {
+<span class="nc" id="L474">            return variableValueNotEquals(variableName, variableValue, false);</span>
+        }
+    }
+
+    @Override
+    public ExecutionQuery processVariableValueEqualsIgnoreCase(String name, String value) {
+<span class="nc bnc" id="L480" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L481">            currentOrQueryObject.variableValueEqualsIgnoreCase(name, value, false);</span>
+<span class="nc" id="L482">            return this;</span>
+        } else {
+<span class="nc" id="L484">            return variableValueEqualsIgnoreCase(name, value, false);</span>
+        }
+    }
+
+    @Override
+    public ExecutionQuery processVariableValueNotEqualsIgnoreCase(String name, String value) {
+<span class="nc bnc" id="L490" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L491">            currentOrQueryObject.variableValueNotEqualsIgnoreCase(name, value, false);</span>
+<span class="nc" id="L492">            return this;</span>
+        } else {
+<span class="nc" id="L494">            return variableValueNotEqualsIgnoreCase(name, value, false);</span>
+        } 
+    }
+
+    @Override
+    public ExecutionQuery processVariableValueLike(String name, String value) {
+<span class="nc bnc" id="L500" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L501">            currentOrQueryObject.variableValueLike(name, value, false);</span>
+<span class="nc" id="L502">            return this;</span>
+        } else {
+<span class="nc" id="L504">            return variableValueLike(name, value, false);</span>
+        }
+    }
+
+    @Override
+    public ExecutionQuery processVariableValueLikeIgnoreCase(String name, String value) {
+<span class="nc bnc" id="L510" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L511">            currentOrQueryObject.variableValueLikeIgnoreCase(name, value, false);</span>
+<span class="nc" id="L512">            return this;</span>
+        } else {
+<span class="nc" id="L514">            return variableValueLikeIgnoreCase(name, value, false);</span>
+        }
+    }
+    
+    @Override
+    public ExecutionQuery processVariableValueGreaterThan(String name, Object value) {
+<span class="nc bnc" id="L520" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L521">            currentOrQueryObject.variableValueGreaterThan(name, value, false);</span>
+        } else {
+<span class="nc" id="L523">            this.variableValueGreaterThan(name, value, false);</span>
+        }
+<span class="nc" id="L525">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQuery processVariableValueGreaterThanOrEqual(String name, Object value) {
+<span class="nc bnc" id="L530" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L531">            currentOrQueryObject.variableValueGreaterThanOrEqual(name, value, false);</span>
+        } else {
+<span class="nc" id="L533">            this.variableValueGreaterThanOrEqual(name, value, false);</span>
+        }
+<span class="nc" id="L535">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQuery processVariableValueLessThan(String name, Object value) {
+<span class="nc bnc" id="L540" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L541">            currentOrQueryObject.variableValueLessThan(name, value, false);</span>
+        } else {
+<span class="nc" id="L543">            this.variableValueLessThan(name, value, false);</span>
+        }
+<span class="nc" id="L545">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQuery processVariableValueLessThanOrEqual(String name, Object value) {
+<span class="nc bnc" id="L550" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L551">            currentOrQueryObject.variableValueLessThanOrEqual(name, value, false);</span>
+        } else {
+<span class="nc" id="L553">            this.variableValueLessThanOrEqual(name, value, false);</span>
+        }
+<span class="nc" id="L555">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQuery processVariableExists(String name) {
+<span class="nc bnc" id="L560" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L561">            currentOrQueryObject.variableExists(name, false);</span>
+<span class="nc" id="L562">            return this;</span>
+        } else {
+<span class="nc" id="L564">            return variableExists(name, false);</span>
+        }
+    }
+
+    @Override
+    public ExecutionQuery processVariableNotExists(String name) {
+<span class="nc bnc" id="L570" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L571">            currentOrQueryObject.variableNotExists(name, false);</span>
+<span class="nc" id="L572">            return this;</span>
+        } else {
+<span class="nc" id="L574">            return variableNotExists(name, false);</span>
+        }
+    }
+    
+    @Override
+    public ExecutionQuery variableValueEquals(String variableName, Object variableValue) {
+<span class="nc bnc" id="L580" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L581">            currentOrQueryObject.variableValueEquals(variableName, variableValue, true);</span>
+<span class="nc" id="L582">            return this;</span>
+        } else {
+<span class="nc" id="L584">            return variableValueEquals(variableName, variableValue, true);</span>
+        }
+    }
+
+    @Override
+    public ExecutionQuery variableValueEquals(Object variableValue) {
+<span class="nc bnc" id="L590" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L591">            currentOrQueryObject.variableValueEquals(variableValue, true);</span>
+<span class="nc" id="L592">            return this;</span>
+        } else {
+<span class="nc" id="L594">            return variableValueEquals(variableValue, true);</span>
+        }
+    }
+
+    @Override
+    public ExecutionQuery variableValueNotEquals(String variableName, Object variableValue) {
+<span class="nc bnc" id="L600" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L601">            currentOrQueryObject.variableValueNotEquals(variableName, variableValue, true);</span>
+<span class="nc" id="L602">            return this;</span>
+        } else {
+<span class="nc" id="L604">            return variableValueNotEquals(variableName, variableValue, true);</span>
+        }
+    }
+
+    @Override
+    public ExecutionQuery variableValueEqualsIgnoreCase(String name, String value) {
+<span class="nc bnc" id="L610" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L611">            currentOrQueryObject.variableValueEqualsIgnoreCase(name, value, true);</span>
+<span class="nc" id="L612">            return this;</span>
+        } else {
+<span class="nc" id="L614">            return variableValueEqualsIgnoreCase(name, value, true);</span>
+        }
+    }
+
+    @Override
+    public ExecutionQuery variableValueNotEqualsIgnoreCase(String name, String value) {
+<span class="nc bnc" id="L620" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L621">            currentOrQueryObject.variableValueNotEqualsIgnoreCase(name, value, true);</span>
+<span class="nc" id="L622">            return this;</span>
+        } else {
+<span class="nc" id="L624">            return variableValueNotEqualsIgnoreCase(name, value, true);</span>
+        } 
+    }
+
+    @Override
+    public ExecutionQuery variableValueLike(String name, String value) {
+<span class="nc bnc" id="L630" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L631">            currentOrQueryObject.variableValueLike(name, value, true);</span>
+<span class="nc" id="L632">            return this;</span>
+        } else {
+<span class="nc" id="L634">            return variableValueLike(name, value, true);</span>
+        }
+    }
+
+    @Override
+    public ExecutionQuery variableValueLikeIgnoreCase(String name, String value) {
+<span class="nc bnc" id="L640" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L641">            currentOrQueryObject.variableValueLikeIgnoreCase(name, value, true);</span>
+<span class="nc" id="L642">            return this;</span>
+        } else {
+<span class="nc" id="L644">            return variableValueLikeIgnoreCase(name, value, true);</span>
+        }
+    }
+    
+    @Override
+    public ExecutionQuery variableValueGreaterThan(String name, Object value) {
+<span class="nc bnc" id="L650" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L651">            currentOrQueryObject.variableValueGreaterThan(name, value, true);</span>
+<span class="nc" id="L652">            return this;</span>
+        } else {
+<span class="nc" id="L654">            return variableValueGreaterThan(name, value, true);</span>
+        }
+    }
+
+    @Override
+    public ExecutionQuery variableValueGreaterThanOrEqual(String name, Object value) {
+<span class="nc bnc" id="L660" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L661">            currentOrQueryObject.variableValueGreaterThanOrEqual(name, value, true);</span>
+<span class="nc" id="L662">            return this;</span>
+        } else {
+<span class="nc" id="L664">            return variableValueGreaterThanOrEqual(name, value, true);</span>
+        }
+    }
+
+    @Override
+    public ExecutionQuery variableValueLessThan(String name, Object value) {
+<span class="nc bnc" id="L670" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L671">            currentOrQueryObject.variableValueLessThan(name, value, true);</span>
+<span class="nc" id="L672">            return this;</span>
+        } else {
+<span class="nc" id="L674">            return variableValueLessThan(name, value, true);</span>
+        }
+    }
+
+    @Override
+    public ExecutionQuery variableValueLessThanOrEqual(String name, Object value) {
+<span class="nc bnc" id="L680" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L681">            currentOrQueryObject.variableValueLessThanOrEqual(name, value, true);</span>
+<span class="nc" id="L682">            return this;</span>
+        } else {
+<span class="nc" id="L684">            return variableValueLessThanOrEqual(name, value, true);</span>
+        }
+    }
+
+    @Override
+    public ExecutionQuery variableExists(String name) {
+<span class="nc bnc" id="L690" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L691">            currentOrQueryObject.variableExists(name, true);</span>
+<span class="nc" id="L692">            return this;</span>
+        } else {
+<span class="nc" id="L694">            return variableExists(name, true);</span>
+        }
+    }
+
+    @Override
+    public ExecutionQuery variableNotExists(String name) {
+<span class="nc bnc" id="L700" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L701">            currentOrQueryObject.variableNotExists(name, true);</span>
+<span class="nc" id="L702">            return this;</span>
+        } else {
+<span class="nc" id="L704">            return variableNotExists(name, true);</span>
+        }
+    }
+
+    @Override
+    public ExecutionQuery locale(String locale) {
+<span class="nc bnc" id="L710" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L711">            currentOrQueryObject.locale = locale;</span>
+        } else {
+<span class="nc" id="L713">            this.locale = locale;</span>
+        }
+        
+<span class="nc" id="L716">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQuery withLocalizationFallback() {
+<span class="nc bnc" id="L721" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L722">            currentOrQueryObject.withLocalizationFallback = true;</span>
+        } else {
+<span class="nc" id="L724">            this.withLocalizationFallback = true;</span>
+        }
+        
+<span class="nc" id="L727">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQuery startedBefore(Date beforeTime) {
+<span class="nc bnc" id="L732" title="All 2 branches missed.">        if (beforeTime == null) {</span>
+<span class="nc" id="L733">            throw new FlowableIllegalArgumentException(&quot;before time is null&quot;);</span>
+        }
+        
+<span class="nc bnc" id="L736" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L737">            currentOrQueryObject.startedBefore = beforeTime;</span>
+        } else {
+<span class="nc" id="L739">            this.startedBefore = beforeTime;</span>
+        }
+        
+<span class="nc" id="L742">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQuery startedAfter(Date afterTime) {
+<span class="nc bnc" id="L747" title="All 2 branches missed.">        if (afterTime == null) {</span>
+<span class="nc" id="L748">            throw new FlowableIllegalArgumentException(&quot;after time is null&quot;);</span>
+        }
+        
+<span class="nc bnc" id="L751" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L752">            currentOrQueryObject.startedAfter = afterTime;</span>
+        } else {
+<span class="nc" id="L754">            this.startedAfter = afterTime;</span>
+        }
+
+<span class="nc" id="L757">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQuery startedBy(String userId) {
+<span class="nc bnc" id="L762" title="All 2 branches missed.">        if (userId == null) {</span>
+<span class="nc" id="L763">            throw new FlowableIllegalArgumentException(&quot;user id is null&quot;);</span>
+        }
+        
+<span class="nc bnc" id="L766" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L767">            currentOrQueryObject.startedBy = userId;</span>
+        } else {
+<span class="nc" id="L769">            this.startedBy = userId;</span>
+        }
+
+<span class="nc" id="L772">        return this;</span>
+    }
+    
+    @Override
+    public ExecutionQuery or() {
+<span class="nc bnc" id="L777" title="All 2 branches missed.">        if (inOrStatement) {</span>
+<span class="nc" id="L778">            throw new FlowableException(&quot;the query is already in an or statement&quot;);</span>
+        }
+
+<span class="nc" id="L781">        inOrStatement = true;</span>
+<span class="nc bnc" id="L782" title="All 2 branches missed.">        if (commandContext != null) {</span>
+<span class="nc" id="L783">            currentOrQueryObject = new ExecutionQueryImpl(commandContext, processEngineConfiguration);</span>
+        } else {
+<span class="nc" id="L785">            currentOrQueryObject = new ExecutionQueryImpl(commandExecutor, processEngineConfiguration);</span>
+        }
+<span class="nc" id="L787">        orQueryObjects.add(currentOrQueryObject);</span>
+<span class="nc" id="L788">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQuery endOr() {
+<span class="nc bnc" id="L793" title="All 2 branches missed.">        if (!inOrStatement) {</span>
+<span class="nc" id="L794">            throw new FlowableException(&quot;endOr() can only be called after calling or()&quot;);</span>
+        }
+
+<span class="nc" id="L797">        inOrStatement = false;</span>
+<span class="nc" id="L798">        currentOrQueryObject = null;</span>
+<span class="nc" id="L799">        return this;</span>
+    }
+
+    // ordering ////////////////////////////////////////////////////
+
+    @Override
+    public ExecutionQueryImpl orderByProcessInstanceId() {
+<span class="nc" id="L806">        this.orderProperty = ExecutionQueryProperty.PROCESS_INSTANCE_ID;</span>
+<span class="nc" id="L807">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQueryImpl orderByProcessDefinitionId() {
+<span class="nc" id="L812">        this.orderProperty = ExecutionQueryProperty.PROCESS_DEFINITION_ID;</span>
+<span class="nc" id="L813">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQueryImpl orderByProcessDefinitionKey() {
+<span class="nc" id="L818">        this.orderProperty = ExecutionQueryProperty.PROCESS_DEFINITION_KEY;</span>
+<span class="nc" id="L819">        return this;</span>
+    }
+
+    @Override
+    public ExecutionQueryImpl orderByTenantId() {
+<span class="nc" id="L824">        this.orderProperty = ExecutionQueryProperty.TENANT_ID;</span>
+<span class="nc" id="L825">        return this;</span>
+    }
+
+    // results ////////////////////////////////////////////////////
+
+    @Override
+    public long executeCount(CommandContext commandContext) {
+<span class="nc" id="L832">        ensureVariablesInitialized();</span>
+        
+<span class="nc bnc" id="L834" title="All 2 branches missed.">        if (processEngineConfiguration.getExecutionQueryInterceptor() != null) {</span>
+<span class="nc" id="L835">            processEngineConfiguration.getExecutionQueryInterceptor().beforeExecutionQueryExecute(this);</span>
+        }
+        
+<span class="nc" id="L838">        return processEngineConfiguration.getExecutionEntityManager().findExecutionCountByQueryCriteria(this);</span>
+    }
+
+    @SuppressWarnings({ &quot;unchecked&quot; })
+    @Override
+    public List&lt;Execution&gt; executeList(CommandContext commandContext) {
+<span class="nc" id="L844">        ensureVariablesInitialized();</span>
+        
+<span class="nc bnc" id="L846" title="All 2 branches missed.">        if (processEngineConfiguration.getExecutionQueryInterceptor() != null) {</span>
+<span class="nc" id="L847">            processEngineConfiguration.getExecutionQueryInterceptor().beforeExecutionQueryExecute(this);</span>
+        }
+        
+<span class="nc" id="L850">        List&lt;?&gt; executions = processEngineConfiguration.getExecutionEntityManager().findExecutionsByQueryCriteria(this);</span>
+
+<span class="nc bnc" id="L852" title="All 2 branches missed.">        if (processEngineConfiguration.getPerformanceSettings().isEnableLocalization()) {</span>
+<span class="nc bnc" id="L853" title="All 2 branches missed.">            for (ExecutionEntity execution : (List&lt;ExecutionEntity&gt;) executions) {</span>
+<span class="nc" id="L854">                String activityId = null;</span>
+<span class="nc bnc" id="L855" title="All 2 branches missed.">                if (execution.getId().equals(execution.getProcessInstanceId())) {</span>
+<span class="nc bnc" id="L856" title="All 2 branches missed.">                    if (execution.getProcessDefinitionId() != null) {</span>
+<span class="nc" id="L857">                        ProcessDefinition processDefinition = processEngineConfiguration</span>
+<span class="nc" id="L858">                                .getDeploymentManager()</span>
+<span class="nc" id="L859">                                .findDeployedProcessDefinitionById(execution.getProcessDefinitionId());</span>
+<span class="nc" id="L860">                        activityId = processDefinition.getKey();</span>
+<span class="nc" id="L861">                    }</span>
+
+                } else {
+<span class="nc" id="L864">                    activityId = execution.getActivityId();</span>
+                }
+
+<span class="nc bnc" id="L867" title="All 2 branches missed.">                if (activityId != null) {</span>
+<span class="nc" id="L868">                    localize(execution, activityId);</span>
+                }
+<span class="nc" id="L870">            }</span>
+        }
+        
+<span class="nc bnc" id="L873" title="All 2 branches missed.">        if (processEngineConfiguration.getExecutionQueryInterceptor() != null) {</span>
+<span class="nc" id="L874">            processEngineConfiguration.getExecutionQueryInterceptor().afterExecutionQueryExecute(this, (List&lt;Execution&gt;) executions);</span>
+        }
+
+<span class="nc" id="L877">        return (List&lt;Execution&gt;) executions;</span>
+    }
+
+    protected void localize(Execution execution, String activityId) {
+<span class="nc" id="L881">        ExecutionEntity executionEntity = (ExecutionEntity) execution;</span>
+<span class="nc" id="L882">        executionEntity.setLocalizedName(null);</span>
+<span class="nc" id="L883">        executionEntity.setLocalizedDescription(null);</span>
+
+<span class="nc" id="L885">        String processDefinitionId = executionEntity.getProcessDefinitionId();</span>
+<span class="nc bnc" id="L886" title="All 4 branches missed.">        if (locale != null &amp;&amp; processDefinitionId != null) {</span>
+<span class="nc" id="L887">            ObjectNode languageNode = BpmnOverrideContext.getLocalizationElementProperties(locale, activityId, processDefinitionId, withLocalizationFallback);</span>
+<span class="nc bnc" id="L888" title="All 2 branches missed.">            if (languageNode != null) {</span>
+<span class="nc" id="L889">                JsonNode languageNameNode = languageNode.get(DynamicBpmnConstants.LOCALIZATION_NAME);</span>
+<span class="nc bnc" id="L890" title="All 4 branches missed.">                if (languageNameNode != null &amp;&amp; !languageNameNode.isNull()) {</span>
+<span class="nc" id="L891">                    executionEntity.setLocalizedName(languageNameNode.asText());</span>
+                }
+
+<span class="nc" id="L894">                JsonNode languageDescriptionNode = languageNode.get(DynamicBpmnConstants.LOCALIZATION_DESCRIPTION);</span>
+<span class="nc bnc" id="L895" title="All 4 branches missed.">                if (languageDescriptionNode != null &amp;&amp; !languageDescriptionNode.isNull()) {</span>
+<span class="nc" id="L896">                    executionEntity.setLocalizedDescription(languageDescriptionNode.asText());</span>
+                }
+            }
+        }
+<span class="nc" id="L900">    }</span>
+    
+    @Override
+    protected void ensureVariablesInitialized() {
+<span class="nc" id="L904">        super.ensureVariablesInitialized();</span>
+
+<span class="nc bnc" id="L906" title="All 2 branches missed.">        for (ExecutionQueryImpl orQueryObject : orQueryObjects) {</span>
+<span class="nc" id="L907">            orQueryObject.ensureVariablesInitialized();</span>
+<span class="nc" id="L908">        }</span>
+<span class="nc" id="L909">    }</span>
+
+    // getters ////////////////////////////////////////////////////
+
+    public boolean getOnlyProcessInstances() {
+<span class="nc" id="L914">        return false;</span>
+    }
+
+    public String getProcessDefinitionKey() {
+<span class="nc" id="L918">        return processDefinitionKey;</span>
+    }
+
+    public String getProcessDefinitionId() {
+<span class="nc" id="L922">        return processDefinitionId;</span>
+    }
+
+    public String getProcessDefinitionCategory() {
+<span class="nc" id="L926">        return processDefinitionCategory;</span>
+    }
+
+    public String getProcessDefinitionName() {
+<span class="nc" id="L930">        return processDefinitionName;</span>
+    }
+
+    public Integer getProcessDefinitionVersion() {
+<span class="nc" id="L934">        return processDefinitionVersion;</span>
+    }
+
+    public String getProcessDefinitionEngineVersion() {
+<span class="nc" id="L938">        return processDefinitionEngineVersion;</span>
+    }
+
+    public String getActivityId() {
+<span class="nc" id="L942">        return activityId;</span>
+    }
+
+    public String getProcessInstanceId() {
+<span class="nc" id="L946">        return processInstanceId;</span>
+    }
+
+    public String getRootProcessInstanceId() {
+<span class="nc" id="L950">        return rootProcessInstanceId;</span>
+    }
+
+    public String getProcessInstanceIds() {
+<span class="nc" id="L954">        return null;</span>
+    }
+
+    public String getBusinessKey() {
+<span class="nc" id="L958">        return businessKey;</span>
+    }
+    
+    public String getBusinessKeyLike() {
+<span class="nc" id="L962">        return businessKeyLike;</span>
+    }
+    
+    public String getBusinessStatus() {
+<span class="nc" id="L966">        return null;</span>
+    }
+    
+    public String getBusinessStatusLike() {
+<span class="nc" id="L970">        return null;</span>
+    }
+
+    public String getExecutionId() {
+<span class="nc" id="L974">        return executionId;</span>
+    }
+    
+    @Override
+    public String getId() {
+<span class="nc" id="L979">        return executionId;</span>
+    }
+
+    public String getSuperProcessInstanceId() {
+<span class="nc" id="L983">        return superProcessInstanceId;</span>
+    }
+
+    public String getSubProcessInstanceId() {
+<span class="nc" id="L987">        return subProcessInstanceId;</span>
+    }
+
+    public boolean isExcludeSubprocesses() {
+<span class="nc" id="L991">        return excludeSubprocesses;</span>
+    }
+
+    public SuspensionState getSuspensionState() {
+<span class="nc" id="L995">        return suspensionState;</span>
+    }
+
+    public void setSuspensionState(SuspensionState suspensionState) {
+<span class="nc" id="L999">        this.suspensionState = suspensionState;</span>
+<span class="nc" id="L1000">    }</span>
+
+    public List&lt;EventSubscriptionQueryValue&gt; getEventSubscriptions() {
+<span class="nc" id="L1003">        return eventSubscriptions;</span>
+    }
+
+    public boolean isIncludeChildExecutionsWithBusinessKeyQuery() {
+<span class="nc" id="L1007">        return includeChildExecutionsWithBusinessKeyQuery;</span>
+    }
+
+    public void setEventSubscriptions(List&lt;EventSubscriptionQueryValue&gt; eventSubscriptions) {
+<span class="nc" id="L1011">        this.eventSubscriptions = eventSubscriptions;</span>
+<span class="nc" id="L1012">    }</span>
+
+    public boolean isActive() {
+<span class="nc" id="L1015">        return isActive;</span>
+    }
+
+    public String getInvolvedUser() {
+<span class="nc" id="L1019">        return involvedUser;</span>
+    }
+
+    public void setInvolvedUser(String involvedUser) {
+<span class="nc" id="L1023">        this.involvedUser = involvedUser;</span>
+<span class="nc" id="L1024">    }</span>
+    
+    public IdentityLinkQueryObject getInvolvedUserIdentityLink() {
+<span class="nc" id="L1027">        return null;</span>
+    }
+
+    public IdentityLinkQueryObject getInvolvedGroupIdentityLink() {
+<span class="nc" id="L1031">        return null;</span>
+    }
+
+    public Set&lt;String&gt; getInvolvedGroups() {
+<span class="nc" id="L1035">        return involvedGroups;</span>
+    }
+
+    public void setInvolvedGroups(Set&lt;String&gt; involvedGroups) {
+<span class="nc" id="L1039">        this.involvedGroups = involvedGroups;</span>
+<span class="nc" id="L1040">    }</span>
+
+    public Set&lt;String&gt; getProcessDefinitionIds() {
+<span class="nc" id="L1043">        return processDefinitionIds;</span>
+    }
+
+    public Set&lt;String&gt; getProcessDefinitionKeys() {
+<span class="nc" id="L1047">        return processDefinitionKeys;</span>
+    }
+
+    public String getParentId() {
+<span class="nc" id="L1051">        return parentId;</span>
+    }
+
+    public boolean isOnlyChildExecutions() {
+<span class="nc" id="L1055">        return onlyChildExecutions;</span>
+    }
+
+    public boolean isOnlySubProcessExecutions() {
+<span class="nc" id="L1059">        return onlySubProcessExecutions;</span>
+    }
+
+    public boolean isOnlyProcessInstanceExecutions() {
+<span class="nc" id="L1063">        return onlyProcessInstanceExecutions;</span>
+    }
+
+    public String getTenantId() {
+<span class="nc" id="L1067">        return tenantId;</span>
+    }
+
+    public String getTenantIdLike() {
+<span class="nc" id="L1071">        return tenantIdLike;</span>
+    }
+
+    public boolean isWithoutTenantId() {
+<span class="nc" id="L1075">        return withoutTenantId;</span>
+    }
+
+    public String getReferenceId() {
+<span class="nc" id="L1079">        return referenceId;</span>
+    }
+
+    public String getReferenceType() {
+<span class="nc" id="L1083">        return referenceType;</span>
+    }
+
+    public String getName() {
+<span class="nc" id="L1087">        return name;</span>
+    }
+
+    public String getNameLike() {
+<span class="nc" id="L1091">        return nameLike;</span>
+    }
+
+    public void setName(String name) {
+<span class="nc" id="L1095">        this.name = name;</span>
+<span class="nc" id="L1096">    }</span>
+
+    public void setNameLike(String nameLike) {
+<span class="nc" id="L1099">        this.nameLike = nameLike;</span>
+<span class="nc" id="L1100">    }</span>
+
+    public String getNameLikeIgnoreCase() {
+<span class="nc" id="L1103">        return nameLikeIgnoreCase;</span>
+    }
+
+    public void setNameLikeIgnoreCase(String nameLikeIgnoreCase) {
+<span class="nc" id="L1107">        this.nameLikeIgnoreCase = nameLikeIgnoreCase;</span>
+<span class="nc" id="L1108">    }</span>
+
+    public String getDeploymentId() {
+<span class="nc" id="L1111">        return deploymentId;</span>
+    }
+
+    public void setDeploymentId(String deploymentId) {
+<span class="nc" id="L1115">        this.deploymentId = deploymentId;</span>
+<span class="nc" id="L1116">    }</span>
+
+    public List&lt;String&gt; getDeploymentIds() {
+<span class="nc" id="L1119">        return deploymentIds;</span>
+    }
+
+    public void setDeploymentIds(List&lt;String&gt; deploymentIds) {
+<span class="nc" id="L1123">        this.deploymentIds = deploymentIds;</span>
+<span class="nc" id="L1124">    }</span>
+
+    public String getActiveActivityId() {
+<span class="nc" id="L1127">        return activeActivityId;</span>
+    }
+
+    public void setActiveActivityId(String activeActivityId) {
+<span class="nc" id="L1131">        this.activeActivityId = activeActivityId;</span>
+<span class="nc" id="L1132">    }</span>
+
+    public Set&lt;String&gt; getActiveActivityIds() {
+<span class="nc" id="L1135">        return activeActivityIds;</span>
+    }
+
+    public void setActiveActivityIds(Set&lt;String&gt; activeActivityIds) {
+<span class="nc" id="L1139">        this.activeActivityIds = activeActivityIds;</span>
+<span class="nc" id="L1140">    }</span>
+
+    public Date getStartedBefore() {
+<span class="nc" id="L1143">        return startedBefore;</span>
+    }
+
+    public void setStartedBefore(Date startedBefore) {
+<span class="nc" id="L1147">        this.startedBefore = startedBefore;</span>
+<span class="nc" id="L1148">    }</span>
+
+    public Date getStartedAfter() {
+<span class="nc" id="L1151">        return startedAfter;</span>
+    }
+
+    public void setStartedAfter(Date startedAfter) {
+<span class="nc" id="L1155">        this.startedAfter = startedAfter;</span>
+<span class="nc" id="L1156">    }</span>
+
+    public String getStartedBy() {
+<span class="nc" id="L1159">        return startedBy;</span>
+    }
+
+    public void setStartedBy(String startedBy) {
+<span class="nc" id="L1163">        this.startedBy = startedBy;</span>
+<span class="nc" id="L1164">    }</span>
+
+    public String getLocale() {
+<span class="nc" id="L1167">        return locale;</span>
+    }
+
+    public boolean isWithLocalizationFallback() {
+<span class="nc" id="L1171">        return withLocalizationFallback;</span>
+    }
+
+    public String getCallbackId() {
+<span class="nc" id="L1175">        return callbackId;</span>
+    }
+
+    public String getCallbackType() {
+<span class="nc" id="L1179">        return callbackType;</span>
+    }
+    
+    public List&lt;ExecutionQueryImpl&gt; getOrQueryObjects() {
+<span class="nc" id="L1183">        return orQueryObjects;</span>
+    }
+
+    public List&lt;List&lt;String&gt;&gt; getSafeInvolvedGroups() {
+<span class="nc" id="L1187">        return safeInvolvedGroups;</span>
+    }
+
+    public void setSafeInvolvedGroups(List&lt;List&lt;String&gt;&gt; safeInvolvedGroups) {
+<span class="nc" id="L1191">        this.safeInvolvedGroups = safeInvolvedGroups;</span>
+<span class="nc" id="L1192">    }</span>
+
+    public String getRootScopeId() {
+<span class="nc" id="L1195">        return null;</span>
+    }
+
+    public String getParentScopeId() {
+<span class="nc" id="L1199">        return null;</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

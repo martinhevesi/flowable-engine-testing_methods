@@ -1,0 +1,602 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>HistoricProcessInstanceTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.history</a> &gt; <span class="el_source">HistoricProcessInstanceTest.java</span></div><h1>HistoricProcessInstanceTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.flowable.engine.test.history;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.entry;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Calendar;
+import java.util.Collections;
+import java.util.Date;
+import java.util.GregorianCalendar;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.flowable.common.engine.api.FlowableIllegalArgumentException;
+import org.flowable.common.engine.impl.history.HistoryLevel;
+import org.flowable.engine.history.HistoricProcessInstance;
+import org.flowable.engine.impl.test.HistoryTestHelper;
+import org.flowable.engine.impl.test.PluggableFlowableTestCase;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.runtime.ProcessInstanceBuilder;
+import org.flowable.engine.test.Deployment;
+import org.flowable.identitylink.api.history.HistoricIdentityLink;
+import org.junit.jupiter.api.Test;
+
+/**
+ * @author Tom Baeyens
+ * @author Joram Barrez
+ */
+<span class="nc" id="L45">public class HistoricProcessInstanceTest extends PluggableFlowableTestCase {</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/history/oneTaskProcess.bpmn20.xml&quot; })
+    public void testHistoricDataCreatedForProcessExecution() {
+
+<span class="nc" id="L51">        Calendar calendar = new GregorianCalendar();</span>
+<span class="nc" id="L52">        calendar.set(Calendar.YEAR, 2010);</span>
+<span class="nc" id="L53">        calendar.set(Calendar.MONTH, 8);</span>
+<span class="nc" id="L54">        calendar.set(Calendar.DAY_OF_MONTH, 30);</span>
+<span class="nc" id="L55">        calendar.set(Calendar.HOUR_OF_DAY, 12);</span>
+<span class="nc" id="L56">        calendar.set(Calendar.MINUTE, 0);</span>
+<span class="nc" id="L57">        calendar.set(Calendar.SECOND, 0);</span>
+<span class="nc" id="L58">        calendar.set(Calendar.MILLISECOND, 0);</span>
+<span class="nc" id="L59">        Date noon = calendar.getTime();</span>
+
+<span class="nc" id="L61">        processEngineConfiguration.getClock().setCurrentTime(noon);</span>
+<span class="nc" id="L62">        final ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;, &quot;myBusinessKey&quot;);</span>
+        
+<span class="nc" id="L64">        waitForHistoryJobExecutorToProcessAllJobs(7000, 100);</span>
+
+<span class="nc" id="L66">        assertThat(historyService.createHistoricProcessInstanceQuery().unfinished().count()).isEqualTo(1);</span>
+<span class="nc" id="L67">        assertThat(historyService.createHistoricProcessInstanceQuery().finished().count()).isZero();</span>
+<span class="nc" id="L68">        HistoricProcessInstance historicProcessInstance = historyService.createHistoricProcessInstanceQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+
+<span class="nc" id="L70">        assertThat(historicProcessInstance).isNotNull();</span>
+<span class="nc" id="L71">        assertThat(historicProcessInstance.getId()).isEqualTo(processInstance.getId());</span>
+<span class="nc" id="L72">        assertThat(historicProcessInstance.getBusinessKey()).isEqualTo(processInstance.getBusinessKey());</span>
+<span class="nc" id="L73">        assertThat(historicProcessInstance.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L74">        assertThat(historicProcessInstance.getStartTime()).isEqualTo(noon);</span>
+<span class="nc" id="L75">        assertThat(historicProcessInstance.getEndTime()).isNull();</span>
+<span class="nc" id="L76">        assertThat(historicProcessInstance.getDurationInMillis()).isNull();</span>
+
+<span class="nc" id="L78">        List&lt;org.flowable.task.api.Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+
+<span class="nc" id="L80">        assertThat(tasks).hasSize(1);</span>
+
+        // in this test scenario we assume that 25 seconds after the process start, the
+        // user completes the task (yes! he must be almost as fast as me)
+<span class="nc" id="L84">        Date twentyFiveSecsAfterNoon = new Date(noon.getTime() + 25 * 1000);</span>
+<span class="nc" id="L85">        processEngineConfiguration.getClock().setCurrentTime(twentyFiveSecsAfterNoon);</span>
+<span class="nc" id="L86">        taskService.complete(tasks.get(0).getId());</span>
+        
+<span class="nc" id="L88">        waitForHistoryJobExecutorToProcessAllJobs(7000, 100);</span>
+
+<span class="nc" id="L90">        historicProcessInstance = historyService.createHistoricProcessInstanceQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+
+<span class="nc" id="L92">        assertThat(historicProcessInstance).isNotNull();</span>
+<span class="nc" id="L93">        assertThat(historicProcessInstance.getId()).isEqualTo(processInstance.getId());</span>
+<span class="nc" id="L94">        assertThat(historicProcessInstance.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L95">        assertThat(historicProcessInstance.getStartTime()).isEqualTo(noon);</span>
+<span class="nc" id="L96">        assertThat(historicProcessInstance.getEndTime()).isEqualTo(twentyFiveSecsAfterNoon);</span>
+<span class="nc" id="L97">        assertThat(historicProcessInstance.getDurationInMillis()).isEqualTo(Long.valueOf(25 * 1000));</span>
+
+<span class="nc" id="L99">        assertThat(historyService.createHistoricProcessInstanceQuery().unfinished().count()).isZero();</span>
+<span class="nc" id="L100">        assertThat(historyService.createHistoricProcessInstanceQuery().finished().count()).isEqualTo(1);</span>
+<span class="nc" id="L101">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/history/oneTaskProcess.bpmn20.xml&quot; })
+    public void testDeleteProcessInstanceHistoryCreated() {
+<span class="nc" id="L106">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+<span class="nc" id="L107">        assertThat(processInstance).isNotNull();</span>
+
+        // delete process instance should not delete the history
+<span class="nc" id="L110">        runtimeService.deleteProcessInstance(processInstance.getId(), &quot;cancel&quot;);</span>
+        
+<span class="nc" id="L112">        waitForHistoryJobExecutorToProcessAllJobs(7000, 100);</span>
+        
+<span class="nc" id="L114">        HistoricProcessInstance historicProcessInstance = historyService.createHistoricProcessInstanceQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L115">        assertThat(historicProcessInstance.getEndTime()).isNotNull();</span>
+<span class="nc" id="L116">    }</span>
+
+    /*
+     * @Test
+     * @Deployment(resources = {&quot;org/flowable/engine/test/history/oneTaskProcess.bpmn20.xml&quot;}) public void testHistoricProcessInstanceVariables() { Map&lt;String,Object&gt; vars = new
+     * HashMap&lt;String,Object&gt;(); vars.put(&quot;foo&quot;, &quot;bar&quot;); vars.put(&quot;baz&quot;, &quot;boo&quot;);
+     * 
+     * runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;, vars);
+     * 
+     * assertThat(&quot;bar&quot;).count()).isEqualTo(1, historyService.createHistoricProcessInstanceQuery().processVariableEquals (&quot;foo&quot;); assertEquals(1, historyService.createHistoricProcessInstanceQuery
+     * ().processVariableEquals(&quot;baz&quot;, &quot;boo&quot;).count()); assertThat(&quot;bar&quot;).isEqualTo(1, historyService .createHistoricProcessInstanceQuery().processVariableEquals(&quot;foo&quot;).processVariableEquals(&quot;baz&quot;,
+     * &quot;boo&quot;).count()); }
+     */
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/history/oneTaskProcess.bpmn20.xml&quot; })
+    public void testHistoricProcessInstanceQuery() {
+<span class="nc" id="L133">        Calendar startTime = Calendar.getInstance();</span>
+
+<span class="nc" id="L135">        processEngineConfiguration.getClock().setCurrentTime(startTime.getTime());</span>
+<span class="nc" id="L136">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;, &quot;businessKey123&quot;);</span>
+<span class="nc" id="L137">        runtimeService.addUserIdentityLink(processInstance.getId(), &quot;kermit&quot;, &quot;someType&quot;);</span>
+<span class="nc" id="L138">        runtimeService.setProcessInstanceName(processInstance.getId(), &quot;The name&quot;);</span>
+<span class="nc" id="L139">        runtimeService.updateBusinessStatus(processInstance.getId(), &quot;businessStatus123&quot;);</span>
+<span class="nc" id="L140">        Calendar hourAgo = Calendar.getInstance();</span>
+<span class="nc" id="L141">        hourAgo.add(Calendar.HOUR_OF_DAY, -1);</span>
+<span class="nc" id="L142">        Calendar hourFromNow = Calendar.getInstance();</span>
+<span class="nc" id="L143">        hourFromNow.add(Calendar.HOUR_OF_DAY, 1);</span>
+        
+<span class="nc" id="L145">        waitForHistoryJobExecutorToProcessAllJobs(7000, 100);</span>
+
+        // Name and name like
+<span class="nc" id="L148">        assertThat(historyService.createHistoricProcessInstanceQuery().processInstanceName(&quot;The name&quot;).singleResult().getName()).isEqualTo(&quot;The name&quot;);</span>
+<span class="nc" id="L149">        assertThat(historyService.createHistoricProcessInstanceQuery().processInstanceName(&quot;The name&quot;).count()).isEqualTo(1);</span>
+<span class="nc" id="L150">        assertThat(historyService.createHistoricProcessInstanceQuery().processInstanceName(&quot;Other name&quot;).count()).isZero();</span>
+
+<span class="nc" id="L152">        assertThat(historyService.createHistoricProcessInstanceQuery().processInstanceNameLike(&quot;% name&quot;).count()).isEqualTo(1);</span>
+<span class="nc" id="L153">        assertThat(historyService.createHistoricProcessInstanceQuery().processInstanceNameLike(&quot;%nope&quot;).count()).isZero();</span>
+
+        // Query after update name
+<span class="nc" id="L156">        runtimeService.setProcessInstanceName(processInstance.getId(), &quot;New name&quot;);</span>
+        
+<span class="nc" id="L158">        waitForHistoryJobExecutorToProcessAllJobs(7000, 100);</span>
+        
+<span class="nc" id="L160">        assertThat(historyService.createHistoricProcessInstanceQuery().processInstanceName(&quot;New name&quot;).singleResult().getName()).isEqualTo(&quot;New name&quot;);</span>
+<span class="nc" id="L161">        assertThat(historyService.createHistoricProcessInstanceQuery().processInstanceName(&quot;New name&quot;).count()).isEqualTo(1);</span>
+<span class="nc" id="L162">        assertThat(historyService.createHistoricProcessInstanceQuery().processInstanceName(&quot;The name&quot;).count()).isZero();</span>
+
+<span class="nc" id="L164">        assertThat(historyService.createHistoricProcessInstanceQuery().processInstanceNameLike(&quot;New %&quot;).count()).isEqualTo(1);</span>
+<span class="nc" id="L165">        assertThat(historyService.createHistoricProcessInstanceQuery().processInstanceNameLike(&quot;The %&quot;).count()).isZero();</span>
+
+        // Start/end dates
+<span class="nc" id="L168">        assertThat(historyService.createHistoricProcessInstanceQuery().finishedBefore(hourAgo.getTime()).count()).isZero();</span>
+<span class="nc" id="L169">        assertThat(historyService.createHistoricProcessInstanceQuery().finishedBefore(hourFromNow.getTime()).count()).isZero();</span>
+<span class="nc" id="L170">        assertThat(historyService.createHistoricProcessInstanceQuery().finishedAfter(hourAgo.getTime()).count()).isZero();</span>
+<span class="nc" id="L171">        assertThat(historyService.createHistoricProcessInstanceQuery().finishedAfter(hourFromNow.getTime()).count()).isZero();</span>
+<span class="nc" id="L172">        assertThat(historyService.createHistoricProcessInstanceQuery().startedBefore(hourFromNow.getTime()).count()).isEqualTo(1);</span>
+<span class="nc" id="L173">        assertThat(historyService.createHistoricProcessInstanceQuery().startedBefore(hourAgo.getTime()).count()).isZero();</span>
+<span class="nc" id="L174">        assertThat(historyService.createHistoricProcessInstanceQuery().startedAfter(hourAgo.getTime()).count()).isEqualTo(1);</span>
+<span class="nc" id="L175">        assertThat(historyService.createHistoricProcessInstanceQuery().startedAfter(hourFromNow.getTime()).count()).isZero();</span>
+
+        // General fields
+<span class="nc" id="L178">        assertThat(historyService.createHistoricProcessInstanceQuery().finished().count()).isZero();</span>
+<span class="nc" id="L179">        assertThat(historyService.createHistoricProcessInstanceQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(1);</span>
+<span class="nc" id="L180">        assertThat(historyService.createHistoricProcessInstanceQuery().processDefinitionId(processInstance.getProcessDefinitionId()).count()).isEqualTo(1);</span>
+<span class="nc" id="L181">        assertThat(historyService.createHistoricProcessInstanceQuery().processDefinitionKey(&quot;oneTaskProcess&quot;).count()).isEqualTo(1);</span>
+<span class="nc" id="L182">        assertThat(historyService.createHistoricProcessInstanceQuery().processDefinitionKeyIn(Collections.singletonList(&quot;oneTaskProcess&quot;)).count()).isEqualTo(1);</span>
+<span class="nc" id="L183">        assertThat(historyService.createHistoricProcessInstanceQuery().processDefinitionKeyIn(Arrays.asList(&quot;undefined&quot;, &quot;oneTaskProcess&quot;)).count()).isEqualTo(1);</span>
+<span class="nc" id="L184">        assertThat(historyService.createHistoricProcessInstanceQuery().processDefinitionKeyIn(Arrays.asList(&quot;undefined1&quot;, &quot;undefined2&quot;)).count()).isZero();</span>
+
+<span class="nc" id="L186">        assertThat(historyService.createHistoricProcessInstanceQuery().processInstanceBusinessKey(&quot;businessKey123&quot;).count()).isEqualTo(1);</span>
+<span class="nc" id="L187">        assertThat(historyService.createHistoricProcessInstanceQuery().processInstanceBusinessStatus(&quot;businessStatus123&quot;).count()).isEqualTo(1);</span>
+
+<span class="nc" id="L189">        List&lt;String&gt; excludeIds = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L190">        excludeIds.add(&quot;unexistingProcessDefinition&quot;);</span>
+
+<span class="nc" id="L192">        assertThat(historyService.createHistoricProcessInstanceQuery().processDefinitionKeyNotIn(excludeIds).count()).isEqualTo(1);</span>
+
+<span class="nc" id="L194">        excludeIds.add(&quot;oneTaskProcess&quot;);</span>
+<span class="nc" id="L195">        assertThat(historyService.createHistoricProcessInstanceQuery().processDefinitionKeyNotIn(excludeIds).count()).isZero();</span>
+
+        // After finishing process
+<span class="nc" id="L198">        taskService.complete(taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult().getId());</span>
+        
+<span class="nc" id="L200">        waitForHistoryJobExecutorToProcessAllJobs(7000, 100);</span>
+        
+<span class="nc" id="L202">        assertThat(historyService.createHistoricProcessInstanceQuery().finished().count()).isEqualTo(1);</span>
+<span class="nc" id="L203">        assertThat(historyService.createHistoricProcessInstanceQuery().finishedBefore(hourAgo.getTime()).count()).isZero();</span>
+<span class="nc" id="L204">        assertThat(historyService.createHistoricProcessInstanceQuery().finishedBefore(hourFromNow.getTime()).count()).isEqualTo(1);</span>
+<span class="nc" id="L205">        assertThat(historyService.createHistoricProcessInstanceQuery().finishedAfter(hourAgo.getTime()).count()).isEqualTo(1);</span>
+<span class="nc" id="L206">        assertThat(historyService.createHistoricProcessInstanceQuery().finishedAfter(hourFromNow.getTime()).count()).isZero();</span>
+
+        // Check identity links
+<span class="nc" id="L209">        assertThat(historyService.createHistoricProcessInstanceQuery().involvedUser(&quot;kermit&quot;).count()).isEqualTo(1);</span>
+<span class="nc" id="L210">        assertThat(historyService.createHistoricProcessInstanceQuery().involvedUser(&quot;gonzo&quot;).count()).isZero();</span>
+<span class="nc" id="L211">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/history/oneTaskProcess.bpmn20.xml&quot; })
+    public void testHistoricProcessInstanceOrQuery() {
+<span class="nc" id="L216">        Calendar startTime = Calendar.getInstance();</span>
+
+<span class="nc" id="L218">        processEngineConfiguration.getClock().setCurrentTime(startTime.getTime());</span>
+<span class="nc" id="L219">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;, &quot;businessKey123&quot;);</span>
+<span class="nc" id="L220">        runtimeService.addUserIdentityLink(processInstance.getId(), &quot;kermit&quot;, &quot;someType&quot;);</span>
+<span class="nc" id="L221">        runtimeService.setProcessInstanceName(processInstance.getId(), &quot;The name&quot;);</span>
+<span class="nc" id="L222">        runtimeService.updateBusinessStatus(processInstance.getId(), &quot;businessStatus123&quot;);</span>
+<span class="nc" id="L223">        Calendar hourAgo = Calendar.getInstance();</span>
+<span class="nc" id="L224">        hourAgo.add(Calendar.HOUR_OF_DAY, -1);</span>
+<span class="nc" id="L225">        Calendar hourFromNow = Calendar.getInstance();</span>
+<span class="nc" id="L226">        hourFromNow.add(Calendar.HOUR_OF_DAY, 1);</span>
+        
+<span class="nc" id="L228">        waitForHistoryJobExecutorToProcessAllJobs(7000, 100);</span>
+
+        // Name and name like
+<span class="nc" id="L231">        assertThat(historyService.createHistoricProcessInstanceQuery().or().processInstanceName(&quot;The name&quot;).processDefinitionId(&quot;undefined&quot;).endOr().singleResult().getName()).isEqualTo(&quot;The name&quot;);</span>
+<span class="nc" id="L232">        assertThat(historyService.createHistoricProcessInstanceQuery().or().processInstanceName(&quot;The name&quot;).processDefinitionId(&quot;undefined&quot;).endOr().count()).isEqualTo(1);</span>
+<span class="nc" id="L233">        assertThat(historyService.createHistoricProcessInstanceQuery().or().processInstanceName(&quot;Other name&quot;).processDefinitionId(&quot;undefined&quot;).endOr().count()).isZero();</span>
+
+<span class="nc" id="L235">        assertThat(historyService.createHistoricProcessInstanceQuery().or().processInstanceNameLike(&quot;% name&quot;).processDefinitionId(&quot;undefined&quot;).endOr().count()).isEqualTo(1);</span>
+<span class="nc" id="L236">        assertThat(historyService.createHistoricProcessInstanceQuery().or().processInstanceNameLike(&quot;%nope&quot;).processDefinitionId(&quot;undefined&quot;).endOr().count()).isZero();</span>
+
+<span class="nc" id="L238">        assertThat(historyService.createHistoricProcessInstanceQuery()</span>
+<span class="nc" id="L239">                .or()</span>
+<span class="nc" id="L240">                .processInstanceName(&quot;The name&quot;)</span>
+<span class="nc" id="L241">                .processDefinitionId(&quot;undefined&quot;)</span>
+<span class="nc" id="L242">                .endOr()</span>
+<span class="nc" id="L243">                .or()</span>
+<span class="nc" id="L244">                .processInstanceNameLike(&quot;% name&quot;)</span>
+<span class="nc" id="L245">                .processDefinitionId(&quot;undefined&quot;)</span>
+<span class="nc" id="L246">                .endOr()</span>
+<span class="nc" id="L247">                .count()).isEqualTo(1);</span>
+
+<span class="nc" id="L249">        assertThat(historyService.createHistoricProcessInstanceQuery()</span>
+<span class="nc" id="L250">                .or()</span>
+<span class="nc" id="L251">                .processInstanceName(&quot;The name&quot;)</span>
+<span class="nc" id="L252">                .processDefinitionId(&quot;undefined&quot;)</span>
+<span class="nc" id="L253">                .endOr()</span>
+<span class="nc" id="L254">                .or()</span>
+<span class="nc" id="L255">                .processInstanceNameLike(&quot;undefined&quot;)</span>
+<span class="nc" id="L256">                .processDefinitionId(&quot;undefined&quot;)</span>
+<span class="nc" id="L257">                .endOr()</span>
+<span class="nc" id="L258">                .count()).isZero();</span>
+
+        // Query after update name
+<span class="nc" id="L261">        runtimeService.setProcessInstanceName(processInstance.getId(), &quot;New name&quot;);</span>
+        
+<span class="nc" id="L263">        waitForHistoryJobExecutorToProcessAllJobs(7000, 100);</span>
+        
+<span class="nc" id="L265">        assertThat(historyService.createHistoricProcessInstanceQuery().or().processInstanceName(&quot;New name&quot;).processDefinitionId(&quot;undefined&quot;).endOr().singleResult().getName()).isEqualTo(&quot;New name&quot;);</span>
+<span class="nc" id="L266">        assertThat(historyService.createHistoricProcessInstanceQuery().or().processInstanceName(&quot;New name&quot;).processDefinitionId(&quot;undefined&quot;).endOr().count()).isEqualTo(1);</span>
+<span class="nc" id="L267">        assertThat(historyService.createHistoricProcessInstanceQuery().or().processInstanceName(&quot;The name&quot;).processDefinitionId(&quot;undefined&quot;).endOr().count()).isZero();</span>
+
+<span class="nc" id="L269">        assertThat(historyService.createHistoricProcessInstanceQuery().or().processInstanceNameLike(&quot;New %&quot;).processDefinitionId(&quot;undefined&quot;).endOr().count()).isEqualTo(1);</span>
+<span class="nc" id="L270">        assertThat(historyService.createHistoricProcessInstanceQuery().or().processInstanceNameLike(&quot;The %&quot;).processDefinitionId(&quot;undefined&quot;).endOr().count()).isZero();</span>
+
+        // Start/end dates
+<span class="nc" id="L273">        assertThat(historyService.createHistoricProcessInstanceQuery().or().finishedBefore(hourAgo.getTime()).processDefinitionId(&quot;undefined&quot;).endOr().count()).isZero();</span>
+<span class="nc" id="L274">        assertThat(historyService.createHistoricProcessInstanceQuery().or().finishedBefore(hourFromNow.getTime()).processDefinitionId(&quot;undefined&quot;).endOr().count()).isZero();</span>
+<span class="nc" id="L275">        assertThat(historyService.createHistoricProcessInstanceQuery().or().finishedAfter(hourAgo.getTime()).processDefinitionId(&quot;undefined&quot;).endOr().count()).isZero();</span>
+<span class="nc" id="L276">        assertThat(historyService.createHistoricProcessInstanceQuery().or().finishedAfter(hourFromNow.getTime()).processDefinitionId(&quot;undefined&quot;).endOr().count()).isZero();</span>
+<span class="nc" id="L277">        assertThat(historyService.createHistoricProcessInstanceQuery().or().startedBefore(hourFromNow.getTime()).processDefinitionId(&quot;undefined&quot;).endOr().count()).isEqualTo(1);</span>
+<span class="nc" id="L278">        assertThat(historyService.createHistoricProcessInstanceQuery().or().startedBefore(hourAgo.getTime()).processDefinitionId(&quot;undefined&quot;).endOr().count()).isZero();</span>
+<span class="nc" id="L279">        assertThat(historyService.createHistoricProcessInstanceQuery().or().startedAfter(hourAgo.getTime()).processDefinitionId(&quot;undefined&quot;).endOr().count()).isEqualTo(1);</span>
+<span class="nc" id="L280">        assertThat(historyService.createHistoricProcessInstanceQuery().or().startedAfter(hourFromNow.getTime()).processDefinitionId(&quot;undefined&quot;).endOr().count()).isZero();</span>
+
+        // General fields
+<span class="nc" id="L283">        assertThat(historyService.createHistoricProcessInstanceQuery().or().finished().count()).isZero();</span>
+<span class="nc" id="L284">        assertThat(historyService.createHistoricProcessInstanceQuery().or().processInstanceId(processInstance.getId()).processDefinitionId(&quot;undefined&quot;).endOr().count()).isEqualTo(1);</span>
+<span class="nc" id="L285">        assertThat(historyService.createHistoricProcessInstanceQuery().or().processDefinitionId(processInstance.getProcessDefinitionId()).processDefinitionKey(&quot;undefined&quot;).count()).isEqualTo(1);</span>
+<span class="nc" id="L286">        assertThat(historyService.createHistoricProcessInstanceQuery().or().processDefinitionId(&quot;undefined&quot;).processDefinitionKeyIn(Arrays.asList(&quot;undefined&quot;, &quot;oneTaskProcess&quot;)).endOr().count()).isEqualTo(1);</span>
+<span class="nc" id="L287">        assertThat(historyService.createHistoricProcessInstanceQuery().or().processDefinitionId(&quot;undefined&quot;).processDefinitionKeyIn(Arrays.asList(&quot;undefined1&quot;, &quot;undefined2&quot;)).endOr().count()).isZero();</span>
+<span class="nc" id="L288">        assertThat(historyService.createHistoricProcessInstanceQuery().or().processDefinitionKey(&quot;oneTaskProcess&quot;).processDefinitionId(&quot;undefined&quot;).endOr().count()).isEqualTo(1);</span>
+<span class="nc" id="L289">        assertThat(historyService.createHistoricProcessInstanceQuery().or().processInstanceBusinessKey(&quot;businessKey123&quot;).processDefinitionId(&quot;undefined&quot;).endOr().count()).isEqualTo(1);</span>
+<span class="nc" id="L290">        assertThat(historyService.createHistoricProcessInstanceQuery().or().processInstanceBusinessKeyLike(&quot;b%123&quot;).processDefinitionId(&quot;undefined&quot;).endOr().count()).isEqualTo(1);</span>
+<span class="nc" id="L291">        assertThat(historyService.createHistoricProcessInstanceQuery().or().processInstanceBusinessStatus(&quot;businessStatus123&quot;).processDefinitionId(&quot;undefined&quot;).endOr().count()).isEqualTo(1);</span>
+<span class="nc" id="L292">        assertThat(historyService.createHistoricProcessInstanceQuery().or().processInstanceBusinessStatusLike(&quot;b%123&quot;).processDefinitionId(&quot;undefined&quot;).endOr().count()).isEqualTo(1);</span>
+        
+<span class="nc" id="L294">        List&lt;String&gt; excludeIds = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L295">        excludeIds.add(&quot;unexistingProcessDefinition&quot;);</span>
+
+<span class="nc" id="L297">        assertThat(historyService.createHistoricProcessInstanceQuery().or().processDefinitionKeyNotIn(excludeIds).processDefinitionId(&quot;undefined&quot;).endOr().count()).isEqualTo(1);</span>
+
+<span class="nc" id="L299">        excludeIds.add(&quot;oneTaskProcess&quot;);</span>
+<span class="nc" id="L300">        assertThat(historyService.createHistoricProcessInstanceQuery().or().processDefinitionKeyNotIn(excludeIds).processDefinitionId(&quot;undefined&quot;).endOr().count()).isZero();</span>
+
+        // After finishing process
+<span class="nc" id="L303">        taskService.complete(taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult().getId());</span>
+        
+<span class="nc" id="L305">        waitForHistoryJobExecutorToProcessAllJobs(7000, 100);</span>
+        
+<span class="nc" id="L307">        assertThat(historyService.createHistoricProcessInstanceQuery().or().finished().processDefinitionId(&quot;undefined&quot;).endOr().count()).isEqualTo(1);</span>
+<span class="nc" id="L308">        assertThat(historyService.createHistoricProcessInstanceQuery().or().finishedBefore(hourAgo.getTime()).processDefinitionId(&quot;undefined&quot;).endOr().count()).isZero();</span>
+<span class="nc" id="L309">        assertThat(historyService.createHistoricProcessInstanceQuery().or().finishedBefore(hourFromNow.getTime()).processDefinitionId(&quot;undefined&quot;).endOr().count()).isEqualTo(1);</span>
+<span class="nc" id="L310">        assertThat(historyService.createHistoricProcessInstanceQuery().or().finishedAfter(hourAgo.getTime()).processDefinitionId(&quot;undefined&quot;).endOr().count()).isEqualTo(1);</span>
+<span class="nc" id="L311">        assertThat(historyService.createHistoricProcessInstanceQuery().or().finishedAfter(hourFromNow.getTime()).processDefinitionId(&quot;undefined&quot;).endOr().count()).isZero();</span>
+
+        // Check identity links
+<span class="nc" id="L314">        assertThat(historyService.createHistoricProcessInstanceQuery().or().involvedUser(&quot;kermit&quot;).processDefinitionId(&quot;undefined&quot;).endOr().count()).isEqualTo(1);</span>
+<span class="nc" id="L315">        assertThat(historyService.createHistoricProcessInstanceQuery().or().involvedUser(&quot;gonzo&quot;).processDefinitionId(&quot;undefined&quot;).endOr().count()).isZero();</span>
+<span class="nc" id="L316">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/history/oneTaskProcess.bpmn20.xml&quot; })
+    public void testHistoricProcessInstanceSorting() {
+<span class="nc" id="L321">        ProcessInstance processInstance1 = runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+        
+<span class="nc" id="L323">        waitForHistoryJobExecutorToProcessAllJobs(7000, 100);</span>
+
+<span class="nc" id="L325">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceId().asc().list()).hasSize(1);</span>
+<span class="nc" id="L326">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceStartTime().asc().list()).hasSize(1);</span>
+<span class="nc" id="L327">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceEndTime().asc().list()).hasSize(1);</span>
+<span class="nc" id="L328">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceDuration().asc().list()).hasSize(1);</span>
+<span class="nc" id="L329">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessDefinitionId().asc().list()).hasSize(1);</span>
+<span class="nc" id="L330">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceBusinessKey().asc().list()).hasSize(1);</span>
+
+<span class="nc" id="L332">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceId().desc().list()).hasSize(1);</span>
+<span class="nc" id="L333">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceStartTime().desc().list()).hasSize(1);</span>
+<span class="nc" id="L334">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceEndTime().desc().list()).hasSize(1);</span>
+<span class="nc" id="L335">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceDuration().desc().list()).hasSize(1);</span>
+<span class="nc" id="L336">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessDefinitionId().desc().list()).hasSize(1);</span>
+<span class="nc" id="L337">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceBusinessKey().desc().list()).hasSize(1);</span>
+
+<span class="nc" id="L339">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceId().asc().count()).isEqualTo(1);</span>
+<span class="nc" id="L340">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceStartTime().asc().count()).isEqualTo(1);</span>
+<span class="nc" id="L341">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceEndTime().asc().count()).isEqualTo(1);</span>
+<span class="nc" id="L342">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceDuration().asc().count()).isEqualTo(1);</span>
+<span class="nc" id="L343">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessDefinitionId().asc().count()).isEqualTo(1);</span>
+<span class="nc" id="L344">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceBusinessKey().asc().count()).isEqualTo(1);</span>
+
+<span class="nc" id="L346">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceId().desc().count()).isEqualTo(1);</span>
+<span class="nc" id="L347">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceStartTime().desc().count()).isEqualTo(1);</span>
+<span class="nc" id="L348">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceEndTime().desc().count()).isEqualTo(1);</span>
+<span class="nc" id="L349">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceDuration().desc().count()).isEqualTo(1);</span>
+<span class="nc" id="L350">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessDefinitionId().desc().count()).isEqualTo(1);</span>
+<span class="nc" id="L351">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceBusinessKey().desc().count()).isEqualTo(1);</span>
+
+<span class="nc" id="L353">        ProcessInstance processInstance2 = runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+
+        // First complete process instance 2
+<span class="nc bnc" id="L356" title="All 2 branches missed.">        for (org.flowable.task.api.Task task : taskService.createTaskQuery().processInstanceId(processInstance2.getId()).list()) {</span>
+<span class="nc" id="L357">            taskService.complete(task.getId());</span>
+<span class="nc" id="L358">        }</span>
+
+        // Then process instance 1
+<span class="nc bnc" id="L361" title="All 2 branches missed.">        for (org.flowable.task.api.Task task : taskService.createTaskQuery().processInstanceId(processInstance1.getId()).list()) {</span>
+<span class="nc" id="L362">            taskService.complete(task.getId());</span>
+<span class="nc" id="L363">        }</span>
+        
+<span class="nc" id="L365">        waitForHistoryJobExecutorToProcessAllJobs(7000, 100);</span>
+
+<span class="nc" id="L367">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceId().asc().list()).hasSize(2);</span>
+<span class="nc" id="L368">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceStartTime().asc().list()).hasSize(2);</span>
+<span class="nc" id="L369">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceEndTime().asc().list()).hasSize(2);</span>
+<span class="nc" id="L370">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceDuration().asc().list()).hasSize(2);</span>
+<span class="nc" id="L371">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessDefinitionId().asc().list()).hasSize(2);</span>
+<span class="nc" id="L372">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceBusinessKey().asc().list()).hasSize(2);</span>
+
+<span class="nc" id="L374">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceId().desc().list()).hasSize(2);</span>
+<span class="nc" id="L375">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceStartTime().desc().list()).hasSize(2);</span>
+<span class="nc" id="L376">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceEndTime().desc().list()).hasSize(2);</span>
+<span class="nc" id="L377">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceDuration().desc().list()).hasSize(2);</span>
+<span class="nc" id="L378">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessDefinitionId().desc().list()).hasSize(2);</span>
+<span class="nc" id="L379">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceBusinessKey().desc().list()).hasSize(2);</span>
+
+<span class="nc" id="L381">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceId().asc().count()).isEqualTo(2);</span>
+<span class="nc" id="L382">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceStartTime().asc().count()).isEqualTo(2);</span>
+<span class="nc" id="L383">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceEndTime().asc().count()).isEqualTo(2);</span>
+<span class="nc" id="L384">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceDuration().asc().count()).isEqualTo(2);</span>
+<span class="nc" id="L385">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessDefinitionId().asc().count()).isEqualTo(2);</span>
+<span class="nc" id="L386">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceBusinessKey().asc().count()).isEqualTo(2);</span>
+
+<span class="nc" id="L388">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceId().desc().count()).isEqualTo(2);</span>
+<span class="nc" id="L389">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceStartTime().desc().count()).isEqualTo(2);</span>
+<span class="nc" id="L390">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceEndTime().desc().count()).isEqualTo(2);</span>
+<span class="nc" id="L391">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceDuration().desc().count()).isEqualTo(2);</span>
+<span class="nc" id="L392">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessDefinitionId().desc().count()).isEqualTo(2);</span>
+<span class="nc" id="L393">        assertThat(historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceBusinessKey().desc().count()).isEqualTo(2);</span>
+
+        // Verify orderByProcessInstanceEndTime
+<span class="nc" id="L396">        List&lt;HistoricProcessInstance&gt; historicProcessInstances = historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceEndTime().desc().list();</span>
+        // only check for existence and assume that the SQL processing has ordered the values correctly
+        // see https://github.com/flowable/flowable-engine/issues/8
+<span class="nc" id="L399">        List&lt;String&gt; processInstance = new ArrayList&lt;&gt;(2);</span>
+<span class="nc" id="L400">        processInstance.add(historicProcessInstances.get(0).getId());</span>
+<span class="nc" id="L401">        processInstance.add(historicProcessInstances.get(1).getId());</span>
+<span class="nc" id="L402">        assertThat(processInstance)</span>
+<span class="nc" id="L403">                .contains(</span>
+<span class="nc" id="L404">                        processInstance1.getId(),</span>
+<span class="nc" id="L405">                        processInstance2.getId()</span>
+                );
+
+        // Verify again, with variables included (bug reported on that)
+<span class="nc" id="L409">        historicProcessInstances = historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceEndTime().desc().includeProcessVariables().list();</span>
+<span class="nc" id="L410">        processInstance = new ArrayList&lt;&gt;(4);</span>
+<span class="nc" id="L411">        processInstance.add(historicProcessInstances.get(0).getId());</span>
+<span class="nc" id="L412">        processInstance.add(historicProcessInstances.get(1).getId());</span>
+<span class="nc" id="L413">        assertThat(processInstance)</span>
+<span class="nc" id="L414">                .contains(</span>
+<span class="nc" id="L415">                        processInstance1.getId(),</span>
+<span class="nc" id="L416">                        processInstance2.getId()</span>
+                );
+<span class="nc" id="L418">    }</span>
+
+    @Test
+    public void testInvalidSorting() {
+<span class="nc" id="L422">        assertThatThrownBy(() -&gt; historyService.createHistoricProcessInstanceQuery().asc())</span>
+<span class="nc" id="L423">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class);</span>
+
+<span class="nc" id="L425">        assertThatThrownBy(() -&gt; historyService.createHistoricProcessInstanceQuery().desc())</span>
+<span class="nc" id="L426">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class);</span>
+
+<span class="nc" id="L428">        assertThatThrownBy(() -&gt; historyService.createHistoricProcessInstanceQuery().orderByProcessInstanceId().list())</span>
+<span class="nc" id="L429">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class);</span>
+<span class="nc" id="L430">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/history/oneTaskProcess.bpmn20.xml&quot; })
+    // ACT-1098
+    public void testDeleteReason() {
+<span class="nc bnc" id="L436" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L437">            final String deleteReason = &quot;some delete reason&quot;;</span>
+<span class="nc" id="L438">            ProcessInstance pi = runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+<span class="nc" id="L439">            runtimeService.deleteProcessInstance(pi.getId(), deleteReason);</span>
+            
+<span class="nc" id="L441">            waitForHistoryJobExecutorToProcessAllJobs(7000, 100);</span>
+            
+<span class="nc" id="L443">            HistoricProcessInstance hpi = historyService.createHistoricProcessInstanceQuery().processInstanceId(pi.getId()).singleResult();</span>
+<span class="nc" id="L444">            assertThat(hpi.getDeleteReason()).isEqualTo(deleteReason);</span>
+        }
+<span class="nc" id="L446">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/history/oneTaskProcess.bpmn20.xml&quot; })
+    public void testHistoricIdentityLinksOnProcessInstance() {
+<span class="nc bnc" id="L451" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.AUDIT, processEngineConfiguration)) {</span>
+<span class="nc" id="L452">            ProcessInstance pi = runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+<span class="nc" id="L453">            runtimeService.addUserIdentityLink(pi.getId(), &quot;kermit&quot;, &quot;myType&quot;);</span>
+            
+<span class="nc" id="L455">            waitForHistoryJobExecutorToProcessAllJobs(7000, 100);</span>
+
+            // Check historic links
+<span class="nc" id="L458">            List&lt;HistoricIdentityLink&gt; historicLinks = historyService.getHistoricIdentityLinksForProcessInstance(pi.getId());</span>
+<span class="nc" id="L459">            assertThat(historicLinks).hasSize(1);</span>
+
+<span class="nc" id="L461">            assertThat(historicLinks.get(0).getType()).isEqualTo(&quot;myType&quot;);</span>
+<span class="nc" id="L462">            assertThat(historicLinks.get(0).getUserId()).isEqualTo(&quot;kermit&quot;);</span>
+<span class="nc" id="L463">            assertThat(historicLinks.get(0).getGroupId()).isNull();</span>
+<span class="nc" id="L464">            assertThat(historicLinks.get(0).getProcessInstanceId()).isEqualTo(pi.getId());</span>
+
+            // When process is ended, link should remain
+<span class="nc" id="L467">            taskService.complete(taskService.createTaskQuery().processInstanceId(pi.getId()).singleResult().getId());</span>
+<span class="nc" id="L468">            assertThat(runtimeService.createProcessInstanceQuery().processInstanceId(pi.getId()).singleResult()).isNull();</span>
+            
+<span class="nc" id="L470">            waitForHistoryJobExecutorToProcessAllJobs(7000, 100);</span>
+
+<span class="nc" id="L472">            assertThat(historyService.getHistoricIdentityLinksForProcessInstance(pi.getId())).hasSize(1);</span>
+
+            // When process is deleted, identitylinks shouldn't exist anymore
+<span class="nc" id="L475">            historyService.deleteHistoricProcessInstance(pi.getId());</span>
+            
+<span class="nc" id="L477">            waitForHistoryJobExecutorToProcessAllJobs(7000, 100);</span>
+            
+<span class="nc" id="L479">            assertThat(historyService.getHistoricIdentityLinksForProcessInstance(pi.getId())).isEmpty();</span>
+        }
+<span class="nc" id="L481">    }</span>
+
+    /**
+     * Validation for ACT-821
+     */
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/history/HistoricProcessInstanceTest.testDeleteHistoricProcessInstanceWithCallActivity.bpmn20.xml&quot;,
+            &quot;org/flowable/engine/test/history/HistoricProcessInstanceTest.testDeleteHistoricProcessInstanceWithCallActivity-subprocess.bpmn20.xml&quot; })
+    public void testDeleteHistoricProcessInstanceWithCallActivity() {
+<span class="nc bnc" id="L490" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.AUDIT, processEngineConfiguration)) {</span>
+<span class="nc" id="L491">            ProcessInstance pi = runtimeService.startProcessInstanceByKey(&quot;callSimpleSubProcess&quot;);</span>
+
+<span class="nc" id="L493">            runtimeService.deleteProcessInstance(pi.getId(), &quot;testing&quot;);</span>
+            
+<span class="nc" id="L495">            waitForHistoryJobExecutorToProcessAllJobs(7000, 100);</span>
+
+            // The parent and child process should be present in history
+<span class="nc" id="L498">            assertThat(historyService.createHistoricProcessInstanceQuery().count()).isEqualTo(2);</span>
+
+            // Deleting the parent process should cascade the child-process
+<span class="nc" id="L501">            historyService.deleteHistoricProcessInstance(pi.getId());</span>
+            
+<span class="nc" id="L503">            waitForHistoryJobExecutorToProcessAllJobs(7000, 100);</span>
+            
+<span class="nc" id="L505">            assertThat(historyService.createHistoricProcessInstanceQuery().count()).isZero();</span>
+        }
+<span class="nc" id="L507">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/history/oneTaskProcess.bpmn20.xml&quot; })
+    public void testHistoricProcessInstanceName() {
+<span class="nc" id="L512">        String piName = &quot;Customized Process Instance Name&quot;;</span>
+<span class="nc" id="L513">        ProcessInstanceBuilder builder = runtimeService.createProcessInstanceBuilder();</span>
+<span class="nc" id="L514">        builder.processDefinitionKey(&quot;oneTaskProcess&quot;);</span>
+<span class="nc" id="L515">        builder.name(piName);</span>
+<span class="nc" id="L516">        ProcessInstance processInstance1 = builder.start();</span>
+        
+<span class="nc" id="L518">        waitForHistoryJobExecutorToProcessAllJobs(7000, 100);</span>
+
+<span class="nc" id="L520">        HistoricProcessInstance historicProcessInstance = historyService.createHistoricProcessInstanceQuery().processInstanceId(processInstance1.getProcessInstanceId()).singleResult();</span>
+<span class="nc" id="L521">        assertThat(historicProcessInstance.getName()).isEqualTo(piName);</span>
+<span class="nc" id="L522">        assertThat(historyService.createHistoricProcessInstanceQuery().processInstanceName(piName).list()).hasSize(1);</span>
+<span class="nc" id="L523">    }</span>
+
+    /**
+     * Validation for https://jira.codehaus.org/browse/ACT-2182
+     */
+    @Test
+    public void testNameAndTenantIdSetWhenFetchingVariables() {
+
+<span class="nc" id="L531">        String tenantId = &quot;testTenantId&quot;;</span>
+<span class="nc" id="L532">        String processInstanceName = &quot;myProcessInstance&quot;;</span>
+
+<span class="nc" id="L534">        String deploymentId = repositoryService.createDeployment().addClasspathResource(&quot;org/flowable/engine/test/history/oneTaskProcess.bpmn20.xml&quot;).tenantId(tenantId).deploy().getId();</span>
+
+<span class="nc" id="L536">        Map&lt;String, Object&gt; vars = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L537">        vars.put(&quot;name&quot;, &quot;Kermit&quot;);</span>
+<span class="nc" id="L538">        vars.put(&quot;age&quot;, 60);</span>
+<span class="nc" id="L539">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKeyAndTenantId(&quot;oneTaskProcess&quot;, vars, tenantId);</span>
+<span class="nc" id="L540">        runtimeService.setProcessInstanceName(processInstance.getId(), processInstanceName);</span>
+
+        // Verify name and tenant id (didn't work on mssql and db2) on process instance
+<span class="nc" id="L543">        List&lt;ProcessInstance&gt; processInstances = runtimeService.createProcessInstanceQuery().includeProcessVariables().list();</span>
+<span class="nc" id="L544">        assertThat(processInstances).hasSize(1);</span>
+<span class="nc" id="L545">        processInstance = processInstances.get(0);</span>
+
+<span class="nc" id="L547">        assertThat(processInstance.getName()).isEqualTo(processInstanceName);</span>
+<span class="nc" id="L548">        assertThat(processInstance.getTenantId()).isEqualTo(tenantId);</span>
+
+<span class="nc" id="L550">        Map&lt;String, Object&gt; processInstanceVars = processInstance.getProcessVariables();</span>
+<span class="nc" id="L551">        assertThat(processInstanceVars)</span>
+<span class="nc" id="L552">                .containsOnly(</span>
+<span class="nc" id="L553">                        entry(&quot;name&quot;, &quot;Kermit&quot;),</span>
+<span class="nc" id="L554">                        entry(&quot;age&quot;, 60)</span>
+                );
+        
+<span class="nc" id="L557">        waitForHistoryJobExecutorToProcessAllJobs(10000, 200);</span>
+
+        // Verify name and tenant id (didn't work on mssql and db2) on historic process instance
+<span class="nc" id="L560">        List&lt;HistoricProcessInstance&gt; historicProcessInstances = historyService.createHistoricProcessInstanceQuery().includeProcessVariables().list();</span>
+<span class="nc" id="L561">        assertThat(historicProcessInstances).hasSize(1);</span>
+<span class="nc" id="L562">        HistoricProcessInstance historicProcessInstance = historicProcessInstances.get(0);</span>
+
+        // Verify name and tenant id (didn't work on mssql and db2) on process instance
+<span class="nc" id="L565">        assertThat(historicProcessInstance.getName()).isEqualTo(processInstanceName);</span>
+<span class="nc" id="L566">        assertThat(historicProcessInstance.getTenantId()).isEqualTo(tenantId);</span>
+
+<span class="nc" id="L568">        Map&lt;String, Object&gt; historicProcessInstanceVars = historicProcessInstance.getProcessVariables();</span>
+<span class="nc" id="L569">        assertThat(historicProcessInstanceVars)</span>
+<span class="nc" id="L570">                .containsOnly(</span>
+<span class="nc" id="L571">                        entry(&quot;name&quot;, &quot;Kermit&quot;),</span>
+<span class="nc" id="L572">                        entry(&quot;age&quot;, 60)</span>
+                );
+        
+<span class="nc" id="L575">        waitForHistoryJobExecutorToProcessAllJobs(10000, 200);</span>
+
+        // cleanup
+<span class="nc" id="L578">        deleteDeployment(deploymentId);</span>
+<span class="nc" id="L579">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot; })
+    public void testQueryByInvalidCallbackId() {
+<span class="nc" id="L584">        String processInstanceId = runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;, &quot;now&quot;).getId();</span>
+
+<span class="nc bnc" id="L586" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.AUDIT, processEngineConfiguration)) {</span>
+<span class="nc" id="L587">            assertThat(historyService.createHistoricProcessInstanceQuery().processInstanceId(processInstanceId).processInstanceCallbackId(&quot;foo&quot;).singleResult()).isNull();</span>
+        }
+<span class="nc" id="L589">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot; })
+    public void testQueryByInvalidCallbackType() {
+<span class="nc" id="L594">        String processInstanceId = runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;, &quot;now&quot;).getId();</span>
+
+<span class="nc bnc" id="L596" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.AUDIT, processEngineConfiguration)) {</span>
+<span class="nc" id="L597">            assertThat(historyService.createHistoricProcessInstanceQuery().processInstanceId(processInstanceId).processInstanceCallbackType(&quot;foo&quot;).singleResult()).isNull();</span>
+        }
+<span class="nc" id="L599">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

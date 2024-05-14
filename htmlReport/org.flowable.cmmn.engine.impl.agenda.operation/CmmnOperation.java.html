@@ -1,0 +1,347 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CmmnOperation.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.cmmn.engine.impl.agenda.operation</a> &gt; <span class="el_source">CmmnOperation.java</span></div><h1>CmmnOperation.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.cmmn.engine.impl.agenda.operation;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.cmmn.engine.impl.agenda.PlanItemEvaluationResult;
+import org.flowable.cmmn.engine.impl.persistence.entity.CaseInstanceEntity;
+import org.flowable.cmmn.engine.impl.persistence.entity.PlanItemInstanceContainer;
+import org.flowable.cmmn.engine.impl.persistence.entity.PlanItemInstanceEntity;
+import org.flowable.cmmn.engine.impl.repository.CaseDefinitionUtil;
+import org.flowable.cmmn.engine.impl.util.CommandContextUtil;
+import org.flowable.cmmn.engine.impl.util.ExpressionUtil;
+import org.flowable.cmmn.engine.impl.util.PlanItemInstanceUtil;
+import org.flowable.cmmn.model.Case;
+import org.flowable.cmmn.model.EventListener;
+import org.flowable.cmmn.model.PlanFragment;
+import org.flowable.cmmn.model.PlanItem;
+import org.flowable.cmmn.model.PlanItemControl;
+import org.flowable.cmmn.model.PlanItemDefinition;
+import org.flowable.cmmn.model.ReactivationRule;
+import org.flowable.cmmn.model.Stage;
+import org.flowable.common.engine.api.variable.VariableContainer;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+
+/**
+ * An abstract base class for CMMN engine based operations supporting general functionalities.
+ *
+ * @author Joram Barrez
+ * @author Micha Kiener
+ */
+public abstract class CmmnOperation implements Runnable {
+    
+    protected CommandContext commandContext;
+<span class="nc" id="L47">    protected boolean isNoop = false; // flag indicating whether this operation did something. False by default, as all operation should typically do something.</span>
+    
+<span class="nc" id="L49">    public CmmnOperation() {</span>
+<span class="nc" id="L50">    }</span>
+
+<span class="nc" id="L52">    public CmmnOperation(CommandContext commandContext) {</span>
+<span class="nc" id="L53">        this.commandContext = commandContext;</span>
+<span class="nc" id="L54">    }</span>
+
+    /**
+     * @return The id of the case instance related to this operation.
+     */
+    public abstract String getCaseInstanceId();
+
+    /**
+     * Returns the case instance entity using the entity manager by getting the case instance id through {@link #getCaseInstanceId()} and returning
+     * the case instance entity accordingly. If there is no id provided, this method will return null, but not throw an exception.
+     *
+     * @return the case instance entity according the case instance id involved in this operation or null, if there is none involved
+     */
+    protected CaseInstanceEntity getCaseInstance() {
+<span class="nc" id="L68">        String caseId = getCaseInstanceId();</span>
+<span class="nc bnc" id="L69" title="All 2 branches missed.">        if (caseId == null) {</span>
+<span class="nc" id="L70">            return null;</span>
+        }
+
+<span class="nc" id="L73">        return CommandContextUtil.getCaseInstanceEntityManager(commandContext).findById(caseId);</span>
+    }
+
+    protected Stage getStage(PlanItemInstanceEntity planItemInstanceEntity) {
+<span class="nc" id="L77">        PlanItemDefinition planItemDefinition = planItemInstanceEntity.getPlanItem().getPlanItemDefinition();</span>
+<span class="nc bnc" id="L78" title="All 2 branches missed.">        if (planItemDefinition instanceof Stage) {</span>
+<span class="nc" id="L79">            return (Stage) planItemDefinition;</span>
+        } else {
+<span class="nc" id="L81">            return planItemDefinition.getParentStage();</span>
+        }
+    }
+
+    public boolean isStage(PlanItemInstanceEntity planItemInstanceEntity) {
+<span class="nc bnc" id="L86" title="All 2 branches missed.">        return (planItemInstanceEntity.getPlanItem() != null</span>
+<span class="nc bnc" id="L87" title="All 2 branches missed.">                &amp;&amp; planItemInstanceEntity.getPlanItem().getPlanItemDefinition() != null</span>
+<span class="nc bnc" id="L88" title="All 2 branches missed.">                &amp;&amp; planItemInstanceEntity.getPlanItem().getPlanItemDefinition() instanceof Stage);</span>
+    }
+
+    public Stage getPlanModel(CaseInstanceEntity caseInstanceEntity) {
+<span class="nc" id="L92">        return CaseDefinitionUtil.getCase(caseInstanceEntity.getCaseDefinitionId()).getPlanModel();</span>
+    }
+    
+    
+    /**
+     * Creates child plan items for the provided stage, might also be the root plan model. It supports both scenarios: a case, running the first time or even
+     * a reactivated one which has some reactivation rules to be considered when creating child plan items.
+     *
+     * @param commandContext the command context to run this method with
+     * @param caseModel the case model the given stage or plan model is contained within
+     * @param planItems the plan items of the stage to be checked for creation
+     * @param directlyReactivatedPlanItems an optional list of plan items already having been reactivated as part of phase 1 of a case reactivation, might be
+     *      null or empty, specially for a regular case
+     * @param caseInstanceEntity the case instance entity, must be provided as it is used to check for a first time running case or a reactivated one
+     * @param stagePlanItemInstanceEntity the optional stage plan item instance, if already available, might be null in very specific use cases (e.g. cross-stage activities, etc)
+     * @param tenantId the id of the tenant to run within
+     * @return the list of created plan item instances for this stage or plan model
+     */
+    protected List&lt;PlanItemInstanceEntity&gt; createPlanItemInstancesForNewOrReactivatedStage(CommandContext commandContext, Case caseModel, List&lt;PlanItem&gt; planItems,
+            List&lt;PlanItem&gt; directlyReactivatedPlanItems, CaseInstanceEntity caseInstanceEntity, PlanItemInstanceEntity stagePlanItemInstanceEntity, String tenantId) {
+        
+<span class="nc" id="L113">        List&lt;PlanItemInstanceEntity&gt; newPlanItemInstances = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L114" title="All 2 branches missed.">        for (PlanItem planItem : planItems) {</span>
+
+<span class="nc bnc" id="L116" title="All 2 branches missed.">            if (planItem.isInstanceLifecycleEnabled()) {</span>
+                // check, if the plan item was already reactivated as part of phase 1 of a case reactivation and if so, skip it to prevent it from being
+                // reactivated more than once
+<span class="nc bnc" id="L119" title="All 4 branches missed.">                if (directlyReactivatedPlanItems == null || directlyReactivatedPlanItems.stream().noneMatch(i -&gt; i.getId().equals(planItem.getId()))) {</span>
+<span class="nc" id="L120">                    createPlanItemInstanceIfNeeded(commandContext, planItem, caseModel, caseInstanceEntity,</span>
+                        stagePlanItemInstanceEntity, tenantId, newPlanItemInstances);
+                }
+
+<span class="nc bnc" id="L124" title="All 4 branches missed.">            } else if (planItem.getPlanItemDefinition() != null &amp;&amp; planItem.getPlanItemDefinition() instanceof PlanFragment) {</span>
+                // Some plan items (plan fragments) exist as plan item, but not as plan item instance
+<span class="nc" id="L126">                PlanFragment planFragment = (PlanFragment) planItem.getPlanItemDefinition();</span>
+<span class="nc" id="L127">                List&lt;PlanItem&gt; planFragmentPlanItems = planFragment.getDirectChildPlanItemsWithLifecycleEnabled();</span>
+<span class="nc bnc" id="L128" title="All 2 branches missed.">                for (PlanItem planFragmentPlanItem : planFragmentPlanItems) {</span>
+<span class="nc" id="L129">                    createPlanItemInstanceIfNeeded(commandContext, planFragmentPlanItem, caseModel, caseInstanceEntity,</span>
+                        stagePlanItemInstanceEntity, tenantId, newPlanItemInstances);
+<span class="nc" id="L131">                }</span>
+
+            }
+<span class="nc" id="L134">        }</span>
+<span class="nc" id="L135">        return newPlanItemInstances;</span>
+    }
+
+    /**
+     * Checks whether the provided plan item needs an instance to be created and optionally activated directly (e.g. for a reactivation use case). It checks
+     * the plan items reactivation model, if the case is a reactivated one.
+     *
+     * @param commandContext the command context in which this method runs
+     * @param planItem the plan item to check for an item creation
+     * @param caseModel the case model used to get the creation mode
+     * @param caseInstanceEntity the case entity used to check, if it is a reactivated one
+     * @param stagePlanItemInstanceEntity the stage the plan item belongs to
+     * @param tenantId the id of the tenant the case belongs to
+     * @param newPlanItemInstances the array where the new plan item instance will be added, if it was created
+     */
+    protected void createPlanItemInstanceIfNeeded(CommandContext commandContext, PlanItem planItem, Case caseModel, CaseInstanceEntity caseInstanceEntity,
+            PlanItemInstanceEntity stagePlanItemInstanceEntity, String tenantId, List&lt;PlanItemInstanceEntity&gt; newPlanItemInstances) {
+
+        // In some cases (e.g. cross-border triggering of a sentry, the child plan item instance has been activated already
+        // As such, it doesn't need to be created again (this is the if check here, which goes against the cache)
+<span class="nc bnc" id="L155" title="All 4 branches missed.">        if (stagePlanItemInstanceEntity == null || !childPlanItemInstanceForPlanItemExists(stagePlanItemInstanceEntity, planItem)) {</span>
+
+            // check if we are in a reactivated case as creating new plan items is depending on the reactivation rule of the plan item
+            // or the default one of the reactivation event listener
+<span class="nc" id="L159">            PlanItemCreationType creationType = getPlanItemCreationOrReactivationType(caseInstanceEntity, caseModel, planItem, stagePlanItemInstanceEntity);</span>
+
+<span class="nc bnc" id="L161" title="All 2 branches missed.">            if (!creationType.isTypeIgnore()) {</span>
+
+<span class="nc" id="L163">                String caseInstanceId = null;</span>
+<span class="nc bnc" id="L164" title="All 2 branches missed.">                if (caseInstanceEntity != null) {</span>
+<span class="nc" id="L165">                    caseInstanceId = caseInstanceEntity.getId();</span>
+<span class="nc bnc" id="L166" title="All 2 branches missed.">                } else if (stagePlanItemInstanceEntity != null) {</span>
+<span class="nc" id="L167">                    caseInstanceId = stagePlanItemInstanceEntity.getCaseInstanceId();</span>
+                }
+
+<span class="nc" id="L170">                PlanItemInstanceEntity childPlanItemInstance = CommandContextUtil.getPlanItemInstanceEntityManager(commandContext)</span>
+<span class="nc" id="L171">                    .createPlanItemInstanceEntityBuilder()</span>
+<span class="nc" id="L172">                    .planItem(planItem)</span>
+<span class="nc" id="L173">                    .caseDefinitionId(caseInstanceEntity.getCaseDefinitionId())</span>
+<span class="nc" id="L174">                    .caseInstanceId(caseInstanceId)</span>
+<span class="nc" id="L175">                    .stagePlanItemInstance(stagePlanItemInstanceEntity)</span>
+<span class="nc" id="L176">                    .tenantId(tenantId)</span>
+<span class="nc" id="L177">                    .addToParent(true)</span>
+                    // we silently ignore any exceptions evaluating the name for the new plan item, if it has repetition on a collection, as the item / itemIndex
+                    // local variables might not yet be available
+<span class="nc" id="L180">                    .silentNameExpressionEvaluation(ExpressionUtil.hasRepetitionOnCollection(planItem))</span>
+<span class="nc" id="L181">                    .create();</span>
+                
+<span class="nc" id="L183">                PlanItemEvaluationResult evaluationResult = null;</span>
+<span class="nc bnc" id="L184" title="All 2 branches missed.">                if (creationType.isTypeActivate()) {</span>
+<span class="nc" id="L185">                    evaluationResult = new PlanItemEvaluationResult();</span>
+<span class="nc" id="L186">                    PlanItemInstanceUtil.evaluateRepetitionRule(childPlanItemInstance, null, stagePlanItemInstanceEntity,</span>
+                            evaluationResult, commandContext);
+                }
+                
+<span class="nc" id="L190">                newPlanItemInstances.add(childPlanItemInstance);</span>
+                
+<span class="nc bnc" id="L192" title="All 6 branches missed.">                if (creationType.isTypeActivate() &amp;&amp; evaluationResult.getNewChildPlanItemInstances() != null &amp;&amp; !evaluationResult.getNewChildPlanItemInstances().isEmpty()) {</span>
+<span class="nc" id="L193">                    newPlanItemInstances.addAll(evaluationResult.getNewChildPlanItemInstances());</span>
+                }
+
+                // for default or activate creation type, we need to plan for the create operation
+<span class="nc" id="L197">                CommandContextUtil.getAgenda(commandContext).planCreatePlanItemInstanceOperation(childPlanItemInstance);</span>
+
+                // additionally, we plan for the activation operation, if we directly need to activate the plan item without any further evaluation
+<span class="nc bnc" id="L200" title="All 2 branches missed.">                if (creationType.isTypeActivate()) {</span>
+<span class="nc" id="L201">                    CommandContextUtil.getAgenda(commandContext).planActivatePlanItemInstanceOperation(childPlanItemInstance, null);</span>
+                }
+            }
+        }
+<span class="nc" id="L205">    }</span>
+
+    protected boolean childPlanItemInstanceForPlanItemExists(PlanItemInstanceContainer planItemInstanceContainer, PlanItem planItem) {
+<span class="nc" id="L208">        List&lt;PlanItemInstanceEntity&gt; childPlanItemInstances = planItemInstanceContainer.getChildPlanItemInstances();</span>
+<span class="nc bnc" id="L209" title="All 4 branches missed.">        if (childPlanItemInstances != null &amp;&amp; !childPlanItemInstances.isEmpty()) {</span>
+<span class="nc bnc" id="L210" title="All 2 branches missed.">            for (PlanItemInstanceEntity childPlanItemInstanceEntity : childPlanItemInstances) {</span>
+<span class="nc bnc" id="L211" title="All 4 branches missed.">                if (childPlanItemInstanceEntity.getPlanItem() != null &amp;&amp; planItem.getId().equals(childPlanItemInstanceEntity.getPlanItem().getId())) {</span>
+<span class="nc" id="L212">                    return true;</span>
+                }
+<span class="nc" id="L214">            }</span>
+        }
+<span class="nc" id="L216">        return false;</span>
+    }
+
+    public boolean isEventListenerWithAvailableCondition(PlanItem planItem) {
+<span class="nc bnc" id="L220" title="All 6 branches missed.">        if (planItem != null &amp;&amp; planItem.getPlanItemDefinition() != null &amp;&amp; planItem.getPlanItemDefinition() instanceof EventListener) {</span>
+<span class="nc" id="L221">            EventListener eventListener = (EventListener) planItem.getPlanItemDefinition();</span>
+<span class="nc" id="L222">            return StringUtils.isNotEmpty(eventListener.getAvailableConditionExpression());</span>
+        }
+<span class="nc" id="L224">        return false;</span>
+    }
+    
+    protected void setRepetitionCounter(PlanItemInstanceEntity repeatingPlanItemInstanceEntity, int counterValue) {
+<span class="nc" id="L228">        repeatingPlanItemInstanceEntity.setVariableLocal(PlanItemInstanceUtil.getCounterVariable(repeatingPlanItemInstanceEntity), counterValue);</span>
+<span class="nc" id="L229">    }</span>
+
+    /**
+     * Evaluates the reactivation rule for the provided plan item, if the case is a reactivated one, otherwise the creation type will always be default.
+     * For a reactivated case, the plan items optional reactivation rule is considered and its creation type returned. If there is none but there is a default
+     * one specified on the reactivation listener, that creation type is returned instead.
+     *
+     * @param caseInstanceEntity the case instance to check for a reactivated case
+     * @param caseModel the case model to obtain the reactivation listener
+     * @param planItem the plan item to be evaluated for creation type
+     * @param parentPlanItemInstance the parent plan item (e.g. stage or plan model) of the plan item
+     * @return the plan item creation type according all the rules for creation and reactivation
+     */
+    protected PlanItemCreationType getPlanItemCreationOrReactivationType(CaseInstanceEntity caseInstanceEntity, Case caseModel, 
+            PlanItem planItem, VariableContainer parentPlanItemInstance) {
+
+        // if the case was never reactivated, we can directly return as there is no special rules to be considered during creation of plan items
+<span class="nc bnc" id="L246" title="All 2 branches missed.">        if (caseInstanceEntity.getLastReactivationTime() == null) {</span>
+<span class="nc" id="L247">            return PlanItemCreationType.typeDefault();</span>
+        }
+
+        // if the case was reactivated, we need to check the reactivation rules, if any specified on the plan item or a default one on the listener
+<span class="nc" id="L251">        PlanItemControl itemControl = planItem.getItemControl();</span>
+<span class="nc bnc" id="L252" title="All 4 branches missed.">        if (itemControl != null &amp;&amp; itemControl.getReactivationRule() != null) {</span>
+            // evaluate the specific reactivation rule on the plan item directly as a first step
+<span class="nc" id="L254">            PlanItemCreationType creationType = evaluateReactivationRule(itemControl.getReactivationRule(), caseInstanceEntity, parentPlanItemInstance);</span>
+<span class="nc bnc" id="L255" title="All 2 branches missed.">            if (creationType != null) {</span>
+<span class="nc" id="L256">                return creationType;</span>
+            }
+        }
+
+        // if there is no reactivation rule provided explicitly, or it didn't match any of its conditions, we need to check the reactivation listener as it
+        // might contain the default reactivation rule for plan items
+<span class="nc bnc" id="L262" title="All 4 branches missed.">        if (caseModel.getReactivateEventListener() != null &amp;&amp; caseModel.getReactivateEventListener().getDefaultReactivationRule() != null) {</span>
+<span class="nc" id="L263">            PlanItemCreationType creationType = evaluateReactivationRule(caseModel.getReactivateEventListener().getDefaultReactivationRule(),</span>
+                caseInstanceEntity, parentPlanItemInstance);
+
+            // return the default creation type, if the rule matched
+<span class="nc bnc" id="L267" title="All 2 branches missed.">            if (creationType != null) {</span>
+<span class="nc" id="L268">                return creationType;</span>
+            }
+        }
+
+        // return the default type which is the same like with regular case creation, if no matching rules found explicitly on the plan item or event listener
+<span class="nc" id="L273">        return PlanItemCreationType.typeDefault();</span>
+    }
+
+    /**
+     * Evaluates the provided reactivation rule for a matching rule and returns its creation type, if at least one was matching. The rules are evaluated the
+     * following way:
+     * &lt;ul&gt;
+     *     &lt;li&gt;reactivation condition: only if explicitly evaluating to true, that type is returned, if false or not existing, it is not considered&lt;/li&gt;
+     *     &lt;li&gt;ignore condition: only if explicitly evaluating to true, that type is returned, if false or not existing, it is not considered&lt;/li&gt;
+     *     &lt;li&gt;default condition: if explicitly evaluating to either true OR false, type default or type ignore is returned, only if there is no condition, nothing is returned&lt;/li&gt;
+     * &lt;/ul&gt;
+     * Or in other words: if there is an explicit matching activate or ignore rule, activate or ignore is returned, if there is an explicit default rule,
+     * default is returned if it evaluates to true, ignore if it evaluates to false or null, if none of the above is met.
+     *
+     * @param reactivationRule the reactivation rule to evaluate against the given context of either the parent plan item instance or the case instance itself
+     * @param caseInstanceEntity the case instance which must not be null
+     * @param parentPlanItemInstance the optional parent plan item instance (e.g. stage or plan model), if already existing, might be null
+     * @return the evaluated creation type, if explicitly matched against one of the rules, null, if no matching rule was found
+     */
+    protected PlanItemCreationType evaluateReactivationRule(ReactivationRule reactivationRule, CaseInstanceEntity caseInstanceEntity, VariableContainer parentPlanItemInstance) {
+        // first evaluate for an activate condition
+<span class="nc" id="L294">        Boolean condition = evaluateReactivationCondition(reactivationRule.getActivateCondition(), caseInstanceEntity, parentPlanItemInstance);</span>
+<span class="nc bnc" id="L295" title="All 4 branches missed.">        if (condition != null &amp;&amp; condition) {</span>
+            // only return for an activation, if explicitly evaluated to true
+<span class="nc" id="L297">            return PlanItemCreationType.typeActivate();</span>
+        }
+
+        // next evaluate for an ignore condition
+<span class="nc" id="L301">        condition = evaluateReactivationCondition(reactivationRule.getIgnoreCondition(), caseInstanceEntity, parentPlanItemInstance);</span>
+<span class="nc bnc" id="L302" title="All 4 branches missed.">        if (condition != null &amp;&amp; condition) {</span>
+            // only return ignore, if explicitly evaluated to true
+<span class="nc" id="L304">            return PlanItemCreationType.typeIgnore();</span>
+        }
+
+        // next evaluate for a default condition
+<span class="nc" id="L308">        condition = evaluateReactivationCondition(reactivationRule.getDefaultCondition(), caseInstanceEntity, parentPlanItemInstance);</span>
+<span class="nc bnc" id="L309" title="All 2 branches missed.">        if (condition != null) {</span>
+            // return on an explicit result, even if false
+<span class="nc bnc" id="L311" title="All 2 branches missed.">            if (condition) {</span>
+<span class="nc" id="L312">                return PlanItemCreationType.typeDefault();</span>
+            }
+<span class="nc" id="L314">            return PlanItemCreationType.typeIgnore();</span>
+        }
+<span class="nc" id="L316">        return null;</span>
+    }
+
+    /**
+     * Evaluates the provided reactivation condition, which might also be null or a constant like &quot;true&quot;. If it is a condition, it is evaluated in
+     * the context of the provided variable container.
+     *
+     * @param condition the condition to be evaluated, might be null or a constant like &quot;true&quot;
+     * @param caseInstanceEntity the case instance to be used as the expression context, if the parent plan item is not yet available (null)
+     * @param parentPlanItemInstance the optional parent plan item to be used as the expression evaluation context
+     * @return the condition evaluation result
+     */
+    protected Boolean evaluateReactivationCondition(String condition, CaseInstanceEntity caseInstanceEntity, VariableContainer parentPlanItemInstance) {
+<span class="nc bnc" id="L329" title="All 2 branches missed.">        if (StringUtils.isEmpty(condition)) {</span>
+<span class="nc" id="L330">            return null;</span>
+        }
+<span class="nc bnc" id="L332" title="All 2 branches missed.">        if (Boolean.parseBoolean(condition)) {</span>
+<span class="nc" id="L333">            return true;</span>
+        }
+<span class="nc bnc" id="L335" title="All 2 branches missed.">        return ExpressionUtil.evaluateBooleanExpression(commandContext, parentPlanItemInstance == null ? caseInstanceEntity : parentPlanItemInstance, condition);</span>
+    }
+
+    public void markAsNoop() {
+<span class="nc" id="L339">        isNoop = true;</span>
+<span class="nc" id="L340">    }</span>
+
+    public boolean isNoop() {
+<span class="nc" id="L343">        return isNoop;</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

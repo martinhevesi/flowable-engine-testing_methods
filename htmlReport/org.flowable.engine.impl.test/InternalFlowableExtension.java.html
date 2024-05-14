@@ -1,0 +1,215 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>InternalFlowableExtension.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.test</a> &gt; <span class="el_source">InternalFlowableExtension.java</span></div><h1>InternalFlowableExtension.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.impl.test;
+
+import java.util.List;
+
+import org.flowable.common.engine.api.FlowableOptimisticLockingException;
+import org.flowable.common.engine.impl.db.SchemaManager;
+import org.flowable.common.engine.impl.interceptor.Command;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.common.engine.impl.test.CleanTest;
+import org.flowable.common.engine.impl.test.EnsureCleanDb;
+import org.flowable.common.engine.impl.test.EnsureCleanDbUtils;
+import org.flowable.engine.ManagementService;
+import org.flowable.engine.ProcessEngine;
+import org.flowable.engine.ProcessEngineConfiguration;
+import org.flowable.engine.RepositoryService;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.history.DefaultHistoryManager;
+import org.flowable.engine.impl.history.HistoryManager;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.engine.test.Deployment;
+import org.flowable.engine.test.DeploymentId;
+import org.flowable.job.api.HistoryJob;
+import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.extension.AfterAllCallback;
+import org.junit.jupiter.api.extension.AfterEachCallback;
+import org.junit.jupiter.api.extension.BeforeEachCallback;
+import org.junit.jupiter.api.extension.ExtensionContext;
+import org.junit.jupiter.api.extension.ParameterContext;
+import org.junit.jupiter.api.extension.ParameterResolver;
+import org.junit.platform.commons.support.AnnotationSupport;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Base internal extension for JUnit Jupiter. This is a basis for other internal extensions. It allows:
+ * &lt;ul&gt;
+ *     &lt;li&gt;
+ *         Performs a deployment before each test when a test method is annotated with {@link Deployment}
+ *     &lt;/li&gt;
+ *     &lt;li&gt;
+ *         Validates the history data after each test
+ *     &lt;/li&gt;
+ *     &lt;li&gt;
+ *         Delete history jobs and deployment after each test
+ *     &lt;/li&gt;
+ *     &lt;li&gt;
+ *         Assert and ensure a clean db after each test or after all tests (depending on the {@link TestInstance.Lifecycle}.
+ *     &lt;/li&gt;
+ *     &lt;li&gt;
+ *         Support for injecting the {@link ProcessEngine}, services, {@link ProcessEngineConfiguration} and the id of the deployment done via
+ *         {@link Deployment} into test methods and lifecycle methods within tests.
+ *     &lt;/li&gt;
+ * &lt;/ul&gt;
+ * @author Filip Hrisafov
+ */
+<span class="nc" id="L68">public abstract class InternalFlowableExtension implements AfterEachCallback, BeforeEachCallback, AfterAllCallback, ParameterResolver {</span>
+
+    protected static final String ANNOTATION_DEPLOYMENT_ID_KEY = &quot;deploymentIdFromDeploymentAnnotation&quot;;
+
+<span class="nc" id="L72">    protected final Logger logger = LoggerFactory.getLogger(getClass());</span>
+
+    @Override
+    public void beforeEach(ExtensionContext context) {
+<span class="nc" id="L76">        ProcessEngine processEngine = getProcessEngine(context);</span>
+
+<span class="nc" id="L78">        AnnotationSupport.findAnnotation(context.getTestMethod(), Deployment.class)</span>
+<span class="nc" id="L79">            .ifPresent(deployment -&gt; {</span>
+<span class="nc" id="L80">                String deploymentIdFromDeploymentAnnotation = TestHelper</span>
+<span class="nc" id="L81">                    .annotationDeploymentSetUp(processEngine, context.getRequiredTestMethod(), deployment);</span>
+<span class="nc" id="L82">                getStore(context).put(context.getUniqueId() + ANNOTATION_DEPLOYMENT_ID_KEY, deploymentIdFromDeploymentAnnotation);</span>
+<span class="nc" id="L83">            });</span>
+<span class="nc" id="L84">    }</span>
+
+    @Override
+    public void afterEach(ExtensionContext context) throws Exception {
+<span class="nc" id="L88">        ProcessEngine processEngine = getProcessEngine(context);</span>
+
+        // Always reset authenticated user to avoid any mistakes
+<span class="nc" id="L91">        processEngine.getIdentityService().setAuthenticatedUserId(null);</span>
+
+        try {
+<span class="nc" id="L94">            AbstractFlowableTestCase.validateHistoryData(processEngine);</span>
+        } finally {
+<span class="nc" id="L96">            doFinally(context, TestInstance.Lifecycle.PER_METHOD);</span>
+        }
+<span class="nc" id="L98">    }</span>
+
+    @Override
+    public void afterAll(ExtensionContext context) throws Exception {
+<span class="nc" id="L102">        doFinally(context, TestInstance.Lifecycle.PER_CLASS);</span>
+<span class="nc" id="L103">    }</span>
+
+    protected void doFinally(ExtensionContext context, TestInstance.Lifecycle lifecycleForClean) {
+<span class="nc" id="L106">        ProcessEngine processEngine = getProcessEngine(context);</span>
+<span class="nc" id="L107">        ProcessEngineConfigurationImpl processEngineConfiguration = (ProcessEngineConfigurationImpl) processEngine.getProcessEngineConfiguration();</span>
+<span class="nc" id="L108">        boolean isAsyncHistoryEnabled = processEngineConfiguration.isAsyncHistoryEnabled();</span>
+
+<span class="nc bnc" id="L110" title="All 2 branches missed.">        if (isAsyncHistoryEnabled) {</span>
+<span class="nc" id="L111">            ManagementService managementService = processEngine.getManagementService();</span>
+<span class="nc" id="L112">            List&lt;HistoryJob&gt; jobs = managementService.createHistoryJobQuery().list();</span>
+<span class="nc bnc" id="L113" title="All 2 branches missed.">            for (HistoryJob job : jobs) {</span>
+<span class="nc" id="L114">                managementService.deleteHistoryJob(job.getId());</span>
+<span class="nc" id="L115">            }</span>
+        }
+
+<span class="nc" id="L118">        HistoryManager asyncHistoryManager = null;</span>
+        try {
+<span class="nc bnc" id="L120" title="All 2 branches missed.">            if (isAsyncHistoryEnabled) {</span>
+<span class="nc" id="L121">                processEngineConfiguration.setAsyncHistoryEnabled(false);</span>
+<span class="nc" id="L122">                asyncHistoryManager = processEngineConfiguration.getHistoryManager();</span>
+<span class="nc" id="L123">                processEngineConfiguration.setHistoryManager(new DefaultHistoryManager(processEngineConfiguration));</span>
+            }
+
+<span class="nc" id="L126">            String annotationDeploymentKey = context.getUniqueId() + ANNOTATION_DEPLOYMENT_ID_KEY;</span>
+<span class="nc" id="L127">            String deploymentIdFromDeploymentAnnotation = getStore(context).get(annotationDeploymentKey, String.class);</span>
+<span class="nc bnc" id="L128" title="All 2 branches missed.">            if (deploymentIdFromDeploymentAnnotation != null) {</span>
+<span class="nc" id="L129">                TestHelper.annotationDeploymentTearDown(processEngine, deploymentIdFromDeploymentAnnotation, context.getRequiredTestClass(),</span>
+<span class="nc" id="L130">                    context.getRequiredTestMethod().getName());</span>
+<span class="nc" id="L131">                getStore(context).remove(annotationDeploymentKey);</span>
+            }
+
+<span class="nc" id="L134">            AnnotationSupport.findAnnotation(context.getTestMethod(), CleanTest.class)</span>
+<span class="nc" id="L135">                .ifPresent(cleanTest -&gt; removeDeployments(processEngine.getRepositoryService()));</span>
+
+<span class="nc" id="L137">            AbstractFlowableTestCase.cleanDeployments(processEngine);</span>
+            
+<span class="nc bnc" id="L139" title="All 2 branches missed.">            if (context.getTestInstanceLifecycle().orElse(TestInstance.Lifecycle.PER_METHOD) == lifecycleForClean</span>
+<span class="nc bnc" id="L140" title="All 2 branches missed.">                    &amp;&amp; processEngineConfiguration.isUsingRelationalDatabase()) { // the logic only is applicable to a relational database with tables</span>
+<span class="nc" id="L141">                cleanTestAndAssertAndEnsureCleanDb(context, processEngine);</span>
+            }
+
+        } finally {
+
+<span class="nc bnc" id="L146" title="All 2 branches missed.">            if (isAsyncHistoryEnabled) {</span>
+<span class="nc" id="L147">                processEngineConfiguration.setAsyncHistoryEnabled(true);</span>
+<span class="nc" id="L148">                processEngineConfiguration.setHistoryManager(asyncHistoryManager);</span>
+            }
+
+<span class="nc" id="L151">            processEngineConfiguration.getClock().reset();</span>
+        }
+<span class="nc" id="L153">    }</span>
+
+    protected void cleanTestAndAssertAndEnsureCleanDb(ExtensionContext context, ProcessEngine processEngine) {
+<span class="nc" id="L156">        AnnotationSupport.findAnnotation(context.getRequiredTestClass(), CleanTest.class)</span>
+<span class="nc" id="L157">            .ifPresent(cleanTest -&gt; removeDeployments(getProcessEngine(context).getRepositoryService()));</span>
+<span class="nc" id="L158">        AnnotationSupport.findAnnotation(context.getRequiredTestClass(), EnsureCleanDb.class)</span>
+<span class="nc" id="L159">            .ifPresent(ensureCleanDb -&gt; assertAndEnsureCleanDb(processEngine, context, ensureCleanDb));</span>
+<span class="nc" id="L160">    }</span>
+
+    /**
+     * Each test is assumed to clean up all DB content it entered. After a test method executed, this method scans all tables to see if the DB is completely clean. It throws AssertionFailed in case
+     * the DB is not clean. If the DB is not clean, it is cleaned by performing a create a drop.
+     */
+    protected void assertAndEnsureCleanDb(ProcessEngine processEngine, ExtensionContext context, EnsureCleanDb ensureCleanDb) {
+<span class="nc" id="L167">        EnsureCleanDbUtils.assertAndEnsureCleanDb(</span>
+<span class="nc" id="L168">                context.getDisplayName(),</span>
+                logger,
+<span class="nc" id="L170">                processEngine.getProcessEngineConfiguration(),</span>
+                ensureCleanDb,
+<span class="nc bnc" id="L172" title="All 2 branches missed.">                !context.getExecutionException().isPresent(),</span>
+<span class="nc" id="L173">                new Command&lt;&gt;() {</span>
+
+                    @Override
+                    public Void execute(CommandContext commandContext) {
+<span class="nc" id="L177">                        SchemaManager schemaManager = CommandContextUtil.getProcessEngineConfiguration(commandContext).getSchemaManager();</span>
+<span class="nc" id="L178">                        schemaManager.schemaDrop();</span>
+<span class="nc" id="L179">                        schemaManager.schemaCreate();</span>
+<span class="nc" id="L180">                        return null;</span>
+                    }
+                }
+        );
+<span class="nc" id="L184">    }</span>
+
+    protected void removeDeployments(RepositoryService repositoryService) {
+<span class="nc bnc" id="L187" title="All 2 branches missed.">        for (org.flowable.engine.repository.Deployment deployment : repositoryService.createDeploymentQuery().list()) {</span>
+            try {
+<span class="nc" id="L189">                repositoryService.deleteDeployment(deployment.getId(), true);</span>
+<span class="nc" id="L190">            } catch (FlowableOptimisticLockingException flowableOptimisticLockingException) {</span>
+<span class="nc" id="L191">                logger.warn(&quot;Caught exception, retrying&quot;, flowableOptimisticLockingException);</span>
+<span class="nc" id="L192">                repositoryService.deleteDeployment(deployment.getId(), true);</span>
+<span class="nc" id="L193">            }</span>
+<span class="nc" id="L194">        }</span>
+<span class="nc" id="L195">    }</span>
+
+    @Override
+    public boolean supportsParameter(ParameterContext parameterContext, ExtensionContext context) {
+<span class="nc" id="L199">        Class&lt;?&gt; parameterType = parameterContext.getParameter().getType();</span>
+<span class="nc bnc" id="L200" title="All 4 branches missed.">        return ProcessEngine.class.equals(parameterType) || parameterContext.isAnnotated(DeploymentId.class);</span>
+    }
+
+    @Override
+    public Object resolveParameter(ParameterContext parameterContext, ExtensionContext context) {
+<span class="nc bnc" id="L205" title="All 2 branches missed.">        if (parameterContext.isAnnotated(DeploymentId.class)) {</span>
+<span class="nc" id="L206">            return getStore(context).get(context.getUniqueId() + ANNOTATION_DEPLOYMENT_ID_KEY, String.class);</span>
+        }
+<span class="nc" id="L208">        return getProcessEngine(context);</span>
+    }
+
+    protected abstract ProcessEngine getProcessEngine(ExtensionContext context);
+
+    protected abstract ExtensionContext.Store getStore(ExtensionContext context);
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

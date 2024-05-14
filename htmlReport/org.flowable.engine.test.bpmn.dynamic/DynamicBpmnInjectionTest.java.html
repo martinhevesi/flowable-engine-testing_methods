@@ -1,0 +1,448 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DynamicBpmnInjectionTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.bpmn.dynamic</a> &gt; <span class="el_source">DynamicBpmnInjectionTest.java</span></div><h1>DynamicBpmnInjectionTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.test.bpmn.dynamic;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.util.List;
+
+import org.flowable.bpmn.model.BpmnModel;
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.FlowElementsContainer;
+import org.flowable.bpmn.model.GraphicInfo;
+import org.flowable.bpmn.model.Process;
+import org.flowable.bpmn.model.SubProcess;
+import org.flowable.bpmn.model.UserTask;
+import org.flowable.common.engine.impl.history.HistoryLevel;
+import org.flowable.engine.history.HistoricActivityInstance;
+import org.flowable.engine.history.HistoricProcessInstance;
+import org.flowable.engine.impl.dynamic.DynamicEmbeddedSubProcessBuilder;
+import org.flowable.engine.impl.dynamic.DynamicUserTaskBuilder;
+import org.flowable.engine.impl.dynamic.DynamicUserTaskCallback;
+import org.flowable.engine.impl.persistence.CountingExecutionEntity;
+import org.flowable.engine.impl.test.HistoryTestHelper;
+import org.flowable.engine.impl.test.PluggableFlowableTestCase;
+import org.flowable.engine.repository.Deployment;
+import org.flowable.engine.repository.ProcessDefinition;
+import org.flowable.engine.runtime.Execution;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.identitylink.api.IdentityLink;
+import org.flowable.task.api.Task;
+import org.flowable.task.api.history.HistoricTaskInstance;
+import org.junit.jupiter.api.Test;
+
+<span class="nc" id="L44">public class DynamicBpmnInjectionTest extends PluggableFlowableTestCase {</span>
+
+    @Test
+    public void testInjectUserTaskInProcessInstance() {
+<span class="nc" id="L48">        deployOneTaskTestProcess();</span>
+
+<span class="nc" id="L50">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+        
+<span class="nc" id="L52">        waitForHistoryJobExecutorToProcessAllJobs(10000, 200);</span>
+        
+<span class="nc" id="L54">        DynamicUserTaskBuilder taskBuilder = new DynamicUserTaskBuilder();</span>
+<span class="nc" id="L55">        taskBuilder.id(&quot;custom_task&quot;)</span>
+<span class="nc" id="L56">            .name(&quot;My injected task&quot;)</span>
+<span class="nc" id="L57">            .assignee(&quot;kermit&quot;)</span>
+<span class="nc" id="L58">            .dynamicUserTaskCallback(new DynamicUserTaskCallback() {</span>
+                @Override
+                public void handleCreatedDynamicUserTask(UserTask userTask, SubProcess newSubProcess, FlowElementsContainer parentContainer, Process process) {
+<span class="nc" id="L61">                    userTask.setOwner(&quot;missPiggy&quot;);</span>
+<span class="nc" id="L62">                }</span>
+            });
+<span class="nc" id="L64">        dynamicBpmnService.injectUserTaskInProcessInstance(processInstance.getId(), taskBuilder);</span>
+        
+<span class="nc" id="L66">        Task injectedTask = taskService.createTaskQuery().taskDefinitionKey(taskBuilder.getDynamicTaskId()).processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L67">        assertThat(injectedTask).isNotNull();</span>
+<span class="nc" id="L68">        assertThat(injectedTask.getOwner()).isEqualTo(&quot;missPiggy&quot;);</span>
+
+<span class="nc" id="L70">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L71">        assertThat(tasks).hasSize(2);</span>
+        
+<span class="nc" id="L73">        deploymentIdsForAutoCleanup.add(repositoryService.getProcessDefinition(tasks.get(0).getProcessDefinitionId()).getDeploymentId()); // For auto-cleanup</span>
+        
+<span class="nc bnc" id="L75" title="All 2 branches missed.">        for (Task t : tasks) {</span>
+<span class="nc" id="L76">            taskService.complete(t.getId());</span>
+<span class="nc" id="L77">        }</span>
+
+<span class="nc" id="L79">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L80">    }</span>
+
+    @Test
+    public void testInjectParallelTask() {
+<span class="nc" id="L84">        deployOneTaskTestProcess();</span>
+
+<span class="nc" id="L86">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+        
+<span class="nc" id="L88">        waitForHistoryJobExecutorToProcessAllJobs(10000, 200);</span>
+        
+<span class="nc" id="L90">        Task task = taskService.createTaskQuery().singleResult();</span>
+
+<span class="nc" id="L92">        DynamicUserTaskBuilder taskBuilder = new DynamicUserTaskBuilder();</span>
+<span class="nc" id="L93">        taskBuilder.id(&quot;custom_task&quot;)</span>
+<span class="nc" id="L94">            .name(&quot;My injected task&quot;)</span>
+<span class="nc" id="L95">            .assignee(&quot;kermit&quot;);</span>
+<span class="nc" id="L96">        dynamicBpmnService.injectParallelUserTask(task.getId(), taskBuilder);</span>
+        
+<span class="nc" id="L98">        Task injectedTask = taskService.createTaskQuery().taskName(&quot;My injected task&quot;).singleResult();</span>
+<span class="nc" id="L99">        assertThat(injectedTask).isNotNull();</span>
+        
+<span class="nc" id="L101">        deploymentIdsForAutoCleanup.add(repositoryService.getProcessDefinition(injectedTask.getProcessDefinitionId()).getDeploymentId()); // For auto-cleanup</span>
+        
+<span class="nc bnc" id="L103" title="All 2 branches missed.">        if (processEngineConfiguration.getPerformanceSettings().isEnableExecutionRelationshipCounts()) {</span>
+<span class="nc" id="L104">            Execution execution = runtimeService.createExecutionQuery().executionId(injectedTask.getExecutionId()).singleResult();</span>
+<span class="nc" id="L105">            assertThat(((CountingExecutionEntity) execution).getTaskCount()).isEqualTo(1);</span>
+        }
+
+<span class="nc" id="L108">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L109">        assertThat(tasks).hasSize(2);</span>
+<span class="nc bnc" id="L110" title="All 2 branches missed.">        for (Task t : tasks) {</span>
+<span class="nc" id="L111">            taskService.complete(t.getId());</span>
+<span class="nc" id="L112">        }</span>
+        
+<span class="nc" id="L114">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L115">    }</span>
+    
+    @Test
+    @org.flowable.engine.test.Deployment
+    public void testOneTaskDi() {
+<span class="nc" id="L120">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+        
+<span class="nc" id="L122">        waitForHistoryJobExecutorToProcessAllJobs(10000, 200);</span>
+        
+<span class="nc" id="L124">        Task task = taskService.createTaskQuery().singleResult();</span>
+
+<span class="nc" id="L126">        DynamicUserTaskBuilder taskBuilder = new DynamicUserTaskBuilder();</span>
+<span class="nc" id="L127">        taskBuilder.id(&quot;custom_task&quot;)</span>
+<span class="nc" id="L128">            .name(&quot;My injected task&quot;)</span>
+<span class="nc" id="L129">            .assignee(&quot;kermit&quot;);</span>
+<span class="nc" id="L130">        dynamicBpmnService.injectParallelUserTask(task.getId(), taskBuilder);</span>
+        
+<span class="nc" id="L132">        List&lt;ProcessDefinition&gt; processDefinitions = repositoryService.createProcessDefinitionQuery().processDefinitionKey(&quot;oneTaskProcess&quot;).list();</span>
+<span class="nc" id="L133">        assertThat(processDefinitions).hasSize(2);</span>
+        
+<span class="nc" id="L135">        ProcessDefinition rootDefinition = null;</span>
+<span class="nc" id="L136">        ProcessDefinition derivedFromDefinition = null;</span>
+<span class="nc bnc" id="L137" title="All 2 branches missed.">        for (ProcessDefinition definitionItem : processDefinitions) {</span>
+<span class="nc bnc" id="L138" title="All 4 branches missed.">            if (definitionItem.getDerivedFrom() != null &amp;&amp; definitionItem.getDerivedFromRoot() != null) {</span>
+<span class="nc" id="L139">                derivedFromDefinition = definitionItem;</span>
+            } else {
+<span class="nc" id="L141">                rootDefinition = definitionItem;</span>
+            }
+<span class="nc" id="L143">        }</span>
+        
+<span class="nc" id="L145">        assertThat(derivedFromDefinition).isNotNull();</span>
+<span class="nc" id="L146">        deploymentIdsForAutoCleanup.add(derivedFromDefinition.getDeploymentId()); // For auto-cleanup</span>
+        
+<span class="nc" id="L148">        BpmnModel bpmnModel = repositoryService.getBpmnModel(derivedFromDefinition.getId());</span>
+<span class="nc" id="L149">        FlowElement taskElement = bpmnModel.getFlowElement(&quot;theTask&quot;);</span>
+<span class="nc" id="L150">        SubProcess subProcessElement = (SubProcess) taskElement.getParentContainer();</span>
+<span class="nc" id="L151">        assertThat(subProcessElement).isNotNull();</span>
+<span class="nc" id="L152">        GraphicInfo subProcessGraphicInfo = bpmnModel.getGraphicInfo(subProcessElement.getId());</span>
+<span class="nc" id="L153">        assertThat(subProcessGraphicInfo).isNotNull();</span>
+<span class="nc" id="L154">        assertThat(subProcessGraphicInfo.getExpanded()).isFalse();</span>
+        
+<span class="nc" id="L156">        BpmnModel rootBpmnModel = repositoryService.getBpmnModel(rootDefinition.getId());</span>
+<span class="nc" id="L157">        GraphicInfo taskGraphicInfo = rootBpmnModel.getGraphicInfo(&quot;theTask&quot;);</span>
+        
+<span class="nc" id="L159">        assertThat(subProcessGraphicInfo.getX()).isEqualTo(taskGraphicInfo.getX());</span>
+<span class="nc" id="L160">        assertThat(subProcessGraphicInfo.getY()).isEqualTo(taskGraphicInfo.getY());</span>
+<span class="nc" id="L161">        assertThat(subProcessGraphicInfo.getWidth()).isEqualTo(taskGraphicInfo.getWidth());</span>
+<span class="nc" id="L162">        assertThat(subProcessGraphicInfo.getHeight()).isEqualTo(taskGraphicInfo.getHeight());</span>
+        
+<span class="nc bnc" id="L164" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L165">            HistoricProcessInstance historicProcessInstance = historyService.createHistoricProcessInstanceQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L166">            assertThat(historicProcessInstance.getProcessDefinitionId()).isEqualTo(derivedFromDefinition.getId());</span>
+<span class="nc" id="L167">            assertThat(historicProcessInstance.getProcessDefinitionVersion()).isEqualTo(Integer.valueOf(derivedFromDefinition.getVersion()));</span>
+            
+<span class="nc" id="L169">            List&lt;HistoricTaskInstance&gt; historicTasks = historyService.createHistoricTaskInstanceQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L170">            assertThat(historicTasks).hasSize(2);</span>
+<span class="nc bnc" id="L171" title="All 2 branches missed.">            for (HistoricTaskInstance historicTaskInstance : historicTasks) {</span>
+<span class="nc" id="L172">                assertThat(historicTaskInstance.getProcessDefinitionId()).isEqualTo(derivedFromDefinition.getId());</span>
+<span class="nc" id="L173">            }</span>
+            
+<span class="nc" id="L175">            List&lt;HistoricActivityInstance&gt; historicActivities = historyService.createHistoricActivityInstanceQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L176">            assertThat(historicActivities).hasSize(5);</span>
+<span class="nc bnc" id="L177" title="All 2 branches missed.">            for (HistoricActivityInstance historicActivityInstance : historicActivities) {</span>
+<span class="nc" id="L178">                assertActivityInstancesAreSame(historicActivityInstance, runtimeService.createActivityInstanceQuery().activityInstanceId(historicActivityInstance.getId()).singleResult());</span>
+<span class="nc" id="L179">                assertThat(historicActivityInstance.getProcessDefinitionId()).isEqualTo(derivedFromDefinition.getId());</span>
+<span class="nc" id="L180">            }</span>
+        }
+        
+<span class="nc" id="L183">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L184">        assertThat(tasks).hasSize(2);</span>
+<span class="nc bnc" id="L185" title="All 2 branches missed.">        for (Task t : tasks) {</span>
+<span class="nc" id="L186">            taskService.complete(t.getId());</span>
+<span class="nc" id="L187">        }</span>
+        
+<span class="nc" id="L189">        assertProcessEnded(processInstance.getId());  </span>
+<span class="nc" id="L190">    }</span>
+
+    @Test
+    public void testInjectParallelTaskNoJoin() {
+<span class="nc" id="L194">        deployOneTaskTestProcess();</span>
+
+<span class="nc" id="L196">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+        
+<span class="nc" id="L198">        waitForHistoryJobExecutorToProcessAllJobs(10000, 200);</span>
+        
+<span class="nc" id="L200">        Task task = taskService.createTaskQuery().singleResult();</span>
+
+<span class="nc" id="L202">        DynamicUserTaskBuilder taskBuilder = new DynamicUserTaskBuilder();</span>
+<span class="nc" id="L203">        taskBuilder.id(&quot;custom_task&quot;)</span>
+<span class="nc" id="L204">            .name(&quot;My injected task&quot;)</span>
+<span class="nc" id="L205">            .assignee(&quot;kermit&quot;);</span>
+<span class="nc" id="L206">        dynamicBpmnService.injectParallelUserTask(task.getId(), taskBuilder);</span>
+        
+<span class="nc" id="L208">        Task injectedTask = taskService.createTaskQuery().taskName(&quot;My injected task&quot;).singleResult();</span>
+<span class="nc" id="L209">        assertThat(injectedTask).isNotNull();</span>
+        
+<span class="nc" id="L211">        deploymentIdsForAutoCleanup.add(repositoryService.getProcessDefinition(injectedTask.getProcessDefinitionId()).getDeploymentId()); // For auto-cleanup</span>
+        
+<span class="nc bnc" id="L213" title="All 2 branches missed.">        if (processEngineConfiguration.getPerformanceSettings().isEnableExecutionRelationshipCounts()) {</span>
+<span class="nc" id="L214">            Execution execution = runtimeService.createExecutionQuery().executionId(injectedTask.getExecutionId()).singleResult();</span>
+<span class="nc" id="L215">            assertThat(((CountingExecutionEntity) execution).getTaskCount()).isEqualTo(1);</span>
+        }
+
+<span class="nc" id="L218">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).orderByTaskName().asc().list();</span>
+<span class="nc" id="L219">        assertThat(tasks).hasSize(2);</span>
+<span class="nc" id="L220">        assertThat(tasks.get(0).getName()).isEqualTo(taskBuilder.getName());</span>
+<span class="nc" id="L221">        taskService.complete(tasks.get(0).getId());</span>
+
+<span class="nc" id="L223">        task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L224">        assertThat(task.getName()).isEqualTo(&quot;The Task&quot;);</span>
+<span class="nc" id="L225">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L227">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L228">    }</span>
+
+    @Test
+    public void testInjectParallelSubProcessSimple() {
+<span class="nc" id="L232">        deployOneTaskTestProcessWithCandidateStarterGroup();</span>
+<span class="nc" id="L233">        Deployment deployment = repositoryService.createDeployment()</span>
+<span class="nc" id="L234">                .addClasspathResource(&quot;org/flowable/engine/test/bpmn/dynamic/dynamic_onetask.bpmn20.xml&quot;)</span>
+<span class="nc" id="L235">                .deploy();</span>
+        
+<span class="nc" id="L237">        deploymentIdsForAutoCleanup.add(deployment.getId());</span>
+
+<span class="nc" id="L239">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+        
+<span class="nc" id="L241">        waitForHistoryJobExecutorToProcessAllJobs(10000, 200);</span>
+        
+<span class="nc" id="L243">        Task task = taskService.createTaskQuery().singleResult();</span>
+
+<span class="nc" id="L245">        ProcessDefinition processDefinition = repositoryService.createProcessDefinitionQuery()</span>
+<span class="nc" id="L246">                .processDefinitionKey(&quot;oneTaskV2&quot;)</span>
+<span class="nc" id="L247">                .singleResult();</span>
+        
+<span class="nc" id="L249">        DynamicEmbeddedSubProcessBuilder subProcessBuilder = new DynamicEmbeddedSubProcessBuilder()</span>
+<span class="nc" id="L250">                .id(&quot;customSubprocess&quot;)</span>
+<span class="nc" id="L251">                .processDefinitionId(processDefinition.getId());</span>
+<span class="nc" id="L252">        dynamicBpmnService.injectParallelEmbeddedSubProcess(task.getId(), subProcessBuilder);</span>
+        
+<span class="nc" id="L254">        processInstance = runtimeService.createProcessInstanceQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L255">        deploymentIdsForAutoCleanup.add(repositoryService.getProcessDefinition(processInstance.getProcessDefinitionId()).getDeploymentId()); // For auto-cleanup</span>
+        
+<span class="nc bnc" id="L257" title="All 2 branches missed.">        if (processEngineConfiguration.getPerformanceSettings().isEnableExecutionRelationshipCounts()) {</span>
+<span class="nc" id="L258">            Execution execution = runtimeService.createExecutionQuery().activityId(&quot;usertaskV2&quot;).singleResult();</span>
+<span class="nc" id="L259">            assertThat(((CountingExecutionEntity) execution).getTaskCount()).isEqualTo(1);</span>
+        }
+        
+<span class="nc" id="L262">        List&lt;IdentityLink&gt; identityLinks = repositoryService.getIdentityLinksForProcessDefinition(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L263">        assertThat(identityLinks).hasSize(1);</span>
+        
+<span class="nc" id="L265">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L266">        assertThat(tasks).hasSize(2);</span>
+<span class="nc bnc" id="L267" title="All 2 branches missed.">        for (Task t : tasks) {</span>
+<span class="nc" id="L268">            taskService.complete(t.getId());</span>
+<span class="nc" id="L269">        }</span>
+        
+<span class="nc" id="L271">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L272">    }</span>
+
+    @Test
+    public void testInjectParallelSubProcessComplex() {
+<span class="nc" id="L276">        Deployment deployment = repositoryService.createDeployment()</span>
+<span class="nc" id="L277">                .addClasspathResource(&quot;org/flowable/engine/test/bpmn/dynamic/dynamic_test_process01.bpmn&quot;)</span>
+<span class="nc" id="L278">                .addClasspathResource(&quot;org/flowable/engine/test/bpmn/dynamic/dynamic_test_process02.bpmn&quot;)</span>
+<span class="nc" id="L279">                .deploy();</span>
+        
+<span class="nc" id="L281">        deploymentIdsForAutoCleanup.add(deployment.getId());</span>
+
+<span class="nc" id="L283">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;testProcess01&quot;);</span>
+        
+<span class="nc" id="L285">        waitForHistoryJobExecutorToProcessAllJobs(10000, 200);</span>
+        
+<span class="nc" id="L287">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).orderByTaskName().asc().list();</span>
+<span class="nc" id="L288">        assertThat(tasks)</span>
+<span class="nc" id="L289">                .extracting(Task::getName)</span>
+<span class="nc" id="L290">                .containsExactly(&quot;task A&quot;, &quot;task B&quot;, &quot;task C&quot;, &quot;task D&quot;);</span>
+
+<span class="nc" id="L292">        Task taskB = tasks.get(1);</span>
+<span class="nc" id="L293">        ProcessDefinition subProcessDefinition = repositoryService.createProcessDefinitionQuery().processDefinitionKey(&quot;testProcess02&quot;).singleResult();</span>
+<span class="nc" id="L294">        dynamicBpmnService.injectParallelEmbeddedSubProcess(taskB.getId(), new DynamicEmbeddedSubProcessBuilder()</span>
+<span class="nc" id="L295">                .id(&quot;injectedSubProcess&quot;)</span>
+<span class="nc" id="L296">                .processDefinitionId(subProcessDefinition.getId()));</span>
+        
+<span class="nc" id="L298">        processInstance = runtimeService.createProcessInstanceQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L299">        deploymentIdsForAutoCleanup.add(repositoryService.getProcessDefinition(processInstance.getProcessDefinitionId()).getDeploymentId()); // For auto-cleanup</span>
+
+<span class="nc" id="L301">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).orderByTaskName().asc().list();</span>
+<span class="nc" id="L302">        assertThat(tasks)</span>
+<span class="nc" id="L303">                .extracting(Task::getName)</span>
+<span class="nc" id="L304">                .containsExactly(&quot;five&quot;, &quot;four&quot;, &quot;one&quot;, &quot;task A&quot;, &quot;task B&quot;, &quot;task C&quot;, &quot;task D&quot;, &quot;three&quot;, &quot;two&quot;);</span>
+
+        // first complete the tasks from the original process definition and check that it won't continue to the next task (After B and After sub process).
+<span class="nc" id="L307">        taskService.complete(taskService.createTaskQuery().taskName(&quot;task A&quot;).singleResult().getId());</span>
+<span class="nc" id="L308">        taskService.complete(taskService.createTaskQuery().taskName(&quot;task B&quot;).singleResult().getId());</span>
+<span class="nc" id="L309">        taskService.complete(taskService.createTaskQuery().taskName(&quot;task C&quot;).singleResult().getId());</span>
+<span class="nc" id="L310">        taskService.complete(taskService.createTaskQuery().taskName(&quot;task D&quot;).singleResult().getId());</span>
+        
+<span class="nc" id="L312">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).orderByTaskName().asc().list();</span>
+<span class="nc" id="L313">        assertThat(tasks)</span>
+<span class="nc" id="L314">                .extracting(Task::getName)</span>
+<span class="nc" id="L315">                .containsExactly(&quot;five&quot;, &quot;four&quot;, &quot;one&quot;, &quot;three&quot;, &quot;two&quot;);</span>
+
+<span class="nc bnc" id="L317" title="All 2 branches missed.">        for (Task task : tasks) {</span>
+<span class="nc" id="L318">            taskService.complete(task.getId());</span>
+<span class="nc" id="L319">        }</span>
+       
+        // now task After B should be available
+<span class="nc" id="L322">        Task afterBTask = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L323">        assertThat(afterBTask.getName()).isEqualTo(&quot;after B&quot;);</span>
+<span class="nc" id="L324">        taskService.complete(afterBTask.getId());</span>
+
+<span class="nc" id="L326">        Task afterSubProcessTask = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L327">        assertThat(afterSubProcessTask.getName()).isEqualTo(&quot;after sub process&quot;);</span>
+<span class="nc" id="L328">        taskService.complete(afterSubProcessTask.getId());</span>
+<span class="nc" id="L329">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L330">    }</span>
+    
+    @Test
+    public void testInjectParallelTask2Times() {
+<span class="nc" id="L334">        deployOneTaskTestProcess();</span>
+
+<span class="nc" id="L336">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+        
+<span class="nc" id="L338">        waitForHistoryJobExecutorToProcessAllJobs(10000, 200);</span>
+        
+<span class="nc" id="L340">        Task task = taskService.createTaskQuery().singleResult();</span>
+
+<span class="nc" id="L342">        DynamicUserTaskBuilder taskBuilder = new DynamicUserTaskBuilder();</span>
+<span class="nc" id="L343">        taskBuilder.id(&quot;custom_task&quot;)</span>
+<span class="nc" id="L344">            .name(&quot;My injected task&quot;)</span>
+<span class="nc" id="L345">            .assignee(&quot;kermit&quot;);</span>
+<span class="nc" id="L346">        dynamicBpmnService.injectParallelUserTask(task.getId(), taskBuilder);</span>
+        
+<span class="nc" id="L348">        processInstance = runtimeService.createProcessInstanceQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L349">        ProcessDefinition processDefinition = repositoryService.createProcessDefinitionQuery().processDefinitionId(processInstance.getProcessDefinitionId()).singleResult();</span>
+<span class="nc" id="L350">        deploymentIdsForAutoCleanup.add(processDefinition.getDeploymentId()); // For auto-cleanup</span>
+<span class="nc" id="L351">        assertThat(processDefinition.getDerivedFrom()).isNotNull();</span>
+<span class="nc" id="L352">        assertThat(processDefinition.getDerivedFromRoot()).isNotNull();</span>
+<span class="nc" id="L353">        assertThat(processDefinition.getDerivedVersion()).isEqualTo(1);</span>
+
+<span class="nc" id="L355">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L356">        assertThat(tasks).hasSize(2);</span>
+<span class="nc bnc" id="L357" title="All 2 branches missed.">        for (Task t : tasks) {</span>
+<span class="nc" id="L358">            taskService.complete(t.getId());</span>
+<span class="nc" id="L359">        }</span>
+<span class="nc" id="L360">        assertProcessEnded(processInstance.getId());</span>
+        
+<span class="nc" id="L362">        processInstance = runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+<span class="nc" id="L363">        task = taskService.createTaskQuery().singleResult();</span>
+        
+<span class="nc" id="L365">        taskBuilder = new DynamicUserTaskBuilder()</span>
+<span class="nc" id="L366">                .id(&quot;custom_task&quot;)</span>
+<span class="nc" id="L367">                .name(&quot;My injected task&quot;)</span>
+<span class="nc" id="L368">                .assignee(&quot;kermit&quot;);</span>
+<span class="nc" id="L369">        dynamicBpmnService.injectParallelUserTask(task.getId(), taskBuilder);</span>
+        
+<span class="nc" id="L371">        processInstance = runtimeService.createProcessInstanceQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L372">        processDefinition = repositoryService.createProcessDefinitionQuery().processDefinitionId(processInstance.getProcessDefinitionId()).singleResult();</span>
+<span class="nc" id="L373">        deploymentIdsForAutoCleanup.add(processDefinition.getDeploymentId()); // For auto-cleanup</span>
+<span class="nc" id="L374">        assertThat(processDefinition.getDerivedFrom()).isNotNull();</span>
+<span class="nc" id="L375">        assertThat(processDefinition.getDerivedFromRoot()).isNotNull();</span>
+<span class="nc" id="L376">        assertThat(processDefinition.getDerivedVersion()).isEqualTo(2);</span>
+
+<span class="nc" id="L378">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L379">        assertThat(tasks).hasSize(2);</span>
+<span class="nc bnc" id="L380" title="All 2 branches missed.">        for (Task t : tasks) {</span>
+<span class="nc" id="L381">            taskService.complete(t.getId());</span>
+<span class="nc" id="L382">        }</span>
+<span class="nc" id="L383">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L384">    }</span>
+
+    @Test
+    public void testInjectParallelSubProcessComplexNoJoin() {
+<span class="nc" id="L388">        Deployment deployment = repositoryService.createDeployment()</span>
+<span class="nc" id="L389">                .addClasspathResource(&quot;org/flowable/engine/test/bpmn/dynamic/dynamic_test_process01.bpmn&quot;)</span>
+<span class="nc" id="L390">                .addClasspathResource(&quot;org/flowable/engine/test/bpmn/dynamic/dynamic_test_process02.bpmn&quot;)</span>
+<span class="nc" id="L391">                .deploy();</span>
+        
+<span class="nc" id="L393">        deploymentIdsForAutoCleanup.add(deployment.getId()); // For auto-cleanup</span>
+
+<span class="nc" id="L395">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;testProcess01&quot;);</span>
+        
+<span class="nc" id="L397">        waitForHistoryJobExecutorToProcessAllJobs(10000, 200);</span>
+        
+<span class="nc" id="L399">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).orderByTaskName().asc().list();</span>
+<span class="nc" id="L400">        assertThat(tasks).hasSize(4);</span>
+
+<span class="nc" id="L402">        Task taskB = tasks.get(1);</span>
+<span class="nc" id="L403">        ProcessDefinition subProcessDefinition = repositoryService.createProcessDefinitionQuery().processDefinitionKey(&quot;testProcess02&quot;).singleResult();</span>
+<span class="nc" id="L404">        dynamicBpmnService.injectEmbeddedSubProcessInProcessInstance(processInstance.getId(), new DynamicEmbeddedSubProcessBuilder()</span>
+<span class="nc" id="L405">                .id(&quot;injectedSubProcess&quot;)</span>
+<span class="nc" id="L406">                .processDefinitionId(subProcessDefinition.getId()));</span>
+        
+<span class="nc" id="L408">        processInstance = runtimeService.createProcessInstanceQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L409">        deploymentIdsForAutoCleanup.add(repositoryService.getProcessDefinition(processInstance.getProcessDefinitionId()).getDeploymentId()); // For auto-cleanup</span>
+
+<span class="nc" id="L411">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).orderByTaskName().asc().list();</span>
+<span class="nc" id="L412">        assertThat(tasks)</span>
+<span class="nc" id="L413">                .extracting(Task::getName)</span>
+<span class="nc" id="L414">                .containsExactly(&quot;five&quot;, &quot;four&quot;, &quot;one&quot;, &quot;task A&quot;, &quot;task B&quot;, &quot;task C&quot;, &quot;task D&quot;, &quot;three&quot;, &quot;two&quot;);</span>
+
+<span class="nc" id="L416">        taskService.complete(taskB.getId());</span>
+<span class="nc" id="L417">        Task afterBTask = taskService.createTaskQuery().processInstanceId(processInstance.getId()).taskDefinitionKey(&quot;afterB&quot;).singleResult();</span>
+<span class="nc" id="L418">        assertThat(afterBTask.getId()).isNotNull();</span>
+<span class="nc" id="L419">        taskService.complete(afterBTask.getId());</span>
+        
+        // first complete the tasks from the original process definition and check that it continues to the next task (After sub process).
+<span class="nc" id="L422">        taskService.complete(taskService.createTaskQuery().taskName(&quot;task A&quot;).singleResult().getId());</span>
+<span class="nc" id="L423">        taskService.complete(taskService.createTaskQuery().taskName(&quot;task C&quot;).singleResult().getId());</span>
+<span class="nc" id="L424">        taskService.complete(taskService.createTaskQuery().taskName(&quot;task D&quot;).singleResult().getId());</span>
+        
+<span class="nc" id="L426">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).orderByTaskName().asc().list();</span>
+<span class="nc" id="L427">        assertThat(tasks)</span>
+<span class="nc" id="L428">                .extracting(Task::getName)</span>
+<span class="nc" id="L429">                .containsExactly(&quot;after sub process&quot;, &quot;five&quot;, &quot;four&quot;, &quot;one&quot;, &quot;three&quot;, &quot;two&quot;);</span>
+
+<span class="nc" id="L431">        Task afterSubProcessTask = tasks.get(0);</span>
+<span class="nc" id="L432">        assertThat(afterSubProcessTask.getName()).isEqualTo(&quot;after sub process&quot;);</span>
+<span class="nc" id="L433">        taskService.complete(afterSubProcessTask.getId());</span>
+        
+<span class="nc" id="L435">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).orderByTaskName().asc().list();</span>
+<span class="nc" id="L436">        assertThat(tasks)</span>
+<span class="nc" id="L437">                .extracting(Task::getName)</span>
+<span class="nc" id="L438">                .containsExactly(&quot;five&quot;, &quot;four&quot;, &quot;one&quot;, &quot;three&quot;, &quot;two&quot;);</span>
+
+<span class="nc bnc" id="L440" title="All 2 branches missed.">        for (Task task : tasks) {</span>
+<span class="nc" id="L441">            taskService.complete(task.getId());</span>
+<span class="nc" id="L442">        }</span>
+
+<span class="nc" id="L444">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L445">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,746 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MultiInstanceActivityBehavior.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.bpmn.behavior</a> &gt; <span class="el_source">MultiInstanceActivityBehavior.java</span></div><h1>MultiInstanceActivityBehavior.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.flowable.engine.impl.bpmn.behavior;
+
+import static org.flowable.engine.impl.variable.BpmnAggregation.COUNTER_VAR_PREFIX;
+import static org.flowable.engine.impl.variable.BpmnAggregation.COUNTER_VAR_VALUE_SEPARATOR;
+import static org.flowable.engine.impl.variable.BpmnAggregation.aggregateComplete;
+import static org.flowable.engine.impl.variable.BpmnAggregation.createScopedVariableAggregationVariableInstance;
+import static org.flowable.engine.impl.variable.BpmnAggregation.groupAggregationsByTarget;
+import static org.flowable.engine.impl.variable.BpmnAggregation.groupVariableInstancesByName;
+import static org.flowable.engine.impl.variable.BpmnAggregation.resolveVariableAggregator;
+import static org.flowable.engine.impl.variable.BpmnAggregation.sortVariablesByCounter;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+
+import org.flowable.bpmn.model.Activity;
+import org.flowable.bpmn.model.BoundaryEvent;
+import org.flowable.bpmn.model.CollectionHandler;
+import org.flowable.bpmn.model.CompensateEventDefinition;
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.FlowNode;
+import org.flowable.bpmn.model.ImplementationType;
+import org.flowable.bpmn.model.Process;
+import org.flowable.bpmn.model.VariableAggregationDefinition;
+import org.flowable.bpmn.model.VariableAggregationDefinitions;
+import org.flowable.common.engine.api.FlowableIllegalArgumentException;
+import org.flowable.common.engine.api.delegate.Expression;
+import org.flowable.common.engine.api.delegate.event.FlowableEngineEventType;
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.impl.el.ExpressionManager;
+import org.flowable.common.engine.impl.util.CollectionUtil;
+import org.flowable.engine.DynamicBpmnConstants;
+import org.flowable.engine.delegate.BpmnError;
+import org.flowable.engine.delegate.DelegateExecution;
+import org.flowable.engine.delegate.ExecutionListener;
+import org.flowable.engine.delegate.event.FlowableMultiInstanceActivityCompletedEvent;
+import org.flowable.engine.delegate.event.impl.FlowableEventBuilder;
+import org.flowable.engine.delegate.variable.VariableAggregator;
+import org.flowable.engine.impl.bpmn.helper.ClassDelegateCollectionHandler;
+import org.flowable.engine.impl.bpmn.helper.DelegateExpressionCollectionHandler;
+import org.flowable.engine.impl.bpmn.helper.DelegateExpressionUtil;
+import org.flowable.engine.impl.bpmn.helper.ErrorPropagation;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.context.BpmnOverrideContext;
+import org.flowable.engine.impl.delegate.ActivityBehavior;
+import org.flowable.engine.impl.delegate.BaseVariableAggregatorContext;
+import org.flowable.engine.impl.delegate.FlowableCollectionHandler;
+import org.flowable.engine.impl.delegate.InterruptibleActivityBehaviour;
+import org.flowable.engine.impl.delegate.SubProcessActivityBehavior;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntity;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntityManager;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.engine.impl.util.ExecutionGraphUtil;
+import org.flowable.engine.impl.util.ProcessDefinitionUtil;
+import org.flowable.engine.impl.variable.BpmnAggregatedVariableType;
+import org.flowable.engine.impl.variable.BpmnAggregation;
+import org.flowable.variable.api.persistence.entity.VariableInstance;
+import org.flowable.variable.service.VariableService;
+import org.flowable.variable.service.VariableServiceConfiguration;
+import org.flowable.variable.service.impl.persistence.entity.VariableInstanceEntity;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+/**
+ * Implementation of the multi-instance functionality as described in the BPMN 2.0 spec.
+ * 
+ * Multi instance functionality is implemented as an {@link ActivityBehavior} that wraps the original {@link ActivityBehavior} of the activity.
+ * 
+ * Only subclasses of {@link AbstractBpmnActivityBehavior} can have multi-instance behavior. As such, special logic is contained in the {@link AbstractBpmnActivityBehavior} to delegate to the
+ * {@link MultiInstanceActivityBehavior} if needed.
+ * 
+ * @author Joram Barrez
+ * @author Tijs Rademakers
+ * @author Filip Hrisafov
+ */
+public abstract class MultiInstanceActivityBehavior extends FlowNodeActivityBehavior implements SubProcessActivityBehavior, InterruptibleActivityBehaviour {
+
+    private static final long serialVersionUID = 1L;
+
+<span class="nc" id="L99">    protected static final Logger LOGGER = LoggerFactory.getLogger(MultiInstanceActivityBehavior.class);</span>
+    protected static final String DELETE_REASON_END = &quot;MI_END&quot;;
+
+    // Variable names for outer instance(as described in spec)
+    protected static final String NUMBER_OF_INSTANCES = &quot;nrOfInstances&quot;;
+    protected static final String NUMBER_OF_ACTIVE_INSTANCES = &quot;nrOfActiveInstances&quot;;
+    protected static final String NUMBER_OF_COMPLETED_INSTANCES = &quot;nrOfCompletedInstances&quot;;
+
+    // Instance members
+    protected Activity activity;
+    protected AbstractBpmnActivityBehavior innerActivityBehavior;
+    protected Expression loopCardinalityExpression;
+    protected String completionCondition;
+    protected Expression collectionExpression;
+    protected String collectionVariable; // Not used anymore. Left here for backwards compatibility.
+    protected String collectionElementVariable;
+    protected String collectionString;
+    protected CollectionHandler collectionHandler;
+    protected VariableAggregationDefinitions aggregations;
+    // default variable name for loop counter for inner instances (as described in the spec)
+<span class="nc" id="L119">    protected String collectionElementIndexVariable = &quot;loopCounter&quot;;</span>
+
+    /**
+     * @param innerActivityBehavior
+     *            The original {@link ActivityBehavior} of the activity that will be wrapped inside this behavior.
+     */
+<span class="nc" id="L125">    public MultiInstanceActivityBehavior(Activity activity, AbstractBpmnActivityBehavior innerActivityBehavior) {</span>
+<span class="nc" id="L126">        this.activity = activity;</span>
+<span class="nc" id="L127">        setInnerActivityBehavior(innerActivityBehavior);</span>
+<span class="nc" id="L128">    }</span>
+
+    @Override
+    public void execute(DelegateExecution delegateExecution) {
+<span class="nc" id="L132">        ExecutionEntity execution = (ExecutionEntity) delegateExecution;</span>
+<span class="nc bnc" id="L133" title="All 2 branches missed.">        if (getLocalLoopVariable(execution, getCollectionElementIndexVariable()) == null) {</span>
+
+<span class="nc" id="L135">            int nrOfInstances = 0;</span>
+<span class="nc bnc" id="L136" title="All 2 branches missed.">            if (hasVariableAggregationDefinitions(delegateExecution)) {</span>
+                // If there are aggregations we need to create an overview variable for every aggregation
+<span class="nc" id="L138">                Map&lt;String, VariableAggregationDefinition&gt; aggregationsByTarget = groupAggregationsByTarget(delegateExecution, aggregations.getOverviewAggregations(),</span>
+<span class="nc" id="L139">                        CommandContextUtil.getProcessEngineConfiguration());</span>
+
+<span class="nc bnc" id="L141" title="All 2 branches missed.">                for (String variableName : aggregationsByTarget.keySet()) {</span>
+<span class="nc" id="L142">                    BpmnAggregation bpmnAggregation = new BpmnAggregation(delegateExecution.getId());</span>
+<span class="nc" id="L143">                    delegateExecution.setVariable(variableName, bpmnAggregation);</span>
+<span class="nc" id="L144">                }</span>
+            }
+
+            try {
+<span class="nc" id="L148">                nrOfInstances = createInstances(delegateExecution);</span>
+<span class="nc" id="L149">            } catch (BpmnError error) {</span>
+<span class="nc" id="L150">                ErrorPropagation.propagateError(error, execution);</span>
+<span class="nc" id="L151">            }</span>
+
+<span class="nc bnc" id="L153" title="All 2 branches missed.">            if (nrOfInstances == 0) {</span>
+<span class="nc" id="L154">                cleanupMiRoot(execution);</span>
+            }
+
+<span class="nc" id="L157">        } else {</span>
+            // for synchronous, history was created already in ContinueMultiInstanceOperation,
+            // but that would lead to wrong timings for asynchronous which is why it's here
+<span class="nc bnc" id="L160" title="All 2 branches missed.">            if (activity.isAsynchronous()) {</span>
+<span class="nc" id="L161">                CommandContextUtil.getActivityInstanceEntityManager().recordActivityStart(execution);</span>
+            }
+<span class="nc" id="L163">            innerActivityBehavior.execute(execution);</span>
+        }
+<span class="nc" id="L165">    }</span>
+
+    protected abstract int createInstances(DelegateExecution execution);
+    
+    @Override
+    public void leave(DelegateExecution execution) {
+<span class="nc" id="L171">        DelegateExecution rootExecution = null;</span>
+        try {
+<span class="nc" id="L173">            rootExecution = getMultiInstanceRootExecution(execution);</span>
+<span class="nc" id="L174">            CommandContextUtil.getProcessEngineConfiguration().getListenerNotificationHelper()</span>
+<span class="nc" id="L175">                    .executeExecutionListeners(activity, rootExecution, ExecutionListener.EVENTNAME_END);</span>
+<span class="nc" id="L176">        } catch (BpmnError error) {</span>
+<span class="nc" id="L177">            ErrorPropagation.propagateError(error, rootExecution);</span>
+<span class="nc" id="L178">            return;</span>
+<span class="nc" id="L179">        }</span>
+<span class="nc" id="L180">        cleanupMiRoot(execution);</span>
+<span class="nc" id="L181">    }</span>
+
+    protected boolean hasVariableAggregationDefinitions(DelegateExecution execution) {
+<span class="nc bnc" id="L184" title="All 4 branches missed.">        return aggregations != null &amp;&amp; !aggregations.getAggregations().isEmpty();</span>
+    }
+
+    /**
+     * Aggregated the variables for the finished child multi instance execution
+     * @param childExecution the child execution
+     * @param miRootExecution the multi instance root execution
+     */
+    protected void aggregateVariablesForChildExecution(DelegateExecution childExecution, DelegateExecution miRootExecution) {
+<span class="nc bnc" id="L193" title="All 4 branches missed.">        if (hasVariableAggregationDefinitions(childExecution) &amp;&amp; miRootExecution != null) {</span>
+
+<span class="nc" id="L195">            ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration();</span>
+<span class="nc" id="L196">            VariableServiceConfiguration variableServiceConfiguration = processEngineConfiguration.getVariableServiceConfiguration();</span>
+<span class="nc" id="L197">            VariableService variableService = variableServiceConfiguration.getVariableService();</span>
+<span class="nc bnc" id="L198" title="All 2 branches missed.">            for (VariableAggregationDefinition aggregation : aggregations.getAggregations()) {</span>
+
+<span class="nc" id="L200">                VariableInstanceEntity aggregatedVarInstance = aggregateComplete(childExecution, miRootExecution, aggregation, processEngineConfiguration);</span>
+<span class="nc bnc" id="L201" title="All 2 branches missed.">                if (aggregatedVarInstance != null) {</span>
+
+<span class="nc" id="L203">                    variableService.insertVariableInstance(aggregatedVarInstance);</span>
+
+<span class="nc" id="L205">                    String targetVarName = aggregatedVarInstance.getName();</span>
+
+<span class="nc" id="L207">                    Integer elementIndexValue = getLoopVariable(childExecution, getCollectionElementIndexVariable());</span>
+<span class="nc" id="L208">                    String counterValue = aggregatedVarInstance.getId() + COUNTER_VAR_VALUE_SEPARATOR + elementIndexValue;</span>
+<span class="nc" id="L209">                    VariableInstanceEntity counterVarInstance = createScopedVariableAggregationVariableInstance(childExecution.getTenantId(),</span>
+<span class="nc" id="L210">                            COUNTER_VAR_PREFIX + targetVarName, aggregatedVarInstance.getScopeId(), aggregatedVarInstance.getSubScopeId(), counterValue,</span>
+                            variableServiceConfiguration);
+<span class="nc" id="L212">                    variableService.insertVariableInstance(counterVarInstance);</span>
+                }
+<span class="nc" id="L214">            }</span>
+        }
+<span class="nc" id="L216">    }</span>
+
+    /**
+     * Aggregates all variables that were stored before for each child instance
+     */
+    protected void aggregateVariablesOfAllInstances(DelegateExecution multiInstanceRootExecution) {
+<span class="nc" id="L222">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration();</span>
+<span class="nc" id="L223">        VariableService variableService = processEngineConfiguration.getVariableServiceConfiguration().getVariableService();</span>
+<span class="nc" id="L224">        List&lt;VariableInstanceEntity&gt; instances = variableService.createInternalVariableInstanceQuery()</span>
+<span class="nc" id="L225">                .subScopeId(multiInstanceRootExecution.getId())</span>
+<span class="nc" id="L226">                .scopeType(ScopeTypes.BPMN_VARIABLE_AGGREGATION)</span>
+<span class="nc" id="L227">                .list();</span>
+
+<span class="nc" id="L229">        Map&lt;String, VariableAggregationDefinition&gt; aggregationsByTarget = groupAggregationsByTarget(multiInstanceRootExecution, aggregations.getAggregations(), processEngineConfiguration);</span>
+
+<span class="nc" id="L231">        Map&lt;String, List&lt;VariableInstance&gt;&gt; instancesByName = groupVariableInstancesByName(instances);</span>
+
+<span class="nc bnc" id="L233" title="All 2 branches missed.">        for (Map.Entry&lt;String, VariableAggregationDefinition&gt; entry : aggregationsByTarget.entrySet()) {</span>
+<span class="nc" id="L234">            String varName = entry.getKey();</span>
+
+<span class="nc" id="L236">            VariableAggregationDefinition aggregation = aggregationsByTarget.get(varName);</span>
+<span class="nc" id="L237">            VariableAggregator aggregator = resolveVariableAggregator(aggregation, multiInstanceRootExecution);</span>
+<span class="nc" id="L238">            List&lt;VariableInstance&gt; varValues = instancesByName.getOrDefault(varName, Collections.emptyList());</span>
+<span class="nc" id="L239">            List&lt;VariableInstance&gt; counterVariables = instancesByName.getOrDefault(COUNTER_VAR_PREFIX + varName, Collections.emptyList());</span>
+
+<span class="nc" id="L241">            sortVariablesByCounter(varValues, counterVariables);</span>
+
+<span class="nc" id="L243">            Object value = aggregator.aggregateMultiVariables(multiInstanceRootExecution, varValues, BaseVariableAggregatorContext.complete(aggregation));</span>
+<span class="nc bnc" id="L244" title="All 2 branches missed.">            if (aggregation.isStoreAsTransientVariable()) {</span>
+<span class="nc" id="L245">                multiInstanceRootExecution.getParent().setTransientVariable(varName, value);</span>
+            } else {
+<span class="nc" id="L247">                multiInstanceRootExecution.getParent().setVariable(varName, value);</span>
+            }
+<span class="nc" id="L249">        }</span>
+<span class="nc" id="L250">    }</span>
+
+    protected void cleanupMiRoot(DelegateExecution execution) {
+        // Delete multi instance root and all child executions.
+        // Create a fresh execution to continue
+        
+<span class="nc" id="L256">        ExecutionEntity multiInstanceRootExecution = (ExecutionEntity) getMultiInstanceRootExecution(execution);</span>
+
+<span class="nc bnc" id="L258" title="All 2 branches missed.">        if (hasVariableAggregationDefinitions(execution)) {</span>
+<span class="nc" id="L259">            aggregateVariablesOfAllInstances(multiInstanceRootExecution);</span>
+        }
+
+
+<span class="nc" id="L263">        FlowElement flowElement = multiInstanceRootExecution.getCurrentFlowElement();</span>
+<span class="nc" id="L264">        ExecutionEntity parentExecution = multiInstanceRootExecution.getParent();</span>
+        
+<span class="nc" id="L266">        ExecutionEntityManager executionEntityManager = CommandContextUtil.getExecutionEntityManager();</span>
+<span class="nc bnc" id="L267" title="All 2 branches missed.">        Collection&lt;String&gt; executionIdsNotToSendCancelledEventsFor = execution.isMultiInstanceRoot() ? null : Collections.singletonList(execution.getId());</span>
+<span class="nc" id="L268">        executionEntityManager.deleteChildExecutions(multiInstanceRootExecution, null, executionIdsNotToSendCancelledEventsFor, DELETE_REASON_END, true, flowElement);</span>
+<span class="nc" id="L269">        executionEntityManager.deleteRelatedDataForExecution(multiInstanceRootExecution, DELETE_REASON_END, false);</span>
+<span class="nc" id="L270">        executionEntityManager.delete(multiInstanceRootExecution);</span>
+
+<span class="nc" id="L272">        ExecutionEntity newExecution = executionEntityManager.createChildExecution(parentExecution);</span>
+<span class="nc" id="L273">        newExecution.setCurrentFlowElement(flowElement);</span>
+<span class="nc" id="L274">        super.leave(newExecution);</span>
+<span class="nc" id="L275">    }</span>
+
+    protected void executeCompensationBoundaryEvents(FlowElement flowElement, DelegateExecution execution) {
+
+        // Execute compensation boundary events
+<span class="nc" id="L280">        Collection&lt;BoundaryEvent&gt; boundaryEvents = findBoundaryEventsForFlowNode(execution.getProcessDefinitionId(), flowElement);</span>
+<span class="nc bnc" id="L281" title="All 2 branches missed.">        if (CollectionUtil.isNotEmpty(boundaryEvents)) {</span>
+
+            // The parent execution becomes a scope, and a child execution is created for each of the boundary events
+<span class="nc bnc" id="L284" title="All 2 branches missed.">            for (BoundaryEvent boundaryEvent : boundaryEvents) {</span>
+
+<span class="nc bnc" id="L286" title="All 2 branches missed.">                if (CollectionUtil.isEmpty(boundaryEvent.getEventDefinitions())) {</span>
+<span class="nc" id="L287">                    continue;</span>
+                }
+
+<span class="nc bnc" id="L290" title="All 2 branches missed.">                if (boundaryEvent.getEventDefinitions().get(0) instanceof CompensateEventDefinition) {</span>
+<span class="nc" id="L291">                    ExecutionEntity childExecutionEntity = CommandContextUtil.getExecutionEntityManager()</span>
+<span class="nc" id="L292">                            .createChildExecution((ExecutionEntity) execution);</span>
+<span class="nc" id="L293">                    childExecutionEntity.setParentId(execution.getId());</span>
+<span class="nc" id="L294">                    childExecutionEntity.setCurrentFlowElement(boundaryEvent);</span>
+<span class="nc" id="L295">                    childExecutionEntity.setScope(false);</span>
+
+<span class="nc" id="L297">                    ActivityBehavior boundaryEventBehavior = ((ActivityBehavior) boundaryEvent.getBehavior());</span>
+<span class="nc" id="L298">                    boundaryEventBehavior.execute(childExecutionEntity);</span>
+                }
+<span class="nc" id="L300">            }</span>
+        }
+<span class="nc" id="L302">    }</span>
+
+    protected Collection&lt;BoundaryEvent&gt; findBoundaryEventsForFlowNode(final String processDefinitionId, final FlowElement flowElement) {
+<span class="nc" id="L305">        Process process = getProcessDefinition(processDefinitionId);</span>
+
+        // This could be cached or could be done at parsing time
+<span class="nc" id="L308">        List&lt;BoundaryEvent&gt; results = new ArrayList&lt;&gt;(1);</span>
+<span class="nc" id="L309">        Collection&lt;BoundaryEvent&gt; boundaryEvents = process.findFlowElementsOfType(BoundaryEvent.class, true);</span>
+<span class="nc bnc" id="L310" title="All 2 branches missed.">        for (BoundaryEvent boundaryEvent : boundaryEvents) {</span>
+<span class="nc bnc" id="L311" title="All 4 branches missed.">            if (boundaryEvent.getAttachedToRefId() != null &amp;&amp; boundaryEvent.getAttachedToRefId().equals(flowElement.getId())) {</span>
+<span class="nc" id="L312">                results.add(boundaryEvent);</span>
+            }
+<span class="nc" id="L314">        }</span>
+<span class="nc" id="L315">        return results;</span>
+    }
+
+    protected Process getProcessDefinition(String processDefinitionId) {
+<span class="nc" id="L319">        return ProcessDefinitionUtil.getProcess(processDefinitionId);</span>
+    }
+
+    // Intercepts signals, and delegates it to the wrapped {@link ActivityBehavior}.
+    @Override
+    public void trigger(DelegateExecution execution, String signalName, Object signalData) {
+<span class="nc" id="L325">        innerActivityBehavior.trigger(execution, signalName, signalData);</span>
+<span class="nc" id="L326">    }</span>
+
+    // required for supporting embedded subprocesses
+    public void lastExecutionEnded(DelegateExecution execution) {
+        // ScopeUtil.createEventScopeExecution((ExecutionEntity) execution);
+<span class="nc" id="L331">        leave(execution);</span>
+<span class="nc" id="L332">    }</span>
+
+    // required for supporting external subprocesses
+    @Override
+    public void completing(DelegateExecution execution, DelegateExecution subProcessInstance) throws Exception {
+<span class="nc bnc" id="L337" title="All 2 branches missed.">        if (innerActivityBehavior instanceof SubProcessActivityBehavior) {</span>
+<span class="nc" id="L338">            ((SubProcessActivityBehavior) innerActivityBehavior).completing(execution, subProcessInstance);</span>
+        }
+<span class="nc" id="L340">    }</span>
+
+    // required for supporting external subprocesses
+    @Override
+    public void completed(DelegateExecution execution) throws Exception {
+<span class="nc" id="L345">        leave(execution);</span>
+<span class="nc" id="L346">    }</span>
+    
+    @Override
+    public void interrupted(DelegateExecution execution) {
+<span class="nc bnc" id="L350" title="All 2 branches missed.">        if (execution.isMultiInstanceRoot()) {</span>
+            // We are only performing the interrupt logic for multi instance root executions
+<span class="nc" id="L352">            internalInterrupted(execution);</span>
+        }
+<span class="nc" id="L354">    }</span>
+
+    protected void internalInterrupted(DelegateExecution execution) {
+<span class="nc bnc" id="L357" title="All 2 branches missed.">        if (hasVariableAggregationDefinitions(execution)) {</span>
+<span class="nc" id="L358">            Map&lt;String, VariableAggregationDefinition&gt; aggregationsByTarget = groupAggregationsByTarget(execution, aggregations.getOverviewAggregations(),</span>
+<span class="nc" id="L359">                    CommandContextUtil.getProcessEngineConfiguration());</span>
+
+<span class="nc bnc" id="L361" title="All 2 branches missed.">            for (String variableName : aggregationsByTarget.keySet()) {</span>
+<span class="nc" id="L362">                VariableInstance variableInstance = execution.getVariableInstance(variableName);</span>
+<span class="nc bnc" id="L363" title="All 4 branches missed.">                if (variableInstance != null &amp;&amp; BpmnAggregatedVariableType.TYPE_NAME.equals(variableInstance.getTypeName())) {</span>
+<span class="nc" id="L364">                    execution.removeVariable(variableName);</span>
+                }
+<span class="nc" id="L366">            }</span>
+        }
+
+<span class="nc bnc" id="L369" title="All 2 branches missed.">        if (innerActivityBehavior instanceof InterruptibleActivityBehaviour) {</span>
+<span class="nc" id="L370">            ((InterruptibleActivityBehaviour) innerActivityBehavior).interrupted(execution);</span>
+        }
+<span class="nc" id="L372">    }</span>
+
+    public boolean completionConditionSatisfied(DelegateExecution execution) {
+<span class="nc bnc" id="L375" title="All 2 branches missed.">        if (completionCondition != null) {</span>
+            
+<span class="nc" id="L377">            ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration();</span>
+<span class="nc" id="L378">            ExpressionManager expressionManager = processEngineConfiguration.getExpressionManager();</span>
+            
+<span class="nc" id="L380">            String activeCompletionCondition = null;</span>
+
+<span class="nc bnc" id="L382" title="All 2 branches missed.">            if (CommandContextUtil.getProcessEngineConfiguration().isEnableProcessDefinitionInfoCache()) {</span>
+<span class="nc" id="L383">                ObjectNode taskElementProperties = BpmnOverrideContext.getBpmnOverrideElementProperties(activity.getId(), execution.getProcessDefinitionId());</span>
+<span class="nc" id="L384">                activeCompletionCondition = getActiveValue(completionCondition, DynamicBpmnConstants.MULTI_INSTANCE_COMPLETION_CONDITION, taskElementProperties);</span>
+
+<span class="nc" id="L386">            } else {</span>
+<span class="nc" id="L387">                activeCompletionCondition = completionCondition;</span>
+            }
+            
+<span class="nc" id="L390">            Object value = expressionManager.createExpression(activeCompletionCondition).getValue(execution);</span>
+            
+<span class="nc bnc" id="L392" title="All 2 branches missed.">            if (!(value instanceof Boolean)) {</span>
+<span class="nc" id="L393">                throw new FlowableIllegalArgumentException(&quot;completionCondition '&quot; + activeCompletionCondition + &quot;' does not evaluate to a boolean value&quot;);</span>
+            }
+
+<span class="nc" id="L396">            Boolean booleanValue = (Boolean) value;</span>
+<span class="nc bnc" id="L397" title="All 2 branches missed.">            if (LOGGER.isDebugEnabled()) {</span>
+<span class="nc" id="L398">                LOGGER.debug(&quot;Completion condition of multi-instance satisfied: {}&quot;, booleanValue);</span>
+            }
+<span class="nc" id="L400">            return booleanValue;</span>
+        }
+<span class="nc" id="L402">        return false;</span>
+    }
+    
+    public Integer getLoopVariable(DelegateExecution execution, String variableName) {
+<span class="nc" id="L406">        VariableInstance variable = getLoopVariableInstance(execution, variableName);</span>
+<span class="nc bnc" id="L407" title="All 2 branches missed.">        Object value = variable != null ? variable.getValue() : 0;</span>
+<span class="nc bnc" id="L408" title="All 2 branches missed.">        return (Integer) (value != null ? value : 0);</span>
+    }
+
+    public VariableInstance getLoopVariableInstance(DelegateExecution execution, String variableName) {
+<span class="nc" id="L412">        VariableInstance variable = execution.getVariableInstanceLocal(variableName);</span>
+<span class="nc" id="L413">        DelegateExecution parent = execution.getParent();</span>
+<span class="nc bnc" id="L414" title="All 4 branches missed.">        while (variable == null &amp;&amp; parent != null) {</span>
+<span class="nc" id="L415">            variable = parent.getVariableInstanceLocal(variableName);</span>
+<span class="nc" id="L416">            parent = parent.getParent();</span>
+        }
+
+<span class="nc" id="L419">        return variable;</span>
+    }
+
+    // Helpers
+    // //////////////////////////////////////////////////////////////////////
+
+    protected void sendCompletedWithConditionEvent(DelegateExecution execution) {
+<span class="nc" id="L426">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration();</span>
+<span class="nc" id="L427">        processEngineConfiguration.getEventDispatcher().dispatchEvent(</span>
+<span class="nc" id="L428">                buildCompletedEvent(execution, FlowableEngineEventType.MULTI_INSTANCE_ACTIVITY_COMPLETED_WITH_CONDITION),</span>
+<span class="nc" id="L429">                processEngineConfiguration.getEngineCfgKey());</span>
+<span class="nc" id="L430">    }</span>
+
+    protected void sendCompletedEvent(DelegateExecution execution) {
+<span class="nc" id="L433">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration();</span>
+<span class="nc" id="L434">        processEngineConfiguration.getEventDispatcher().dispatchEvent(</span>
+<span class="nc" id="L435">                buildCompletedEvent(execution, FlowableEngineEventType.MULTI_INSTANCE_ACTIVITY_COMPLETED),</span>
+<span class="nc" id="L436">                processEngineConfiguration.getEngineCfgKey());</span>
+<span class="nc" id="L437">    }</span>
+
+    protected FlowableMultiInstanceActivityCompletedEvent buildCompletedEvent(DelegateExecution execution, FlowableEngineEventType eventType) {
+<span class="nc" id="L440">        FlowElement flowNode = execution.getCurrentFlowElement();</span>
+
+<span class="nc" id="L442">        return FlowableEventBuilder.createMultiInstanceActivityCompletedEvent(eventType,</span>
+<span class="nc" id="L443">                getLoopVariable(execution, NUMBER_OF_INSTANCES),</span>
+<span class="nc" id="L444">                getLoopVariable(execution, NUMBER_OF_ACTIVE_INSTANCES),</span>
+<span class="nc" id="L445">                getLoopVariable(execution, NUMBER_OF_COMPLETED_INSTANCES),</span>
+<span class="nc" id="L446">                flowNode.getId(),</span>
+<span class="nc" id="L447">                flowNode.getName(), execution.getId(), execution.getProcessInstanceId(), execution.getProcessDefinitionId(), flowNode);</span>
+    }
+
+    @SuppressWarnings(&quot;rawtypes&quot;)
+    protected int resolveNrOfInstances(DelegateExecution execution) {
+<span class="nc bnc" id="L452" title="All 2 branches missed.">        if (loopCardinalityExpression != null) {</span>
+<span class="nc" id="L453">            return resolveLoopCardinality(execution);</span>
+
+<span class="nc bnc" id="L455" title="All 2 branches missed.">        } else if (usesCollection()) {</span>
+<span class="nc" id="L456">            Collection collection = resolveAndValidateCollection(execution);</span>
+<span class="nc" id="L457">            return collection.size();</span>
+
+        } else {
+<span class="nc" id="L460">            throw new FlowableIllegalArgumentException(&quot;Couldn't resolve collection expression nor variable reference&quot;);</span>
+        }
+    }
+
+    @SuppressWarnings(&quot;rawtypes&quot;)
+    protected void executeOriginalBehavior(DelegateExecution execution, ExecutionEntity multiInstanceRootExecution, int loopCounter) {
+<span class="nc bnc" id="L466" title="All 4 branches missed.">        if (usesCollection() &amp;&amp; collectionElementVariable != null) {</span>
+<span class="nc" id="L467">            Collection collection = resolveAndValidateCollection(execution);</span>
+
+<span class="nc" id="L469">            Object value = null;</span>
+<span class="nc" id="L470">            int index = 0;</span>
+<span class="nc" id="L471">            Iterator it = collection.iterator();</span>
+<span class="nc bnc" id="L472" title="All 2 branches missed.">            while (index &lt;= loopCounter) {</span>
+<span class="nc" id="L473">                value = it.next();</span>
+<span class="nc" id="L474">                index++;</span>
+            }
+<span class="nc" id="L476">            setLoopVariable(execution, collectionElementVariable, value);</span>
+        }
+
+<span class="nc" id="L479">        execution.setCurrentFlowElement(activity);</span>
+<span class="nc" id="L480">        CommandContextUtil.getAgenda().planContinueMultiInstanceOperation((ExecutionEntity) execution, multiInstanceRootExecution, loopCounter);</span>
+<span class="nc" id="L481">    }</span>
+
+    @SuppressWarnings(&quot;rawtypes&quot;)
+    protected Collection resolveAndValidateCollection(DelegateExecution execution) {
+<span class="nc" id="L485">        Object obj = resolveCollection(execution);</span>
+<span class="nc bnc" id="L486" title="All 2 branches missed.">        if (collectionHandler != null ) {           </span>
+<span class="nc" id="L487">            return createFlowableCollectionHandler(collectionHandler, execution).resolveCollection(obj, execution);</span>
+        } else {
+<span class="nc bnc" id="L489" title="All 2 branches missed.">            if (obj instanceof Collection) {</span>
+<span class="nc" id="L490">                return (Collection) obj;</span>
+                
+<span class="nc bnc" id="L492" title="All 2 branches missed.">            } else if (obj instanceof Iterable) {</span>
+<span class="nc" id="L493">                return iterableToCollection((Iterable) obj);</span>
+                
+<span class="nc bnc" id="L495" title="All 2 branches missed.">            } else if (obj instanceof String) {</span>
+<span class="nc" id="L496">                Object collectionVariable = execution.getVariable((String) obj);</span>
+<span class="nc bnc" id="L497" title="All 2 branches missed.">                if (collectionVariable instanceof Collection) {</span>
+<span class="nc" id="L498">                    return (Collection) collectionVariable;</span>
+<span class="nc bnc" id="L499" title="All 2 branches missed.">                } else if (collectionVariable instanceof Iterable) {</span>
+<span class="nc" id="L500">                    return iterableToCollection((Iterable) collectionVariable);</span>
+<span class="nc bnc" id="L501" title="All 2 branches missed.">                } else if (collectionVariable == null) {</span>
+<span class="nc" id="L502">                    throw new FlowableIllegalArgumentException(&quot;Variable '&quot; + obj + &quot;' was not found&quot;);</span>
+                } else {
+<span class="nc" id="L504">                    throw new FlowableIllegalArgumentException(&quot;Variable '&quot; + obj + &quot;':&quot; + collectionVariable + &quot; is not a Collection&quot;);</span>
+                }
+                
+            } else {
+<span class="nc" id="L508">                throw new FlowableIllegalArgumentException(buildUnresolvedCollectionExceptionMessage());</span>
+            }
+        }
+    }
+
+    protected String buildUnresolvedCollectionExceptionMessage() {
+<span class="nc" id="L514">        StringBuilder exceptionStringBuilder = new StringBuilder(&quot;Couldn't resolve collection expression&quot;);</span>
+<span class="nc bnc" id="L515" title="All 2 branches missed.">        if (collectionExpression != null) {</span>
+<span class="nc" id="L516">            exceptionStringBuilder.append(&quot; (&quot;);</span>
+<span class="nc" id="L517">            exceptionStringBuilder.append(collectionExpression.getExpressionText());</span>
+<span class="nc" id="L518">            exceptionStringBuilder.append(&quot;)&quot;);</span>
+        }
+<span class="nc" id="L520">        exceptionStringBuilder.append(&quot;, variable reference&quot;);</span>
+<span class="nc bnc" id="L521" title="All 2 branches missed.">        if (collectionVariable != null) {</span>
+<span class="nc" id="L522">            exceptionStringBuilder.append(&quot; (&quot;);</span>
+<span class="nc" id="L523">            exceptionStringBuilder.append(collectionVariable);</span>
+<span class="nc" id="L524">            exceptionStringBuilder.append(&quot;)&quot;);</span>
+        }
+<span class="nc" id="L526">        exceptionStringBuilder.append(&quot; or string&quot;);</span>
+<span class="nc bnc" id="L527" title="All 2 branches missed.">        if (collectionString != null) {</span>
+<span class="nc" id="L528">            exceptionStringBuilder.append(&quot; (&quot;);</span>
+<span class="nc" id="L529">            exceptionStringBuilder.append(collectionString);</span>
+<span class="nc" id="L530">            exceptionStringBuilder.append(&quot;)&quot;);</span>
+        }
+<span class="nc" id="L532">        return exceptionStringBuilder.toString();</span>
+    }
+
+    @SuppressWarnings({ &quot;unchecked&quot;, &quot;rawtypes&quot; })
+    protected Collection iterableToCollection(Iterable iterable) {
+<span class="nc" id="L537">        List result = new ArrayList();</span>
+<span class="nc" id="L538">        iterable.forEach(element -&gt; result.add(element));</span>
+<span class="nc" id="L539">        return result;</span>
+    }
+
+    protected Object resolveCollection(DelegateExecution execution) {
+<span class="nc" id="L543">        Object collection = null;</span>
+<span class="nc bnc" id="L544" title="All 2 branches missed.">        if (collectionExpression != null) {</span>
+<span class="nc" id="L545">            collection = collectionExpression.getValue(execution);</span>
+
+<span class="nc bnc" id="L547" title="All 2 branches missed.">        } else if (collectionVariable != null) {</span>
+<span class="nc" id="L548">            collection = execution.getVariable(collectionVariable);</span>
+            
+<span class="nc bnc" id="L550" title="All 2 branches missed.">        } else if (collectionString != null) {</span>
+<span class="nc" id="L551">            collection = collectionString;</span>
+        }
+<span class="nc" id="L553">        return collection;</span>
+    }
+
+    protected boolean usesCollection() {
+<span class="nc bnc" id="L557" title="All 6 branches missed.">        return collectionExpression != null || collectionVariable != null || collectionString != null;</span>
+    }
+
+    protected boolean isExtraScopeNeeded(FlowNode flowNode) {
+<span class="nc bnc" id="L561" title="All 2 branches missed.">        return flowNode.getSubProcess() != null;</span>
+    }
+
+    protected int resolveLoopCardinality(DelegateExecution execution) {
+        // Using Number since expr can evaluate to eg. Long (which is also the default for Juel)
+<span class="nc" id="L566">        Object value = loopCardinalityExpression.getValue(execution);</span>
+<span class="nc bnc" id="L567" title="All 2 branches missed.">        if (value instanceof Number) {</span>
+<span class="nc" id="L568">            return ((Number) value).intValue();</span>
+
+<span class="nc bnc" id="L570" title="All 2 branches missed.">        } else if (value instanceof String) {</span>
+<span class="nc" id="L571">            return Integer.valueOf((String) value);</span>
+
+        } else {
+<span class="nc" id="L574">            throw new FlowableIllegalArgumentException(&quot;Could not resolve loopCardinality expression '&quot; + loopCardinalityExpression.getExpressionText() + &quot;': not a number nor number String&quot;);</span>
+        }
+    }
+
+    protected void setLoopVariable(DelegateExecution execution, String variableName, Object value) {
+<span class="nc" id="L579">        execution.setVariableLocal(variableName, value);</span>
+<span class="nc" id="L580">    }</span>
+
+    protected Integer getLocalLoopVariable(DelegateExecution execution, String variableName) {
+<span class="nc" id="L583">        Map&lt;String, Object&gt; localVariables = execution.getVariablesLocal();</span>
+<span class="nc bnc" id="L584" title="All 2 branches missed.">        if (localVariables.containsKey(variableName)) {</span>
+<span class="nc" id="L585">            return (Integer) execution.getVariableLocal(variableName);</span>
+            
+<span class="nc bnc" id="L587" title="All 2 branches missed.">        } else if (!execution.isMultiInstanceRoot()) {</span>
+<span class="nc" id="L588">            DelegateExecution parentExecution = execution.getParent();</span>
+<span class="nc" id="L589">            localVariables = parentExecution.getVariablesLocal();</span>
+<span class="nc bnc" id="L590" title="All 2 branches missed.">            if (localVariables.containsKey(variableName)) {</span>
+<span class="nc" id="L591">                return (Integer) parentExecution.getVariableLocal(variableName);</span>
+                
+<span class="nc bnc" id="L593" title="All 2 branches missed.">            } else if (!parentExecution.isMultiInstanceRoot()) {</span>
+<span class="nc" id="L594">                DelegateExecution superExecution = parentExecution.getParent();</span>
+<span class="nc" id="L595">                return (Integer) superExecution.getVariableLocal(variableName);</span>
+                
+            } else {
+<span class="nc" id="L598">                return null;</span>
+            }
+            
+        } else {
+<span class="nc" id="L602">            return null;</span>
+        }
+    }
+
+    /**
+     * Since no transitions are followed when leaving the inner activity, it is needed to call the end listeners yourself.
+     */
+    protected void callActivityEndListeners(DelegateExecution execution) {
+<span class="nc" id="L610">        CommandContextUtil.getProcessEngineConfiguration().getListenerNotificationHelper()</span>
+<span class="nc" id="L611">                .executeExecutionListeners(activity, execution, ExecutionListener.EVENTNAME_END);</span>
+<span class="nc" id="L612">    }</span>
+
+    protected void logLoopDetails(DelegateExecution execution, String custom, int loopCounter, int nrOfCompletedInstances, int nrOfActiveInstances, int nrOfInstances) {
+<span class="nc bnc" id="L615" title="All 2 branches missed.">        if (LOGGER.isDebugEnabled()) {</span>
+<span class="nc" id="L616">            LOGGER.debug(&quot;Multi-instance '{}' {}. Details: loopCounter={}, nrOrCompletedInstances={},nrOfActiveInstances={},nrOfInstances={}&quot;,</span>
+<span class="nc bnc" id="L617" title="All 2 branches missed.">                    execution.getCurrentFlowElement() != null ? execution.getCurrentFlowElement().getId() : &quot;&quot;, custom, loopCounter,</span>
+<span class="nc" id="L618">                    nrOfCompletedInstances, nrOfActiveInstances, nrOfInstances);</span>
+        }
+<span class="nc" id="L620">    }</span>
+
+    protected DelegateExecution getMultiInstanceRootExecution(DelegateExecution execution) {
+<span class="nc" id="L623">        return ExecutionGraphUtil.getMultiInstanceRootExecution((ExecutionEntity) execution);</span>
+    }
+
+    protected DelegateExecution getInstanceExecution(DelegateExecution execution) {
+<span class="nc" id="L627">        return ExecutionGraphUtil.getParentInstanceExecutionInMultiInstance((ExecutionEntity) execution);</span>
+    }
+    
+    protected String getActiveValue(String originalValue, String propertyName, ObjectNode taskElementProperties) {
+<span class="nc" id="L631">        String activeValue = originalValue;</span>
+<span class="nc bnc" id="L632" title="All 2 branches missed.">        if (taskElementProperties != null) {</span>
+<span class="nc" id="L633">            JsonNode overrideValueNode = taskElementProperties.get(propertyName);</span>
+<span class="nc bnc" id="L634" title="All 2 branches missed.">            if (overrideValueNode != null) {</span>
+<span class="nc bnc" id="L635" title="All 2 branches missed.">                if (overrideValueNode.isNull()) {</span>
+<span class="nc" id="L636">                    activeValue = null;</span>
+                } else {
+<span class="nc" id="L638">                    activeValue = overrideValueNode.asText();</span>
+                }
+            }
+        }
+<span class="nc" id="L642">        return activeValue;</span>
+    }
+
+    protected FlowableCollectionHandler createFlowableCollectionHandler(CollectionHandler handler, DelegateExecution execution) {
+<span class="nc" id="L646">    	FlowableCollectionHandler collectionHandler = null;</span>
+
+<span class="nc bnc" id="L648" title="All 2 branches missed.">        if (ImplementationType.IMPLEMENTATION_TYPE_CLASS.equalsIgnoreCase(handler.getImplementationType())) {</span>
+<span class="nc" id="L649">        	collectionHandler = new ClassDelegateCollectionHandler(handler.getImplementation(), null);</span>
+        
+<span class="nc bnc" id="L651" title="All 2 branches missed.">        } else if (ImplementationType.IMPLEMENTATION_TYPE_DELEGATEEXPRESSION.equalsIgnoreCase(handler.getImplementationType())) {</span>
+<span class="nc" id="L652">        	Object delegate = DelegateExpressionUtil.resolveDelegateExpression(CommandContextUtil.getProcessEngineConfiguration().getExpressionManager().createExpression(handler.getImplementation()), execution);</span>
+<span class="nc bnc" id="L653" title="All 2 branches missed.">            if (delegate instanceof FlowableCollectionHandler) {</span>
+<span class="nc" id="L654">                collectionHandler = new DelegateExpressionCollectionHandler(execution, CommandContextUtil.getProcessEngineConfiguration().getExpressionManager().createExpression(handler.getImplementation()));   </span>
+            } else {
+<span class="nc" id="L656">                throw new FlowableIllegalArgumentException(&quot;Delegate expression &quot; + handler.getImplementation() + &quot; did not resolve to an implementation of &quot; + FlowableCollectionHandler.class);</span>
+            }
+        }
+<span class="nc" id="L659">        return collectionHandler;</span>
+    }
+
+    // Getters and Setters
+    // ///////////////////////////////////////////////////////////
+
+    public Expression getLoopCardinalityExpression() {
+<span class="nc" id="L666">        return loopCardinalityExpression;</span>
+    }
+
+    public void setLoopCardinalityExpression(Expression loopCardinalityExpression) {
+<span class="nc" id="L670">        this.loopCardinalityExpression = loopCardinalityExpression;</span>
+<span class="nc" id="L671">    }</span>
+
+    public String getCompletionCondition() {
+<span class="nc" id="L674">        return completionCondition;</span>
+    }
+
+    public void setCompletionCondition(String completionCondition) {
+<span class="nc" id="L678">        this.completionCondition = completionCondition;</span>
+<span class="nc" id="L679">    }</span>
+
+    public Expression getCollectionExpression() {
+<span class="nc" id="L682">        return collectionExpression;</span>
+    }
+
+    public void setCollectionExpression(Expression collectionExpression) {
+<span class="nc" id="L686">        this.collectionExpression = collectionExpression;</span>
+<span class="nc" id="L687">    }</span>
+
+    public String getCollectionVariable() {
+<span class="nc" id="L690">        return collectionVariable;</span>
+    }
+
+    public void setCollectionVariable(String collectionVariable) {
+<span class="nc" id="L694">        this.collectionVariable = collectionVariable;</span>
+<span class="nc" id="L695">    }</span>
+
+    public String getCollectionElementVariable() {
+<span class="nc" id="L698">        return collectionElementVariable;</span>
+    }
+
+    public void setCollectionElementVariable(String collectionElementVariable) {
+<span class="nc" id="L702">        this.collectionElementVariable = collectionElementVariable;</span>
+<span class="nc" id="L703">    }</span>
+
+    public String getCollectionString() {
+<span class="nc" id="L706">        return collectionString;</span>
+    }
+
+    public void setCollectionString(String collectionString) {
+<span class="nc" id="L710">        this.collectionString = collectionString;</span>
+<span class="nc" id="L711">    }</span>
+
+	public CollectionHandler getHandler() {
+<span class="nc" id="L714">		return collectionHandler;</span>
+	}
+
+	public void setHandler(CollectionHandler collectionHandler) {
+<span class="nc" id="L718">		this.collectionHandler = collectionHandler;</span>
+<span class="nc" id="L719">	}</span>
+
+    public VariableAggregationDefinitions getAggregations() {
+<span class="nc" id="L722">        return aggregations;</span>
+    }
+
+    public void setAggregations(VariableAggregationDefinitions aggregations) {
+<span class="nc" id="L726">        this.aggregations = aggregations;</span>
+<span class="nc" id="L727">    }</span>
+
+    public String getCollectionElementIndexVariable() {
+<span class="nc" id="L730">        return collectionElementIndexVariable;</span>
+    }
+
+    public void setCollectionElementIndexVariable(String collectionElementIndexVariable) {
+<span class="nc" id="L734">        this.collectionElementIndexVariable = collectionElementIndexVariable;</span>
+<span class="nc" id="L735">    }</span>
+
+    public void setInnerActivityBehavior(AbstractBpmnActivityBehavior innerActivityBehavior) {
+<span class="nc" id="L738">        this.innerActivityBehavior = innerActivityBehavior;</span>
+<span class="nc" id="L739">        this.innerActivityBehavior.setMultiInstanceActivityBehavior(this);</span>
+<span class="nc" id="L740">    }</span>
+
+    public AbstractBpmnActivityBehavior getInnerActivityBehavior() {
+<span class="nc" id="L743">        return innerActivityBehavior;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

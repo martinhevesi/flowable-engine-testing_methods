@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BulkMoveDeadLetterJobsTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.jobexecutor</a> &gt; <span class="el_source">BulkMoveDeadLetterJobsTest.java</span></div><h1>BulkMoveDeadLetterJobsTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.test.jobexecutor;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.util.List;
+import java.util.stream.Collectors;
+
+import org.flowable.common.engine.impl.db.AbstractDataManager;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.test.Deployment;
+import org.flowable.job.api.Job;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+
+/**
+ * Tests the bulk move of timer jobs, as this uses a where with in() clause that is limited
+ * in number of elements (due to limitations of certain databases).
+ * If this test passes on all db's we know that the in() clause limitation works on all supported db's.
+ *
+ * @author Christopher Welsch
+ */
+<span class="nc" id="L35">public class BulkMoveDeadLetterJobsTest extends JobExecutorTestCase {</span>
+
+    private static final int NR_OF_TIMER_JOBS = AbstractDataManager.MAX_ENTRIES_IN_CLAUSE + (AbstractDataManager.MAX_ENTRIES_IN_CLAUSE / 2);
+
+    @Override
+    protected void configureConfiguration(ProcessEngineConfigurationImpl processEngineConfiguration) {
+<span class="nc" id="L41">        super.configureConfiguration(processEngineConfiguration);</span>
+
+        // Make sure more timer jobs are fetched in one go than possible in the in() clause, so the logic to split is used.
+<span class="nc" id="L44">        processEngineConfiguration.getAsyncExecutorConfiguration().setMaxTimerJobsPerAcquisition(NR_OF_TIMER_JOBS);</span>
+<span class="nc bnc" id="L45" title="All 2 branches missed.">        if (processEngineConfiguration.getAsyncExecutor() != null) {</span>
+<span class="nc" id="L46">            processEngineConfiguration.getAsyncExecutor().setMaxTimerJobsPerAcquisition(NR_OF_TIMER_JOBS);</span>
+        }
+<span class="nc" id="L48">    }</span>
+
+    @AfterEach
+    public void cleanup() {
+<span class="nc bnc" id="L52" title="All 2 branches missed.">        for (Job timerJob : processEngineConfiguration.getManagementService().createTimerJobQuery().list()) {</span>
+<span class="nc" id="L53">            processEngineConfiguration.getManagementService().deleteTimerJob(timerJob.getId());</span>
+<span class="nc" id="L54">        }</span>
+<span class="nc bnc" id="L55" title="All 2 branches missed.">        for (Job job : processEngineConfiguration.getManagementService().createJobQuery().list()) {</span>
+<span class="nc" id="L56">            processEngineConfiguration.getManagementService().deleteJob(job.getId());</span>
+<span class="nc" id="L57">        }</span>
+<span class="nc" id="L58">    }</span>
+
+    @Test
+    @Deployment
+    public void testBulkMoveDeadLetterJobs() {
+        // process throws no exception. Service task passes at the first time.
+<span class="nc" id="L64">        ProcessInstance instance1 = runtimeService.createProcessInstanceBuilder().variable(&quot;fail&quot;, true).processDefinitionKey(&quot;failedServiceTask&quot;).start();</span>
+<span class="nc" id="L65">        ProcessInstance instance2 = runtimeService.createProcessInstanceBuilder().variable(&quot;fail&quot;, true).processDefinitionKey(&quot;failedServiceTask&quot;).start();</span>
+
+<span class="nc" id="L67">        waitForJobExecutorToProcessAllJobs(10000, 200);</span>
+
+<span class="nc" id="L69">        List&lt;Job&gt; deadLetterJobs = managementService.createDeadLetterJobQuery().list();</span>
+<span class="nc" id="L70">        assertThat(deadLetterJobs).hasSize(2);</span>
+
+<span class="nc" id="L72">        runtimeService.setVariable(instance1.getId(), &quot;fail&quot;, false);</span>
+<span class="nc" id="L73">        runtimeService.setVariable(instance2.getId(), &quot;fail&quot;, false);</span>
+
+<span class="nc" id="L75">        List&lt;String&gt; jobIds = deadLetterJobs.stream().map(Job::getId).collect(Collectors.toList());</span>
+
+<span class="nc" id="L77">        managementService.bulkMoveDeadLetterJobs(jobIds, 3);</span>
+
+<span class="nc" id="L79">        assertThat(managementService.createDeadLetterJobQuery().list()).isEmpty();</span>
+
+<span class="nc" id="L81">        List&lt;Job&gt; jobs = managementService.createJobQuery().list();</span>
+<span class="nc" id="L82">        assertThat(jobs).hasSize(2);</span>
+
+<span class="nc" id="L84">        jobs.forEach(job -&gt; managementService.executeJob(job.getId()));</span>
+
+<span class="nc" id="L86">        assertThat(managementService.createDeadLetterJobQuery().list()).isEmpty();</span>
+<span class="nc" id="L87">        assertThat(managementService.createJobQuery().list()).isEmpty();</span>
+
+<span class="nc" id="L89">        assertProcessEnded(instance1.getId());</span>
+<span class="nc" id="L90">        assertProcessEnded(instance2.getId());</span>
+<span class="nc" id="L91">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

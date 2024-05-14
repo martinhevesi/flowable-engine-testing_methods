@@ -1,0 +1,1514 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AbstractDynamicStateManager.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.dynamic</a> &gt; <span class="el_source">AbstractDynamicStateManager.java</span></div><h1>AbstractDynamicStateManager.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.impl.dynamic;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.bpmn.constants.BpmnXMLConstants;
+import org.flowable.bpmn.model.Activity;
+import org.flowable.bpmn.model.BoundaryEvent;
+import org.flowable.bpmn.model.BpmnModel;
+import org.flowable.bpmn.model.CallActivity;
+import org.flowable.bpmn.model.CompensateEventDefinition;
+import org.flowable.bpmn.model.EventDefinition;
+import org.flowable.bpmn.model.EventSubProcess;
+import org.flowable.bpmn.model.ExtensionElement;
+import org.flowable.bpmn.model.ExternalWorkerServiceTask;
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.FlowElementsContainer;
+import org.flowable.bpmn.model.Gateway;
+import org.flowable.bpmn.model.MessageEventDefinition;
+import org.flowable.bpmn.model.MultiInstanceLoopCharacteristics;
+import org.flowable.bpmn.model.Process;
+import org.flowable.bpmn.model.ServiceTask;
+import org.flowable.bpmn.model.Signal;
+import org.flowable.bpmn.model.SignalEventDefinition;
+import org.flowable.bpmn.model.StartEvent;
+import org.flowable.bpmn.model.SubProcess;
+import org.flowable.bpmn.model.Task;
+import org.flowable.bpmn.model.TimerEventDefinition;
+import org.flowable.bpmn.model.UserTask;
+import org.flowable.bpmn.model.ValuedDataObject;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.delegate.Expression;
+import org.flowable.common.engine.api.delegate.event.FlowableEngineEventType;
+import org.flowable.common.engine.api.delegate.event.FlowableEventDispatcher;
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.impl.el.ExpressionManager;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.common.engine.impl.util.CollectionUtil;
+import org.flowable.engine.ManagementService;
+import org.flowable.engine.ProcessEngineConfiguration;
+import org.flowable.engine.delegate.event.impl.FlowableEventBuilder;
+import org.flowable.engine.history.DeleteReason;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.delegate.ActivityBehavior;
+import org.flowable.engine.impl.dynamic.MoveExecutionEntityContainer.FlowElementMoveEntry;
+import org.flowable.engine.impl.event.EventDefinitionExpressionUtil;
+import org.flowable.engine.impl.jobexecutor.AsyncContinuationJobHandler;
+import org.flowable.engine.impl.jobexecutor.TimerEventHandler;
+import org.flowable.engine.impl.jobexecutor.TriggerTimerEventJobHandler;
+import org.flowable.engine.impl.persistence.deploy.DeploymentManager;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntity;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntityImpl;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntityManager;
+import org.flowable.engine.impl.persistence.entity.ProcessDefinitionEntityManager;
+import org.flowable.engine.impl.runtime.ChangeActivityStateBuilderImpl;
+import org.flowable.engine.impl.runtime.EnableActivityIdContainer;
+import org.flowable.engine.impl.runtime.MoveActivityIdContainer;
+import org.flowable.engine.impl.runtime.MoveExecutionIdContainer;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.engine.impl.util.CountingEntityUtil;
+import org.flowable.engine.impl.util.EntityLinkUtil;
+import org.flowable.engine.impl.util.Flowable5Util;
+import org.flowable.engine.impl.util.IOParameterUtil;
+import org.flowable.engine.impl.util.JobUtil;
+import org.flowable.engine.impl.util.ProcessDefinitionUtil;
+import org.flowable.engine.impl.util.ProcessInstanceHelper;
+import org.flowable.engine.impl.util.TaskHelper;
+import org.flowable.engine.impl.util.TimerUtil;
+import org.flowable.engine.interceptor.MigrationContext;
+import org.flowable.engine.repository.ProcessDefinition;
+import org.flowable.eventsubscription.service.EventSubscriptionService;
+import org.flowable.eventsubscription.service.impl.persistence.entity.EventSubscriptionEntity;
+import org.flowable.eventsubscription.service.impl.persistence.entity.MessageEventSubscriptionEntity;
+import org.flowable.eventsubscription.service.impl.persistence.entity.SignalEventSubscriptionEntity;
+import org.flowable.job.service.JobService;
+import org.flowable.job.service.TimerJobService;
+import org.flowable.job.service.impl.persistence.entity.DeadLetterJobEntityImpl;
+import org.flowable.job.service.impl.persistence.entity.ExternalWorkerJobEntityImpl;
+import org.flowable.job.service.impl.persistence.entity.JobEntity;
+import org.flowable.job.service.impl.persistence.entity.SuspendedJobEntityImpl;
+import org.flowable.job.service.impl.persistence.entity.TimerJobEntity;
+import org.flowable.job.service.impl.persistence.entity.TimerJobEntityImpl;
+import org.flowable.task.service.TaskService;
+import org.flowable.task.service.impl.persistence.entity.TaskEntityImpl;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * @author Tijs Rademakers
+ * @author Dennis Federico
+ */
+<span class="nc" id="L116">public abstract class AbstractDynamicStateManager {</span>
+
+<span class="nc" id="L118">    protected final Logger LOGGER = LoggerFactory.getLogger(this.getClass());</span>
+
+    //-- Move container preparation section start
+    public List&lt;MoveExecutionEntityContainer&gt; resolveMoveExecutionEntityContainers(ChangeActivityStateBuilderImpl changeActivityStateBuilder, 
+    		Map&lt;String, Object&gt; variables, CommandContext commandContext) {
+    	
+<span class="nc" id="L124">        List&lt;MoveExecutionEntityContainer&gt; moveExecutionEntityContainerList = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L125" title="All 2 branches missed.">        if (changeActivityStateBuilder.getMoveExecutionIdList().size() &gt; 0) {</span>
+<span class="nc bnc" id="L126" title="All 2 branches missed.">            for (MoveExecutionIdContainer executionContainer : changeActivityStateBuilder.getMoveExecutionIdList()) {</span>
+                
+<span class="nc" id="L128">                Map&lt;String, List&lt;ExecutionEntity&gt;&gt; executionsByParent = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L129">                Map&lt;String, List&lt;ExecutionEntity&gt;&gt; miExecutionsByParent = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L130" title="All 2 branches missed.">                for (String executionId : executionContainer.getExecutionIds()) {</span>
+<span class="nc" id="L131">                    ExecutionEntity execution = resolveActiveExecution(executionId, commandContext);</span>
+                    List&lt;ExecutionEntity&gt; executionEntities;
+<span class="nc bnc" id="L133" title="All 2 branches missed.">                    if (!execution.isMultiInstanceRoot()) {</span>
+<span class="nc" id="L134">                    	executionEntities = executionsByParent.computeIfAbsent(execution.getParentId(), k -&gt; new ArrayList&lt;&gt;());</span>
+                    } else {
+<span class="nc" id="L136">                    	executionEntities = miExecutionsByParent.computeIfAbsent(execution.getParentId(), k -&gt; new ArrayList&lt;&gt;());</span>
+                    }
+<span class="nc" id="L138">                    executionEntities.add(execution);</span>
+<span class="nc" id="L139">                }</span>
+                
+<span class="nc" id="L141">                miExecutionsByParent.values().forEach(executions -&gt; {</span>
+<span class="nc" id="L142">                    MoveExecutionEntityContainer moveExecutionEntityContainer = new MoveExecutionEntityContainer(executions, executionContainer.getMoveToActivityIds());</span>
+<span class="nc bnc" id="L143" title="All 4 branches missed.">                    if (executions.get(0).getVariablesLocal() != null &amp;&amp; !executions.get(0).getVariablesLocal().isEmpty()) {</span>
+<span class="nc" id="L144">                        moveExecutionEntityContainer.addLocalVariableMap(executions.get(0).getActivityId(), executions.get(0).getVariablesLocal());</span>
+                    }
+<span class="nc bnc" id="L146" title="All 2 branches missed.">                    if (executionContainer.getNewAssigneeId() != null) {</span>
+<span class="nc" id="L147">                        moveExecutionEntityContainer.setNewAssigneeId(executionContainer.getNewAssigneeId());</span>
+                    }
+<span class="nc bnc" id="L149" title="All 2 branches missed.">                    if (executionContainer.getNewOwnerId() != null) {</span>
+<span class="nc" id="L150">                        moveExecutionEntityContainer.setNewOwnerId(executionContainer.getNewOwnerId());</span>
+                    }
+<span class="nc" id="L152">                    moveExecutionEntityContainerList.add(moveExecutionEntityContainer);</span>
+<span class="nc" id="L153">                });</span>
+                
+<span class="nc" id="L155">                executionsByParent.values().forEach(executions -&gt; {</span>
+<span class="nc bnc" id="L156" title="All 8 branches missed.">                    if (!miExecutionsByParent.isEmpty() &amp;&amp; executions.size() &gt; 1 &amp;&amp; (executions.get(0).getCurrentFlowElement() instanceof Task || executions.get(0).getCurrentFlowElement() instanceof CallActivity)) {</span>
+<span class="nc bnc" id="L157" title="All 2 branches missed.">                        for (ExecutionEntity execution : executions) {</span>
+<span class="nc" id="L158">                            List&lt;ExecutionEntity&gt; miExecutionList = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L159">                            miExecutionList.add(execution);</span>
+<span class="nc" id="L160">                            MoveExecutionEntityContainer moveExecutionEntityContainer = new MoveExecutionEntityContainer(miExecutionList, executionContainer.getMoveToActivityIds());</span>
+                        
+<span class="nc bnc" id="L162" title="All 4 branches missed.">                            if (execution.getVariablesLocal() != null &amp;&amp; !execution.getVariablesLocal().isEmpty()) {</span>
+<span class="nc" id="L163">                                moveExecutionEntityContainer.addLocalVariableMap(execution.getActivityId(), execution.getVariablesLocal());</span>
+                            }
+                            
+<span class="nc bnc" id="L166" title="All 2 branches missed.">                            if (executionContainer.getNewAssigneeId() != null) {</span>
+<span class="nc" id="L167">                                moveExecutionEntityContainer.setNewAssigneeId(executionContainer.getNewAssigneeId());</span>
+                            }
+<span class="nc bnc" id="L169" title="All 2 branches missed.">                            if (executionContainer.getNewOwnerId() != null) {</span>
+<span class="nc" id="L170">                                moveExecutionEntityContainer.setNewOwnerId(executionContainer.getNewOwnerId());</span>
+                            }
+<span class="nc" id="L172">                            moveExecutionEntityContainerList.add(moveExecutionEntityContainer);</span>
+<span class="nc" id="L173">                        }</span>
+                    
+                    } else {
+<span class="nc" id="L176">                        MoveExecutionEntityContainer moveExecutionEntityContainer = new MoveExecutionEntityContainer(executions, executionContainer.getMoveToActivityIds());</span>
+<span class="nc bnc" id="L177" title="All 2 branches missed.">                        for (ExecutionEntity execution : executions) {</span>
+<span class="nc bnc" id="L178" title="All 4 branches missed.">                            if (execution.getVariablesLocal() != null &amp;&amp; !execution.getVariablesLocal().isEmpty()) {</span>
+<span class="nc" id="L179">                                moveExecutionEntityContainer.addLocalVariableMap(execution.getActivityId(), execution.getVariablesLocal());</span>
+                            }
+<span class="nc" id="L181">                        }</span>
+<span class="nc bnc" id="L182" title="All 2 branches missed.">                        if (executionContainer.getNewAssigneeId() != null) {</span>
+<span class="nc" id="L183">                        	moveExecutionEntityContainer.setNewAssigneeId(executionContainer.getNewAssigneeId());</span>
+                        }
+<span class="nc bnc" id="L185" title="All 2 branches missed.">                        if (executionContainer.getNewOwnerId() != null) {</span>
+<span class="nc" id="L186">                        	moveExecutionEntityContainer.setNewOwnerId(executionContainer.getNewOwnerId());</span>
+                        }
+<span class="nc" id="L188">                        moveExecutionEntityContainerList.add(moveExecutionEntityContainer);</span>
+                    }
+<span class="nc" id="L190">                });</span>
+<span class="nc" id="L191">            }</span>
+        }
+
+<span class="nc bnc" id="L194" title="All 2 branches missed.">        if (changeActivityStateBuilder.getMoveActivityIdList().size() &gt; 0) {</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">            for (MoveActivityIdContainer activityContainer : changeActivityStateBuilder.getMoveActivityIdList()) {</span>
+<span class="nc" id="L196">                Map&lt;String, List&lt;ExecutionEntity&gt;&gt; activitiesExecutionsByMultiInstanceParentId = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L197">                List&lt;ExecutionEntity&gt; activitiesExecutionsNotInMultiInstanceParent = new ArrayList&lt;&gt;();</span>
+
+<span class="nc bnc" id="L199" title="All 2 branches missed.">                for (String activityId : activityContainer.getActivityIds()) {</span>
+<span class="nc" id="L200">                    List&lt;ExecutionEntity&gt; activityExecutions = resolveActiveExecutions(changeActivityStateBuilder.getProcessInstanceId(), activityId, commandContext);</span>
+<span class="nc bnc" id="L201" title="All 2 branches missed.">                    if (!activityExecutions.isEmpty()) {</span>
+
+                        // check for a multi instance root execution
+<span class="nc" id="L204">                        ExecutionEntity miExecution = null;</span>
+<span class="nc" id="L205">                        boolean isInsideMultiInstance = false;</span>
+<span class="nc bnc" id="L206" title="All 2 branches missed.">                        for (ExecutionEntity possibleMIExecution : activityExecutions) {</span>
+<span class="nc bnc" id="L207" title="All 2 branches missed.">                            if (possibleMIExecution.isMultiInstanceRoot()) {</span>
+<span class="nc" id="L208">                                miExecution = possibleMIExecution;</span>
+<span class="nc" id="L209">                                isInsideMultiInstance = true;</span>
+<span class="nc" id="L210">                                break;</span>
+                            }
+
+<span class="nc bnc" id="L213" title="All 2 branches missed.">                            if (isExecutionInsideMultiInstance(possibleMIExecution)) {</span>
+<span class="nc" id="L214">                                isInsideMultiInstance = true;</span>
+                            }
+<span class="nc" id="L216">                        }</span>
+
+                        //If inside a multiInstance, we create one container for each execution
+<span class="nc bnc" id="L219" title="All 2 branches missed.">                        if (isInsideMultiInstance) {</span>
+
+                            //We group by the parentId (executions belonging to the same parent execution instance
+                            // i.e. gateways nested in MultiInstance subProcesses, need to be in the same move container)
+<span class="nc" id="L223">                            Stream&lt;ExecutionEntity&gt; executionEntitiesStream = activityExecutions.stream();</span>
+<span class="nc bnc" id="L224" title="All 2 branches missed.">                            if (miExecution != null) {</span>
+<span class="nc" id="L225">                                executionEntitiesStream = executionEntitiesStream.filter(ExecutionEntity::isMultiInstanceRoot);</span>
+                            }
+
+<span class="nc" id="L228">                            executionEntitiesStream.forEach(childExecution -&gt; {</span>
+<span class="nc bnc" id="L229" title="All 2 branches missed.">                                String parentId = childExecution.isMultiInstanceRoot() ? childExecution.getId() : childExecution.getParentId();</span>
+<span class="nc" id="L230">                                List&lt;ExecutionEntity&gt; executionEntities = activitiesExecutionsByMultiInstanceParentId.computeIfAbsent(parentId, k -&gt; new ArrayList&lt;&gt;());</span>
+<span class="nc" id="L231">                                executionEntities.add(childExecution);</span>
+<span class="nc" id="L232">                            });</span>
+
+<span class="nc" id="L234">                        } else {</span>
+<span class="nc" id="L235">                            ExecutionEntity execution = activityExecutions.iterator().next();</span>
+<span class="nc" id="L236">                            activitiesExecutionsNotInMultiInstanceParent.add(execution);</span>
+                        }
+                    }
+<span class="nc" id="L239">                }</span>
+
+                //Create a move container for each execution group (executionList)
+<span class="nc" id="L242">                Stream.concat(activitiesExecutionsByMultiInstanceParentId.values().stream(), Stream.of(activitiesExecutionsNotInMultiInstanceParent))</span>
+<span class="nc bnc" id="L243" title="All 4 branches missed.">                    .filter(executions -&gt; executions != null &amp;&amp; !executions.isEmpty())</span>
+<span class="nc" id="L244">                    .forEach(executions -&gt; moveExecutionEntityContainerList.add(createMoveExecutionEntityContainer(activityContainer, executions, commandContext)));</span>
+<span class="nc" id="L245">            }</span>
+        }
+
+<span class="nc" id="L248">        return moveExecutionEntityContainerList;</span>
+    }
+    
+    public List&lt;EnableActivityContainer&gt; resolveEnableActivityContainers(ChangeActivityStateBuilderImpl changeActivityStateBuilder) {
+<span class="nc" id="L252">        List&lt;EnableActivityContainer&gt; enableActivityContainerList = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L253" title="All 2 branches missed.">        if (!changeActivityStateBuilder.getEnableActivityIdList().isEmpty()) {</span>
+<span class="nc bnc" id="L254" title="All 2 branches missed.">            for (EnableActivityIdContainer enableActivityIdContainer : changeActivityStateBuilder.getEnableActivityIdList()) {</span>
+<span class="nc" id="L255">                EnableActivityContainer enableActivityContainer = new EnableActivityContainer(enableActivityIdContainer.getActivityIds());</span>
+<span class="nc" id="L256">                enableActivityContainerList.add(enableActivityContainer);</span>
+<span class="nc" id="L257">            }</span>
+        }
+        
+<span class="nc" id="L260">        return enableActivityContainerList;</span>
+    }
+
+    protected ExecutionEntity resolveActiveExecution(String executionId, CommandContext commandContext) {
+<span class="nc" id="L264">        ExecutionEntityManager executionEntityManager = CommandContextUtil.getExecutionEntityManager(commandContext);</span>
+<span class="nc" id="L265">        ExecutionEntity execution = executionEntityManager.findById(executionId);</span>
+
+<span class="nc bnc" id="L267" title="All 2 branches missed.">        if (execution == null) {</span>
+<span class="nc" id="L268">            throw new FlowableException(&quot;Execution could not be found with id &quot; + executionId);</span>
+        }
+
+<span class="nc bnc" id="L271" title="All 2 branches missed.">        if (Flowable5Util.isFlowable5ProcessDefinitionId(commandContext, execution.getProcessDefinitionId())) {</span>
+<span class="nc" id="L272">            throw new FlowableException(&quot;Flowable 5 process definitions are not supported&quot;);</span>
+        }
+
+<span class="nc" id="L275">        return execution;</span>
+    }
+
+    protected List&lt;ExecutionEntity&gt; resolveActiveExecutions(String processInstanceId, String activityId, CommandContext commandContext) {
+<span class="nc" id="L279">        ExecutionEntityManager executionEntityManager = CommandContextUtil.getExecutionEntityManager(commandContext);</span>
+<span class="nc" id="L280">        ExecutionEntity processExecution = executionEntityManager.findById(processInstanceId);</span>
+
+<span class="nc bnc" id="L282" title="All 2 branches missed.">        if (processExecution == null) {</span>
+<span class="nc" id="L283">            throw new FlowableException(&quot;Execution could not be found with id &quot; + processInstanceId);</span>
+        }
+
+<span class="nc bnc" id="L286" title="All 2 branches missed.">        if (!processExecution.isProcessInstanceType()) {</span>
+<span class="nc" id="L287">            throw new FlowableException(&quot;Execution is not a process instance type execution for id &quot; + processInstanceId);</span>
+        }
+
+<span class="nc bnc" id="L290" title="All 2 branches missed.">        if (Flowable5Util.isFlowable5ProcessDefinitionId(commandContext, processExecution.getProcessDefinitionId())) {</span>
+<span class="nc" id="L291">            throw new FlowableException(&quot;Flowable 5 process definitions are not supported&quot;);</span>
+        }
+
+<span class="nc" id="L294">        List&lt;ExecutionEntity&gt; childExecutions = executionEntityManager.findChildExecutionsByProcessInstanceId(processExecution.getId());</span>
+
+<span class="nc" id="L296">        List&lt;ExecutionEntity&gt; executions = childExecutions.stream()</span>
+<span class="nc bnc" id="L297" title="All 2 branches missed.">            .filter(e -&gt; e.getCurrentActivityId() != null)</span>
+<span class="nc" id="L298">            .filter(e -&gt; e.getCurrentActivityId().equals(activityId))</span>
+<span class="nc" id="L299">            .collect(Collectors.toList());</span>
+
+<span class="nc bnc" id="L301" title="All 2 branches missed.">        if (executions.isEmpty()) {</span>
+<span class="nc" id="L302">            throw new FlowableException(&quot;Active execution could not be found with activity id &quot; + activityId);</span>
+        }
+
+<span class="nc" id="L305">        return executions;</span>
+    }
+
+    protected MoveExecutionEntityContainer createMoveExecutionEntityContainer(MoveActivityIdContainer activityContainer, List&lt;ExecutionEntity&gt; executions, CommandContext commandContext) {
+<span class="nc" id="L309">        MoveExecutionEntityContainer moveExecutionEntityContainer = new MoveExecutionEntityContainer(executions, activityContainer.getMoveToActivityIds());</span>
+<span class="nc" id="L310">        activityContainer.getNewAssigneeId().ifPresent(moveExecutionEntityContainer::setNewAssigneeId);</span>
+<span class="nc" id="L311">        activityContainer.getNewOwnerId().ifPresent(moveExecutionEntityContainer::setNewOwnerId);</span>
+
+<span class="nc bnc" id="L313" title="All 2 branches missed.">        if (activityContainer.isMoveToParentProcess()) {</span>
+<span class="nc" id="L314">            ExecutionEntity processInstanceExecution = executions.get(0).getProcessInstance();</span>
+<span class="nc" id="L315">            ExecutionEntity superExecution = processInstanceExecution.getSuperExecution();</span>
+<span class="nc bnc" id="L316" title="All 2 branches missed.">            if (superExecution == null) {</span>
+<span class="nc" id="L317">                throw new FlowableException(&quot;No parent process found for execution with activity id &quot; + executions.get(0).getCurrentActivityId());</span>
+            }
+
+<span class="nc" id="L320">            moveExecutionEntityContainer.setMoveToParentProcess(true);</span>
+<span class="nc" id="L321">            moveExecutionEntityContainer.setSuperExecution(superExecution);</span>
+
+<span class="nc bnc" id="L323" title="All 2 branches missed.">        } else if (activityContainer.isMoveToSubProcessInstance()) {</span>
+<span class="nc" id="L324">            moveExecutionEntityContainer.setMoveToSubProcessInstance(true);</span>
+<span class="nc" id="L325">            moveExecutionEntityContainer.setCallActivityId(activityContainer.getCallActivityId());</span>
+<span class="nc" id="L326">            moveExecutionEntityContainer.setCallActivitySubProcessVersion(activityContainer.getCallActivitySubProcessVersion());</span>
+        }
+<span class="nc" id="L328">        return moveExecutionEntityContainer;</span>
+    }
+
+    protected void prepareMoveExecutionEntityContainer(MoveExecutionEntityContainer moveExecutionContainer, ProcessDefinition migrateToProcessDefinition, CommandContext commandContext) {
+<span class="nc" id="L332">        ExpressionManager expressionManager = CommandContextUtil.getProcessEngineConfiguration(commandContext).getExpressionManager();</span>
+
+<span class="nc" id="L334">        BpmnModel bpmnModelToMigrateTo = null;</span>
+<span class="nc bnc" id="L335" title="All 2 branches missed.">        if (migrateToProcessDefinition != null) {</span>
+<span class="nc" id="L336">        	bpmnModelToMigrateTo = ProcessDefinitionUtil.getBpmnModel(migrateToProcessDefinition.getId());</span>
+        }
+<span class="nc bnc" id="L338" title="All 4 branches missed.">        boolean canContainerDirectMigrate = (moveExecutionContainer.getMoveToActivityIds().size() == 1) &amp;&amp; (moveExecutionContainer.getExecutions().size() == 1);</span>
+<span class="nc bnc" id="L339" title="All 2 branches missed.">        for (String activityId : moveExecutionContainer.getMoveToActivityIds()) {</span>
+            FlowElement currentFlowElement;
+            FlowElement newFlowElement;
+            String currentActivityId;
+<span class="nc bnc" id="L343" title="All 2 branches missed.">            if (moveExecutionContainer.isMoveToParentProcess()) {</span>
+<span class="nc" id="L344">                String parentProcessDefinitionId = moveExecutionContainer.getSuperExecution().getProcessDefinitionId();</span>
+<span class="nc" id="L345">                BpmnModel modelOfCallActivity = ProcessDefinitionUtil.getBpmnModel(moveExecutionContainer.getExecutions().get(0).getProcessDefinitionId());</span>
+<span class="nc" id="L346">                currentActivityId = moveExecutionContainer.getExecutions().get(0).getCurrentActivityId();</span>
+<span class="nc" id="L347">                currentFlowElement = resolveFlowElementFromBpmnModel(modelOfCallActivity, currentActivityId);</span>
+<span class="nc bnc" id="L348" title="All 2 branches missed.">                if (bpmnModelToMigrateTo != null) {</span>
+<span class="nc" id="L349">                	newFlowElement = resolveFlowElementFromBpmnModel(bpmnModelToMigrateTo, activityId);</span>
+                } else {
+<span class="nc" id="L351">                	BpmnModel bpmnModel = ProcessDefinitionUtil.getBpmnModel(parentProcessDefinitionId);</span>
+<span class="nc" id="L352">                	newFlowElement = resolveFlowElementFromBpmnModel(bpmnModel, activityId);</span>
+                }
+<span class="nc" id="L354">                canContainerDirectMigrate = false;</span>
+                
+<span class="nc bnc" id="L356" title="All 2 branches missed.">            } else if (moveExecutionContainer.isMoveToSubProcessInstance()) {</span>
+                //The subProcess model is defined in the callActivity of the current processDefinition or the migrateProcessDefinition if defined
+<span class="nc" id="L358">                ExecutionEntity firstExecution = moveExecutionContainer.getExecutions().get(0);</span>
+<span class="nc" id="L359">                BpmnModel bpmnModel = ProcessDefinitionUtil.getBpmnModel(firstExecution.getProcessDefinitionId());</span>
+<span class="nc" id="L360">                currentActivityId = firstExecution.getCurrentActivityId();</span>
+<span class="nc" id="L361">                currentFlowElement = resolveFlowElementFromBpmnModel(bpmnModel, currentActivityId);</span>
+
+<span class="nc" id="L363">                String processDefinitionIdOfCallActivity = null;</span>
+<span class="nc bnc" id="L364" title="All 2 branches missed.">                if (migrateToProcessDefinition != null) {</span>
+<span class="nc" id="L365">                	processDefinitionIdOfCallActivity = migrateToProcessDefinition.getId();</span>
+                } else {
+<span class="nc" id="L367">                	processDefinitionIdOfCallActivity = firstExecution.getProcessDefinitionId();</span>
+                }
+                
+<span class="nc" id="L370">                CallActivity callActivity = null;</span>
+<span class="nc bnc" id="L371" title="All 2 branches missed.">                if (bpmnModelToMigrateTo != null) {</span>
+<span class="nc" id="L372">                	callActivity = (CallActivity) resolveFlowElementFromBpmnModel(bpmnModelToMigrateTo, moveExecutionContainer.getCallActivityId());</span>
+                } else {
+<span class="nc" id="L374">                	callActivity = (CallActivity) resolveFlowElementFromBpmnModel(bpmnModel, moveExecutionContainer.getCallActivityId());</span>
+                }
+
+<span class="nc" id="L377">                moveExecutionContainer.setCallActivity(callActivity);</span>
+<span class="nc" id="L378">                ProcessDefinition callActivityProcessDefinition = ProcessDefinitionUtil.getProcessDefinition(processDefinitionIdOfCallActivity);</span>
+<span class="nc" id="L379">                String tenantId = callActivityProcessDefinition.getTenantId();</span>
+<span class="nc" id="L380">                Integer calledProcessVersion = moveExecutionContainer.getCallActivitySubProcessVersion();</span>
+<span class="nc" id="L381">                String calledProcessDefKey = callActivity.getCalledElement();</span>
+<span class="nc bnc" id="L382" title="All 2 branches missed.">                if (isExpression(calledProcessDefKey)) {</span>
+                    try {
+<span class="nc" id="L384">                        calledProcessDefKey = expressionManager.createExpression(calledProcessDefKey).getValue(firstExecution.getProcessInstance()).toString();</span>
+<span class="nc" id="L385">                    } catch (FlowableException e) {</span>
+<span class="nc" id="L386">                        throw new FlowableException(&quot;Cannot resolve calledElement expression '&quot; + calledProcessDefKey + &quot;' of callActivity '&quot; + callActivity.getId() + &quot;'&quot;, e);</span>
+<span class="nc" id="L387">                    }</span>
+                }
+<span class="nc" id="L389">                moveExecutionContainer.setSubProcessDefKey(calledProcessDefKey);</span>
+<span class="nc" id="L390">                ProcessDefinition subProcessDefinition = resolveProcessDefinition(calledProcessDefKey, calledProcessVersion, tenantId, commandContext);</span>
+<span class="nc" id="L391">                BpmnModel subProcessModel = ProcessDefinitionUtil.getBpmnModel(subProcessDefinition.getId());</span>
+<span class="nc" id="L392">                moveExecutionContainer.setSubProcessDefinition(subProcessDefinition);</span>
+<span class="nc" id="L393">                moveExecutionContainer.setSubProcessModel(subProcessModel);</span>
+
+<span class="nc" id="L395">                newFlowElement = resolveFlowElementFromBpmnModel(subProcessModel, activityId);</span>
+<span class="nc" id="L396">                canContainerDirectMigrate = false;</span>
+                
+<span class="nc" id="L398">            } else {</span>
+                // Get first execution to get process definition id
+<span class="nc" id="L400">                ExecutionEntity firstExecution = moveExecutionContainer.getExecutions().get(0);</span>
+<span class="nc" id="L401">                BpmnModel bpmnModel = ProcessDefinitionUtil.getBpmnModel(firstExecution.getProcessDefinitionId());</span>
+<span class="nc" id="L402">                currentActivityId = firstExecution.getCurrentActivityId();</span>
+<span class="nc" id="L403">                currentFlowElement = resolveFlowElementFromBpmnModel(bpmnModel, currentActivityId);</span>
+<span class="nc bnc" id="L404" title="All 2 branches missed.">                if (bpmnModelToMigrateTo != null) {</span>
+<span class="nc" id="L405">                	newFlowElement = resolveFlowElementFromBpmnModel(bpmnModelToMigrateTo, activityId);</span>
+                } else {
+<span class="nc" id="L407">                	newFlowElement = resolveFlowElementFromBpmnModel(bpmnModel, activityId);</span>
+                }
+            }
+
+<span class="nc" id="L411">            moveExecutionContainer.addMoveToFlowElement(activityId, currentFlowElement, newFlowElement);</span>
+<span class="nc bnc" id="L412" title="All 4 branches missed.">            canContainerDirectMigrate = canContainerDirectMigrate &amp;&amp; isDirectFlowElementExecutionMigration(currentFlowElement, newFlowElement);</span>
+<span class="nc" id="L413">        }</span>
+
+<span class="nc bnc" id="L415" title="All 4 branches missed.">        moveExecutionContainer.setDirectExecutionMigration(canContainerDirectMigrate &amp;&amp; migrateToProcessDefinition != null);</span>
+<span class="nc" id="L416">    }</span>
+
+    protected FlowElement resolveFlowElementFromBpmnModel(BpmnModel bpmnModel, String activityId) {
+<span class="nc" id="L419">        FlowElement flowElement = bpmnModel.getFlowElement(activityId);</span>
+<span class="nc bnc" id="L420" title="All 2 branches missed.">        if (flowElement == null) {</span>
+<span class="nc" id="L421">            throw new FlowableException(&quot;Cannot find activity '&quot; + activityId + &quot;' in process definition with id '&quot; + bpmnModel.getMainProcess().getId() + &quot;'&quot;);</span>
+        }
+<span class="nc" id="L423">        return flowElement;</span>
+    }
+    //-- Move container preparation section end
+
+    protected void doMoveExecutionState(ProcessInstanceChangeState processInstanceChangeState, CommandContext commandContext) {
+<span class="nc" id="L428">        ExecutionEntityManager executionEntityManager = CommandContextUtil.getExecutionEntityManager(commandContext);</span>
+<span class="nc" id="L429">        Map&lt;String, List&lt;ExecutionEntity&gt;&gt; activeEmbeddedSubProcesses = resolveActiveEmbeddedSubProcesses(processInstanceChangeState.getProcessInstanceId(), commandContext);</span>
+<span class="nc" id="L430">        processInstanceChangeState.setProcessInstanceActiveEmbeddedExecutions(activeEmbeddedSubProcesses);</span>
+
+        //Set the processInstance variables first so they are available during the change state
+<span class="nc" id="L433">        ExecutionEntity processInstanceExecution = executionEntityManager.findById(processInstanceChangeState.getProcessInstanceId());</span>
+<span class="nc" id="L434">        processInstanceExecution.setVariables(processInstanceChangeState.getProcessInstanceVariables());</span>
+
+<span class="nc bnc" id="L436" title="All 2 branches missed.">        for (MoveExecutionEntityContainer moveExecutionContainer : processInstanceChangeState.getMoveExecutionEntityContainers()) {</span>
+<span class="nc" id="L437">            prepareMoveExecutionEntityContainer(moveExecutionContainer, processInstanceChangeState.getProcessDefinitionToMigrateTo(), commandContext);</span>
+            // Action the moves (changeState)
+<span class="nc bnc" id="L439" title="All 2 branches missed.">            if (moveExecutionContainer.isMoveToParentProcess()) {</span>
+<span class="nc" id="L440">                String callActivityInstanceId = moveExecutionContainer.getExecutions().get(0).getProcessInstanceId();</span>
+<span class="nc" id="L441">                String deleteReason = &quot;Change activity to parent process activity ids: &quot; + printFlowElementIds(moveExecutionContainer.getMoveToFlowElements());</span>
+<span class="nc" id="L442">                safeDeleteSubProcessInstance(callActivityInstanceId, moveExecutionContainer.getExecutions(), deleteReason, commandContext);</span>
+            }
+
+            List&lt;ExecutionEntity&gt; executionsToMove;
+<span class="nc bnc" id="L446" title="All 2 branches missed.">            if (moveExecutionContainer.isMoveToParentProcess()) {</span>
+<span class="nc" id="L447">                executionsToMove = Collections.singletonList(moveExecutionContainer.getSuperExecution());</span>
+            } else {
+<span class="nc" id="L449">                executionsToMove = moveExecutionContainer.getExecutions();</span>
+            }
+
+            Collection&lt;FlowElementMoveEntry&gt; moveToFlowElements;
+<span class="nc bnc" id="L453" title="All 2 branches missed.">            if (moveExecutionContainer.isMoveToSubProcessInstance()) {</span>
+<span class="nc" id="L454">                moveToFlowElements = Collections.singletonList(new FlowElementMoveEntry(moveExecutionContainer.getCallActivity(), moveExecutionContainer.getCallActivity()));</span>
+            } else {
+<span class="nc" id="L456">                moveToFlowElements = moveExecutionContainer.getMoveToFlowElements();</span>
+            }
+
+<span class="nc" id="L459">            String flowElementIdsLine = printFlowElementIds(moveToFlowElements);</span>
+<span class="nc" id="L460">            Collection&lt;String&gt; executionIdsNotToDelete = new HashSet&lt;&gt;();</span>
+<span class="nc bnc" id="L461" title="All 2 branches missed.">            for (ExecutionEntity execution : executionsToMove) {</span>
+<span class="nc" id="L462">                executionIdsNotToDelete.add(execution.getId());</span>
+
+                // Don't delete called process when directly migration CallActivity
+<span class="nc" id="L465">                List&lt;String&gt; childExecutionsToKeep = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L466" title="All 4 branches missed.">                if (execution.getCurrentFlowElement() instanceof CallActivity &amp;&amp; moveExecutionContainer.isDirectExecutionMigration()) {</span>
+<span class="nc" id="L467">                    executionEntityManager.collectChildren(execution).stream()</span>
+<span class="nc bnc" id="L468" title="All 2 branches missed.">                            .filter(executionEntity -&gt; !Objects.equals(executionEntity.getProcessDefinitionId(), execution.getProcessDefinitionId()))</span>
+<span class="nc" id="L469">                            .map(ExecutionEntity::getId)</span>
+<span class="nc" id="L470">                            .forEach(childExecutionsToKeep::add);</span>
+                }
+
+<span class="nc" id="L473">                executionEntityManager.deleteChildExecutions(execution, childExecutionsToKeep, null, &quot;Change parent activity to &quot; + flowElementIdsLine, true, null);</span>
+<span class="nc bnc" id="L474" title="All 2 branches missed.">                if (!moveExecutionContainer.isDirectExecutionMigration()) {</span>
+<span class="nc" id="L475">                    executionEntityManager.deleteExecutionAndRelatedData(execution, &quot;Change activity to &quot; + flowElementIdsLine, false, false, true, execution.getCurrentFlowElement());</span>
+                }
+
+                // Make sure we are not moving the root execution
+<span class="nc bnc" id="L479" title="All 2 branches missed.">                if (execution.getParentId() == null) {</span>
+<span class="nc" id="L480">                    throw new FlowableException(&quot;Execution has no parent execution &quot; + execution.getParentId());</span>
+                }
+
+                // Delete the parent executions for each current execution when the move to activity id has the same subProcess scope
+                ExecutionEntity continueParentExecution;
+<span class="nc bnc" id="L485" title="All 2 branches missed.">                if (processInstanceChangeState.getProcessDefinitionToMigrateTo() != null) {</span>
+<span class="nc" id="L486">                    continueParentExecution = deleteDirectParentExecutions(execution.getParentId(), moveToFlowElements, </span>
+<span class="nc" id="L487">                    		executionIdsNotToDelete, processInstanceChangeState.getProcessDefinitionToMigrateTo(), moveExecutionContainer, commandContext);</span>
+                } else {
+<span class="nc" id="L489">                    continueParentExecution = deleteParentExecutions(execution.getParentId(), moveToFlowElements, executionIdsNotToDelete, commandContext);</span>
+                }
+<span class="nc" id="L491">                moveExecutionContainer.addContinueParentExecution(execution.getId(), continueParentExecution);</span>
+<span class="nc" id="L492">            }</span>
+
+<span class="nc" id="L494">            List&lt;ExecutionEntity&gt; newChildExecutions = createEmbeddedSubProcessAndExecutions(moveToFlowElements, executionsToMove, moveExecutionContainer, processInstanceChangeState, commandContext);</span>
+
+<span class="nc bnc" id="L496" title="All 2 branches missed.">            if (moveExecutionContainer.isMoveToSubProcessInstance()) {</span>
+<span class="nc" id="L497">                CallActivity callActivity = moveExecutionContainer.getCallActivity();</span>
+<span class="nc" id="L498">                Process subProcess = moveExecutionContainer.getSubProcessModel().getProcessById(moveExecutionContainer.getSubProcessDefKey());</span>
+<span class="nc" id="L499">                ExecutionEntity callActivityInstanceExecution = createCallActivityInstance(callActivity, moveExecutionContainer.getSubProcessDefinition(), newChildExecutions.get(0), subProcess.getInitialFlowElement().getId(), commandContext);</span>
+<span class="nc" id="L500">                List&lt;ExecutionEntity&gt; moveExecutions = moveExecutionContainer.getExecutions();</span>
+<span class="nc" id="L501">                MoveExecutionEntityContainer subProcessMoveExecutionEntityContainer = new MoveExecutionEntityContainer(moveExecutions, moveExecutionContainer.getMoveToActivityIds());</span>
+<span class="nc" id="L502">                subProcessMoveExecutionEntityContainer.setNewAssigneeId(moveExecutionContainer.getNewAssigneeId());</span>
+<span class="nc" id="L503">                subProcessMoveExecutionEntityContainer.setNewOwnerId(moveExecutionContainer.getNewOwnerId());</span>
+<span class="nc" id="L504">                moveExecutions.forEach(executionEntity -&gt; subProcessMoveExecutionEntityContainer.addContinueParentExecution(executionEntity.getId(), callActivityInstanceExecution));</span>
+<span class="nc" id="L505">                newChildExecutions = createEmbeddedSubProcessAndExecutions(moveExecutionContainer.getMoveToFlowElements(), moveExecutions, subProcessMoveExecutionEntityContainer, new ProcessInstanceChangeState(), commandContext);</span>
+            }
+
+<span class="nc bnc" id="L508" title="All 2 branches missed.">            if (!processInstanceChangeState.getLocalVariables().isEmpty()) {</span>
+<span class="nc" id="L509">                Map&lt;String, Map&lt;String, Object&gt;&gt; localVariables = processInstanceChangeState.getLocalVariables();</span>
+<span class="nc" id="L510">                Iterator&lt;ExecutionEntity&gt; newChildExecutionsIterator = newChildExecutions.iterator();</span>
+<span class="nc bnc" id="L511" title="All 2 branches missed.">                while (newChildExecutionsIterator.hasNext()) {</span>
+                    //With changeState Api we can set local variables to the parents of moved executions (i.e. subProcesses created during the move)
+                    //Thus we traverse up in the hierarchy from the newly created executions
+<span class="nc" id="L514">                    ExecutionEntity execution = newChildExecutionsIterator.next();</span>
+<span class="nc bnc" id="L515" title="All 2 branches missed.">                    while (execution != null) {</span>
+<span class="nc bnc" id="L516" title="All 4 branches missed.">                        if (execution.getActivityId() != null &amp;&amp; localVariables.containsKey(execution.getActivityId())) {</span>
+<span class="nc bnc" id="L517" title="All 4 branches missed.">                            if (execution.isScope() || execution.getCurrentFlowElement() instanceof UserTask) {</span>
+<span class="nc" id="L518">                                execution.setVariablesLocal(localVariables.get(execution.getActivityId()));</span>
+                            } else {
+<span class="nc" id="L520">                                ExecutionEntity scopedExecutionCandidate = execution;</span>
+<span class="nc bnc" id="L521" title="All 2 branches missed.">                                while (scopedExecutionCandidate.getParent() != null) {</span>
+<span class="nc" id="L522">                                    ExecutionEntity parentExecution = scopedExecutionCandidate.getParent();</span>
+<span class="nc bnc" id="L523" title="All 2 branches missed.">                                    if (parentExecution.isScope()) {</span>
+<span class="nc" id="L524">                                        parentExecution.setVariablesLocal(localVariables.get(execution.getActivityId()));</span>
+<span class="nc" id="L525">                                        break;</span>
+                                    }
+
+<span class="nc" id="L528">                                    scopedExecutionCandidate = scopedExecutionCandidate.getParent();</span>
+<span class="nc" id="L529">                                }</span>
+                            }
+                        }
+<span class="nc" id="L532">                        execution = execution.getParent();</span>
+                    }
+<span class="nc" id="L534">                }</span>
+            }
+
+<span class="nc bnc" id="L537" title="All 2 branches missed.">            if (!moveExecutionContainer.isDirectExecutionMigration()) {</span>
+<span class="nc bnc" id="L538" title="All 2 branches missed.">                for (ExecutionEntity newChildExecution : newChildExecutions) {</span>
+<span class="nc bnc" id="L539" title="All 4 branches missed.">                    if (moveExecutionContainer.getNewAssigneeId() != null &amp;&amp; moveExecutionContainer.hasNewExecutionId(newChildExecution.getId())) {</span>
+<span class="nc" id="L540">                        MigrationContext migrationContext = new MigrationContext();</span>
+<span class="nc" id="L541">                        migrationContext.setAssignee(moveExecutionContainer.getNewAssigneeId());</span>
+<span class="nc" id="L542">                        CommandContextUtil.getAgenda(commandContext).planContinueProcessWithMigrationContextOperation(newChildExecution, migrationContext);</span>
+                        
+<span class="nc bnc" id="L544" title="All 4 branches missed.">                    } else if (moveExecutionContainer.getNewOwnerId() != null &amp;&amp; moveExecutionContainer.hasNewExecutionId(newChildExecution.getId())) {</span>
+<span class="nc" id="L545">                        MigrationContext migrationContext = new MigrationContext();</span>
+<span class="nc" id="L546">                        migrationContext.setOwner(moveExecutionContainer.getNewOwnerId());</span>
+<span class="nc" id="L547">                        CommandContextUtil.getAgenda(commandContext).planContinueProcessWithMigrationContextOperation(newChildExecution, migrationContext);</span>
+
+<span class="nc" id="L549">                    } else {</span>
+<span class="nc bnc" id="L550" title="All 6 branches missed.">                        if (newChildExecution.isMultiInstanceRoot() &amp;&amp; (newChildExecution.getCurrentFlowElement() instanceof Task || newChildExecution.getCurrentFlowElement() instanceof CallActivity)) {</span>
+<span class="nc" id="L551">                            continue;</span>
+                        }
+                        
+<span class="nc bnc" id="L554" title="All 4 branches missed.">                        if (newChildExecution.getCurrentFlowElement() instanceof Task &amp;&amp; ((Task) newChildExecution.getCurrentFlowElement()).isAsynchronous()) {</span>
+<span class="nc" id="L555">                            JobService jobService = CommandContextUtil.getJobService(commandContext);</span>
+                            
+<span class="nc" id="L557">                            JobEntity job = JobUtil.createJob(newChildExecution, newChildExecution.getCurrentFlowElement(), AsyncContinuationJobHandler.TYPE, CommandContextUtil.getProcessEngineConfiguration(commandContext));</span>
+                            
+<span class="nc" id="L559">                            Task task = (Task) newChildExecution.getCurrentFlowElement();</span>
+<span class="nc" id="L560">                            jobService.createAsyncJob(job, task.isExclusive());</span>
+<span class="nc" id="L561">                            jobService.scheduleAsyncJob(job);</span>
+                        
+<span class="nc" id="L563">                        } else {</span>
+<span class="nc" id="L564">                            CommandContextUtil.getAgenda(commandContext).planContinueProcessOperation(newChildExecution);</span>
+                        }
+                    }
+<span class="nc" id="L567">                }</span>
+            }
+<span class="nc" id="L569">        }</span>
+
+<span class="nc" id="L571">        processPendingEventSubProcessesStartEvents(processInstanceChangeState, commandContext);</span>
+        
+<span class="nc bnc" id="L573" title="All 2 branches missed.">        for (EnableActivityContainer enableActivityContainer : processInstanceChangeState.getEnableActivityContainers()) {</span>
+<span class="nc bnc" id="L574" title="All 4 branches missed.">            if (enableActivityContainer.getActivityIds() != null &amp;&amp; !enableActivityContainer.getActivityIds().isEmpty()) {</span>
+<span class="nc" id="L575">                BpmnModel bpmnModel = null;</span>
+<span class="nc" id="L576">                ExecutionEntity parentExecution = executionEntityManager.findById(processInstanceChangeState.getProcessInstanceId());</span>
+<span class="nc bnc" id="L577" title="All 2 branches missed.">                if (processInstanceChangeState.getProcessDefinitionToMigrateTo() != null) {</span>
+<span class="nc" id="L578">                    bpmnModel = ProcessDefinitionUtil.getBpmnModel(processInstanceChangeState.getProcessDefinitionToMigrateTo().getId());</span>
+                    
+                } else {
+<span class="nc" id="L581">                    bpmnModel = ProcessDefinitionUtil.getBpmnModel(parentExecution.getProcessDefinitionId());</span>
+                }
+                
+<span class="nc" id="L584">                ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc" id="L585">                ProcessInstanceHelper processInstanceHelper = processEngineConfiguration.getProcessInstanceHelper();</span>
+                
+<span class="nc bnc" id="L587" title="All 2 branches missed.">                for (String enableActivityId : enableActivityContainer.getActivityIds()) {</span>
+<span class="nc" id="L588">                    FlowElement enableFlowElement = bpmnModel.getFlowElement(enableActivityId);</span>
+<span class="nc bnc" id="L589" title="All 2 branches missed.">                    if (enableFlowElement == null) {</span>
+<span class="nc" id="L590">                        throw new FlowableException(&quot;could not find element for activity id &quot; + enableActivityId);</span>
+                    }
+                    
+<span class="nc" id="L593">                    processInstanceHelper.processEventSubProcessStartEvent(enableFlowElement, parentExecution, processEngineConfiguration, commandContext);</span>
+<span class="nc" id="L594">                }</span>
+            }
+<span class="nc" id="L596">        }</span>
+<span class="nc" id="L597">    }</span>
+
+    protected void processPendingEventSubProcessesStartEvents(ProcessInstanceChangeState processInstanceChangeState, CommandContext commandContext) {
+<span class="nc" id="L600">        ProcessInstanceHelper processInstanceHelper = CommandContextUtil.getProcessEngineConfiguration(commandContext).getProcessInstanceHelper();</span>
+<span class="nc bnc" id="L601" title="All 2 branches missed.">        for (Map.Entry&lt;? extends StartEvent, ExecutionEntity&gt; pendingStartEventEntry : processInstanceChangeState.getPendingEventSubProcessesStartEvents().entrySet()) {</span>
+<span class="nc" id="L602">            StartEvent startEvent = pendingStartEventEntry.getKey();</span>
+<span class="nc" id="L603">            ExecutionEntity parentExecution = pendingStartEventEntry.getValue();</span>
+<span class="nc bnc" id="L604" title="All 2 branches missed.">            if (!processInstanceChangeState.getCreatedEmbeddedSubProcesses().containsKey(startEvent.getSubProcess().getId())) {</span>
+<span class="nc" id="L605">                processInstanceHelper.processEventSubProcess(parentExecution, (EventSubProcess) startEvent.getSubProcess(), commandContext);</span>
+            }
+<span class="nc" id="L607">        }</span>
+<span class="nc" id="L608">    }</span>
+
+    protected abstract Map&lt;String, List&lt;ExecutionEntity&gt;&gt; resolveActiveEmbeddedSubProcesses(String processInstanceId, CommandContext commandContext);
+
+    protected abstract boolean isDirectFlowElementExecutionMigration(FlowElement currentFlowElement, FlowElement newFlowElement);
+
+    protected void safeDeleteSubProcessInstance(String processInstanceId, List&lt;ExecutionEntity&gt; executionsPool, String deleteReason, CommandContext commandContext) {
+<span class="nc" id="L615">        ExecutionEntityManager executionEntityManager = CommandContextUtil.getExecutionEntityManager(commandContext);</span>
+
+        //Confirm that all the subProcessExecutions are in the executionsPool
+<span class="nc" id="L618">        List&lt;ExecutionEntity&gt; subProcessExecutions = executionEntityManager.findChildExecutionsByProcessInstanceId(processInstanceId);</span>
+<span class="nc" id="L619">        HashSet&lt;String&gt; executionIdsToMove = executionsPool.stream().map(ExecutionEntity::getId).collect(Collectors.toCollection(HashSet::new));</span>
+<span class="nc bnc" id="L620" title="All 2 branches missed.">        Optional&lt;ExecutionEntity&gt; notIncludedExecution = subProcessExecutions.stream().filter(e -&gt; !executionIdsToMove.contains(e.getId())).findAny();</span>
+<span class="nc bnc" id="L621" title="All 2 branches missed.">        if (notIncludedExecution.isPresent()) {</span>
+<span class="nc" id="L622">            throw new FlowableException(&quot;Execution of sub process instance is not moved &quot; + notIncludedExecution.get().getId());</span>
+        }
+
+        // delete the sub process instance
+<span class="nc" id="L626">        executionEntityManager.deleteProcessInstance(processInstanceId, deleteReason, true);</span>
+<span class="nc" id="L627">    }</span>
+
+    protected ExecutionEntity deleteParentExecutions(String parentExecutionId, Collection&lt;FlowElementMoveEntry&gt; moveToFlowElements, CommandContext commandContext) {
+<span class="nc" id="L630">        return deleteParentExecutions(parentExecutionId, moveToFlowElements, null, commandContext);</span>
+    }
+
+    protected ExecutionEntity deleteParentExecutions(String parentExecutionId, Collection&lt;FlowElementMoveEntry&gt; moveToFlowElements, Collection&lt;String&gt; executionIdsNotToDelete, CommandContext commandContext) {
+<span class="nc" id="L634">        ExecutionEntityManager executionEntityManager = CommandContextUtil.getExecutionEntityManager(commandContext);</span>
+
+<span class="nc" id="L636">        ExecutionEntity parentExecution = executionEntityManager.findById(parentExecutionId);</span>
+<span class="nc bnc" id="L637" title="All 4 branches missed.">        if (parentExecution != null &amp;&amp; parentExecution.getCurrentFlowElement() instanceof SubProcess) {</span>
+<span class="nc" id="L638">            SubProcess parentSubProcess = (SubProcess) parentExecution.getCurrentFlowElement();</span>
+<span class="nc bnc" id="L639" title="All 2 branches missed.">            if (!isSubProcessAncestorOfAnyNewFlowElements(parentSubProcess.getId(), moveToFlowElements)) {</span>
+<span class="nc" id="L640">                ExecutionEntity toDeleteParentExecution = resolveParentExecutionToDelete(parentExecution, moveToFlowElements);</span>
+<span class="nc" id="L641">                ExecutionEntity finalDeleteExecution = null;</span>
+<span class="nc bnc" id="L642" title="All 2 branches missed.">                if (toDeleteParentExecution != null) {</span>
+<span class="nc" id="L643">                    finalDeleteExecution = toDeleteParentExecution;</span>
+                } else {
+<span class="nc" id="L645">                    finalDeleteExecution = parentExecution;</span>
+                }
+
+<span class="nc" id="L648">                parentExecution = finalDeleteExecution.getParent();</span>
+
+<span class="nc" id="L650">                String flowElementIdsLine = printFlowElementIds(moveToFlowElements);</span>
+<span class="nc" id="L651">                executionEntityManager.deleteChildExecutions(finalDeleteExecution, executionIdsNotToDelete, null, &quot;Change activity to &quot; + flowElementIdsLine, true, null);</span>
+<span class="nc" id="L652">                executionEntityManager.deleteExecutionAndRelatedData(finalDeleteExecution, &quot;Change activity to &quot; + flowElementIdsLine, false, false, true, finalDeleteExecution.getCurrentFlowElement());</span>
+            }
+        }
+
+<span class="nc" id="L656">        return parentExecution;</span>
+    }
+
+    protected ExecutionEntity deleteDirectParentExecutions(String parentExecutionId, Collection&lt;FlowElementMoveEntry&gt; moveToFlowElements, 
+    		Collection&lt;String&gt; executionIdsNotToDelete, ProcessDefinition procDefToMigrateTo, 
+    		MoveExecutionEntityContainer moveExecutionContainer, CommandContext commandContext) {
+    	
+<span class="nc" id="L663">        ExecutionEntityManager executionEntityManager = CommandContextUtil.getExecutionEntityManager(commandContext);</span>
+
+<span class="nc" id="L665">        ExecutionEntity parentExecution = executionEntityManager.findById(parentExecutionId);</span>
+<span class="nc bnc" id="L666" title="All 2 branches missed.">        if (parentExecution.getCurrentFlowElement() instanceof SubProcess) {</span>
+<span class="nc" id="L667">            SubProcess parentSubProcess = (SubProcess) parentExecution.getCurrentFlowElement();</span>
+<span class="nc bnc" id="L668" title="All 2 branches missed.">            if (!isSubProcessContainerOfAnyFlowElement(parentSubProcess.getId(), moveToFlowElements)) {</span>
+<span class="nc bnc" id="L669" title="All 4 branches missed.">            	if (parentSubProcess.getLoopCharacteristics() == null || moveExecutionContainer.getMoveToFlowElement(parentSubProcess.getId()) != null) {</span>
+<span class="nc" id="L670">	                ExecutionEntity toDeleteParentExecution = resolveParentExecutionToDelete(parentExecution, moveToFlowElements);</span>
+<span class="nc" id="L671">	                ExecutionEntity finalDeleteExecution = null;</span>
+<span class="nc bnc" id="L672" title="All 2 branches missed.">	                if (toDeleteParentExecution != null) {</span>
+<span class="nc" id="L673">	                    finalDeleteExecution = toDeleteParentExecution;</span>
+	                } else {
+<span class="nc" id="L675">	                    finalDeleteExecution = parentExecution;</span>
+	                }
+	
+<span class="nc" id="L678">	                parentExecution = finalDeleteExecution.getParent();</span>
+	
+<span class="nc" id="L680">	                String flowElementIdsLine = printFlowElementIds(moveToFlowElements);</span>
+<span class="nc" id="L681">	                executionEntityManager.deleteChildExecutions(finalDeleteExecution, executionIdsNotToDelete, null, &quot;Change activity to &quot; + flowElementIdsLine, true, null);</span>
+<span class="nc" id="L682">	                executionEntityManager.deleteExecutionAndRelatedData(finalDeleteExecution, &quot;Change activity to &quot; + flowElementIdsLine, false, false, true, finalDeleteExecution.getCurrentFlowElement());</span>
+            	
+<span class="nc" id="L684">            	} else {</span>
+<span class="nc" id="L685">            		parentExecution.setProcessDefinitionId(procDefToMigrateTo.getId());</span>
+<span class="nc bnc" id="L686" title="All 2 branches missed.">            		if (!parentExecution.isMultiInstanceRoot()) {</span>
+<span class="nc" id="L687">            			parentExecution.getParent().setProcessDefinitionId(procDefToMigrateTo.getId());</span>
+            		}
+            	}
+            }
+        }
+
+<span class="nc" id="L693">        return parentExecution;</span>
+    }
+
+    protected boolean isSubProcessContainerOfAnyFlowElement(String subProcessId, Collection&lt;FlowElementMoveEntry&gt; moveToFlowElements) {
+<span class="nc" id="L697">        Optional&lt;SubProcess&gt; isUsed = moveToFlowElements.stream()</span>
+<span class="nc" id="L698">            .map(FlowElementMoveEntry::getNewFlowElement)</span>
+<span class="nc" id="L699">            .map(FlowElement::getSubProcess)</span>
+<span class="nc" id="L700">            .filter(Objects::nonNull)</span>
+<span class="nc" id="L701">            .filter(elementSubProcess -&gt; elementSubProcess.getId().equals(subProcessId))</span>
+<span class="nc" id="L702">            .findAny();</span>
+
+<span class="nc" id="L704">        return isUsed.isPresent();</span>
+    }
+
+    protected ExecutionEntity resolveParentExecutionToDelete(ExecutionEntity execution, Collection&lt;FlowElementMoveEntry&gt; moveToFlowElements) {
+<span class="nc" id="L708">        ExecutionEntity parentExecution = execution.getParent();</span>
+
+<span class="nc bnc" id="L710" title="All 2 branches missed.">        if (parentExecution.isProcessInstanceType()) {</span>
+<span class="nc" id="L711">            return null;</span>
+        }
+
+<span class="nc bnc" id="L714" title="All 2 branches missed.">        if (!isSubProcessContainerOfAnyFlowElement(parentExecution.getActivityId(), moveToFlowElements)) {</span>
+<span class="nc" id="L715">            ExecutionEntity subProcessParentExecution = resolveParentExecutionToDelete(parentExecution, moveToFlowElements);</span>
+<span class="nc bnc" id="L716" title="All 2 branches missed.">            if (subProcessParentExecution != null) {</span>
+<span class="nc" id="L717">                return subProcessParentExecution;</span>
+            } else {
+<span class="nc" id="L719">                return parentExecution;</span>
+            }
+        }
+
+<span class="nc" id="L723">        return null;</span>
+    }
+
+    protected List&lt;ExecutionEntity&gt; createEmbeddedSubProcessAndExecutions(Collection&lt;FlowElementMoveEntry&gt; moveToFlowElements, List&lt;ExecutionEntity&gt; movingExecutions, 
+            MoveExecutionEntityContainer moveExecutionEntityContainer, ProcessInstanceChangeState processInstanceChangeState, CommandContext commandContext) {
+
+<span class="nc" id="L729">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc" id="L730">        ExecutionEntityManager executionEntityManager = processEngineConfiguration.getExecutionEntityManager();</span>
+
+        // Resolve the sub process elements that need to be created for each move to flow element
+<span class="nc" id="L733">        HashMap&lt;String, SubProcess&gt; subProcessesToCreate = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L734" title="All 2 branches missed.">        for (FlowElementMoveEntry flowElementMoveEntry : moveToFlowElements) {</span>
+<span class="nc" id="L735">            FlowElement newFlowElement = flowElementMoveEntry.getNewFlowElement();</span>
+<span class="nc" id="L736">            SubProcess subProcess = newFlowElement.getSubProcess();</span>
+            //If the new flowElement is the StartEvent of and EventSubProcess, we skip the subProcess creation, the startEvent is contained in a level above
+<span class="nc bnc" id="L738" title="All 2 branches missed.">            if (isEventSubProcessStart(newFlowElement)) {</span>
+<span class="nc" id="L739">                subProcess = subProcess.getSubProcess();</span>
+            }
+<span class="nc bnc" id="L741" title="All 2 branches missed.">            while (subProcess != null) {</span>
+<span class="nc bnc" id="L742" title="All 4 branches missed.">                if (!processInstanceChangeState.getProcessInstanceActiveEmbeddedExecutions().containsKey(subProcess.getId()) &amp;&amp; !isSubProcessAncestorOfAnyExecution(subProcess.getId(), movingExecutions)) {</span>
+<span class="nc" id="L743">                    subProcessesToCreate.put(subProcess.getId(), subProcess);</span>
+                }
+<span class="nc" id="L745">                subProcess = subProcess.getSubProcess();</span>
+            }
+<span class="nc" id="L747">        }</span>
+
+        // The default parent execution is retrieved from the match with the first source execution
+<span class="nc" id="L750">        ExecutionEntity defaultContinueParentExecution = moveExecutionEntityContainer.getContinueParentExecution(movingExecutions.get(0).getId());</span>
+<span class="nc" id="L751">        Set&lt;String&gt; movingExecutionIds = movingExecutions.stream().map(ExecutionEntity::getId).collect(Collectors.toSet());</span>
+
+        // Build the subProcess hierarchy
+<span class="nc bnc" id="L754" title="All 2 branches missed.">        for (SubProcess subProcess : subProcessesToCreate.values()) {</span>
+<span class="nc bnc" id="L755" title="All 2 branches missed.">            if (!processInstanceChangeState.getCreatedEmbeddedSubProcesses().containsKey(subProcess.getId())) {</span>
+<span class="nc" id="L756">                ExecutionEntity embeddedSubProcess = createEmbeddedSubProcessHierarchy(subProcess, defaultContinueParentExecution, subProcessesToCreate, movingExecutionIds, processInstanceChangeState, commandContext);</span>
+<span class="nc" id="L757">                processInstanceChangeState.addCreatedEmbeddedSubProcess(subProcess.getId(), embeddedSubProcess);</span>
+            }
+<span class="nc" id="L759">        }</span>
+
+        // Adds the execution (leaf) to the subProcess
+<span class="nc" id="L762">        List&lt;ExecutionEntity&gt; newChildExecutions = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L763" title="All 2 branches missed.">        for (FlowElementMoveEntry flowElementMoveEntry : moveToFlowElements) {</span>
+<span class="nc" id="L764">            FlowElement newFlowElement = flowElementMoveEntry.getNewFlowElement();</span>
+            ExecutionEntity parentExecution;
+<span class="nc bnc" id="L766" title="All 4 branches missed.">            if (newFlowElement.getSubProcess() != null &amp;&amp; processInstanceChangeState.getCreatedEmbeddedSubProcesses().containsKey(newFlowElement.getSubProcess().getId())) {</span>
+<span class="nc" id="L767">                parentExecution = processInstanceChangeState.getCreatedEmbeddedSubProcesses().get(newFlowElement.getSubProcess().getId());</span>
+            
+<span class="nc bnc" id="L769" title="All 8 branches missed.">            } else if ((newFlowElement instanceof Task || newFlowElement instanceof CallActivity) &amp;&amp; isFlowElementMultiInstance(newFlowElement) &amp;&amp; !movingExecutions.get(0).isMultiInstanceRoot() &amp;&amp;</span>
+<span class="nc bnc" id="L770" title="All 2 branches missed.">                    processInstanceChangeState.getCreatedMultiInstanceRootExecution().containsKey(newFlowElement.getId())) {</span>
+                
+<span class="nc" id="L772">                parentExecution = processInstanceChangeState.getCreatedMultiInstanceRootExecution().get(newFlowElement.getId());</span>
+                
+            } else {
+<span class="nc" id="L775">                parentExecution = defaultContinueParentExecution;</span>
+            }
+
+<span class="nc bnc" id="L778" title="All 2 branches missed.">            if (isEventSubProcessStart(newFlowElement)) {</span>
+                // EventSubProcessStarts are created later if the eventSubProcess was not created already during another move
+<span class="nc" id="L780">                processInstanceChangeState.addPendingEventSubProcessStartEvent((StartEvent) newFlowElement, parentExecution);</span>
+                
+            } else {
+                ExecutionEntity newChildExecution;
+<span class="nc bnc" id="L784" title="All 4 branches missed.">                if (moveExecutionEntityContainer.isDirectExecutionMigration() &amp;&amp; isDirectFlowElementExecutionMigration(flowElementMoveEntry.originalFlowElement, flowElementMoveEntry.newFlowElement)) {</span>
+<span class="nc" id="L785">                    newChildExecution = migrateExecutionEntity(parentExecution, movingExecutions.get(0), newFlowElement, commandContext);</span>
+                } else {
+<span class="nc" id="L787">                    newChildExecution = executionEntityManager.createChildExecution(parentExecution);</span>
+<span class="nc" id="L788">                    newChildExecution.setCurrentFlowElement(newFlowElement);</span>
+<span class="nc" id="L789">                    moveExecutionEntityContainer.addNewExecutionId(newChildExecution.getId());</span>
+                }
+
+<span class="nc bnc" id="L792" title="All 2 branches missed.">                if (newChildExecution != null) {</span>
+
+<span class="nc bnc" id="L794" title="All 2 branches missed.">                    if (moveExecutionEntityContainer.getFlowElementLocalVariableMap().containsKey(newFlowElement.getId())) {</span>
+<span class="nc" id="L795">                        newChildExecution.setVariablesLocal(moveExecutionEntityContainer.getFlowElementLocalVariableMap().get(newFlowElement.getId()));</span>
+                    }
+                    
+<span class="nc bnc" id="L798" title="All 6 branches missed.">                    if (movingExecutions.get(0).isMultiInstanceRoot() &amp;&amp; isFlowElementMultiInstance(newFlowElement) &amp;&amp; hasSameMultiInstanceConfig(movingExecutions.get(0).getCurrentFlowElement(), newFlowElement)) {</span>
+<span class="nc" id="L799">                        newChildExecution.setMultiInstanceRoot(true);</span>
+<span class="nc" id="L800">                        newChildExecution.setActive(false);</span>
+<span class="nc" id="L801">                        processInstanceChangeState.addCreatedMultiInstanceRootExecution(newFlowElement.getId(), newChildExecution);</span>
+                    }
+                    
+<span class="nc bnc" id="L804" title="All 2 branches missed.">                    if (newFlowElement instanceof UserTask</span>
+<span class="nc bnc" id="L805" title="All 2 branches missed.">                            &amp;&amp; !moveExecutionEntityContainer.hasNewExecutionId(newChildExecution.getId())) {</span>
+
+<span class="nc bnc" id="L807" title="All 2 branches missed.">                        if (moveExecutionEntityContainer.getNewAssigneeId() != null) {</span>
+<span class="nc" id="L808">                            handleUserTaskNewAssignee(newChildExecution, moveExecutionEntityContainer.getNewAssigneeId(), commandContext);</span>
+                        }
+
+<span class="nc bnc" id="L811" title="All 2 branches missed.">                        if (moveExecutionEntityContainer.getNewOwnerId() != null) {</span>
+<span class="nc" id="L812">                            handleUserTaskNewOwner(newChildExecution, moveExecutionEntityContainer.getNewOwnerId(), commandContext);</span>
+                        }
+
+                    }
+
+<span class="nc bnc" id="L817" title="All 4 branches missed.">                    if (newFlowElement instanceof CallActivity &amp;&amp; !moveExecutionEntityContainer.isDirectExecutionMigration()) {</span>
+                        
+<span class="nc bnc" id="L819" title="All 2 branches missed.">                        if (!newChildExecution.isMultiInstanceRoot()) {</span>
+<span class="nc" id="L820">                            processEngineConfiguration.getActivityInstanceEntityManager().recordActivityStart(newChildExecution);</span>
+    
+<span class="nc" id="L822">                            FlowableEventDispatcher eventDispatcher = processEngineConfiguration.getEventDispatcher();</span>
+<span class="nc bnc" id="L823" title="All 4 branches missed.">                            if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L824">                                eventDispatcher.dispatchEvent(</span>
+<span class="nc" id="L825">                                    FlowableEventBuilder.createActivityEvent(FlowableEngineEventType.ACTIVITY_STARTED, newFlowElement.getId(), newFlowElement.getName(), newChildExecution.getId(),</span>
+<span class="nc" id="L826">                                        newChildExecution.getProcessInstanceId(), newChildExecution.getProcessDefinitionId(), newFlowElement),</span>
+<span class="nc" id="L827">                                    processEngineConfiguration.getEngineCfgKey());</span>
+                            }
+                        }
+
+                        // start boundary events of new call activity
+<span class="nc" id="L832">                        CallActivity callActivity = (CallActivity) newFlowElement;</span>
+<span class="nc" id="L833">                        List&lt;BoundaryEvent&gt; boundaryEvents = callActivity.getBoundaryEvents();</span>
+<span class="nc bnc" id="L834" title="All 2 branches missed.">                        if (CollectionUtil.isNotEmpty(boundaryEvents)) {</span>
+<span class="nc" id="L835">                            executeBoundaryEvents(boundaryEvents, newChildExecution);</span>
+                        }
+                    }
+
+<span class="nc" id="L839">                    newChildExecutions.add(newChildExecution);</span>
+                }
+
+                // Parallel gateway joins needs each incoming execution to enter the gateway naturally as it checks the number of executions to be able to progress/continue
+                // If we have multiple executions going into a gateway, usually into a gateway join using xxxToSingleActivityId
+<span class="nc bnc" id="L844" title="All 2 branches missed.">                if (newFlowElement instanceof Gateway) {</span>
+                    //Skip one that was already added
+<span class="nc" id="L846">                    movingExecutions.stream().skip(1).forEach(e -&gt; {</span>
+<span class="nc" id="L847">                        ExecutionEntity childExecution = executionEntityManager.createChildExecution(defaultContinueParentExecution);</span>
+<span class="nc" id="L848">                        childExecution.setCurrentFlowElement(newFlowElement);</span>
+<span class="nc" id="L849">                        newChildExecutions.add(childExecution);</span>
+<span class="nc" id="L850">                    });</span>
+                }
+            }
+<span class="nc" id="L853">        }</span>
+
+<span class="nc" id="L855">        return newChildExecutions;</span>
+    }
+
+    protected boolean isSubProcessAncestorOfAnyExecution(String subProcessId, List&lt;ExecutionEntity&gt; executions) {
+<span class="nc bnc" id="L859" title="All 2 branches missed.">        for (ExecutionEntity execution : executions) {</span>
+<span class="nc" id="L860">            FlowElement executionElement = execution.getCurrentFlowElement();</span>
+
+<span class="nc bnc" id="L862" title="All 2 branches missed.">            if (isSubProcessAncestor(subProcessId, executionElement)) {</span>
+<span class="nc" id="L863">                return true;</span>
+            }
+<span class="nc" id="L865">        }</span>
+<span class="nc" id="L866">        return false;</span>
+    }
+
+    protected boolean isSubProcessAncestorOfAnyNewFlowElements(String subProcessId, Collection&lt;FlowElementMoveEntry&gt; flowElements) {
+<span class="nc bnc" id="L870" title="All 2 branches missed.">        for (FlowElementMoveEntry flowElementMoveEntry : flowElements) {</span>
+<span class="nc bnc" id="L871" title="All 2 branches missed.">            if (isSubProcessAncestor(subProcessId, flowElementMoveEntry.getNewFlowElement())) {</span>
+<span class="nc" id="L872">                return true;</span>
+            }
+<span class="nc" id="L874">        }</span>
+<span class="nc" id="L875">        return false;</span>
+    }
+
+    private boolean isSubProcessAncestor(String subProcessId, FlowElement flowElement) {
+<span class="nc bnc" id="L879" title="All 2 branches missed.">        while (flowElement.getSubProcess() != null) {</span>
+<span class="nc" id="L880">            String execElemSubProcessId = flowElement.getSubProcess().getId();</span>
+<span class="nc bnc" id="L881" title="All 4 branches missed.">            if (execElemSubProcessId != null &amp;&amp; execElemSubProcessId.equals(subProcessId)) {</span>
+<span class="nc" id="L882">                return true;</span>
+            }
+<span class="nc" id="L884">            flowElement = flowElement.getSubProcess();</span>
+<span class="nc" id="L885">        }</span>
+<span class="nc" id="L886">        return false;</span>
+    }
+
+    protected List&lt;FlowElement&gt; getFlowElementsInSubProcess(SubProcess subProcess, Collection&lt;FlowElement&gt; flowElements) {
+<span class="nc" id="L890">        return flowElements.stream()</span>
+<span class="nc bnc" id="L891" title="All 2 branches missed.">            .filter(e -&gt; e.getSubProcess() != null)</span>
+<span class="nc" id="L892">            .filter(e -&gt; e.getSubProcess().getId().equals(subProcess.getId()))</span>
+<span class="nc" id="L893">            .collect(Collectors.toList());</span>
+    }
+
+    protected ExecutionEntity createEmbeddedSubProcessHierarchy(SubProcess subProcess, ExecutionEntity defaultParentExecution, Map&lt;String, SubProcess&gt; subProcessesToCreate, Set&lt;String&gt; movingExecutionIds, ProcessInstanceChangeState processInstanceChangeState, CommandContext commandContext) {
+<span class="nc" id="L897">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc bnc" id="L898" title="All 2 branches missed.">        if (processInstanceChangeState.getProcessInstanceActiveEmbeddedExecutions().containsKey(subProcess.getId())) {</span>
+<span class="nc" id="L899">            return processInstanceChangeState.getProcessInstanceActiveEmbeddedExecutions().get(subProcess.getId()).get(0);</span>
+        }
+
+<span class="nc bnc" id="L902" title="All 2 branches missed.">        if (processInstanceChangeState.getCreatedEmbeddedSubProcesses().containsKey(subProcess.getId())) {</span>
+<span class="nc" id="L903">            return processInstanceChangeState.getCreatedEmbeddedSubProcesses().get(subProcess.getId());</span>
+        }
+
+        //Create the parent, if needed
+<span class="nc" id="L907">        ExecutionEntity parentSubProcess = defaultParentExecution;</span>
+<span class="nc bnc" id="L908" title="All 2 branches missed.">        if (subProcess.getSubProcess() != null) {</span>
+<span class="nc" id="L909">            parentSubProcess = createEmbeddedSubProcessHierarchy(subProcess.getSubProcess(), defaultParentExecution, subProcessesToCreate, movingExecutionIds, processInstanceChangeState, commandContext);</span>
+<span class="nc" id="L910">            processInstanceChangeState.getCreatedEmbeddedSubProcesses().put(subProcess.getSubProcess().getId(), parentSubProcess);</span>
+        }
+<span class="nc" id="L912">        ExecutionEntityManager executionEntityManager = processEngineConfiguration.getExecutionEntityManager();</span>
+
+<span class="nc" id="L914">        ExecutionEntity subProcessExecution = executionEntityManager.createChildExecution(parentSubProcess);</span>
+<span class="nc" id="L915">        subProcessExecution.setCurrentFlowElement(subProcess);</span>
+<span class="nc" id="L916">        subProcessExecution.setScope(true);</span>
+
+<span class="nc" id="L918">        FlowableEventDispatcher eventDispatcher = processEngineConfiguration.getEventDispatcher();</span>
+<span class="nc bnc" id="L919" title="All 4 branches missed.">        if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L920">            eventDispatcher.dispatchEvent(</span>
+<span class="nc" id="L921">                FlowableEventBuilder.createActivityEvent(FlowableEngineEventType.ACTIVITY_STARTED, subProcess.getId(), subProcess.getName(), subProcessExecution.getId(),</span>
+<span class="nc" id="L922">                    subProcessExecution.getProcessInstanceId(), subProcessExecution.getProcessDefinitionId(), subProcess),</span>
+<span class="nc" id="L923">                processEngineConfiguration.getEngineCfgKey());</span>
+        }
+
+<span class="nc" id="L926">        subProcessExecution.setVariablesLocal(processDataObjects(subProcess.getDataObjects()));</span>
+
+<span class="nc" id="L928">        processEngineConfiguration.getActivityInstanceEntityManager().recordActivityStart(subProcessExecution);</span>
+
+<span class="nc" id="L930">        List&lt;BoundaryEvent&gt; boundaryEvents = subProcess.getBoundaryEvents();</span>
+<span class="nc bnc" id="L931" title="All 2 branches missed.">        if (CollectionUtil.isNotEmpty(boundaryEvents)) {</span>
+<span class="nc" id="L932">            executeBoundaryEvents(boundaryEvents, subProcessExecution);</span>
+        }
+
+<span class="nc bnc" id="L935" title="All 2 branches missed.">        if (subProcess instanceof EventSubProcess) {</span>
+<span class="nc" id="L936">            processCreatedEventSubProcess((EventSubProcess) subProcess, subProcessExecution, movingExecutionIds, commandContext);</span>
+        }
+
+<span class="nc" id="L939">        ProcessInstanceHelper processInstanceHelper = processEngineConfiguration.getProcessInstanceHelper();</span>
+
+        //Process containing child Event SubProcesses not contained in this creation hierarchy
+<span class="nc" id="L942">        List&lt;EventSubProcess&gt; childEventSubProcesses = subProcess.findAllSubFlowElementInFlowMapOfType(EventSubProcess.class);</span>
+<span class="nc" id="L943">        childEventSubProcesses.stream()</span>
+<span class="nc bnc" id="L944" title="All 2 branches missed.">            .filter(childEventSubProcess -&gt; !subProcessesToCreate.containsKey(childEventSubProcess.getId()))</span>
+<span class="nc" id="L945">            .forEach(childEventSubProcess -&gt; processInstanceHelper.processEventSubProcess(subProcessExecution, childEventSubProcess, commandContext));</span>
+
+<span class="nc" id="L947">        return subProcessExecution;</span>
+    }
+
+    protected Map&lt;String, Object&gt; processDataObjects(Collection&lt;ValuedDataObject&gt; dataObjects) {
+<span class="nc" id="L951">        Map&lt;String, Object&gt; variablesMap = new HashMap&lt;&gt;();</span>
+        // convert data objects to process variables
+<span class="nc bnc" id="L953" title="All 2 branches missed.">        if (dataObjects != null) {</span>
+<span class="nc" id="L954">            variablesMap = new HashMap&lt;&gt;(dataObjects.size());</span>
+<span class="nc bnc" id="L955" title="All 2 branches missed.">            for (ValuedDataObject dataObject : dataObjects) {</span>
+<span class="nc" id="L956">                variablesMap.put(dataObject.getName(), dataObject.getValue());</span>
+<span class="nc" id="L957">            }</span>
+        }
+<span class="nc" id="L959">        return variablesMap;</span>
+    }
+
+    protected void executeBoundaryEvents(Collection&lt;BoundaryEvent&gt; boundaryEvents, ExecutionEntity execution) {
+
+        // The parent execution becomes a scope, and a child execution is created for each of the boundary events
+<span class="nc bnc" id="L965" title="All 2 branches missed.">        for (BoundaryEvent boundaryEvent : boundaryEvents) {</span>
+
+<span class="nc bnc" id="L967" title="All 2 branches missed.">            if (CollectionUtil.isEmpty(boundaryEvent.getEventDefinitions())</span>
+<span class="nc bnc" id="L968" title="All 2 branches missed.">                || (boundaryEvent.getEventDefinitions().get(0) instanceof CompensateEventDefinition)) {</span>
+<span class="nc" id="L969">                continue;</span>
+            }
+
+            // A Child execution of the current execution is created to represent the boundary event being active
+<span class="nc" id="L973">            ExecutionEntity childExecutionEntity = CommandContextUtil.getExecutionEntityManager().createChildExecution(execution);</span>
+<span class="nc" id="L974">            childExecutionEntity.setParentId(execution.getId());</span>
+<span class="nc" id="L975">            childExecutionEntity.setCurrentFlowElement(boundaryEvent);</span>
+<span class="nc" id="L976">            childExecutionEntity.setScope(false);</span>
+
+<span class="nc" id="L978">            CommandContextUtil.getProcessEngineConfiguration().getActivityInstanceEntityManager().recordActivityStart(childExecutionEntity);</span>
+
+<span class="nc" id="L980">            ActivityBehavior boundaryEventBehavior = ((ActivityBehavior) boundaryEvent.getBehavior());</span>
+<span class="nc" id="L981">            LOGGER.debug(&quot;Executing boundary event activityBehavior {} with execution {}&quot;, boundaryEventBehavior.getClass(), childExecutionEntity.getId());</span>
+<span class="nc" id="L982">            boundaryEventBehavior.execute(childExecutionEntity);</span>
+<span class="nc" id="L983">        }</span>
+<span class="nc" id="L984">    }</span>
+
+    protected ExecutionEntity createCallActivityInstance(CallActivity callActivity, ProcessDefinition subProcessDefinition, ExecutionEntity parentExecution, String initialActivityId, CommandContext commandContext) {
+
+<span class="nc" id="L988">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc" id="L989">        ExpressionManager expressionManager = processEngineConfiguration.getExpressionManager();</span>
+<span class="nc" id="L990">        ExecutionEntityManager executionEntityManager = processEngineConfiguration.getExecutionEntityManager();</span>
+
+<span class="nc" id="L992">        Process subProcess = ProcessDefinitionUtil.getProcess(subProcessDefinition.getId());</span>
+<span class="nc bnc" id="L993" title="All 2 branches missed.">        if (subProcess == null) {</span>
+<span class="nc" id="L994">            throw new FlowableException(&quot;Cannot start a sub process instance. Process model &quot; + subProcessDefinition.getName() + &quot; (id = &quot; + subProcessDefinition.getId() + &quot;) could not be found&quot;);</span>
+        }
+
+<span class="nc" id="L997">        String businessKey = null;</span>
+
+<span class="nc bnc" id="L999" title="All 2 branches missed.">        if (!StringUtils.isEmpty(callActivity.getBusinessKey())) {</span>
+<span class="nc" id="L1000">            Expression expression = expressionManager.createExpression(callActivity.getBusinessKey());</span>
+<span class="nc" id="L1001">            businessKey = expression.getValue(parentExecution).toString();</span>
+
+<span class="nc bnc" id="L1003" title="All 2 branches missed.">        } else if (callActivity.isInheritBusinessKey()) {</span>
+<span class="nc" id="L1004">            ExecutionEntity processInstance = executionEntityManager.findById(parentExecution.getProcessInstanceId());</span>
+<span class="nc" id="L1005">            businessKey = processInstance.getBusinessKey();</span>
+        }
+
+<span class="nc" id="L1008">        ExecutionEntity subProcessInstance = executionEntityManager.createSubprocessInstance(subProcessDefinition, parentExecution, businessKey, initialActivityId);</span>
+<span class="nc" id="L1009">        EntityLinkUtil.createEntityLinks(parentExecution.getProcessInstanceId(), parentExecution.getId(), callActivity.getId(),</span>
+<span class="nc" id="L1010">                subProcessInstance.getId(), ScopeTypes.BPMN);</span>
+<span class="nc" id="L1011">        CommandContextUtil.getActivityInstanceEntityManager(commandContext).recordSubProcessInstanceStart(parentExecution, subProcessInstance);</span>
+
+<span class="nc" id="L1013">        FlowableEventDispatcher eventDispatcher = processEngineConfiguration.getEventDispatcher();</span>
+<span class="nc bnc" id="L1014" title="All 4 branches missed.">        if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L1015">            CommandContextUtil.getProcessEngineConfiguration().getEventDispatcher().dispatchEvent(FlowableEventBuilder.createEntityEvent(</span>
+<span class="nc" id="L1016">                    FlowableEngineEventType.PROCESS_CREATED, subProcessInstance), processEngineConfiguration.getEngineCfgKey());</span>
+        }
+
+        // process template-defined data objects
+<span class="nc" id="L1020">        subProcessInstance.setVariables(processDataObjects(subProcess.getDataObjects()));</span>
+
+<span class="nc" id="L1022">        Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+
+<span class="nc bnc" id="L1024" title="All 2 branches missed.">        if (callActivity.isInheritVariables()) {</span>
+<span class="nc" id="L1025">            Map&lt;String, Object&gt; executionVariables = parentExecution.getVariables();</span>
+<span class="nc bnc" id="L1026" title="All 2 branches missed.">            for (Map.Entry&lt;String, Object&gt; entry : executionVariables.entrySet()) {</span>
+<span class="nc" id="L1027">                variables.put(entry.getKey(), entry.getValue());</span>
+<span class="nc" id="L1028">            }</span>
+        }
+
+        // copy process variables
+<span class="nc" id="L1032">        IOParameterUtil.processInParameters(callActivity.getInParameters(), parentExecution, variables::put, variables::put, expressionManager);</span>
+
+<span class="nc bnc" id="L1034" title="All 2 branches missed.">        if (!variables.isEmpty()) {</span>
+<span class="nc" id="L1035">            subProcessInstance.setVariables(variables);</span>
+        }
+
+<span class="nc bnc" id="L1038" title="All 4 branches missed.">        if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L1039">            eventDispatcher.dispatchEvent(FlowableEventBuilder.createEntityEvent(FlowableEngineEventType.ENTITY_INITIALIZED, subProcessInstance),</span>
+<span class="nc" id="L1040">                    processEngineConfiguration.getEngineCfgKey());</span>
+        }
+
+<span class="nc" id="L1043">        return subProcessInstance;</span>
+    }
+
+    protected ExecutionEntity migrateExecutionEntity(ExecutionEntity parentExecutionEntity, ExecutionEntity childExecution, FlowElement newFlowElement, CommandContext commandContext) {
+<span class="nc" id="L1047">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc" id="L1048">        TaskService taskService = processEngineConfiguration.getTaskServiceConfiguration().getTaskService();</span>
+<span class="nc" id="L1049">        ExpressionManager expressionManager = processEngineConfiguration.getExpressionManager();</span>
+
+        // manage the bidirectional parent-child relation
+<span class="nc" id="L1052">        childExecution.setProcessInstanceId(parentExecutionEntity.getProcessInstanceId());</span>
+<span class="nc" id="L1053">        childExecution.setProcessInstance(parentExecutionEntity.getProcessInstance());</span>
+<span class="nc" id="L1054">        childExecution.setProcessDefinitionId(parentExecutionEntity.getProcessDefinitionId());</span>
+<span class="nc" id="L1055">        ExecutionEntity oldParent = childExecution.getParent();</span>
+<span class="nc bnc" id="L1056" title="All 4 branches missed.">        if (oldParent != null &amp;&amp; !oldParent.getId().equals(parentExecutionEntity.getId())) {</span>
+<span class="nc" id="L1057">            oldParent.getExecutions().remove(childExecution);</span>
+        }
+<span class="nc" id="L1059">        childExecution.setParent(parentExecutionEntity);</span>
+<span class="nc" id="L1060">        parentExecutionEntity.addChildExecution(childExecution);</span>
+
+        //Additional changes if the new activity Id doesn't match
+<span class="nc" id="L1063">        String oldActivityId = childExecution.getCurrentActivityId();</span>
+<span class="nc bnc" id="L1064" title="All 2 branches missed.">        if (!childExecution.getCurrentActivityId().equals(newFlowElement.getId())) {</span>
+<span class="nc" id="L1065">            ((ExecutionEntityImpl) childExecution).setActivityId(newFlowElement.getId());</span>
+        }
+
+        // If we are moving a UserTask we need to update its processDefinition references
+<span class="nc bnc" id="L1069" title="All 2 branches missed.">        if (newFlowElement instanceof UserTask) {</span>
+<span class="nc" id="L1070">            TaskEntityImpl task = (TaskEntityImpl) taskService.createTaskQuery(processEngineConfiguration.getCommandExecutor(), processEngineConfiguration)</span>
+<span class="nc" id="L1071">                    .executionId(childExecution.getId()).singleResult();</span>
+<span class="nc" id="L1072">            task.setProcessDefinitionId(childExecution.getProcessDefinitionId());</span>
+<span class="nc" id="L1073">            task.setTaskDefinitionKey(newFlowElement.getId());</span>
+
+            // Set name
+<span class="nc" id="L1076">            String name = null;</span>
+<span class="nc bnc" id="L1077" title="All 2 branches missed.">            if (newFlowElement.getName() != null) {</span>
+<span class="nc" id="L1078">                Object nameValue = expressionManager.createExpression(newFlowElement.getName()).getValue(childExecution);</span>
+<span class="nc bnc" id="L1079" title="All 2 branches missed.">                if (nameValue != null) {</span>
+<span class="nc" id="L1080">                    name = nameValue.toString();</span>
+                }
+            }
+<span class="nc" id="L1083">            task.setName(name);</span>
+
+            // Set description
+<span class="nc" id="L1086">            String description = null;</span>
+<span class="nc bnc" id="L1087" title="All 2 branches missed.">            if (newFlowElement.getDocumentation() != null) {</span>
+<span class="nc" id="L1088">                Object descriptionValue = expressionManager.createExpression(newFlowElement.getDocumentation()).getValue(childExecution);</span>
+<span class="nc bnc" id="L1089" title="All 2 branches missed.">                if (descriptionValue != null) {</span>
+<span class="nc" id="L1090">                    description = descriptionValue.toString();</span>
+                }
+            }
+<span class="nc" id="L1093">            task.setDescription(description);</span>
+            
+            // Set form key
+<span class="nc" id="L1096">            String newFormKey = null;</span>
+<span class="nc" id="L1097">            String userTaskFormKey = ((UserTask) newFlowElement).getFormKey();</span>
+<span class="nc bnc" id="L1098" title="All 2 branches missed.">            if (userTaskFormKey != null) {</span>
+<span class="nc" id="L1099">                Object formKeyValue = expressionManager.createExpression(userTaskFormKey).getValue(childExecution);</span>
+<span class="nc bnc" id="L1100" title="All 2 branches missed.">                if (formKeyValue != null) {</span>
+<span class="nc" id="L1101">                    newFormKey = formKeyValue.toString();</span>
+                }
+            }
+<span class="nc" id="L1104">            task.setFormKey(newFormKey);</span>
+
+            // Set newCategory
+<span class="nc" id="L1107">            String newCategory = null;</span>
+<span class="nc" id="L1108">            String userTaskCategory = ((UserTask) newFlowElement).getCategory();</span>
+<span class="nc bnc" id="L1109" title="All 2 branches missed.">            if (userTaskCategory != null) {</span>
+<span class="nc" id="L1110">                Object categoryValue = expressionManager.createExpression(userTaskCategory).getValue(childExecution);</span>
+<span class="nc bnc" id="L1111" title="All 2 branches missed.">                if (categoryValue != null) {</span>
+<span class="nc" id="L1112">                    newCategory = categoryValue.toString();</span>
+                }
+            }
+<span class="nc" id="L1115">            task.setCategory(newCategory);</span>
+
+<span class="nc" id="L1117">            task.setProcessInstanceId(childExecution.getProcessInstanceId());</span>
+
+            //Sync history
+<span class="nc" id="L1120">            processEngineConfiguration.getActivityInstanceEntityManager().syncUserTaskExecution(childExecution, newFlowElement, oldActivityId, task);</span>
+        }
+
+<span class="nc bnc" id="L1123" title="All 6 branches missed.">        if (newFlowElement instanceof ServiceTask &amp;&amp; (((ServiceTask) newFlowElement).isAsynchronous() || ((ServiceTask) newFlowElement).isAsynchronousLeave())) {</span>
+<span class="nc" id="L1124">            handleServiceTaskJobUpdate(childExecution, commandContext);</span>
+<span class="nc bnc" id="L1125" title="All 2 branches missed.">        } else if (newFlowElement instanceof ExternalWorkerServiceTask) {</span>
+<span class="nc" id="L1126">            handleExternalWorkerServiceTaskJobUpdate(childExecution, commandContext);</span>
+        }
+
+        // Boundary Events - only applies to Activities and up to this point we have a UserTask, ReceiveTask or ExternalWorkerServiceTask execution, they are all Activities
+<span class="nc" id="L1130">        List&lt;BoundaryEvent&gt; boundaryEvents = ((Activity) newFlowElement).getBoundaryEvents();</span>
+<span class="nc bnc" id="L1131" title="All 4 branches missed.">        if (boundaryEvents != null &amp;&amp; !boundaryEvents.isEmpty()) {</span>
+<span class="nc" id="L1132">            List&lt;ExecutionEntity&gt; boundaryEventsExecutions = createBoundaryEvents(boundaryEvents, childExecution, commandContext);</span>
+<span class="nc" id="L1133">            executeBoundaryEvents(boundaryEvents, boundaryEventsExecutions);</span>
+        }
+
+<span class="nc bnc" id="L1136" title="All 2 branches missed.">        if (LOGGER.isDebugEnabled()) {</span>
+<span class="nc" id="L1137">            LOGGER.debug(&quot;Child execution {} updated with parent {}&quot;, childExecution, parentExecutionEntity.getId());</span>
+        }
+<span class="nc" id="L1139">        return childExecution;</span>
+    }
+    
+    protected void handleServiceTaskJobUpdate(ExecutionEntity childExecution, CommandContext commandContext) {
+<span class="nc" id="L1143">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc" id="L1144">        ManagementService managementService = processEngineConfiguration.getManagementService();</span>
+
+        // An existing executable job is not updated, because it's not needed and could lead to optimistic lock exceptions
+        
+        // Update an existing timer job
+<span class="nc" id="L1149">        TimerJobEntityImpl timerJob = (TimerJobEntityImpl) managementService.createTimerJobQuery()</span>
+<span class="nc" id="L1150">                .executionId(childExecution.getId()).singleResult();</span>
+<span class="nc bnc" id="L1151" title="All 2 branches missed.">        if (timerJob != null) {</span>
+<span class="nc" id="L1152">            timerJob.setProcessDefinitionId(childExecution.getProcessDefinitionId());</span>
+<span class="nc" id="L1153">            return;</span>
+        }
+
+        // Update an existing dead letter job
+<span class="nc" id="L1157">        DeadLetterJobEntityImpl deadLetterJob = (DeadLetterJobEntityImpl) managementService.createDeadLetterJobQuery()</span>
+<span class="nc" id="L1158">                .executionId(childExecution.getId()).singleResult();</span>
+<span class="nc bnc" id="L1159" title="All 2 branches missed.">        if (deadLetterJob != null) {</span>
+<span class="nc" id="L1160">            deadLetterJob.setProcessDefinitionId(childExecution.getProcessDefinitionId());</span>
+<span class="nc" id="L1161">            return;</span>
+        }
+
+        // Update an existing suspended job
+<span class="nc" id="L1165">        SuspendedJobEntityImpl suspendedJob = (SuspendedJobEntityImpl) managementService.createSuspendedJobQuery()</span>
+<span class="nc" id="L1166">                .executionId(childExecution.getId()).singleResult();</span>
+<span class="nc bnc" id="L1167" title="All 2 branches missed.">        if (suspendedJob != null) {</span>
+<span class="nc" id="L1168">            suspendedJob.setProcessDefinitionId(childExecution.getProcessDefinitionId());</span>
+<span class="nc" id="L1169">            return;</span>
+        }
+<span class="nc" id="L1171">    }</span>
+
+    protected void handleExternalWorkerServiceTaskJobUpdate(ExecutionEntity childExecution, CommandContext commandContext) {
+<span class="nc" id="L1174">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc" id="L1175">        ManagementService managementService = processEngineConfiguration.getManagementService();</span>
+
+        // Update an existing external worker job
+<span class="nc" id="L1178">        ExternalWorkerJobEntityImpl externalWorkerJob = (ExternalWorkerJobEntityImpl) managementService.createExternalWorkerJobQuery()</span>
+<span class="nc" id="L1179">                .executionId(childExecution.getId()).singleResult();</span>
+<span class="nc bnc" id="L1180" title="All 2 branches missed.">        if (externalWorkerJob != null) {</span>
+<span class="nc" id="L1181">            externalWorkerJob.setProcessDefinitionId(childExecution.getProcessDefinitionId());</span>
+<span class="nc" id="L1182">            return;</span>
+        }
+
+        // Update an existing dead letter job
+<span class="nc" id="L1186">        DeadLetterJobEntityImpl deadLetterJob = (DeadLetterJobEntityImpl) managementService.createDeadLetterJobQuery()</span>
+<span class="nc" id="L1187">                .executionId(childExecution.getId()).singleResult();</span>
+<span class="nc bnc" id="L1188" title="All 2 branches missed.">        if (deadLetterJob != null) {</span>
+<span class="nc" id="L1189">            deadLetterJob.setProcessDefinitionId(childExecution.getProcessDefinitionId());</span>
+<span class="nc" id="L1190">            return;</span>
+        }
+
+        // Update an existing suspended job
+<span class="nc" id="L1194">        SuspendedJobEntityImpl suspendedJob = (SuspendedJobEntityImpl) managementService.createSuspendedJobQuery()</span>
+<span class="nc" id="L1195">                .executionId(childExecution.getId()).singleResult();</span>
+<span class="nc bnc" id="L1196" title="All 2 branches missed.">        if (suspendedJob != null) {</span>
+<span class="nc" id="L1197">            suspendedJob.setProcessDefinitionId(childExecution.getProcessDefinitionId());</span>
+<span class="nc" id="L1198">            return;</span>
+        }
+<span class="nc" id="L1200">    }</span>
+
+    protected void handleUserTaskNewAssignee(ExecutionEntity taskExecution, String newAssigneeId, CommandContext commandContext) {
+<span class="nc" id="L1203">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc" id="L1204">        TaskService taskService = processEngineConfiguration.getTaskServiceConfiguration().getTaskService();</span>
+<span class="nc" id="L1205">        TaskEntityImpl task = (TaskEntityImpl) taskService.createTaskQuery(processEngineConfiguration.getCommandExecutor(), processEngineConfiguration)</span>
+<span class="nc" id="L1206">                .executionId(taskExecution.getId()).singleResult();</span>
+<span class="nc bnc" id="L1207" title="All 2 branches missed.">        if (task != null) {</span>
+<span class="nc" id="L1208">            TaskHelper.changeTaskAssignee(task, newAssigneeId);</span>
+        }
+<span class="nc" id="L1210">    }</span>
+
+    protected void handleUserTaskNewOwner(ExecutionEntity taskExecution, String newOwnerId, CommandContext commandContext) {
+<span class="nc" id="L1213">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc" id="L1214">        TaskService taskService = processEngineConfiguration.getTaskServiceConfiguration().getTaskService();</span>
+<span class="nc" id="L1215">        TaskEntityImpl task = (TaskEntityImpl) taskService.createTaskQuery(processEngineConfiguration.getCommandExecutor(), processEngineConfiguration)</span>
+<span class="nc" id="L1216">                .executionId(taskExecution.getId()).singleResult();</span>
+<span class="nc bnc" id="L1217" title="All 2 branches missed.">        if (task != null) {</span>
+<span class="nc" id="L1218">            TaskHelper.changeTaskOwner(task, newOwnerId);</span>
+        }
+<span class="nc" id="L1220">    }</span>
+
+    protected boolean isEventSubProcessStart(FlowElement flowElement) {
+<span class="nc bnc" id="L1223" title="All 6 branches missed.">        return flowElement instanceof StartEvent &amp;&amp; flowElement.getSubProcess() != null &amp;&amp; flowElement.getSubProcess() instanceof EventSubProcess;</span>
+    }
+
+    protected List&lt;ExecutionEntity&gt; createBoundaryEvents(List&lt;BoundaryEvent&gt; boundaryEvents, ExecutionEntity execution, CommandContext commandContext) {
+<span class="nc" id="L1227">        ExecutionEntityManager executionEntityManager = CommandContextUtil.getExecutionEntityManager(commandContext);</span>
+
+<span class="nc" id="L1229">        List&lt;ExecutionEntity&gt; boundaryEventExecutions = new ArrayList&lt;&gt;(boundaryEvents.size());</span>
+
+        // The parent execution becomes a scope, and a child execution is created for each of the boundary events
+<span class="nc bnc" id="L1232" title="All 2 branches missed.">        for (BoundaryEvent boundaryEvent : boundaryEvents) {</span>
+
+<span class="nc bnc" id="L1234" title="All 2 branches missed.">            if (CollectionUtil.isEmpty(boundaryEvent.getEventDefinitions())) {</span>
+                
+<span class="nc" id="L1236">                boolean hasEventRegistryBoundaryEvent = false;</span>
+<span class="nc bnc" id="L1237" title="All 2 branches missed.">                if (!boundaryEvent.getExtensionElements().isEmpty()) {</span>
+<span class="nc" id="L1238">                    List&lt;ExtensionElement&gt; eventTypeExtensionElements = boundaryEvent.getExtensionElements().get(BpmnXMLConstants.ELEMENT_EVENT_TYPE);</span>
+<span class="nc bnc" id="L1239" title="All 4 branches missed.">                    if (eventTypeExtensionElements != null &amp;&amp; !eventTypeExtensionElements.isEmpty()) {</span>
+<span class="nc" id="L1240">                        String eventTypeValue = eventTypeExtensionElements.get(0).getElementText();</span>
+<span class="nc bnc" id="L1241" title="All 2 branches missed.">                        if (StringUtils.isNotEmpty(eventTypeValue)) {</span>
+<span class="nc" id="L1242">                            hasEventRegistryBoundaryEvent = true;</span>
+                        }
+                    }
+                }
+                
+<span class="nc bnc" id="L1247" title="All 2 branches missed.">                if (!hasEventRegistryBoundaryEvent) {</span>
+<span class="nc" id="L1248">                    continue;</span>
+                }
+                
+<span class="nc bnc" id="L1251" title="All 2 branches missed.">            } else if (boundaryEvent.getEventDefinitions().get(0) instanceof CompensateEventDefinition) {</span>
+<span class="nc" id="L1252">                continue;</span>
+            }
+
+            // A Child execution of the current execution is created to represent the boundary event being active
+<span class="nc" id="L1256">            ExecutionEntity childExecutionEntity = executionEntityManager.createChildExecution(execution);</span>
+<span class="nc" id="L1257">            childExecutionEntity.setParentId(execution.getId());</span>
+<span class="nc" id="L1258">            childExecutionEntity.setCurrentFlowElement(boundaryEvent);</span>
+<span class="nc" id="L1259">            childExecutionEntity.setScope(false);</span>
+<span class="nc" id="L1260">            boundaryEventExecutions.add(childExecutionEntity);</span>
+<span class="nc" id="L1261">        }</span>
+
+<span class="nc" id="L1263">        return boundaryEventExecutions;</span>
+    }
+
+    protected void executeBoundaryEvents(List&lt;BoundaryEvent&gt; boundaryEvents, List&lt;ExecutionEntity&gt; boundaryEventExecutions) {
+<span class="nc bnc" id="L1267" title="All 2 branches missed.">        if (!CollectionUtil.isEmpty(boundaryEventExecutions)) {</span>
+<span class="nc" id="L1268">            Iterator&lt;BoundaryEvent&gt; boundaryEventsIterator = boundaryEvents.iterator();</span>
+<span class="nc" id="L1269">            Iterator&lt;ExecutionEntity&gt; boundaryEventExecutionsIterator = boundaryEventExecutions.iterator();</span>
+
+<span class="nc bnc" id="L1271" title="All 4 branches missed.">            while (boundaryEventsIterator.hasNext() &amp;&amp; boundaryEventExecutionsIterator.hasNext()) {</span>
+<span class="nc" id="L1272">                BoundaryEvent boundaryEvent = boundaryEventsIterator.next();</span>
+<span class="nc" id="L1273">                ExecutionEntity boundaryEventExecution = boundaryEventExecutionsIterator.next();</span>
+<span class="nc" id="L1274">                ActivityBehavior boundaryEventBehavior = ((ActivityBehavior) boundaryEvent.getBehavior());</span>
+<span class="nc" id="L1275">                LOGGER.debug(&quot;Executing boundary event activityBehavior {} with execution {}&quot;, boundaryEventBehavior.getClass(), boundaryEventExecution.getId());</span>
+<span class="nc" id="L1276">                boundaryEventBehavior.execute(boundaryEventExecution);</span>
+<span class="nc" id="L1277">            }</span>
+        }
+<span class="nc" id="L1279">    }</span>
+
+    protected boolean isExecutionInsideMultiInstance(ExecutionEntity execution) {
+<span class="nc bnc" id="L1282" title="All 2 branches missed.">        return getFlowElementMultiInstanceParentId(execution.getCurrentFlowElement()) != null;</span>
+    }
+
+    protected String getFlowElementMultiInstanceParentId(FlowElement flowElement) {
+<span class="nc" id="L1286">        FlowElementsContainer parentContainer = flowElement.getParentContainer();</span>
+<span class="nc bnc" id="L1287" title="All 2 branches missed.">        while (parentContainer instanceof Activity) {</span>
+<span class="nc bnc" id="L1288" title="All 2 branches missed.">            if (isFlowElementMultiInstance((Activity) parentContainer)) {</span>
+<span class="nc" id="L1289">                return parentContainer.getId();</span>
+            }
+<span class="nc" id="L1291">            parentContainer = ((Activity) parentContainer).getParentContainer();</span>
+        }
+<span class="nc" id="L1293">        return null;</span>
+    }
+
+    protected boolean isFlowElementMultiInstance(FlowElement flowElement) {
+<span class="nc bnc" id="L1297" title="All 2 branches missed.">        if (flowElement instanceof Activity) {</span>
+<span class="nc bnc" id="L1298" title="All 2 branches missed.">            return ((Activity) flowElement).getLoopCharacteristics() != null;</span>
+        }
+<span class="nc" id="L1300">        return false;</span>
+    }
+    
+    protected boolean hasSameMultiInstanceConfig(FlowElement sourceElement, FlowElement targetElement) {
+<span class="nc" id="L1304">        MultiInstanceLoopCharacteristics sourceMIConfig = null;</span>
+<span class="nc bnc" id="L1305" title="All 2 branches missed.">        if (sourceElement instanceof Activity) {</span>
+<span class="nc" id="L1306">            sourceMIConfig = ((Activity) sourceElement).getLoopCharacteristics();</span>
+        }
+        
+<span class="nc" id="L1309">        MultiInstanceLoopCharacteristics targetMIConfig = null;</span>
+<span class="nc bnc" id="L1310" title="All 2 branches missed.">        if (targetElement instanceof Activity) {</span>
+<span class="nc" id="L1311">            targetMIConfig = ((Activity) targetElement).getLoopCharacteristics();</span>
+        }
+        
+<span class="nc bnc" id="L1314" title="All 4 branches missed.">        if (sourceMIConfig == null || targetMIConfig == null) {</span>
+<span class="nc" id="L1315">            return false;</span>
+        }
+        
+<span class="nc bnc" id="L1318" title="All 2 branches missed.">        if (sourceMIConfig.isSequential() != targetMIConfig.isSequential()) {</span>
+<span class="nc" id="L1319">            return false;</span>
+        }
+        
+<span class="nc bnc" id="L1322" title="All 4 branches missed.">        if (sourceMIConfig.getLoopCardinality() != null &amp;&amp; !sourceMIConfig.getLoopCardinality().equals(targetMIConfig.getLoopCardinality())) {</span>
+<span class="nc" id="L1323">            return false;</span>
+        }
+        
+<span class="nc bnc" id="L1326" title="All 4 branches missed.">        if (targetMIConfig.getLoopCardinality() != null &amp;&amp; !targetMIConfig.getLoopCardinality().equals(sourceMIConfig.getLoopCardinality())) {</span>
+<span class="nc" id="L1327">            return false;</span>
+        }
+        
+<span class="nc" id="L1330">        return true;</span>
+    }
+
+    protected void processCreatedEventSubProcess(EventSubProcess eventSubProcess, ExecutionEntity eventSubProcessExecution, Set&lt;String&gt; movingExecutionIds, CommandContext commandContext) {
+<span class="nc" id="L1334">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc" id="L1335">        EventSubscriptionService eventSubscriptionService = processEngineConfiguration.getEventSubscriptionServiceConfiguration().getEventSubscriptionService();</span>
+<span class="nc" id="L1336">        ExecutionEntityManager executionEntityManager = processEngineConfiguration.getExecutionEntityManager();</span>
+<span class="nc" id="L1337">        TimerJobService timerJobService = processEngineConfiguration.getJobServiceConfiguration().getTimerJobService();</span>
+<span class="nc" id="L1338">        List&lt;StartEvent&gt; allStartEvents = eventSubProcess.findAllSubFlowElementInFlowMapOfType(StartEvent.class);</span>
+
+<span class="nc bnc" id="L1340" title="All 2 branches missed.">        for (StartEvent startEvent : allStartEvents) {</span>
+<span class="nc bnc" id="L1341" title="All 2 branches missed.">            if (!startEvent.getEventDefinitions().isEmpty()) {</span>
+
+<span class="nc" id="L1343">                Collection&lt;ExecutionEntity&gt; inactiveExecutionsByProcessInstanceId = executionEntityManager.findInactiveExecutionsByProcessInstanceId(eventSubProcessExecution.getProcessInstanceId());</span>
+<span class="nc" id="L1344">                Optional&lt;ExecutionEntity&gt; startEventExecution = inactiveExecutionsByProcessInstanceId.stream().filter(execution -&gt; execution.getActivityId().equals(startEvent.getId())).findFirst();</span>
+
+<span class="nc" id="L1346">                EventDefinition eventDefinition = startEvent.getEventDefinitions().get(0);</span>
+<span class="nc" id="L1347">                List&lt;EventSubscriptionEntity&gt; eventSubscriptions = null;</span>
+<span class="nc bnc" id="L1348" title="All 2 branches missed.">                if (eventDefinition instanceof SignalEventDefinition) {</span>
+<span class="nc" id="L1349">                    eventSubscriptions = eventSubscriptionService.findEventSubscriptionsByProcessInstanceAndActivityId(eventSubProcessExecution.getProcessInstanceId(), startEvent.getId(), SignalEventSubscriptionEntity.EVENT_TYPE);</span>
+<span class="nc bnc" id="L1350" title="All 2 branches missed.">                } else if (eventDefinition instanceof MessageEventDefinition) {</span>
+<span class="nc" id="L1351">                    eventSubscriptions = eventSubscriptionService.findEventSubscriptionsByProcessInstanceAndActivityId(eventSubProcessExecution.getProcessInstanceId(), startEvent.getId(), MessageEventSubscriptionEntity.EVENT_TYPE);</span>
+                }
+
+<span class="nc" id="L1354">                boolean isOnlyRemainingExecutionAtParentScope = isOnlyRemainingExecutionAtParentScope(eventSubProcessExecution, movingExecutionIds, commandContext);</span>
+
+                // If its an interrupting eventSubProcess we don't register a subscription or startEvent executions and we make sure that they are removed if existed
+                //Current eventSubProcess plus its startEvent
+<span class="nc bnc" id="L1358" title="All 4 branches missed.">                if (startEvent.isInterrupting() || isOnlyRemainingExecutionAtParentScope) {</span>
+<span class="nc bnc" id="L1359" title="All 4 branches missed.">                    if (eventSubscriptions != null &amp;&amp; !eventSubscriptions.isEmpty()) {</span>
+<span class="nc" id="L1360">                        eventSubscriptions.forEach(eventSubscriptionService::deleteEventSubscription);</span>
+                    }
+<span class="nc bnc" id="L1362" title="All 4 branches missed.">                    if (eventDefinition instanceof TimerEventDefinition &amp;&amp; startEventExecution.isPresent()) {</span>
+<span class="nc" id="L1363">                        List&lt;TimerJobEntity&gt; timerJobsByExecutionId = timerJobService.findTimerJobsByExecutionId(startEventExecution.get().getId());</span>
+<span class="nc" id="L1364">                        timerJobsByExecutionId.forEach(timerJobService::deleteTimerJob);</span>
+                    }
+<span class="nc bnc" id="L1366" title="All 2 branches missed.">                    if (startEventExecution.isPresent()) {</span>
+<span class="nc" id="L1367">                        executionEntityManager.deleteExecutionAndRelatedData(startEventExecution.get(), DeleteReason.EVENT_SUBPROCESS_INTERRUPTING + &quot;(&quot; + startEvent.getId() + &quot;)&quot;, false);</span>
+                    }
+
+                    //Remove any other child of the parentScope
+<span class="nc" id="L1371">                    List&lt;ExecutionEntity&gt; childExecutions = executionEntityManager.collectChildren(eventSubProcessExecution.getParent());</span>
+<span class="nc bnc" id="L1372" title="All 2 branches missed.">                    for (int i = childExecutions.size() - 1; i &gt;= 0; i--) {</span>
+<span class="nc" id="L1373">                        ExecutionEntity childExecutionEntity = childExecutions.get(i);</span>
+<span class="nc bnc" id="L1374" title="All 6 branches missed.">                        if (!childExecutionEntity.isEnded() &amp;&amp; !childExecutionEntity.getId().equals(eventSubProcessExecution.getId()) &amp;&amp; !movingExecutionIds.contains(childExecutionEntity.getId())) {</span>
+<span class="nc" id="L1375">                            executionEntityManager.deleteExecutionAndRelatedData(childExecutionEntity,</span>
+<span class="nc" id="L1376">                                DeleteReason.EVENT_SUBPROCESS_INTERRUPTING + &quot;(&quot; + startEvent.getId() + &quot;)&quot;, false);</span>
+                        }
+                    }
+<span class="nc" id="L1379">                } else {</span>
+                    // For non-interrupting, we register a subscription and startEvent execution if they don't exist already
+<span class="nc bnc" id="L1381" title="All 6 branches missed.">                    if (eventDefinition instanceof MessageEventDefinition &amp;&amp; (eventSubscriptions == null || eventSubscriptions.isEmpty())) {</span>
+<span class="nc" id="L1382">                        MessageEventDefinition messageEventDefinition = (MessageEventDefinition) eventDefinition;</span>
+<span class="nc" id="L1383">                        BpmnModel bpmnModel = ProcessDefinitionUtil.getBpmnModel(eventSubProcessExecution.getProcessDefinitionId());</span>
+<span class="nc bnc" id="L1384" title="All 2 branches missed.">                        if (bpmnModel.containsMessageId(messageEventDefinition.getMessageRef())) {</span>
+<span class="nc" id="L1385">                            messageEventDefinition.setMessageRef(bpmnModel.getMessage(messageEventDefinition.getMessageRef()).getName());</span>
+                        }
+
+<span class="nc" id="L1388">                        ExecutionEntity messageExecution = processEngineConfiguration.getExecutionEntityManager().createChildExecution(eventSubProcessExecution.getParent());</span>
+<span class="nc" id="L1389">                        messageExecution.setCurrentFlowElement(startEvent);</span>
+<span class="nc" id="L1390">                        messageExecution.setEventScope(true);</span>
+<span class="nc" id="L1391">                        messageExecution.setActive(false);</span>
+
+<span class="nc" id="L1393">                        String messageName = EventDefinitionExpressionUtil.determineMessageName(commandContext, messageEventDefinition, null);</span>
+<span class="nc" id="L1394">                        EventSubscriptionEntity messageSubscription = (EventSubscriptionEntity) eventSubscriptionService.createEventSubscriptionBuilder()</span>
+<span class="nc" id="L1395">                                        .eventType(MessageEventSubscriptionEntity.EVENT_TYPE)</span>
+<span class="nc" id="L1396">                                        .eventName(messageName)</span>
+<span class="nc" id="L1397">                                        .executionId(messageExecution.getId())</span>
+<span class="nc" id="L1398">                                        .processInstanceId(messageExecution.getProcessInstanceId())</span>
+<span class="nc" id="L1399">                                        .activityId(messageExecution.getCurrentActivityId())</span>
+<span class="nc" id="L1400">                                        .processDefinitionId(messageExecution.getProcessDefinitionId())</span>
+<span class="nc" id="L1401">                                        .tenantId(messageExecution.getTenantId())</span>
+<span class="nc" id="L1402">                                        .create();</span>
+                        
+<span class="nc" id="L1404">                        CountingEntityUtil.handleInsertEventSubscriptionEntityCount(messageSubscription);</span>
+<span class="nc" id="L1405">                        messageExecution.getEventSubscriptions().add(messageSubscription);</span>
+                        
+<span class="nc" id="L1407">                        processEngineConfiguration.getEventDispatcher()</span>
+<span class="nc" id="L1408">                            .dispatchEvent(FlowableEventBuilder.createMessageEvent(FlowableEngineEventType.ACTIVITY_MESSAGE_WAITING, messageSubscription.getActivityId(),</span>
+<span class="nc" id="L1409">                                    messageSubscription.getEventName(), null, messageSubscription.getExecutionId(),</span>
+<span class="nc" id="L1410">                                    messageSubscription.getProcessInstanceId(), messageSubscription.getProcessDefinitionId()),</span>
+<span class="nc" id="L1411">                                    processEngineConfiguration.getEngineCfgKey());</span>
+
+                    }
+<span class="nc bnc" id="L1414" title="All 6 branches missed.">                    if (eventDefinition instanceof SignalEventDefinition &amp;&amp; (eventSubscriptions == null || eventSubscriptions.isEmpty())) {</span>
+<span class="nc" id="L1415">                        SignalEventDefinition signalEventDefinition = (SignalEventDefinition) eventDefinition;</span>
+<span class="nc" id="L1416">                        BpmnModel bpmnModel = ProcessDefinitionUtil.getBpmnModel(eventSubProcessExecution.getProcessDefinitionId());</span>
+<span class="nc" id="L1417">                        Signal signal = null;</span>
+<span class="nc bnc" id="L1418" title="All 2 branches missed.">                        if (bpmnModel.containsSignalId(signalEventDefinition.getSignalRef())) {</span>
+<span class="nc" id="L1419">                            signal = bpmnModel.getSignal(signalEventDefinition.getSignalRef());</span>
+<span class="nc" id="L1420">                            signalEventDefinition.setSignalRef(signal.getName());</span>
+                        }
+
+<span class="nc" id="L1423">                        ExecutionEntity signalExecution = processEngineConfiguration.getExecutionEntityManager().createChildExecution(eventSubProcessExecution.getParent());</span>
+<span class="nc" id="L1424">                        signalExecution.setCurrentFlowElement(startEvent);</span>
+<span class="nc" id="L1425">                        signalExecution.setEventScope(true);</span>
+<span class="nc" id="L1426">                        signalExecution.setActive(false);</span>
+
+<span class="nc" id="L1428">                        String eventName = EventDefinitionExpressionUtil.determineSignalName(commandContext, signalEventDefinition, bpmnModel, null);</span>
+
+<span class="nc" id="L1430">                        EventSubscriptionEntity signalSubscription = (EventSubscriptionEntity) eventSubscriptionService.createEventSubscriptionBuilder()</span>
+<span class="nc" id="L1431">                                        .eventType(SignalEventSubscriptionEntity.EVENT_TYPE)</span>
+<span class="nc" id="L1432">                                        .eventName(eventName)</span>
+<span class="nc" id="L1433">                                        .signal(signal)</span>
+<span class="nc" id="L1434">                                        .executionId(signalExecution.getId())</span>
+<span class="nc" id="L1435">                                        .processInstanceId(signalExecution.getProcessInstanceId())</span>
+<span class="nc" id="L1436">                                        .activityId(signalExecution.getCurrentActivityId())</span>
+<span class="nc" id="L1437">                                        .processDefinitionId(signalExecution.getProcessDefinitionId())</span>
+<span class="nc" id="L1438">                                        .tenantId(signalExecution.getTenantId())</span>
+<span class="nc" id="L1439">                                        .create();</span>
+                                        
+<span class="nc" id="L1441">                        CountingEntityUtil.handleInsertEventSubscriptionEntityCount(signalSubscription);</span>
+<span class="nc" id="L1442">                        signalExecution.getEventSubscriptions().add(signalSubscription);</span>
+                        
+<span class="nc" id="L1444">                        processEngineConfiguration.getEventDispatcher()</span>
+<span class="nc" id="L1445">                            .dispatchEvent(FlowableEventBuilder.createSignalEvent(FlowableEngineEventType.ACTIVITY_SIGNAL_WAITING, signalSubscription.getActivityId(),</span>
+<span class="nc" id="L1446">                                    signalSubscription.getEventName(), null, signalSubscription.getExecutionId(),</span>
+<span class="nc" id="L1447">                                    signalSubscription.getProcessInstanceId(), signalSubscription.getProcessDefinitionId()),</span>
+<span class="nc" id="L1448">                                    processEngineConfiguration.getEngineCfgKey());</span>
+
+                    }
+
+<span class="nc bnc" id="L1452" title="All 2 branches missed.">                    if (eventDefinition instanceof TimerEventDefinition) {</span>
+<span class="nc bnc" id="L1453" title="All 2 branches missed.">                        if (!startEventExecution.isPresent()) {</span>
+
+<span class="nc" id="L1455">                            TimerEventDefinition timerEventDefinition = (TimerEventDefinition) eventDefinition;</span>
+<span class="nc" id="L1456">                            ExecutionEntity timerExecution = processEngineConfiguration.getExecutionEntityManager().createChildExecution(eventSubProcessExecution.getParent());</span>
+<span class="nc" id="L1457">                            timerExecution.setCurrentFlowElement(startEvent);</span>
+<span class="nc" id="L1458">                            timerExecution.setEventScope(true);</span>
+<span class="nc" id="L1459">                            timerExecution.setActive(false);</span>
+<span class="nc" id="L1460">                            TimerJobEntity timerJob = TimerUtil.createTimerEntityForTimerEventDefinition(timerEventDefinition, startEvent, false, timerExecution, TriggerTimerEventJobHandler.TYPE,</span>
+<span class="nc" id="L1461">                                TimerEventHandler.createConfiguration(startEvent.getId(), timerEventDefinition.getEndDate(), timerEventDefinition.getCalendarName()));</span>
+<span class="nc bnc" id="L1462" title="All 2 branches missed.">                            if (timerJob != null) {</span>
+<span class="nc" id="L1463">                                timerJobService.scheduleTimerJob(timerJob);</span>
+                            }
+                        }
+                    }
+                }
+            }
+<span class="nc" id="L1469">        }</span>
+<span class="nc" id="L1470">    }</span>
+
+    protected boolean isOnlyRemainingExecutionAtParentScope(ExecutionEntity executionEntity, Set&lt;String&gt; ignoreExecutionIds, CommandContext commandContext) {
+<span class="nc" id="L1473">        ExecutionEntityManager executionEntityManager = CommandContextUtil.getExecutionEntityManager(commandContext);</span>
+<span class="nc" id="L1474">        List&lt;ExecutionEntity&gt; siblingExecutions = executionEntityManager.findChildExecutionsByParentExecutionId(executionEntity.getParentId());</span>
+<span class="nc" id="L1475">        return siblingExecutions.stream()</span>
+<span class="nc" id="L1476">            .filter(ExecutionEntity::isActive)</span>
+<span class="nc bnc" id="L1477" title="All 2 branches missed.">            .filter(execution -&gt; !execution.getId().equals(executionEntity.getId()))</span>
+<span class="nc bnc" id="L1478" title="All 2 branches missed.">            .filter(execution -&gt; !ignoreExecutionIds.contains(execution.getId()))</span>
+<span class="nc bnc" id="L1479" title="All 2 branches missed.">            .count() == 0;</span>
+    }
+
+    protected boolean isExpression(String variableName) {
+<span class="nc bnc" id="L1483" title="All 4 branches missed.">        return variableName.startsWith(&quot;${&quot;) || variableName.startsWith(&quot;#{&quot;);</span>
+    }
+
+    protected ProcessDefinition resolveProcessDefinition(String processDefinitionKey, Integer processDefinitionVersion, String tenantId, CommandContext commandContext) {
+<span class="nc" id="L1487">        ProcessDefinitionEntityManager processDefinitionEntityManager = CommandContextUtil.getProcessDefinitionEntityManager(commandContext);</span>
+        ProcessDefinition processDefinition;
+<span class="nc bnc" id="L1489" title="All 2 branches missed.">        if (processDefinitionVersion != null) {</span>
+<span class="nc" id="L1490">            processDefinition = processDefinitionEntityManager.findProcessDefinitionByKeyAndVersionAndTenantId(processDefinitionKey, processDefinitionVersion, tenantId);</span>
+        } else {
+<span class="nc bnc" id="L1492" title="All 4 branches missed.">            if (tenantId == null || ProcessEngineConfiguration.NO_TENANT_ID.equals(tenantId)) {</span>
+<span class="nc" id="L1493">                processDefinition = processDefinitionEntityManager.findLatestProcessDefinitionByKey(processDefinitionKey);</span>
+            } else {
+<span class="nc" id="L1495">                processDefinition = processDefinitionEntityManager.findLatestProcessDefinitionByKeyAndTenantId(processDefinitionKey, tenantId);</span>
+            }
+        }
+
+<span class="nc bnc" id="L1499" title="All 2 branches missed.">        if (processDefinition == null) {</span>
+<span class="nc" id="L1500">            DeploymentManager deploymentManager = CommandContextUtil.getProcessEngineConfiguration(commandContext).getDeploymentManager();</span>
+<span class="nc bnc" id="L1501" title="All 4 branches missed.">            if (tenantId == null || ProcessEngineConfiguration.NO_TENANT_ID.equals(tenantId)) {</span>
+<span class="nc" id="L1502">                processDefinition = deploymentManager.findDeployedLatestProcessDefinitionByKey(processDefinitionKey);</span>
+            } else {
+<span class="nc" id="L1504">                processDefinition = deploymentManager.findDeployedLatestProcessDefinitionByKeyAndTenantId(processDefinitionKey, tenantId);</span>
+            }
+        }
+<span class="nc" id="L1507">        return processDefinition;</span>
+    }
+
+    private String printFlowElementIds(Collection&lt;FlowElementMoveEntry&gt; flowElements) {
+<span class="nc" id="L1511">        return flowElements.stream().map(FlowElementMoveEntry::getNewFlowElement).map(FlowElement::getId).collect(Collectors.joining(&quot;,&quot;));</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

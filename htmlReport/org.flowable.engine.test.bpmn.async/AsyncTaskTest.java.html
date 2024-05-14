@@ -1,0 +1,721 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AsyncTaskTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.bpmn.async</a> &gt; <span class="el_source">AsyncTaskTest.java</span></div><h1>AsyncTaskTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.test.bpmn.async;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
+
+import java.util.Collections;
+import java.util.Date;
+import java.util.List;
+
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.impl.history.HistoryLevel;
+import org.flowable.engine.history.HistoricActivityInstance;
+import org.flowable.engine.impl.context.Context;
+import org.flowable.engine.impl.jobexecutor.AsyncContinuationJobHandler;
+import org.flowable.engine.impl.jobexecutor.ParallelMultiInstanceActivityCompletionJobHandler;
+import org.flowable.engine.impl.test.HistoryTestHelper;
+import org.flowable.engine.impl.test.JobTestHelper;
+import org.flowable.engine.impl.test.PluggableFlowableTestCase;
+import org.flowable.engine.runtime.Execution;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.test.Deployment;
+import org.flowable.job.api.Job;
+import org.flowable.job.service.impl.persistence.entity.JobEntity;
+import org.flowable.variable.api.history.HistoricVariableInstance;
+import org.flowable.variable.api.persistence.entity.VariableInstance;
+import org.junit.Assert;
+import org.junit.jupiter.api.Test;
+
+<span class="nc" id="L42">public class AsyncTaskTest extends PluggableFlowableTestCase {</span>
+
+    public static boolean INVOCATION;
+
+    @Test
+    @Deployment
+    public void testAsyncServiceNoListeners() {
+<span class="nc" id="L49">        INVOCATION = false;</span>
+        // start process
+<span class="nc" id="L51">        runtimeService.startProcessInstanceByKey(&quot;asyncService&quot;);</span>
+        // now there should be one job in the database:
+<span class="nc" id="L53">        assertThat(managementService.createJobQuery().count()).isEqualTo(1);</span>
+        // the service was not invoked:
+<span class="nc" id="L55">        assertThat(INVOCATION).isFalse();</span>
+
+<span class="nc" id="L57">        waitForJobExecutorToProcessAllJobs(7000L, 100L);</span>
+
+        // the service was invoked
+<span class="nc" id="L60">        assertThat(INVOCATION).isTrue();</span>
+        // and the job is done
+<span class="nc" id="L62">        assertThat(managementService.createJobQuery().count()).isZero();</span>
+<span class="nc" id="L63">    }</span>
+
+    @Test
+    @Deployment
+    public void testAsyncServiceListeners() {
+<span class="nc" id="L68">        String pid = runtimeService.startProcessInstanceByKey(&quot;asyncService&quot;).getProcessInstanceId();</span>
+<span class="nc" id="L69">        assertThat(managementService.createJobQuery().count()).isEqualTo(1);</span>
+        // the listener was not yet invoked:
+<span class="nc" id="L71">        assertThat(runtimeService.getVariable(pid, &quot;listener&quot;)).isNull();</span>
+
+<span class="nc" id="L73">        waitForJobExecutorToProcessAllJobs(7000L, 100L);</span>
+
+<span class="nc" id="L75">        assertThat(managementService.createJobQuery().count()).isZero();</span>
+<span class="nc" id="L76">    }</span>
+
+    @Test
+    @Deployment
+    public void testAsyncServiceCurrentTenant() {
+<span class="nc" id="L81">        String noTenantInstanceId = runtimeService.startProcessInstanceByKey(&quot;asyncService&quot;).getProcessInstanceId();</span>
+<span class="nc" id="L82">        String flowableInstanceId = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L83">                .processDefinitionKey(&quot;asyncService&quot;)</span>
+<span class="nc" id="L84">                .overrideProcessDefinitionTenantId(&quot;flowable&quot;)</span>
+<span class="nc" id="L85">                .start()</span>
+<span class="nc" id="L86">                .getId();</span>
+<span class="nc" id="L87">        String muppetsInstanceId = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L88">                .processDefinitionKey(&quot;asyncService&quot;)</span>
+<span class="nc" id="L89">                .overrideProcessDefinitionTenantId(&quot;muppets&quot;)</span>
+<span class="nc" id="L90">                .start()</span>
+<span class="nc" id="L91">                .getId();</span>
+
+<span class="nc" id="L93">        assertThat(runtimeService.hasVariable(noTenantInstanceId, &quot;currentTenantVar&quot;)).isFalse();</span>
+<span class="nc" id="L94">        assertThat(runtimeService.hasVariable(flowableInstanceId, &quot;currentTenantVar&quot;)).isFalse();</span>
+<span class="nc" id="L95">        assertThat(runtimeService.hasVariable(muppetsInstanceId, &quot;currentTenantVar&quot;)).isFalse();</span>
+
+<span class="nc" id="L97">        waitForJobExecutorToProcessAllJobs(7000L, 100L);</span>
+
+<span class="nc" id="L99">        VariableInstance variableInstance = runtimeService.getVariableInstance(noTenantInstanceId, &quot;currentTenantVar&quot;);</span>
+<span class="nc" id="L100">        assertThat(variableInstance).isNotNull();</span>
+<span class="nc" id="L101">        assertThat((String) variableInstance.getValue()).isNullOrEmpty();</span>
+<span class="nc" id="L102">        assertThat(runtimeService.getVariable(flowableInstanceId, &quot;currentTenantVar&quot;)).isEqualTo(&quot;flowable&quot;);</span>
+<span class="nc" id="L103">        assertThat(runtimeService.getVariable(muppetsInstanceId, &quot;currentTenantVar&quot;)).isEqualTo(&quot;muppets&quot;);</span>
+<span class="nc" id="L104">    }</span>
+
+    @Test
+    @Deployment
+    public void testAsyncServiceConcurrent() {
+<span class="nc" id="L109">        INVOCATION = false;</span>
+        // start process
+<span class="nc" id="L111">        runtimeService.startProcessInstanceByKey(&quot;asyncService&quot;);</span>
+        // now there should be one job in the database:
+<span class="nc" id="L113">        assertThat(managementService.createJobQuery().count()).isEqualTo(1);</span>
+        // the service was not invoked:
+<span class="nc" id="L115">        assertThat(INVOCATION).isFalse();</span>
+
+<span class="nc" id="L117">        waitForJobExecutorToProcessAllJobs(7000L, 100L);</span>
+
+        // the service was invoked
+<span class="nc" id="L120">        assertThat(INVOCATION).isTrue();</span>
+        // and the job is done
+<span class="nc" id="L122">        assertThat(managementService.createJobQuery().count()).isZero();</span>
+<span class="nc" id="L123">    }</span>
+
+    @Test
+    @Deployment
+    public void testAsyncServiceMultiInstance() {
+<span class="nc" id="L128">        INVOCATION = false;</span>
+        // start process
+<span class="nc" id="L130">        runtimeService.startProcessInstanceByKey(&quot;asyncService&quot;);</span>
+        // now there should be one job in the database:
+<span class="nc" id="L132">        assertThat(managementService.createJobQuery().count()).isEqualTo(1);</span>
+        // the service was not invoked:
+<span class="nc" id="L134">        assertThat(INVOCATION).isFalse();</span>
+
+<span class="nc" id="L136">        waitForJobExecutorToProcessAllJobs(7000L, 100L);</span>
+
+        // the service was invoked
+<span class="nc" id="L139">        assertThat(INVOCATION).isTrue();</span>
+        // and the job is done
+<span class="nc" id="L141">        assertThat(managementService.createJobQuery().count()).isZero();</span>
+<span class="nc" id="L142">    }</span>
+
+    @Test
+    @Deployment
+    public void testFailingAsyncServiceTimer() {
+        // start process
+<span class="nc" id="L148">        runtimeService.startProcessInstanceByKey(&quot;asyncService&quot;);</span>
+        // now there should be one job in the database, and it is a message
+<span class="nc" id="L150">        assertThat(managementService.createJobQuery().count()).isEqualTo(1);</span>
+<span class="nc" id="L151">        Job job = managementService.createJobQuery().singleResult();</span>
+
+<span class="nc" id="L153">        assertThatThrownBy(() -&gt; managementService.executeJob(job.getId()))</span>
+<span class="nc" id="L154">                .isInstanceOf(FlowableException.class);</span>
+
+        // the service failed: the execution is still sitting in the service task:
+<span class="nc" id="L157">        Execution execution = null;</span>
+<span class="nc bnc" id="L158" title="All 2 branches missed.">        for (Execution e : runtimeService.createExecutionQuery().list()) {</span>
+<span class="nc bnc" id="L159" title="All 2 branches missed.">            if (e.getParentId() != null) {</span>
+<span class="nc" id="L160">                execution = e;</span>
+            }
+<span class="nc" id="L162">        }</span>
+<span class="nc" id="L163">        assertThat(execution).isNotNull();</span>
+
+        // there is still a single job because the timer was created in the same
+        // transaction as the service was executed (which rolled back)
+<span class="nc" id="L167">        assertThat(managementService.createTimerJobQuery().count()).isEqualTo(1);</span>
+
+<span class="nc" id="L169">        runtimeService.deleteProcessInstance(execution.getId(), &quot;dead&quot;);</span>
+<span class="nc" id="L170">    }</span>
+
+    // TODO: Think about this:
+    @Deployment
+    public void FAILING_testFailingAsycServiceTimer() {
+        // start process
+<span class="nc" id="L176">        runtimeService.startProcessInstanceByKey(&quot;asyncService&quot;);</span>
+        // now there are two jobs the message and a timer:
+<span class="nc" id="L178">        assertThat(managementService.createJobQuery().count()).isEqualTo(2);</span>
+
+        // let 'max-retires' on the message be reached
+<span class="nc" id="L181">        waitForJobExecutorToProcessAllJobs(7000L, 100L);</span>
+
+        // the service failed: the execution is still sitting in the service task:
+<span class="nc" id="L184">        Execution execution = runtimeService.createExecutionQuery().singleResult();</span>
+<span class="nc" id="L185">        assertThat(execution).isNotNull();</span>
+<span class="nc" id="L186">        assertThat(runtimeService.getActiveActivityIds(execution.getId()).get(0)).isEqualTo(&quot;service&quot;);</span>
+
+        // there are tow jobs, the message and the timer (the message will not
+        // be retried anymore, max retires is reached.)
+<span class="nc" id="L190">        assertThat(managementService.createJobQuery().count()).isEqualTo(2);</span>
+
+        // now the timer triggers:
+<span class="nc" id="L193">        Context.getProcessEngineConfiguration().getClock().setCurrentTime(new Date(System.currentTimeMillis() + 10000));</span>
+<span class="nc" id="L194">        waitForJobExecutorToProcessAllJobs(7000L, 100L);</span>
+
+        // and we are done:
+<span class="nc" id="L197">        assertThat(runtimeService.createExecutionQuery().singleResult()).isNull();</span>
+        // and there are no more jobs left:
+<span class="nc" id="L199">        assertThat(managementService.createJobQuery().count()).isZero();</span>
+
+<span class="nc" id="L201">    }</span>
+
+    @Test
+    @Deployment
+    public void testAsyncServiceSubProcessTimer() {
+<span class="nc" id="L206">        INVOCATION = false;</span>
+        // start process
+<span class="nc" id="L208">        runtimeService.startProcessInstanceByKey(&quot;asyncService&quot;);</span>
+        // now there should be two jobs in the database:
+<span class="nc" id="L210">        assertThat(managementService.createJobQuery().count()).isEqualTo(1);</span>
+
+        // the service was not invoked:
+<span class="nc" id="L213">        assertThat(INVOCATION).isFalse();</span>
+
+<span class="nc" id="L215">        waitForJobExecutorToProcessAllJobs(7000L, 200L);</span>
+
+        // the service was invoked
+<span class="nc" id="L218">        assertThat(INVOCATION).isTrue();</span>
+
+        // both the timer and the message are cancelled
+<span class="nc" id="L221">        assertThat(managementService.createJobQuery().count()).isZero();</span>
+<span class="nc" id="L222">    }</span>
+
+    @Test
+    @Deployment
+    public void testAsyncServiceSubProcess() {
+        // start process
+<span class="nc" id="L228">        runtimeService.startProcessInstanceByKey(&quot;asyncService&quot;);</span>
+
+<span class="nc" id="L230">        assertThat(managementService.createJobQuery().count()).isEqualTo(1);</span>
+
+<span class="nc" id="L232">        waitForJobExecutorToProcessAllJobs(7000L, 100L);</span>
+
+        // both the timer and the message are cancelled
+<span class="nc" id="L235">        assertThat(managementService.createJobQuery().count()).isZero();</span>
+
+<span class="nc" id="L237">    }</span>
+
+    @Test
+    @Deployment
+    public void testAsyncTask() {
+        // start process
+<span class="nc" id="L243">        runtimeService.startProcessInstanceByKey(&quot;asyncTask&quot;);</span>
+        // now there should be one job in the database:
+<span class="nc" id="L245">        assertThat(managementService.createJobQuery().count()).isEqualTo(1);</span>
+        
+<span class="nc" id="L247">        Job job = managementService.createJobQuery().singleResult();</span>
+<span class="nc" id="L248">        assertThat(job.getElementId()).isEqualTo(&quot;task&quot;);</span>
+<span class="nc" id="L249">        assertThat(job.getElementName()).isEqualTo(&quot;Test task&quot;);</span>
+
+<span class="nc" id="L251">        waitForJobExecutorToProcessAllJobs(7000L, 200L);</span>
+
+        // the job is done
+<span class="nc" id="L254">        assertThat(managementService.createJobQuery().count()).isZero();</span>
+<span class="nc" id="L255">    }</span>
+    
+    @Test
+    @Deployment
+    public void testAsyncTaskWithJobCategory() {
+        // start process
+<span class="nc" id="L261">        runtimeService.startProcessInstanceByKey(&quot;asyncTask&quot;);</span>
+        // now there should be one job in the database:
+<span class="nc" id="L263">        assertThat(managementService.createJobQuery().count()).isEqualTo(1);</span>
+        
+<span class="nc" id="L265">        Job job = managementService.createJobQuery().singleResult();</span>
+<span class="nc" id="L266">        assertThat(job.getElementId()).isEqualTo(&quot;task&quot;);</span>
+<span class="nc" id="L267">        assertThat(job.getCategory()).isEqualTo(&quot;testCategory&quot;);</span>
+
+<span class="nc" id="L269">        waitForJobExecutorToProcessAllJobs(7000L, 200L);</span>
+
+        // the job is done
+<span class="nc" id="L272">        assertThat(managementService.createJobQuery().count()).isZero();</span>
+<span class="nc" id="L273">    }</span>
+    
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/bpmn/async/AsyncTaskTest.testAsyncTaskWithJobCategory.bpmn20.xml&quot;)
+    public void testAsyncTaskWithJobCategoryWithCategoryConfigurationSet() {
+        try {
+<span class="nc" id="L279">            processEngineConfiguration.getJobServiceConfiguration().addEnabledJobCategory(&quot;myCategory&quot;);</span>
+            // start process
+<span class="nc" id="L281">            runtimeService.startProcessInstanceByKey(&quot;asyncTask&quot;);</span>
+
+<span class="nc" id="L283">            assertThatThrownBy(() -&gt; waitForJobExecutorToProcessAllJobs(4000L, 200L))</span>
+<span class="nc" id="L284">                    .isInstanceOf(FlowableException.class);</span>
+            
+            // job is not executed because of different job category value
+<span class="nc" id="L287">            assertThat(managementService.createJobQuery().count()).isEqualTo(1);</span>
+            
+<span class="nc" id="L289">            processEngineConfiguration.getJobServiceConfiguration().setEnabledJobCategories(Collections.singletonList(&quot;testCategory&quot;));</span>
+    
+<span class="nc" id="L291">            waitForJobExecutorToProcessAllJobs(4000L, 200L);</span>
+            
+            // the job is done
+<span class="nc" id="L294">            assertThat(managementService.createJobQuery().count()).isZero();</span>
+            
+        } finally {
+<span class="nc" id="L297">            processEngineConfiguration.getJobServiceConfiguration().setEnabledJobCategories(null);</span>
+        }
+<span class="nc" id="L299">    }</span>
+    
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/bpmn/async/AsyncTaskTest.testAsyncTaskWithJobCategory.bpmn20.xml&quot;)
+    public void testAsyncTaskWithJobCategoryWithCategoryConfigurationSetAndRunningAsyncExecutor() throws Exception {
+        try {
+<span class="nc" id="L305">            processEngineConfiguration.getJobServiceConfiguration().addEnabledJobCategory(&quot;myCategory&quot;);</span>
+            
+<span class="nc" id="L307">            processEngineConfiguration.getAsyncExecutor().start();</span>
+<span class="nc" id="L308">            processEngineConfiguration.setAsyncExecutorActivate(true);</span>
+            
+            // start process
+<span class="nc" id="L311">            ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;asyncTask&quot;);</span>
+            
+<span class="nc" id="L313">            JobEntity job = (JobEntity) managementService.createJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L314">            assertThat(job.getLockOwner()).isNull();</span>
+<span class="nc" id="L315">            assertThat(job.getLockExpirationTime()).isNull();</span>
+            
+<span class="nc" id="L317">            Thread.sleep(4000);</span>
+            
+            // job is not executed because of different job category value
+<span class="nc" id="L320">            assertThat(managementService.createJobQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(1);</span>
+            
+<span class="nc" id="L322">            job = (JobEntity) managementService.createJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L323">            assertThat(job.getLockOwner()).isNull();</span>
+<span class="nc" id="L324">            assertThat(job.getLockExpirationTime()).isNull();</span>
+            
+<span class="nc" id="L326">            processEngineConfiguration.getAsyncExecutor().shutdown();</span>
+            
+<span class="nc" id="L328">            processEngineConfiguration.getJobServiceConfiguration().setEnabledJobCategories(Collections.singletonList(&quot;testCategory&quot;));</span>
+    
+<span class="nc" id="L330">            processEngineConfiguration.getAsyncExecutor().start();</span>
+<span class="nc" id="L331">            JobTestHelper.waitForJobExecutorToProcessAllJobs(processEngineConfiguration, managementService, 4000, 300, false);</span>
+            
+            // the job is done
+<span class="nc" id="L334">            assertThat(managementService.createJobQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+            
+<span class="nc" id="L336">            assertThat(runtimeService.createProcessInstanceQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+            
+        } finally {
+<span class="nc" id="L339">            processEngineConfiguration.getJobServiceConfiguration().setEnabledJobCategories(null);</span>
+<span class="nc" id="L340">            processEngineConfiguration.setAsyncExecutorActivate(false);</span>
+<span class="nc" id="L341">            processEngineConfiguration.getAsyncExecutor().shutdown();</span>
+        }
+<span class="nc" id="L343">    }</span>
+    
+    @Test
+    @Deployment
+    public void testAsyncTaskWithJobCategoryExpression() {
+        // start process
+<span class="nc" id="L349">        runtimeService.startProcessInstanceByKey(&quot;asyncTask&quot;, Collections.singletonMap(&quot;categoryValue&quot;, &quot;myCategory&quot;));</span>
+        // now there should be one job in the database:
+<span class="nc" id="L351">        assertThat(managementService.createJobQuery().count()).isEqualTo(1);</span>
+        
+<span class="nc" id="L353">        Job job = managementService.createJobQuery().singleResult();</span>
+<span class="nc" id="L354">        assertThat(job.getCategory()).isEqualTo(&quot;myCategory&quot;);</span>
+
+<span class="nc" id="L356">        waitForJobExecutorToProcessAllJobs(5000L, 200L);</span>
+
+        // the job is done
+<span class="nc" id="L359">        assertThat(managementService.createJobQuery().count()).isZero();</span>
+<span class="nc" id="L360">    }</span>
+    
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/bpmn/async/AsyncTaskTest.testAsyncTaskWithJobCategoryExpression.bpmn20.xml&quot;)
+    public void testAsyncTaskWithJobCategoryExpressionWithCategoryConfigurationSet() {
+        try {
+<span class="nc" id="L366">            processEngineConfiguration.getJobServiceConfiguration().addEnabledJobCategory(&quot;myCategory&quot;);</span>
+            // start process
+<span class="nc" id="L368">            runtimeService.startProcessInstanceByKey(&quot;asyncTask&quot;, Collections.singletonMap(&quot;categoryValue&quot;, &quot;myCategory&quot;));</span>
+    
+<span class="nc" id="L370">            waitForJobExecutorToProcessAllJobs(4000L, 200L);</span>
+            
+            // the job is done
+<span class="nc" id="L373">            assertThat(managementService.createJobQuery().count()).isZero();</span>
+            
+        } finally {
+<span class="nc" id="L376">            processEngineConfiguration.getJobServiceConfiguration().setEnabledJobCategories(null);</span>
+        }
+<span class="nc" id="L378">    }</span>
+    
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/bpmn/async/AsyncTaskTest.testAsyncTaskWithJobCategoryExpression.bpmn20.xml&quot;)
+    public void testAsyncTaskWithJobCategoryWithMultipleCategoryConfigurationSet() {
+        try {
+<span class="nc" id="L384">            processEngineConfiguration.getJobServiceConfiguration().addEnabledJobCategory(&quot;myCategory&quot;);</span>
+<span class="nc" id="L385">            processEngineConfiguration.getJobServiceConfiguration().addEnabledJobCategory(&quot;anotherCategory&quot;);</span>
+<span class="nc" id="L386">            processEngineConfiguration.getJobServiceConfiguration().addEnabledJobCategory(&quot;testCategory&quot;);</span>
+            
+            // start process
+<span class="nc" id="L389">            runtimeService.startProcessInstanceByKey(&quot;asyncTask&quot;, Collections.singletonMap(&quot;categoryValue&quot;, &quot;testCategory&quot;));</span>
+    
+<span class="nc" id="L391">            waitForJobExecutorToProcessAllJobs(4000L, 200L);</span>
+            
+            // the job is done
+<span class="nc" id="L394">            assertThat(managementService.createJobQuery().count()).isZero();</span>
+            
+        } finally {
+<span class="nc" id="L397">            processEngineConfiguration.getJobServiceConfiguration().setEnabledJobCategories(null);</span>
+        }
+<span class="nc" id="L399">    }</span>
+
+    @Test
+    @Deployment
+    public void testAsyncEndEvent() {
+        // start process
+<span class="nc" id="L405">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;asyncEndEvent&quot;);</span>
+        // now there should be one job in the database:
+<span class="nc" id="L407">        assertThat(managementService.createJobQuery().count()).isEqualTo(1);</span>
+        
+<span class="nc" id="L409">        Job job = managementService.createJobQuery().singleResult();</span>
+<span class="nc" id="L410">        assertThat(job.getElementId()).isEqualTo(&quot;theEnd&quot;);</span>
+<span class="nc" id="L411">        assertThat(job.getElementName()).isEqualTo(&quot;End event&quot;);</span>
+
+<span class="nc" id="L413">        Object value = runtimeService.getVariable(processInstance.getId(), &quot;variableSetInExecutionListener&quot;);</span>
+<span class="nc" id="L414">        assertThat(value).isNull();</span>
+
+<span class="nc" id="L416">        waitForJobExecutorToProcessAllJobs(2000L, 200L);</span>
+
+        // the job is done
+<span class="nc" id="L419">        assertThat(managementService.createJobQuery().count()).isZero();</span>
+
+<span class="nc" id="L421">        assertProcessEnded(processInstance.getId());</span>
+
+<span class="nc bnc" id="L423" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.AUDIT, processEngineConfiguration)) {</span>
+<span class="nc" id="L424">            List&lt;HistoricVariableInstance&gt; variables = historyService.createHistoricVariableInstanceQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L425">            assertThat(variables).hasSize(3);</span>
+
+<span class="nc" id="L427">            assertThat(variables)</span>
+<span class="nc" id="L428">                    .extracting(HistoricVariableInstance::getVariableName, HistoricVariableInstance::getValue)</span>
+<span class="nc" id="L429">                    .contains(tuple(&quot;variableSetInExecutionListener&quot;, &quot;firstValue&quot;));</span>
+        }
+<span class="nc" id="L431">    }</span>
+
+    @Test
+    @Deployment
+    public void testAsyncScript() {
+        // start process
+<span class="nc" id="L437">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;asyncScript&quot;);</span>
+        // now there should be one job in the database:
+<span class="nc" id="L439">        assertThat(managementService.createJobQuery().count()).isEqualTo(1);</span>
+        
+<span class="nc" id="L441">        Job job = managementService.createJobQuery().singleResult();</span>
+<span class="nc" id="L442">        assertThat(job.getElementId()).isEqualTo(&quot;script&quot;);</span>
+<span class="nc" id="L443">        assertThat(job.getElementName()).isEqualTo(&quot;Script&quot;);</span>
+        
+        // the script was not invoked:
+<span class="nc" id="L446">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L447">        String eid = null;</span>
+<span class="nc bnc" id="L448" title="All 2 branches missed.">        for (Execution e : executions) {</span>
+<span class="nc bnc" id="L449" title="All 2 branches missed.">            if (e.getParentId() != null) {</span>
+<span class="nc" id="L450">                eid = e.getId();</span>
+            }
+<span class="nc" id="L452">        }</span>
+<span class="nc" id="L453">        assertThat(runtimeService.getVariable(eid, &quot;invoked&quot;)).isNull();</span>
+
+<span class="nc" id="L455">        waitForJobExecutorToProcessAllJobs(7000L, 100L);</span>
+
+        // and the job is done
+<span class="nc" id="L458">        assertThat(managementService.createJobQuery().count()).isZero();</span>
+
+        // the script was invoked
+<span class="nc" id="L461">        assertThat(runtimeService.getVariable(eid, &quot;invoked&quot;)).isEqualTo(&quot;true&quot;);</span>
+
+<span class="nc" id="L463">        runtimeService.trigger(eid);</span>
+<span class="nc" id="L464">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/async/AsyncTaskTest.testAsyncCallActivity.bpmn20.xml&quot;,
+            &quot;org/flowable/engine/test/bpmn/async/AsyncTaskTest.testAsyncServiceNoListeners.bpmn20.xml&quot; })
+    public void testAsyncCallActivity() throws Exception {
+        // start process
+<span class="nc" id="L471">        runtimeService.startProcessInstanceByKey(&quot;asyncCallactivity&quot;);</span>
+        // now there should be one job in the database:
+<span class="nc" id="L473">        assertThat(managementService.createJobQuery().count()).isEqualTo(1);</span>
+
+<span class="nc" id="L475">        waitForJobExecutorToProcessAllJobs(20000L, 250L);</span>
+
+<span class="nc" id="L477">        assertThat(managementService.createJobQuery().count()).isZero();</span>
+<span class="nc" id="L478">        assertThat(runtimeService.createProcessInstanceQuery().count()).isZero();</span>
+<span class="nc" id="L479">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/async/AsyncTaskTest.testBasicAsyncCallActivity.bpmn20.xml&quot;, &quot;org/flowable/engine/test/bpmn/StartToEndTest.testStartToEnd.bpmn20.xml&quot; })
+    public void testBasicAsyncCallActivity() {
+<span class="nc" id="L484">        runtimeService.startProcessInstanceByKey(&quot;myProcess&quot;);</span>
+<span class="nc" id="L485">        assertThat(managementService.createJobQuery().count()).as(&quot;There should be one job available.&quot;).isEqualTo(1);</span>
+<span class="nc" id="L486">        waitForJobExecutorToProcessAllJobs(7000L, 250L);</span>
+<span class="nc" id="L487">        assertThat(managementService.createJobQuery().count()).isZero();</span>
+<span class="nc" id="L488">    }</span>
+
+    @Test
+    @Deployment
+    public void testAsyncUserTask() {
+        // start process
+<span class="nc" id="L494">        String pid = runtimeService.startProcessInstanceByKey(&quot;asyncUserTask&quot;).getId();</span>
+        // now there should be one job in the database:
+<span class="nc" id="L496">        assertThat(managementService.createJobQuery().count()).isEqualTo(1);</span>
+        // the listener was not yet invoked:
+<span class="nc" id="L498">        assertThat(runtimeService.getVariable(pid, &quot;listener&quot;)).isNull();</span>
+        // the task listener was not yet invoked:
+<span class="nc" id="L500">        assertThat(runtimeService.getVariable(pid, &quot;taskListener&quot;)).isNull();</span>
+        // there is no usertask
+<span class="nc" id="L502">        assertThat(taskService.createTaskQuery().singleResult()).isNull();</span>
+
+<span class="nc" id="L504">        waitForJobExecutorToProcessAllJobs(7000L, 250L);</span>
+        // the listener was now invoked:
+<span class="nc" id="L506">        assertThat(runtimeService.getVariable(pid, &quot;listener&quot;)).isNotNull();</span>
+        // the task listener was now invoked:
+<span class="nc" id="L508">        assertThat(runtimeService.getVariable(pid, &quot;taskListener&quot;)).isNotNull();</span>
+
+        // there is a usertask
+<span class="nc" id="L511">        assertThat(taskService.createTaskQuery().singleResult()).isNotNull();</span>
+        // and no more job
+<span class="nc" id="L513">        assertThat(managementService.createJobQuery().count()).isZero();</span>
+
+<span class="nc" id="L515">        String taskId = taskService.createTaskQuery().singleResult().getId();</span>
+<span class="nc" id="L516">        taskService.complete(taskId);</span>
+
+<span class="nc" id="L518">    }</span>
+
+    @Test
+    @Deployment
+    public void testMultiInstanceAsyncTask() {
+        // start process
+<span class="nc" id="L524">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;asyncTask&quot;);</span>
+
+        // now there should be one job in the database:
+<span class="nc" id="L527">        assertThat(managementService.createJobQuery().processInstanceId(processInstance.getId()).list())</span>
+<span class="nc" id="L528">                .extracting(Job::getJobHandlerType )</span>
+<span class="nc" id="L529">                .containsExactlyInAnyOrder(AsyncContinuationJobHandler.TYPE, AsyncContinuationJobHandler.TYPE, AsyncContinuationJobHandler.TYPE);</span>
+
+        // execute first of 3 parallel multi instance tasks
+<span class="nc" id="L532">        managementService.executeJob(managementService.createJobQuery().processInstanceId(processInstance.getId()).list().get(0).getId());</span>
+<span class="nc" id="L533">        assertThat(managementService.createJobQuery().processInstanceId(processInstance.getId()).list())</span>
+<span class="nc" id="L534">                .extracting(Job::getJobHandlerType )</span>
+<span class="nc" id="L535">                .containsExactlyInAnyOrder(AsyncContinuationJobHandler.TYPE, AsyncContinuationJobHandler.TYPE, ParallelMultiInstanceActivityCompletionJobHandler.TYPE);</span>
+
+        // execute second of 3 parallel multi instance tasks
+<span class="nc" id="L538">        managementService.executeJob(managementService.createJobQuery().processInstanceId(processInstance.getId()).handlerType(AsyncContinuationJobHandler.TYPE).list().get(0).getId());</span>
+<span class="nc" id="L539">        assertThat(managementService.createJobQuery().processInstanceId(processInstance.getId()).list())</span>
+<span class="nc" id="L540">                .extracting(Job::getJobHandlerType )</span>
+<span class="nc" id="L541">                .containsExactlyInAnyOrder(AsyncContinuationJobHandler.TYPE, ParallelMultiInstanceActivityCompletionJobHandler.TYPE, ParallelMultiInstanceActivityCompletionJobHandler.TYPE);</span>
+
+        // execute third of 3 parallel multi instance tasks
+<span class="nc" id="L544">        managementService.executeJob(managementService.createJobQuery().processInstanceId(processInstance.getId()).handlerType(AsyncContinuationJobHandler.TYPE).singleResult().getId());</span>
+
+        // the job is done
+<span class="nc" id="L547">        assertThat(managementService.createJobQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+
+<span class="nc bnc" id="L549" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L550">            List&lt;HistoricActivityInstance&gt; historicActivities = historyService.createHistoricActivityInstanceQuery()</span>
+<span class="nc" id="L551">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L552">                    .list();</span>
+
+<span class="nc" id="L554">            int startCount = 0;</span>
+<span class="nc" id="L555">            int taskCount = 0;</span>
+<span class="nc" id="L556">            int endCount = 0;</span>
+<span class="nc" id="L557">            int sequenceFlowCount = 0;</span>
+<span class="nc bnc" id="L558" title="All 2 branches missed.">            for (HistoricActivityInstance historicActivityInstance : historicActivities) {</span>
+<span class="nc bnc" id="L559" title="All 2 branches missed.">                if (&quot;task&quot;.equals(historicActivityInstance.getActivityId())) {</span>
+<span class="nc" id="L560">                    taskCount++;</span>
+
+<span class="nc bnc" id="L562" title="All 2 branches missed.">                } else if (&quot;theStart&quot;.equals(historicActivityInstance.getActivityId())) {</span>
+<span class="nc" id="L563">                    startCount++;</span>
+
+<span class="nc bnc" id="L565" title="All 2 branches missed.">                } else if (&quot;theEnd&quot;.equals(historicActivityInstance.getActivityId())) {</span>
+<span class="nc" id="L566">                    endCount++;</span>
+
+<span class="nc bnc" id="L568" title="All 2 branches missed.">                } else if (historicActivityInstance.getActivityId().contains(&quot;_flow_&quot;)) {</span>
+<span class="nc" id="L569">                    sequenceFlowCount++;</span>
+
+                } else {
+<span class="nc" id="L572">                    Assert.fail(&quot;Unexpected activity found &quot; + historicActivityInstance.getActivityId());</span>
+                }
+<span class="nc" id="L574">            }</span>
+
+<span class="nc" id="L576">            assertThat(startCount).isEqualTo(1);</span>
+<span class="nc" id="L577">            assertThat(taskCount).isEqualTo(3);</span>
+<span class="nc" id="L578">            assertThat(sequenceFlowCount).isEqualTo(2);</span>
+<span class="nc" id="L579">            assertThat(endCount).isEqualTo(1);</span>
+        }
+<span class="nc" id="L581">    }</span>
+
+    @Test
+    @Deployment
+    public void testMultiInstanceTask() {
+        // start process
+<span class="nc" id="L587">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;asyncTask&quot;);</span>
+
+<span class="nc bnc" id="L589" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L590">            List&lt;HistoricActivityInstance&gt; historicActivities = historyService.createHistoricActivityInstanceQuery()</span>
+<span class="nc" id="L591">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L592">                    .list();</span>
+
+<span class="nc" id="L594">            int startCount = 0;</span>
+<span class="nc" id="L595">            int taskCount = 0;</span>
+<span class="nc" id="L596">            int endCount = 0;</span>
+<span class="nc" id="L597">            int sequenceFlowCount = 0;</span>
+<span class="nc bnc" id="L598" title="All 2 branches missed.">            for (HistoricActivityInstance historicActivityInstance : historicActivities) {</span>
+<span class="nc bnc" id="L599" title="All 2 branches missed.">                if (&quot;task&quot;.equals(historicActivityInstance.getActivityId())) {</span>
+<span class="nc" id="L600">                    taskCount++;</span>
+
+<span class="nc bnc" id="L602" title="All 2 branches missed.">                } else if (&quot;theStart&quot;.equals(historicActivityInstance.getActivityId())) {</span>
+<span class="nc" id="L603">                    startCount++;</span>
+
+<span class="nc bnc" id="L605" title="All 2 branches missed.">                } else if (&quot;theEnd&quot;.equals(historicActivityInstance.getActivityId())) {</span>
+<span class="nc" id="L606">                    endCount++;</span>
+
+<span class="nc bnc" id="L608" title="All 2 branches missed.">                } else if (historicActivityInstance.getActivityId().contains(&quot;_flow_&quot;)) {</span>
+<span class="nc" id="L609">                    sequenceFlowCount++;</span>
+
+                } else {
+<span class="nc" id="L612">                    Assert.fail(&quot;Unexpected activity found &quot; + historicActivityInstance.getActivityId());</span>
+                }
+<span class="nc" id="L614">            }</span>
+
+<span class="nc" id="L616">            assertThat(startCount).isEqualTo(1);</span>
+<span class="nc" id="L617">            assertThat(taskCount).isEqualTo(3);</span>
+<span class="nc" id="L618">            assertThat(sequenceFlowCount).isEqualTo(2);</span>
+<span class="nc" id="L619">            assertThat(endCount).isEqualTo(1);</span>
+        }
+<span class="nc" id="L621">    }</span>
+
+    @Test
+    @Deployment
+    public void testMultiInstanceAsyncSequentialTask() {
+        // start process
+<span class="nc" id="L627">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;asyncTask&quot;);</span>
+
+        // now there should be one job in the database:
+<span class="nc" id="L630">        assertThat(managementService.createJobQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(1);</span>
+
+        // execute first of 3 sequential multi instance tasks
+<span class="nc" id="L633">        managementService.executeJob(managementService.createJobQuery().processInstanceId(processInstance.getId()).singleResult().getId());</span>
+<span class="nc" id="L634">        assertThat(managementService.createJobQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(1);</span>
+
+        // execute second of 3 sequential multi instance tasks
+<span class="nc" id="L637">        managementService.executeJob(managementService.createJobQuery().processInstanceId(processInstance.getId()).singleResult().getId());</span>
+<span class="nc" id="L638">        assertThat(managementService.createJobQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(1);</span>
+
+        // execute third of 3 sequential multi instance tasks
+<span class="nc" id="L641">        managementService.executeJob(managementService.createJobQuery().processInstanceId(processInstance.getId()).singleResult().getId());</span>
+
+        // the job is done
+<span class="nc" id="L644">        assertThat(managementService.createJobQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+
+<span class="nc bnc" id="L646" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L647">            List&lt;HistoricActivityInstance&gt; historicActivities = historyService.createHistoricActivityInstanceQuery()</span>
+<span class="nc" id="L648">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L649">                    .list();</span>
+
+<span class="nc" id="L651">            int startCount = 0;</span>
+<span class="nc" id="L652">            int taskCount = 0;</span>
+<span class="nc" id="L653">            int endCount = 0;</span>
+<span class="nc" id="L654">            int sequenceFlowCount = 0;</span>
+<span class="nc bnc" id="L655" title="All 2 branches missed.">            for (HistoricActivityInstance historicActivityInstance : historicActivities) {</span>
+<span class="nc bnc" id="L656" title="All 2 branches missed.">                if (&quot;task&quot;.equals(historicActivityInstance.getActivityId())) {</span>
+<span class="nc" id="L657">                    taskCount++;</span>
+
+<span class="nc bnc" id="L659" title="All 2 branches missed.">                } else if (&quot;theStart&quot;.equals(historicActivityInstance.getActivityId())) {</span>
+<span class="nc" id="L660">                    startCount++;</span>
+
+<span class="nc bnc" id="L662" title="All 2 branches missed.">                } else if (&quot;theEnd&quot;.equals(historicActivityInstance.getActivityId())) {</span>
+<span class="nc" id="L663">                    endCount++;</span>
+
+<span class="nc bnc" id="L665" title="All 2 branches missed.">                } else if (historicActivityInstance.getActivityId().contains(&quot;_flow_&quot;)) {</span>
+<span class="nc" id="L666">                    sequenceFlowCount++;</span>
+
+                } else {
+<span class="nc" id="L669">                    Assert.fail(&quot;Unexpected activity found &quot; + historicActivityInstance.getActivityId());</span>
+                }
+<span class="nc" id="L671">            }</span>
+
+<span class="nc" id="L673">            assertThat(startCount).isEqualTo(1);</span>
+<span class="nc" id="L674">            assertThat(taskCount).isEqualTo(3);</span>
+<span class="nc" id="L675">            assertThat(sequenceFlowCount).isEqualTo(2);</span>
+<span class="nc" id="L676">            assertThat(endCount).isEqualTo(1);</span>
+        }
+<span class="nc" id="L678">    }</span>
+
+    @Test
+    @Deployment
+    public void testMultiInstanceSequentialTask() {
+        // start process
+<span class="nc" id="L684">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;asyncTask&quot;);</span>
+
+<span class="nc bnc" id="L686" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L687">            List&lt;HistoricActivityInstance&gt; historicActivities = historyService.createHistoricActivityInstanceQuery()</span>
+<span class="nc" id="L688">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L689">                    .list();</span>
+
+<span class="nc" id="L691">            int startCount = 0;</span>
+<span class="nc" id="L692">            int taskCount = 0;</span>
+<span class="nc" id="L693">            int endCount = 0;</span>
+<span class="nc" id="L694">            int sequenceFlowCount = 0;</span>
+<span class="nc bnc" id="L695" title="All 2 branches missed.">            for (HistoricActivityInstance historicActivityInstance : historicActivities) {</span>
+<span class="nc bnc" id="L696" title="All 2 branches missed.">                if (&quot;task&quot;.equals(historicActivityInstance.getActivityId())) {</span>
+<span class="nc" id="L697">                    taskCount++;</span>
+
+<span class="nc bnc" id="L699" title="All 2 branches missed.">                } else if (&quot;theStart&quot;.equals(historicActivityInstance.getActivityId())) {</span>
+<span class="nc" id="L700">                    startCount++;</span>
+
+<span class="nc bnc" id="L702" title="All 2 branches missed.">                } else if (&quot;theEnd&quot;.equals(historicActivityInstance.getActivityId())) {</span>
+<span class="nc" id="L703">                    endCount++;</span>
+
+<span class="nc bnc" id="L705" title="All 2 branches missed.">                } else if (historicActivityInstance.getActivityId().contains(&quot;_flow_&quot;)) {</span>
+<span class="nc" id="L706">                    sequenceFlowCount++;</span>
+
+                } else {
+<span class="nc" id="L709">                    Assert.fail(&quot;Unexpected activity found &quot; + historicActivityInstance.getActivityId());</span>
+                }
+<span class="nc" id="L711">            }</span>
+
+<span class="nc" id="L713">            assertThat(startCount).isEqualTo(1);</span>
+<span class="nc" id="L714">            assertThat(taskCount).isEqualTo(3);</span>
+<span class="nc" id="L715">            assertThat(sequenceFlowCount).isEqualTo(2);</span>
+<span class="nc" id="L716">            assertThat(endCount).isEqualTo(1);</span>
+        }
+<span class="nc" id="L718">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

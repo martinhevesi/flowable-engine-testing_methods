@@ -1,0 +1,338 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>JuelScriptEngine.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.scripting</a> &gt; <span class="el_source">JuelScriptEngine.java</span></div><h1>JuelScriptEngine.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.flowable.engine.impl.scripting;
+
+import java.io.IOException;
+import java.io.Reader;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+
+import javax.script.AbstractScriptEngine;
+import javax.script.Bindings;
+import javax.script.Compilable;
+import javax.script.CompiledScript;
+import javax.script.ScriptContext;
+import javax.script.ScriptEngine;
+import javax.script.ScriptEngineFactory;
+import javax.script.ScriptException;
+import javax.script.SimpleBindings;
+
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.impl.de.odysseus.el.util.SimpleResolver;
+import org.flowable.common.engine.impl.el.DynamicBeanPropertyELResolver;
+import org.flowable.common.engine.impl.el.ExpressionFactoryResolver;
+import org.flowable.common.engine.impl.el.JsonNodeELResolver;
+import org.flowable.common.engine.impl.javax.el.ArrayELResolver;
+import org.flowable.common.engine.impl.javax.el.BeanELResolver;
+import org.flowable.common.engine.impl.javax.el.CompositeELResolver;
+import org.flowable.common.engine.impl.javax.el.CouldNotResolvePropertyELResolver;
+import org.flowable.common.engine.impl.javax.el.ELContext;
+import org.flowable.common.engine.impl.javax.el.ELException;
+import org.flowable.common.engine.impl.javax.el.ELResolver;
+import org.flowable.common.engine.impl.javax.el.ExpressionFactory;
+import org.flowable.common.engine.impl.javax.el.FunctionMapper;
+import org.flowable.common.engine.impl.javax.el.ListELResolver;
+import org.flowable.common.engine.impl.javax.el.MapELResolver;
+import org.flowable.common.engine.impl.javax.el.ResourceBundleELResolver;
+import org.flowable.common.engine.impl.javax.el.ValueExpression;
+import org.flowable.common.engine.impl.javax.el.VariableMapper;
+import org.flowable.common.engine.impl.util.ReflectUtil;
+import org.flowable.engine.impl.bpmn.data.ItemInstance;
+
+/**
+ * ScriptEngine that used JUEL for script evaluation and compilation (JSR-223).
+ * 
+ * Uses EL 1.1 if available, to resolve expressions. Otherwise it reverts to EL 1.0, using {@link ExpressionFactoryResolver}.
+ * 
+ * @author Frederik Heremans
+ */
+public class JuelScriptEngine extends AbstractScriptEngine implements Compilable {
+
+    private ScriptEngineFactory scriptEngineFactory;
+    private ExpressionFactory expressionFactory;
+
+<span class="nc" id="L65">    public JuelScriptEngine(ScriptEngineFactory scriptEngineFactory) {</span>
+<span class="nc" id="L66">        this.scriptEngineFactory = scriptEngineFactory;</span>
+        // Resolve the ExpressionFactory
+<span class="nc" id="L68">        expressionFactory = ExpressionFactoryResolver.resolveExpressionFactory();</span>
+<span class="nc" id="L69">    }</span>
+
+    public JuelScriptEngine() {
+<span class="nc" id="L72">        this(null);</span>
+<span class="nc" id="L73">    }</span>
+
+    @Override
+    public CompiledScript compile(String script) throws ScriptException {
+<span class="nc" id="L77">        ValueExpression expr = parse(script, context);</span>
+<span class="nc" id="L78">        return new JuelCompiledScript(expr);</span>
+    }
+
+    @Override
+    public CompiledScript compile(Reader reader) throws ScriptException {
+        // Create a String based on the reader and compile it
+<span class="nc" id="L84">        return compile(readFully(reader));</span>
+    }
+
+    @Override
+    public Object eval(String script, ScriptContext scriptContext) throws ScriptException {
+<span class="nc" id="L89">        ValueExpression expr = parse(script, scriptContext);</span>
+<span class="nc" id="L90">        return evaluateExpression(expr, scriptContext);</span>
+    }
+
+    @Override
+    public Object eval(Reader reader, ScriptContext scriptContext) throws ScriptException {
+<span class="nc" id="L95">        return eval(readFully(reader), scriptContext);</span>
+    }
+
+    @Override
+    public ScriptEngineFactory getFactory() {
+<span class="nc" id="L100">        synchronized (this) {</span>
+<span class="nc bnc" id="L101" title="All 2 branches missed.">            if (scriptEngineFactory == null) {</span>
+<span class="nc" id="L102">                scriptEngineFactory = new JuelScriptEngineFactory();</span>
+            }
+<span class="nc" id="L104">        }</span>
+<span class="nc" id="L105">        return scriptEngineFactory;</span>
+    }
+
+    @Override
+    public Bindings createBindings() {
+<span class="nc" id="L110">        return new SimpleBindings();</span>
+    }
+
+    private Object evaluateExpression(ValueExpression expr, ScriptContext ctx) throws ScriptException {
+        try {
+<span class="nc" id="L115">            return expr.getValue(createElContext(ctx));</span>
+<span class="nc" id="L116">        } catch (ELException elexp) {</span>
+<span class="nc" id="L117">            throw new ScriptException(elexp);</span>
+        }
+    }
+
+    private ELResolver createElResolver() {
+<span class="nc" id="L122">        CompositeELResolver compositeResolver = new CompositeELResolver();</span>
+<span class="nc" id="L123">        compositeResolver.add(new ArrayELResolver());</span>
+<span class="nc" id="L124">        compositeResolver.add(new ListELResolver());</span>
+<span class="nc" id="L125">        compositeResolver.add(new MapELResolver());</span>
+<span class="nc" id="L126">        compositeResolver.add(new JsonNodeELResolver());</span>
+<span class="nc" id="L127">        compositeResolver.add(new ResourceBundleELResolver());</span>
+<span class="nc" id="L128">        compositeResolver.add(new DynamicBeanPropertyELResolver(ItemInstance.class, &quot;getFieldValue&quot;, &quot;setFieldValue&quot;));</span>
+<span class="nc" id="L129">        compositeResolver.add(new BeanELResolver());</span>
+<span class="nc" id="L130">        compositeResolver.add(new CouldNotResolvePropertyELResolver());</span>
+<span class="nc" id="L131">        return new SimpleResolver(compositeResolver);</span>
+    }
+
+    private String readFully(Reader reader) throws ScriptException {
+<span class="nc" id="L135">        char[] array = new char[8192];</span>
+<span class="nc" id="L136">        StringBuilder strBuffer = new StringBuilder();</span>
+        int count;
+        try {
+<span class="nc bnc" id="L139" title="All 2 branches missed.">            while ((count = reader.read(array, 0, array.length)) &gt; 0) {</span>
+<span class="nc" id="L140">                strBuffer.append(array, 0, count);</span>
+            }
+<span class="nc" id="L142">        } catch (IOException exp) {</span>
+<span class="nc" id="L143">            throw new ScriptException(exp);</span>
+<span class="nc" id="L144">        }</span>
+<span class="nc" id="L145">        return strBuffer.toString();</span>
+    }
+
+    private ValueExpression parse(String script, ScriptContext scriptContext) throws ScriptException {
+        try {
+<span class="nc" id="L150">            return expressionFactory.createValueExpression(createElContext(scriptContext), script, Object.class);</span>
+<span class="nc" id="L151">        } catch (ELException ele) {</span>
+<span class="nc" id="L152">            throw new ScriptException(ele);</span>
+        }
+    }
+
+    private ELContext createElContext(final ScriptContext scriptCtx) {
+        // Check if the ELContext is already stored on the ScriptContext
+<span class="nc" id="L158">        Object existingELCtx = scriptCtx.getAttribute(&quot;elcontext&quot;);</span>
+<span class="nc bnc" id="L159" title="All 2 branches missed.">        if (existingELCtx instanceof ELContext) {</span>
+<span class="nc" id="L160">            return (ELContext) existingELCtx;</span>
+        }
+
+<span class="nc" id="L163">        scriptCtx.setAttribute(&quot;context&quot;, scriptCtx, ScriptContext.ENGINE_SCOPE);</span>
+
+        // Built-in function are added to ScriptCtx
+<span class="nc" id="L166">        scriptCtx.setAttribute(&quot;out:print&quot;, getPrintMethod(), ScriptContext.ENGINE_SCOPE);</span>
+
+<span class="nc" id="L168">        SecurityManager securityManager = System.getSecurityManager();</span>
+<span class="nc bnc" id="L169" title="All 2 branches missed.">        if (securityManager == null) {</span>
+<span class="nc" id="L170">            scriptCtx.setAttribute(&quot;lang:import&quot;, getImportMethod(), ScriptContext.ENGINE_SCOPE);</span>
+        }
+
+<span class="nc" id="L173">        ELContext elContext = new ELContext() {</span>
+
+<span class="nc" id="L175">            ELResolver resolver = createElResolver();</span>
+<span class="nc" id="L176">            VariableMapper varMapper = new ScriptContextVariableMapper(scriptCtx);</span>
+<span class="nc" id="L177">            FunctionMapper funcMapper = new ScriptContextFunctionMapper(scriptCtx);</span>
+
+            @Override
+            public ELResolver getELResolver() {
+<span class="nc" id="L181">                return resolver;</span>
+            }
+
+            @Override
+            public VariableMapper getVariableMapper() {
+<span class="nc" id="L186">                return varMapper;</span>
+            }
+
+            @Override
+            public FunctionMapper getFunctionMapper() {
+<span class="nc" id="L191">                return funcMapper;</span>
+            }
+        };
+        // Store the elcontext in the scriptContext to be able to reuse
+<span class="nc" id="L195">        scriptCtx.setAttribute(&quot;elcontext&quot;, elContext, ScriptContext.ENGINE_SCOPE);</span>
+<span class="nc" id="L196">        return elContext;</span>
+    }
+
+    private static Method getPrintMethod() {
+        try {
+<span class="nc" id="L201">            return JuelScriptEngine.class.getMethod(&quot;print&quot;, new Class[] { Object.class });</span>
+<span class="nc" id="L202">        } catch (Exception exp) {</span>
+            // Will never occur
+<span class="nc" id="L204">            return null;</span>
+        }
+    }
+
+    public static void print(Object object) {
+<span class="nc" id="L209">        System.out.print(object);</span>
+<span class="nc" id="L210">    }</span>
+
+    private static Method getImportMethod() {
+        try {
+<span class="nc" id="L214">            return JuelScriptEngine.class.getMethod(&quot;importFunctions&quot;, new Class[] { ScriptContext.class, String.class, Object.class });</span>
+<span class="nc" id="L215">        } catch (Exception exp) {</span>
+            // Will never occur
+<span class="nc" id="L217">            return null;</span>
+        }
+    }
+
+    public static void importFunctions(ScriptContext ctx, String namespace, Object obj) {
+<span class="nc" id="L222">        Class&lt;?&gt; clazz = null;</span>
+<span class="nc bnc" id="L223" title="All 2 branches missed.">        if (obj instanceof Class) {</span>
+<span class="nc" id="L224">            clazz = (Class&lt;?&gt;) obj;</span>
+<span class="nc bnc" id="L225" title="All 2 branches missed.">        } else if (obj instanceof String) {</span>
+            try {
+<span class="nc" id="L227">                clazz = ReflectUtil.loadClass((String) obj);</span>
+<span class="nc" id="L228">            } catch (FlowableException ae) {</span>
+<span class="nc" id="L229">                throw new ELException(ae);</span>
+<span class="nc" id="L230">            }</span>
+        } else {
+<span class="nc" id="L232">            throw new ELException(&quot;Class or class name is missing&quot;);</span>
+        }
+<span class="nc" id="L234">        Method[] methods = clazz.getMethods();</span>
+<span class="nc bnc" id="L235" title="All 2 branches missed.">        for (Method m : methods) {</span>
+<span class="nc" id="L236">            int mod = m.getModifiers();</span>
+<span class="nc bnc" id="L237" title="All 4 branches missed.">            if (Modifier.isStatic(mod) &amp;&amp; Modifier.isPublic(mod)) {</span>
+<span class="nc" id="L238">                String name = namespace + &quot;:&quot; + m.getName();</span>
+<span class="nc" id="L239">                ctx.setAttribute(name, m, ScriptContext.ENGINE_SCOPE);</span>
+            }
+        }
+<span class="nc" id="L242">    }</span>
+
+    /**
+     * Class representing a compiled script using JUEL.
+     * 
+     * @author Frederik Heremans
+     */
+    private class JuelCompiledScript extends CompiledScript {
+
+        private ValueExpression valueExpression;
+
+<span class="nc" id="L253">        JuelCompiledScript(ValueExpression valueExpression) {</span>
+<span class="nc" id="L254">            this.valueExpression = valueExpression;</span>
+<span class="nc" id="L255">        }</span>
+
+        @Override
+        public ScriptEngine getEngine() {
+            // Return outer class instance
+<span class="nc" id="L260">            return JuelScriptEngine.this;</span>
+        }
+
+        @Override
+        public Object eval(ScriptContext ctx) throws ScriptException {
+<span class="nc" id="L265">            return evaluateExpression(valueExpression, ctx);</span>
+        }
+    }
+
+    /**
+     * ValueMapper that uses the ScriptContext to get variable values or value expressions.
+     * 
+     * @author Frederik Heremans
+     */
+    private class ScriptContextVariableMapper extends VariableMapper {
+
+        private ScriptContext scriptContext;
+
+<span class="nc" id="L278">        ScriptContextVariableMapper(ScriptContext scriptCtx) {</span>
+<span class="nc" id="L279">            this.scriptContext = scriptCtx;</span>
+<span class="nc" id="L280">        }</span>
+
+        @Override
+        public ValueExpression resolveVariable(String variableName) {
+<span class="nc" id="L284">            int scope = scriptContext.getAttributesScope(variableName);</span>
+<span class="nc bnc" id="L285" title="All 2 branches missed.">            if (scope != -1) {</span>
+<span class="nc" id="L286">                Object value = scriptContext.getAttribute(variableName, scope);</span>
+<span class="nc bnc" id="L287" title="All 2 branches missed.">                if (value instanceof ValueExpression) {</span>
+                    // Just return the existing ValueExpression
+<span class="nc" id="L289">                    return (ValueExpression) value;</span>
+                } else {
+                    // Create a new ValueExpression based on the variable value
+<span class="nc" id="L292">                    return expressionFactory.createValueExpression(value, Object.class);</span>
+                }
+            }
+<span class="nc" id="L295">            return null;</span>
+        }
+
+        @Override
+        public ValueExpression setVariable(String name, ValueExpression value) {
+<span class="nc" id="L300">            ValueExpression previousValue = resolveVariable(name);</span>
+<span class="nc" id="L301">            scriptContext.setAttribute(name, value, ScriptContext.ENGINE_SCOPE);</span>
+<span class="nc" id="L302">            return previousValue;</span>
+        }
+    }
+
+    /**
+     * FunctionMapper that uses the ScriptContext to resolve functions in EL.
+     * 
+     * @author Frederik Heremans
+     */
+    private static class ScriptContextFunctionMapper extends FunctionMapper {
+
+        private ScriptContext scriptContext;
+
+<span class="nc" id="L315">        ScriptContextFunctionMapper(ScriptContext ctx) {</span>
+<span class="nc" id="L316">            this.scriptContext = ctx;</span>
+<span class="nc" id="L317">        }</span>
+
+        private String getFullFunctionName(String prefix, String localName) {
+<span class="nc" id="L320">            return prefix + &quot;:&quot; + localName;</span>
+        }
+
+        @Override
+        public Method resolveFunction(String prefix, String localName) {
+<span class="nc" id="L325">            String functionName = getFullFunctionName(prefix, localName);</span>
+<span class="nc" id="L326">            int scope = scriptContext.getAttributesScope(functionName);</span>
+<span class="nc bnc" id="L327" title="All 2 branches missed.">            if (scope != -1) {</span>
+                // Methods are added as variables in the ScriptScope
+<span class="nc" id="L329">                Object attributeValue = scriptContext.getAttribute(functionName);</span>
+<span class="nc bnc" id="L330" title="All 2 branches missed.">                return (attributeValue instanceof Method) ? (Method) attributeValue : null;</span>
+            } else {
+<span class="nc" id="L332">                return null;</span>
+            }
+        }
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,1374 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>InclusiveGatewayTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.bpmn.gateway</a> &gt; <span class="el_source">InclusiveGatewayTest.java</span></div><h1>InclusiveGatewayTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.test.bpmn.gateway;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.entry;
+import static org.assertj.core.api.Assertions.fail;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.impl.history.HistoryLevel;
+import org.flowable.common.engine.impl.interceptor.Command;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.common.engine.impl.util.CollectionUtil;
+import org.flowable.engine.delegate.DelegateExecution;
+import org.flowable.engine.delegate.JavaDelegate;
+import org.flowable.engine.delegate.MapBasedFlowableFutureJavaDelegate;
+import org.flowable.engine.delegate.ReadOnlyDelegateExecution;
+import org.flowable.engine.history.HistoricActivityInstance;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntity;
+import org.flowable.engine.impl.test.AbstractFlowableTestCase;
+import org.flowable.engine.impl.test.HistoryTestHelper;
+import org.flowable.engine.impl.test.PluggableFlowableTestCase;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.engine.repository.ProcessDefinition;
+import org.flowable.engine.runtime.Execution;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.test.Deployment;
+import org.flowable.eventsubscription.api.EventSubscription;
+import org.flowable.eventsubscription.service.impl.EventSubscriptionQueryImpl;
+import org.flowable.job.api.Job;
+import org.flowable.task.api.Task;
+import org.flowable.variable.api.history.HistoricVariableInstance;
+import org.junit.jupiter.api.Test;
+
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+/**
+ * @author Joram Barrez
+ * @author Tom Van Buskirk
+ * @author Tijs Rademakers
+ * @author Saeid Mirzaei
+ */
+<span class="nc" id="L67">public class InclusiveGatewayTest extends PluggableFlowableTestCase {</span>
+
+    private static final String TASK1_NAME = &quot;Task 1&quot;;
+    private static final String TASK2_NAME = &quot;Task 2&quot;;
+    private static final String TASK3_NAME = &quot;Task 3&quot;;
+
+    private static final String BEAN_TASK1_NAME = &quot;Basic service&quot;;
+    private static final String BEAN_TASK2_NAME = &quot;Standard service&quot;;
+    private static final String BEAN_TASK3_NAME = &quot;Gold Member service&quot;;
+
+    @Test
+    @Deployment
+    public void testDivergingInclusiveGateway() {
+<span class="nc" id="L80">        ProcessInstance pi = runtimeService.startProcessInstanceByKey(&quot;inclusiveGwDiverging&quot;, CollectionUtil.singletonMap(&quot;input&quot;, 1));</span>
+<span class="nc" id="L81">        List&lt;org.flowable.task.api.Task&gt; tasks = taskService.createTaskQuery().processInstanceId(pi.getId()).list();</span>
+<span class="nc" id="L82">        assertThat(tasks)</span>
+<span class="nc" id="L83">                .extracting(Task::getName)</span>
+<span class="nc" id="L84">                .containsExactlyInAnyOrder(TASK1_NAME, TASK2_NAME, TASK3_NAME);</span>
+<span class="nc" id="L85">        runtimeService.deleteProcessInstance(pi.getId(), &quot;testing deletion&quot;);</span>
+
+<span class="nc" id="L87">        pi = runtimeService.startProcessInstanceByKey(&quot;inclusiveGwDiverging&quot;, CollectionUtil.singletonMap(&quot;input&quot;, 2));</span>
+<span class="nc" id="L88">        tasks = taskService.createTaskQuery().processInstanceId(pi.getId()).list();</span>
+<span class="nc" id="L89">        assertThat(tasks)</span>
+<span class="nc" id="L90">                .extracting(Task::getName)</span>
+<span class="nc" id="L91">                .containsExactlyInAnyOrder(TASK2_NAME, TASK3_NAME);</span>
+<span class="nc" id="L92">        runtimeService.deleteProcessInstance(pi.getId(), &quot;testing deletion&quot;);</span>
+
+<span class="nc" id="L94">        pi = runtimeService.startProcessInstanceByKey(&quot;inclusiveGwDiverging&quot;, CollectionUtil.singletonMap(&quot;input&quot;, 3));</span>
+<span class="nc" id="L95">        tasks = taskService.createTaskQuery().processInstanceId(pi.getId()).list();</span>
+<span class="nc" id="L96">        assertThat(tasks)</span>
+<span class="nc" id="L97">                .extracting(Task::getName)</span>
+<span class="nc" id="L98">                .containsExactlyInAnyOrder(TASK3_NAME);</span>
+<span class="nc" id="L99">        runtimeService.deleteProcessInstance(pi.getId(), &quot;testing deletion&quot;);</span>
+<span class="nc" id="L100">    }</span>
+
+    @Test
+    @Deployment
+    public void testMergingInclusiveGateway() {
+<span class="nc" id="L105">        ProcessInstance pi = runtimeService.startProcessInstanceByKey(&quot;inclusiveGwMerging&quot;, CollectionUtil.singletonMap(&quot;input&quot;, 2));</span>
+<span class="nc" id="L106">        assertThat(taskService.createTaskQuery().count()).isEqualTo(1);</span>
+
+<span class="nc" id="L108">        runtimeService.deleteProcessInstance(pi.getId(), &quot;testing deletion&quot;);</span>
+<span class="nc" id="L109">    }</span>
+
+    @Test
+    @Deployment
+    public void testMergeWithEndedExecution() {
+<span class="nc" id="L114">        ProcessInstance pi = runtimeService.startProcessInstanceByKey(&quot;myProcess&quot;);</span>
+<span class="nc" id="L115">        Task task1 = taskService.createTaskQuery().processInstanceId(pi.getId()).taskName(&quot;Task 1&quot;).singleResult();</span>
+<span class="nc" id="L116">        Task task2 = taskService.createTaskQuery().processInstanceId(pi.getId()).taskName(&quot;Task 2&quot;).singleResult();</span>
+
+<span class="nc" id="L118">        taskService.complete(task1.getId());</span>
+<span class="nc" id="L119">        taskService.complete(task2.getId(), CollectionUtil.singletonMap(&quot;decision&quot;, &quot;goDown&quot;));</span>
+
+<span class="nc" id="L121">        assertProcessEnded(pi.getId());</span>
+
+<span class="nc bnc" id="L123" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L124">            List&lt;String&gt; activityNames = historyService.createHistoricActivityInstanceQuery()</span>
+<span class="nc" id="L125">                .processInstanceId(pi.getId())</span>
+<span class="nc" id="L126">                .list()</span>
+<span class="nc" id="L127">                .stream()</span>
+<span class="nc" id="L128">                .map(HistoricActivityInstance::getActivityName)</span>
+<span class="nc" id="L129">                .collect(Collectors.toList());</span>
+
+<span class="nc" id="L131">            assertThat(activityNames).contains(&quot;Other end&quot;); // the path downwards needs to be followed</span>
+        }
+<span class="nc" id="L133">    }</span>
+
+    @Test
+    @Deployment
+    public void testMergeWithEndedExecutionNestedCommand() {
+<span class="nc" id="L138">        ProcessInstance pi = runtimeService.startProcessInstanceByKey(&quot;myProcess&quot;);</span>
+<span class="nc" id="L139">        Task task1 = taskService.createTaskQuery().processInstanceId(pi.getId()).taskName(&quot;Task 1&quot;).singleResult();</span>
+<span class="nc" id="L140">        Task task2 = taskService.createTaskQuery().processInstanceId(pi.getId()).taskName(&quot;Task 2&quot;).singleResult();</span>
+
+<span class="nc" id="L142">        taskService.complete(task1.getId());</span>
+
+        // Testing a bug: when the command is nested, the reuse flag gets set to true for the inner command context, never triggering the InactiveBehavior
+<span class="nc" id="L145">        managementService.executeCommand(new Command&lt;&gt;() {</span>
+
+            @Override
+            public Object execute(CommandContext commandContext) {
+<span class="nc" id="L149">                taskService.complete(task2.getId(), CollectionUtil.singletonMap(&quot;decision&quot;, &quot;goDown&quot;));</span>
+
+<span class="nc" id="L151">                return null;</span>
+            }
+
+        });
+
+<span class="nc" id="L156">        assertProcessEnded(pi.getId());</span>
+
+<span class="nc bnc" id="L158" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L159">            List&lt;String&gt; activityNames = historyService.createHistoricActivityInstanceQuery()</span>
+<span class="nc" id="L160">                .processInstanceId(pi.getId())</span>
+<span class="nc" id="L161">                .list()</span>
+<span class="nc" id="L162">                .stream()</span>
+<span class="nc" id="L163">                .map(HistoricActivityInstance::getActivityName)</span>
+<span class="nc" id="L164">                .collect(Collectors.toList());</span>
+
+<span class="nc" id="L166">            assertThat(activityNames).contains(&quot;Other end&quot;); // the path downwards needs to be followed</span>
+        }
+<span class="nc" id="L168">    }</span>
+
+    @Test
+    @Deployment(extraResources = &quot;org/flowable/engine/test/bpmn/gateway/InclusiveGatewayTest.testProcessInstanceStartedThroughRuntimeService2.bpmn20.xml&quot;)
+    public void testProcessInstanceStartedThroughRuntimeService() {
+
+        // A slightly odd unit test: the process is started through the runtime service (and that one has an inclusive gateway).
+        // This is because of a bugfix that fixes a bug in the handling of nested command context that happened before.
+
+<span class="nc" id="L177">        assertThat(runtimeService.createProcessInstanceQuery().count()).isEqualTo(0);</span>
+
+        // After starting the process instance, two process instances should be fully finished.
+        // Before the bugfix, only one was finished, the one with the inclusive gateway wasn't.
+<span class="nc" id="L181">        runtimeService.startProcessInstanceByKey(&quot;oneServiceTaskProcess&quot;);</span>
+
+<span class="nc" id="L183">        assertThat(runtimeService.createProcessInstanceQuery().count()).isEqualTo(0);</span>
+
+<span class="nc bnc" id="L185" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L186">            List&lt;String&gt; activityNames = historyService.createHistoricActivityInstanceQuery()</span>
+<span class="nc" id="L187">                .processInstanceId(InclusiveGatewayTestDelegate01.PROCESS_INSTANCE_ID)</span>
+<span class="nc" id="L188">                .list()</span>
+<span class="nc" id="L189">                .stream()</span>
+<span class="nc" id="L190">                .map(HistoricActivityInstance::getActivityName)</span>
+<span class="nc" id="L191">                .collect(Collectors.toList());</span>
+
+<span class="nc" id="L193">            assertThat(activityNames).contains(&quot;Other end&quot;); // the path downwards needs to be followed</span>
+        }
+<span class="nc" id="L195">    }</span>
+
+<span class="nc" id="L197">    public static class InclusiveGatewayTestDelegate01 implements JavaDelegate  {</span>
+
+        public static String PROCESS_INSTANCE_ID;
+
+        @Override
+        public void execute(DelegateExecution execution) {
+<span class="nc" id="L203">            ProcessInstance processInstance = CommandContextUtil.getProcessEngineConfiguration().getRuntimeService()</span>
+<span class="nc" id="L204">                .startProcessInstanceByKey(&quot;myProcess&quot;, CollectionUtil.singletonMap(&quot;decision&quot;, &quot;goDown&quot;));</span>
+<span class="nc" id="L205">            PROCESS_INSTANCE_ID = processInstance.getId();</span>
+<span class="nc" id="L206">        }</span>
+
+    }
+
+    @Test
+    @Deployment
+    public void testPartialMergingInclusiveGateway() {
+<span class="nc" id="L213">        ProcessInstance pi = runtimeService.startProcessInstanceByKey(&quot;partialInclusiveGwMerging&quot;, CollectionUtil.singletonMap(&quot;input&quot;, 3));</span>
+<span class="nc" id="L214">        org.flowable.task.api.Task partialTask = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L215">        assertThat(partialTask.getTaskDefinitionKey()).isEqualTo(&quot;partialTask&quot;);</span>
+
+<span class="nc" id="L217">        taskService.complete(partialTask.getId());</span>
+
+<span class="nc" id="L219">        org.flowable.task.api.Task fullTask = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L220">        assertThat(fullTask.getTaskDefinitionKey()).isEqualTo(&quot;theTask&quot;);</span>
+
+<span class="nc" id="L222">        runtimeService.deleteProcessInstance(pi.getId(), &quot;testing deletion&quot;);</span>
+<span class="nc" id="L223">    }</span>
+
+    @Test
+    @Deployment
+    public void testNoSequenceFlowSelected() {
+<span class="nc" id="L228">        assertThatThrownBy(() -&gt; runtimeService.startProcessInstanceByKey(&quot;inclusiveGwNoSeqFlowSelected&quot;, CollectionUtil.singletonMap(&quot;input&quot;, 4)))</span>
+<span class="nc" id="L229">                .isInstanceOf(FlowableException.class);</span>
+<span class="nc" id="L230">    }</span>
+
+    /**
+     * Test for ACT-1216: When merging a concurrent execution the parent is not activated correctly
+     */
+    @Test
+    @Deployment
+    public void testParentActivationOnNonJoiningEnd() {
+<span class="nc" id="L238">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;parentActivationOnNonJoiningEnd&quot;);</span>
+
+<span class="nc" id="L240">        List&lt;Execution&gt; executionsBefore = runtimeService.createExecutionQuery().list();</span>
+<span class="nc" id="L241">        assertThat(executionsBefore).hasSize(3);</span>
+
+        // start first round of tasks
+<span class="nc" id="L244">        List&lt;org.flowable.task.api.Task&gt; firstTasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L245">        assertThat(firstTasks).hasSize(2);</span>
+
+<span class="nc bnc" id="L247" title="All 2 branches missed.">        for (org.flowable.task.api.Task t : firstTasks) {</span>
+<span class="nc" id="L248">            taskService.complete(t.getId());</span>
+<span class="nc" id="L249">        }</span>
+
+        // start second round of tasks
+<span class="nc" id="L252">        List&lt;org.flowable.task.api.Task&gt; secondTasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L253">        assertThat(secondTasks).hasSize(2);</span>
+
+        // complete one task
+<span class="nc" id="L256">        org.flowable.task.api.Task task = secondTasks.get(0);</span>
+<span class="nc" id="L257">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L259">        List&lt;Execution&gt; executionsAfter = runtimeService.createExecutionQuery().list();</span>
+<span class="nc" id="L260">        assertThat(executionsAfter).hasSize(2);</span>
+
+<span class="nc" id="L262">        Execution execution = null;</span>
+<span class="nc bnc" id="L263" title="All 2 branches missed.">        for (Execution e : executionsAfter) {</span>
+<span class="nc bnc" id="L264" title="All 2 branches missed.">            if (e.getParentId() != null) {</span>
+<span class="nc" id="L265">                execution = e;</span>
+            }
+<span class="nc" id="L267">        }</span>
+
+        // and should have one active activity
+<span class="nc" id="L270">        List&lt;String&gt; activeActivityIds = runtimeService.getActiveActivityIds(execution.getId());</span>
+<span class="nc" id="L271">        assertThat(activeActivityIds).hasSize(1);</span>
+
+        // Completing last task should finish the process instance
+
+<span class="nc" id="L275">        org.flowable.task.api.Task lastTask = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L276">        taskService.complete(lastTask.getId());</span>
+
+<span class="nc" id="L278">        assertThat(runtimeService.createProcessInstanceQuery().active().count()).isZero();</span>
+<span class="nc" id="L279">    }</span>
+
+    /**
+     * Test for bug ACT-10: whitespaces/newlines in expressions lead to exceptions
+     */
+    @Test
+    @Deployment
+    public void testWhitespaceInExpression() {
+        // Starting a process instance will lead to an exception if whitespace
+        // are incorrectly handled
+<span class="nc" id="L289">        runtimeService.startProcessInstanceByKey(&quot;inclusiveWhiteSpaceInExpression&quot;, CollectionUtil.singletonMap(&quot;input&quot;, 1));</span>
+<span class="nc" id="L290">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/gateway/InclusiveGatewayTest.testDivergingInclusiveGateway.bpmn20.xml&quot; })
+    public void testUnknownVariableInExpression() {
+        // Instead of 'input' we're starting a process instance with the name
+        // 'iinput' (ie. a typo)
+<span class="nc" id="L297">        assertThatThrownBy(() -&gt; runtimeService.startProcessInstanceByKey(&quot;inclusiveGwDiverging&quot;, CollectionUtil.singletonMap(&quot;iinput&quot;, 1)))</span>
+<span class="nc" id="L298">                .isInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L299">                .hasMessageContaining(&quot;Unknown property used in expression&quot;);</span>
+<span class="nc" id="L300">    }</span>
+
+    @Test
+    @Deployment
+    public void testDecideBasedOnBeanProperty() {
+<span class="nc" id="L305">        runtimeService.startProcessInstanceByKey(&quot;inclusiveDecisionBasedOnBeanProperty&quot;, CollectionUtil.singletonMap(&quot;order&quot;, new InclusiveGatewayTestOrder(150)));</span>
+<span class="nc" id="L306">        List&lt;org.flowable.task.api.Task&gt; tasks = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L307">        assertThat(tasks)</span>
+<span class="nc" id="L308">                .extracting(Task::getName)</span>
+<span class="nc" id="L309">                .containsExactlyInAnyOrder(BEAN_TASK2_NAME, BEAN_TASK3_NAME);</span>
+<span class="nc" id="L310">    }</span>
+
+    @Test
+    @Deployment
+    public void testDecideBasedOnListOrArrayOfBeans() {
+<span class="nc" id="L315">        List&lt;InclusiveGatewayTestOrder&gt; orders = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L316">        orders.add(new InclusiveGatewayTestOrder(50));</span>
+<span class="nc" id="L317">        orders.add(new InclusiveGatewayTestOrder(300));</span>
+<span class="nc" id="L318">        orders.add(new InclusiveGatewayTestOrder(175));</span>
+
+<span class="nc" id="L320">        assertThatThrownBy(() -&gt; runtimeService.startProcessInstanceByKey(&quot;inclusiveDecisionBasedOnListOrArrayOfBeans&quot;, CollectionUtil.singletonMap(&quot;orders&quot;, orders)))</span>
+<span class="nc" id="L321">                .isInstanceOf(FlowableException.class);</span>
+
+<span class="nc" id="L323">        orders.set(1, new InclusiveGatewayTestOrder(175));</span>
+<span class="nc" id="L324">        ProcessInstance pi = runtimeService.startProcessInstanceByKey(&quot;inclusiveDecisionBasedOnListOrArrayOfBeans&quot;, CollectionUtil.singletonMap(&quot;orders&quot;, orders));</span>
+<span class="nc" id="L325">        org.flowable.task.api.Task task = taskService.createTaskQuery().processInstanceId(pi.getId()).singleResult();</span>
+<span class="nc" id="L326">        assertThat(task).isNotNull();</span>
+<span class="nc" id="L327">        assertThat(task.getName()).isEqualTo(BEAN_TASK3_NAME);</span>
+
+<span class="nc" id="L329">        orders.set(1, new InclusiveGatewayTestOrder(125));</span>
+<span class="nc" id="L330">        pi = runtimeService.startProcessInstanceByKey(&quot;inclusiveDecisionBasedOnListOrArrayOfBeans&quot;, CollectionUtil.singletonMap(&quot;orders&quot;, orders));</span>
+<span class="nc" id="L331">        List&lt;org.flowable.task.api.Task&gt; tasks = taskService.createTaskQuery().processInstanceId(pi.getId()).list();</span>
+<span class="nc" id="L332">        assertThat(tasks).isNotNull();</span>
+<span class="nc" id="L333">        assertThat(tasks)</span>
+<span class="nc" id="L334">                .extracting(Task::getName)</span>
+<span class="nc" id="L335">                .containsExactlyInAnyOrder(BEAN_TASK2_NAME, BEAN_TASK3_NAME);</span>
+
+        // Arrays are usable in exactly the same way
+<span class="nc" id="L338">        InclusiveGatewayTestOrder[] orderArray = orders.toArray(new InclusiveGatewayTestOrder[orders.size()]);</span>
+<span class="nc" id="L339">        orderArray[1].setPrice(10);</span>
+<span class="nc" id="L340">        pi = runtimeService.startProcessInstanceByKey(&quot;inclusiveDecisionBasedOnListOrArrayOfBeans&quot;, CollectionUtil.singletonMap(&quot;orders&quot;, orderArray));</span>
+<span class="nc" id="L341">        tasks = taskService.createTaskQuery().processInstanceId(pi.getId()).list();</span>
+<span class="nc" id="L342">        assertThat(tasks).isNotNull();</span>
+<span class="nc" id="L343">        assertThat(tasks)</span>
+<span class="nc" id="L344">                .extracting(Task::getName)</span>
+<span class="nc" id="L345">                .containsExactlyInAnyOrder(BEAN_TASK1_NAME, BEAN_TASK2_NAME, BEAN_TASK3_NAME);</span>
+<span class="nc" id="L346">    }</span>
+
+    @Test
+    @Deployment
+    public void testDecideBasedOnBeanMethod() {
+<span class="nc" id="L351">        ProcessInstance pi = runtimeService.startProcessInstanceByKey(&quot;inclusiveDecisionBasedOnBeanMethod&quot;, CollectionUtil.singletonMap(&quot;order&quot;, new InclusiveGatewayTestOrder(200)));</span>
+<span class="nc" id="L352">        org.flowable.task.api.Task task = taskService.createTaskQuery().processInstanceId(pi.getId()).singleResult();</span>
+<span class="nc" id="L353">        assertThat(task).isNotNull();</span>
+<span class="nc" id="L354">        assertThat(task.getName()).isEqualTo(BEAN_TASK3_NAME);</span>
+
+<span class="nc" id="L356">        pi = runtimeService.startProcessInstanceByKey(&quot;inclusiveDecisionBasedOnBeanMethod&quot;, CollectionUtil.singletonMap(&quot;order&quot;, new InclusiveGatewayTestOrder(125)));</span>
+<span class="nc" id="L357">        List&lt;org.flowable.task.api.Task&gt; tasks = taskService.createTaskQuery().processInstanceId(pi.getId()).list();</span>
+<span class="nc" id="L358">        assertThat(tasks)</span>
+<span class="nc" id="L359">                .extracting(Task::getName)</span>
+<span class="nc" id="L360">                .containsExactlyInAnyOrder(BEAN_TASK2_NAME, BEAN_TASK3_NAME);</span>
+
+<span class="nc" id="L362">        assertThatThrownBy(() -&gt; runtimeService.startProcessInstanceByKey(&quot;inclusiveDecisionBasedOnBeanMethod&quot;, CollectionUtil.singletonMap(&quot;order&quot;, new InclusiveGatewayTestOrder(300))))</span>
+<span class="nc" id="L363">                .isInstanceOf(FlowableException.class);</span>
+<span class="nc" id="L364">    }</span>
+
+    @Test
+    @Deployment
+    public void testInvalidMethodExpression() {
+<span class="nc" id="L369">        assertThatThrownBy(() -&gt; runtimeService.startProcessInstanceByKey(&quot;inclusiveInvalidMethodExpression&quot;, CollectionUtil.singletonMap(&quot;order&quot;, new InclusiveGatewayTestOrder(50))))</span>
+<span class="nc" id="L370">                .isInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L371">                .hasMessageContaining(&quot;Unknown method used in expression&quot;);</span>
+<span class="nc" id="L372">    }</span>
+
+    @Test
+    @Deployment
+    public void testDefaultSequenceFlow() {
+        // Input == 1 -&gt; default is not selected, other 2 tasks are selected
+<span class="nc" id="L378">        ProcessInstance pi = runtimeService.startProcessInstanceByKey(&quot;inclusiveGwDefaultSequenceFlow&quot;, CollectionUtil.singletonMap(&quot;input&quot;, 1));</span>
+<span class="nc" id="L379">        List&lt;org.flowable.task.api.Task&gt; tasks = taskService.createTaskQuery().processInstanceId(pi.getId()).list();</span>
+<span class="nc" id="L380">        assertThat(tasks)</span>
+<span class="nc" id="L381">                .extracting(Task::getName)</span>
+<span class="nc" id="L382">                .containsExactlyInAnyOrder(&quot;Input is one&quot;, &quot;Input is three or one&quot;);</span>
+
+<span class="nc" id="L384">        runtimeService.deleteProcessInstance(pi.getId(), null);</span>
+
+        // Input == 3 -&gt; default is not selected, &quot;one or three&quot; is selected
+<span class="nc" id="L387">        pi = runtimeService.startProcessInstanceByKey(&quot;inclusiveGwDefaultSequenceFlow&quot;, CollectionUtil.singletonMap(&quot;input&quot;, 3));</span>
+<span class="nc" id="L388">        org.flowable.task.api.Task task = taskService.createTaskQuery().processInstanceId(pi.getId()).singleResult();</span>
+<span class="nc" id="L389">        assertThat(task.getName()).isEqualTo(&quot;Input is three or one&quot;);</span>
+
+        // Default input
+<span class="nc" id="L392">        pi = runtimeService.startProcessInstanceByKey(&quot;inclusiveGwDefaultSequenceFlow&quot;, CollectionUtil.singletonMap(&quot;input&quot;, 5));</span>
+<span class="nc" id="L393">        task = taskService.createTaskQuery().processInstanceId(pi.getId()).singleResult();</span>
+<span class="nc" id="L394">        assertThat(task.getName()).isEqualTo(&quot;Default input&quot;);</span>
+<span class="nc" id="L395">    }</span>
+
+    @Test
+    @Deployment
+    public void testNoIdOnSequenceFlow() {
+<span class="nc" id="L400">        ProcessInstance pi = runtimeService.startProcessInstanceByKey(&quot;inclusiveNoIdOnSequenceFlow&quot;, CollectionUtil.singletonMap(&quot;input&quot;, 3));</span>
+<span class="nc" id="L401">        org.flowable.task.api.Task task = taskService.createTaskQuery().processInstanceId(pi.getId()).singleResult();</span>
+<span class="nc" id="L402">        assertThat(task.getName()).isEqualTo(&quot;Input is more than one&quot;);</span>
+
+        // Both should be enabled on 1
+<span class="nc" id="L405">        pi = runtimeService.startProcessInstanceByKey(&quot;inclusiveNoIdOnSequenceFlow&quot;, CollectionUtil.singletonMap(&quot;input&quot;, 1));</span>
+<span class="nc" id="L406">        List&lt;org.flowable.task.api.Task&gt; tasks = taskService.createTaskQuery().processInstanceId(pi.getId()).list();</span>
+<span class="nc" id="L407">        assertThat(tasks)</span>
+<span class="nc" id="L408">                .extracting(Task::getName)</span>
+<span class="nc" id="L409">                .containsExactlyInAnyOrder(&quot;Input is one&quot;, &quot;Input is more than one&quot;);</span>
+<span class="nc" id="L410">    }</span>
+
+    /**
+     * This test the isReachable() check that is done to check if upstream tokens can reach the inclusive gateway.
+     *
+     * In case of loops, special care needs to be taken in the algorithm, or else stackoverflows will happen very quickly.
+     */
+    @Test
+    @Deployment
+    public void testLoop() {
+<span class="nc" id="L420">        ProcessInstance pi = runtimeService.startProcessInstanceByKey(&quot;inclusiveTestLoop&quot;, CollectionUtil.singletonMap(&quot;counter&quot;, 1));</span>
+
+<span class="nc" id="L422">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L423">        assertThat(task.getName()).isEqualTo(&quot;task C&quot;);</span>
+
+<span class="nc" id="L425">        taskService.complete(task.getId());</span>
+<span class="nc" id="L426">        assertThat(taskService.createTaskQuery().count()).isZero();</span>
+        
+<span class="nc" id="L428">        assertThat(runtimeService.createExecutionQuery().count())</span>
+<span class="nc" id="L429">                .as(&quot;Found executions: &quot; + runtimeService.createExecutionQuery().list())</span>
+<span class="nc" id="L430">                .isZero();</span>
+<span class="nc" id="L431">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceId(pi.getId()).count()).isZero();</span>
+<span class="nc" id="L432">    }</span>
+
+    @Test
+    @Deployment
+    public void testJoinAfterSubprocesses() {
+        // Test case to test act-1204
+<span class="nc" id="L438">        Map&lt;String, Object&gt; variableMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L439">        variableMap.put(&quot;a&quot;, 1);</span>
+<span class="nc" id="L440">        variableMap.put(&quot;b&quot;, 1);</span>
+<span class="nc" id="L441">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;InclusiveGateway&quot;, variableMap);</span>
+<span class="nc" id="L442">        assertThat(processInstance.getId()).isNotNull();</span>
+
+<span class="nc" id="L444">        List&lt;org.flowable.task.api.Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L445">        assertThat(taskService.createTaskQuery().count()).isEqualTo(2);</span>
+
+<span class="nc" id="L447">        taskService.complete(tasks.get(0).getId());</span>
+<span class="nc" id="L448">        assertThat(taskService.createTaskQuery().count()).isEqualTo(1);</span>
+
+<span class="nc" id="L450">        taskService.complete(tasks.get(1).getId());</span>
+
+<span class="nc" id="L452">        org.flowable.task.api.Task task = taskService.createTaskQuery().taskAssignee(&quot;c&quot;).singleResult();</span>
+<span class="nc" id="L453">        assertThat(task).isNotNull();</span>
+<span class="nc" id="L454">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L456">        processInstance = runtimeService.createProcessInstanceQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L457">        assertThat(processInstance).isNull();</span>
+
+<span class="nc" id="L459">        variableMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L460">        variableMap.put(&quot;a&quot;, 1);</span>
+<span class="nc" id="L461">        variableMap.put(&quot;b&quot;, 2);</span>
+<span class="nc" id="L462">        processInstance = runtimeService.startProcessInstanceByKey(&quot;InclusiveGateway&quot;, variableMap);</span>
+<span class="nc" id="L463">        assertThat(processInstance.getId()).isNotNull();</span>
+
+<span class="nc" id="L465">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L466">        assertThat(taskService.createTaskQuery().count()).isEqualTo(1);</span>
+<span class="nc" id="L467">        assertThat(tasks)</span>
+<span class="nc" id="L468">                .extracting(Task::getAssignee)</span>
+<span class="nc" id="L469">                .containsExactly(&quot;a&quot;);</span>
+<span class="nc" id="L470">        taskService.complete(tasks.get(0).getId());</span>
+
+<span class="nc" id="L472">        task = taskService.createTaskQuery().taskAssignee(&quot;c&quot;).singleResult();</span>
+<span class="nc" id="L473">        assertThat(task).isNotNull();</span>
+<span class="nc" id="L474">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L476">        processInstance = runtimeService.createProcessInstanceQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L477">        assertThat(processInstance).isNull();</span>
+
+<span class="nc" id="L479">        Map&lt;String, Object&gt; newVariableMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L480">        newVariableMap.put(&quot;a&quot;, 2);</span>
+<span class="nc" id="L481">        newVariableMap.put(&quot;b&quot;, 2);</span>
+<span class="nc" id="L482">        assertThatThrownBy(() -&gt; runtimeService.startProcessInstanceByKey(&quot;InclusiveGateway&quot;, newVariableMap))</span>
+<span class="nc" id="L483">                .isInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L484">                .hasMessageContaining(&quot;No outgoing sequence flow&quot;);</span>
+<span class="nc" id="L485">    }</span>
+
+    @Test
+    @Deployment
+    public void testJoinAfterParallelGateway() {
+<span class="nc" id="L490">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;InclusiveGateway&quot;);</span>
+<span class="nc" id="L491">        org.flowable.task.api.Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L492">        assertThat(task).isNotNull();</span>
+<span class="nc" id="L493">        assertThat(task.getName()).isEqualTo(&quot;Task1&quot;);</span>
+
+<span class="nc" id="L495">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L497">        Execution execution = runtimeService.createExecutionQuery()</span>
+<span class="nc" id="L498">                .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L499">                .activityId(&quot;receiveTask1&quot;)</span>
+<span class="nc" id="L500">                .singleResult();</span>
+
+<span class="nc" id="L502">        assertThat(execution).isNotNull();</span>
+<span class="nc" id="L503">        runtimeService.trigger(execution.getId());</span>
+
+<span class="nc" id="L505">        execution = runtimeService.createExecutionQuery()</span>
+<span class="nc" id="L506">                .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L507">                .activityId(&quot;receiveTask1&quot;)</span>
+<span class="nc" id="L508">                .singleResult();</span>
+
+<span class="nc" id="L510">        assertThat(execution).isNotNull();</span>
+<span class="nc" id="L511">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/gateway/InclusiveGatewayTest.testJoinAfterCall.bpmn20.xml&quot;,
+            &quot;org/flowable/engine/test/bpmn/gateway/InclusiveGatewayTest.testJoinAfterCallSubProcess.bpmn20.xml&quot; })
+    public void testJoinAfterCall() {
+        // Test case to test act-1026
+<span class="nc" id="L518">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;InclusiveGatewayAfterCall&quot;);</span>
+<span class="nc" id="L519">        assertThat(processInstance.getId()).isNotNull();</span>
+<span class="nc" id="L520">        assertThat(taskService.createTaskQuery().count()).isEqualTo(3);</span>
+
+        // now complete task A and check number of remaining tasks.
+        // inclusive gateway should wait for the &quot;Task B&quot; and &quot;Task C&quot;
+<span class="nc" id="L524">        org.flowable.task.api.Task taskA = taskService.createTaskQuery().taskName(&quot;Task A&quot;).singleResult();</span>
+<span class="nc" id="L525">        assertThat(taskA).isNotNull();</span>
+<span class="nc" id="L526">        taskService.complete(taskA.getId());</span>
+<span class="nc" id="L527">        assertThat(taskService.createTaskQuery().count()).isEqualTo(2);</span>
+
+        // now complete task B and check number of remaining tasks
+        // inclusive gateway should wait for &quot;Task C&quot;
+<span class="nc" id="L531">        org.flowable.task.api.Task taskB = taskService.createTaskQuery().taskName(&quot;Task B&quot;).singleResult();</span>
+<span class="nc" id="L532">        assertThat(taskB).isNotNull();</span>
+<span class="nc" id="L533">        taskService.complete(taskB.getId());</span>
+<span class="nc" id="L534">        assertThat(taskService.createTaskQuery().count()).isEqualTo(1);</span>
+
+        // now complete task C. Gateway activates and &quot;Task C&quot; remains
+<span class="nc" id="L537">        org.flowable.task.api.Task taskC = taskService.createTaskQuery().taskName(&quot;Task C&quot;).singleResult();</span>
+<span class="nc" id="L538">        assertThat(taskC).isNotNull();</span>
+<span class="nc" id="L539">        taskService.complete(taskC.getId());</span>
+<span class="nc" id="L540">        assertThat(taskService.createTaskQuery().count()).isEqualTo(1);</span>
+
+        // check that remaining task is in fact task D
+<span class="nc" id="L543">        org.flowable.task.api.Task taskD = taskService.createTaskQuery().taskName(&quot;Task D&quot;).singleResult();</span>
+<span class="nc" id="L544">        assertThat(taskD).isNotNull();</span>
+<span class="nc" id="L545">        assertThat(taskD.getName()).isEqualTo(&quot;Task D&quot;);</span>
+<span class="nc" id="L546">        taskService.complete(taskD.getId());</span>
+
+<span class="nc" id="L548">        processInstance = runtimeService.createProcessInstanceQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L549">        assertThat(processInstance).isNull();</span>
+<span class="nc" id="L550">    }</span>
+
+    @Test
+    @Deployment
+    public void testAsyncBehavior() {
+<span class="nc" id="L555">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;async&quot;);</span>
+<span class="nc" id="L556">        waitForJobExecutorToProcessAllJobs(10000L, 250);</span>
+<span class="nc" id="L557">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+<span class="nc" id="L558">    }</span>
+
+    @Test
+    @Deployment
+    public void testAsyncTasks() {
+<span class="nc" id="L563">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L564">            .processDefinitionKey(&quot;testAsyncTasks&quot;)</span>
+<span class="nc" id="L565">            .variable(&quot;counter&quot;, 0L)</span>
+<span class="nc" id="L566">            .start();</span>
+
+<span class="nc" id="L568">        List&lt;Job&gt; jobs = managementService.createJobQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L569">        assertThat(jobs).hasSize(2);</span>
+
+<span class="nc bnc" id="L571" title="All 2 branches missed.">        for (Job job : jobs) {</span>
+<span class="nc" id="L572">            managementService.executeJob(job.getId());</span>
+<span class="nc" id="L573">        }</span>
+
+        // There should be 2 jobs, one for each excution arriving in the join
+<span class="nc" id="L576">        jobs = managementService.createJobQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L577">        assertThat(jobs).hasSize(2);</span>
+
+<span class="nc bnc" id="L579" title="All 2 branches missed.">        for (Job job : jobs) {</span>
+<span class="nc" id="L580">            managementService.executeJob(job.getId());</span>
+<span class="nc" id="L581">        }</span>
+
+        // There was a bug that async inclusive gw joins would lead to two executions leaving the gateway
+<span class="nc" id="L584">        assertThat(runtimeService.getVariable(processInstance.getId(), &quot;counter&quot;)).isEqualTo(1L);</span>
+<span class="nc" id="L585">    }</span>
+
+    @Test
+    @Deployment
+    public void testDirectSequenceFlow() {
+<span class="nc" id="L590">        Map&lt;String, Object&gt; varMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L591">        varMap.put(&quot;input&quot;, 1);</span>
+<span class="nc" id="L592">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;inclusiveGwDirectSequenceFlow&quot;, varMap);</span>
+<span class="nc" id="L593">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L594">        assertThat(task).isNotNull();</span>
+<span class="nc" id="L595">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;theTask1&quot;);</span>
+<span class="nc" id="L596">        taskService.complete(task.getId());</span>
+<span class="nc" id="L597">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+
+<span class="nc" id="L599">        varMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L600">        varMap.put(&quot;input&quot;, 3);</span>
+<span class="nc" id="L601">        processInstance = runtimeService.startProcessInstanceByKey(&quot;inclusiveGwDirectSequenceFlow&quot;, varMap);</span>
+<span class="nc" id="L602">        List&lt;org.flowable.task.api.Task&gt; tasks = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L603">        assertThat(tasks).hasSize(2);</span>
+<span class="nc" id="L604">        taskService.complete(tasks.get(0).getId());</span>
+<span class="nc" id="L605">        taskService.complete(tasks.get(1).getId());</span>
+<span class="nc" id="L606">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+
+<span class="nc" id="L608">        varMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L609">        varMap.put(&quot;input&quot;, 0);</span>
+<span class="nc" id="L610">        processInstance = runtimeService.startProcessInstanceByKey(&quot;inclusiveGwDirectSequenceFlow&quot;, varMap);</span>
+<span class="nc" id="L611">        assertThat(processInstance.isEnded()).isTrue();</span>
+<span class="nc" id="L612">    }</span>
+
+    @Test
+    @Deployment
+    public void testSkipExpression() {
+<span class="nc" id="L617">        Map&lt;String, Object&gt; varMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L618">        varMap.put(&quot;_ACTIVITI_SKIP_EXPRESSION_ENABLED&quot;, true);</span>
+<span class="nc" id="L619">        varMap.put(&quot;input&quot;, 10);</span>
+<span class="nc" id="L620">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;inclusiveGwSkipExpression&quot;, varMap);</span>
+<span class="nc" id="L621">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L622">        assertThat(task).isNotNull();</span>
+<span class="nc" id="L623">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;theTask1&quot;);</span>
+<span class="nc" id="L624">        taskService.complete(task.getId());</span>
+<span class="nc" id="L625">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+
+<span class="nc" id="L627">        varMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L628">        varMap.put(&quot;_ACTIVITI_SKIP_EXPRESSION_ENABLED&quot;, true);</span>
+<span class="nc" id="L629">        varMap.put(&quot;input&quot;, 30);</span>
+<span class="nc" id="L630">        processInstance = runtimeService.startProcessInstanceByKey(&quot;inclusiveGwSkipExpression&quot;, varMap);</span>
+<span class="nc" id="L631">        List&lt;org.flowable.task.api.Task&gt; tasks = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L632">        assertThat(tasks).hasSize(2);</span>
+<span class="nc" id="L633">        taskService.complete(tasks.get(0).getId());</span>
+<span class="nc" id="L634">        taskService.complete(tasks.get(1).getId());</span>
+<span class="nc" id="L635">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+
+<span class="nc" id="L637">        varMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L638">        varMap.put(&quot;_ACTIVITI_SKIP_EXPRESSION_ENABLED&quot;, true);</span>
+<span class="nc" id="L639">        varMap.put(&quot;input&quot;, 3);</span>
+<span class="nc" id="L640">        processInstance = runtimeService.startProcessInstanceByKey(&quot;inclusiveGwSkipExpression&quot;, varMap);</span>
+<span class="nc" id="L641">        assertThat(processInstance.isEnded()).isTrue();</span>
+<span class="nc" id="L642">    }</span>
+    
+    @Test
+    @Deployment
+    public void testSkipExpressionWithDefinitionInfo() {
+<span class="nc" id="L647">        ProcessDefinition processDefinition = repositoryService.createProcessDefinitionQuery().processDefinitionKey(&quot;inclusiveGwSkipExpression&quot;).singleResult();</span>
+<span class="nc" id="L648">        ObjectNode infoNode = dynamicBpmnService.enableSkipExpression();</span>
+<span class="nc" id="L649">        dynamicBpmnService.saveProcessDefinitionInfo(processDefinition.getId(), infoNode);</span>
+<span class="nc" id="L650">        Map&lt;String, Object&gt; varMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L651">        varMap.put(&quot;input&quot;, 10);</span>
+<span class="nc" id="L652">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;inclusiveGwSkipExpression&quot;, varMap);</span>
+<span class="nc" id="L653">        org.flowable.task.api.Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L654">        assertThat(task).isNotNull();</span>
+<span class="nc" id="L655">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;theTask1&quot;);</span>
+
+<span class="nc" id="L657">        varMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L658">        varMap.put(&quot;input&quot;, 30);</span>
+<span class="nc" id="L659">        processInstance = runtimeService.startProcessInstanceByKey(&quot;inclusiveGwSkipExpression&quot;, varMap);</span>
+<span class="nc" id="L660">        List&lt;org.flowable.task.api.Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L661">        assertThat(tasks).hasSize(2);</span>
+
+<span class="nc" id="L663">        dynamicBpmnService.removeEnableSkipExpression(infoNode);</span>
+<span class="nc" id="L664">        dynamicBpmnService.saveProcessDefinitionInfo(processDefinition.getId(), infoNode);</span>
+<span class="nc" id="L665">        varMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L666">        varMap.put(&quot;input&quot;, 10);</span>
+<span class="nc" id="L667">        processInstance = runtimeService.startProcessInstanceByKey(&quot;inclusiveGwSkipExpression&quot;, varMap);</span>
+<span class="nc" id="L668">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L669">        assertThat(task).isNotNull();</span>
+<span class="nc" id="L670">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;theTask2&quot;);</span>
+        
+<span class="nc" id="L672">        dynamicBpmnService.enableSkipExpression(infoNode);</span>
+<span class="nc" id="L673">        dynamicBpmnService.changeSkipExpression(&quot;flow2&quot;, &quot;${input &lt; 30}&quot;, infoNode);</span>
+<span class="nc" id="L674">        dynamicBpmnService.changeSkipExpression(&quot;flow3&quot;, &quot;${input &gt;= 30}&quot;, infoNode);</span>
+<span class="nc" id="L675">        dynamicBpmnService.saveProcessDefinitionInfo(processDefinition.getId(), infoNode);</span>
+<span class="nc" id="L676">        varMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L677">        varMap.put(&quot;input&quot;, 30);</span>
+<span class="nc" id="L678">        processInstance = runtimeService.startProcessInstanceByKey(&quot;inclusiveGwSkipExpression&quot;, varMap);</span>
+<span class="nc" id="L679">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc bnc" id="L680" title="All 2 branches missed.">        for (Task taskObject : tasks) {</span>
+<span class="nc bnc" id="L681" title="All 4 branches missed.">            if (!&quot;theTask2&quot;.equals(taskObject.getTaskDefinitionKey()) &amp;&amp; !&quot;theTask3&quot;.equals(taskObject.getTaskDefinitionKey())) {</span>
+<span class="nc" id="L682">                fail(&quot;expected theTask2 and theTask3 only&quot;);</span>
+            }
+<span class="nc" id="L684">        }</span>
+<span class="nc" id="L685">        assertThat(tasks).hasSize(2);</span>
+<span class="nc" id="L686">    }</span>
+
+    @Test
+    @Deployment
+    public void testMultipleProcessInstancesMergedBug() {
+
+        // Start first process instance, continue A. Process instance should be in C
+<span class="nc" id="L693">        ProcessInstance processInstance1 = runtimeService.startProcessInstanceByKey(&quot;testMultipleProcessInstancesMergedBug&quot;);</span>
+<span class="nc" id="L694">        taskService.complete(taskService.createTaskQuery().processInstanceId(processInstance1.getId()).taskName(&quot;A&quot;).singleResult().getId());</span>
+<span class="nc" id="L695">        org.flowable.task.api.Task taskCInPi1 = taskService.createTaskQuery().processInstanceId(processInstance1.getId()).singleResult();</span>
+<span class="nc" id="L696">        assertThat(taskCInPi1).isNotNull();</span>
+
+        // Start second process instance, continue A. Process instance should be in B
+<span class="nc" id="L699">        ProcessInstance processInstance2 = runtimeService.startProcessInstanceByKey(&quot;testMultipleProcessInstancesMergedBug&quot;, CollectionUtil.singletonMap(&quot;var&quot;, &quot;goToB&quot;));</span>
+<span class="nc" id="L700">        taskService.complete(taskService.createTaskQuery().processInstanceId(processInstance2.getId()).taskName(&quot;A&quot;).singleResult().getId());</span>
+<span class="nc" id="L701">        org.flowable.task.api.Task taskBInPi2 = taskService.createTaskQuery().processInstanceId(processInstance2.getId()).singleResult();</span>
+<span class="nc" id="L702">        assertThat(taskBInPi2).isNotNull();</span>
+
+        // Verify there is an inactive execution in the inclusive gateway before the task complete of process instance 1
+        // (cannot combine activityId and inactive together, hence the workaround)
+<span class="nc" id="L706">        assertThat(getInactiveExecutionsInActivityId(&quot;inclusiveGw&quot;)).hasSize(2);</span>
+
+        // Completing C of PI 1 should not trigger C
+<span class="nc" id="L709">        taskService.complete(taskCInPi1.getId());</span>
+
+        // Verify structure after complete.
+        // Before bugfix: in BOTH process instances the inactive execution was removed (result was 0)
+<span class="nc" id="L713">        assertThat(getInactiveExecutionsInActivityId(&quot;inclusiveGw&quot;)).hasSize(1);</span>
+
+<span class="nc" id="L715">        assertThat(taskService.createTaskQuery().taskName(&quot;After Merge&quot;).count()).isEqualTo(1);</span>
+
+        // Finish both processes
+
+<span class="nc" id="L719">        List&lt;org.flowable.task.api.Task&gt; tasks = taskService.createTaskQuery().list();</span>
+<span class="nc bnc" id="L720" title="All 2 branches missed.">        while (tasks.size() &gt; 0) {</span>
+<span class="nc bnc" id="L721" title="All 2 branches missed.">            for (org.flowable.task.api.Task task : tasks) {</span>
+<span class="nc" id="L722">                taskService.complete(task.getId());</span>
+<span class="nc" id="L723">            }</span>
+<span class="nc" id="L724">            tasks = taskService.createTaskQuery().list();</span>
+        }
+<span class="nc" id="L726">        assertThat(runtimeService.createProcessInstanceQuery().count()).isZero();</span>
+
+<span class="nc" id="L728">    }</span>
+
+    // See https://github.com/flowable/flowable-engine/issues/582
+    @Test
+    @Deployment
+    public void testInclusiveGatewayInEventSubProcess() {
+
+<span class="nc" id="L735">        ProcessDefinition processDefinition = repositoryService</span>
+<span class="nc" id="L736">                .createProcessDefinitionQuery()</span>
+<span class="nc" id="L737">                .processDefinitionKey(&quot;b92d819d-481f-4001-834e-cbdfa6ee0fad&quot;)</span>
+<span class="nc" id="L738">                .singleResult();</span>
+
+        //make sure both conditions are true for the sequence flows of the inclusive gateway
+<span class="nc" id="L741">        final ProcessInstance instance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L742">                .processDefinitionId(processDefinition.getId())</span>
+<span class="nc" id="L743">                .variable(&quot;test&quot;, true)</span>
+<span class="nc" id="L744">                .variable(&quot;test2&quot;, true)</span>
+<span class="nc" id="L745">                .start();</span>
+
+<span class="nc" id="L747">        List&lt;Task&gt; tasks = taskService</span>
+<span class="nc" id="L748">                .createTaskQuery()</span>
+<span class="nc" id="L749">                .processDefinitionId(instance.getProcessDefinitionId())</span>
+<span class="nc" id="L750">                .list();</span>
+
+<span class="nc" id="L752">        assertThat(tasks).hasSize(1);</span>
+
+<span class="nc" id="L754">        String executionId = processEngine.getManagementService().executeCommand(new Command&lt;&gt;() {</span>
+            @Override
+            public String execute(CommandContext commandContext) {
+<span class="nc" id="L757">                EventSubscriptionQueryImpl q = new EventSubscriptionQueryImpl(commandContext,</span>
+<span class="nc" id="L758">                        processEngineConfiguration.getEventSubscriptionServiceConfiguration());</span>
+<span class="nc" id="L759">                q.processInstanceId(instance.getProcessInstanceId());</span>
+
+<span class="nc" id="L761">                List&lt;EventSubscription&gt; subs = processEngineConfiguration.getEventSubscriptionServiceConfiguration().getEventSubscriptionService()</span>
+<span class="nc" id="L762">                        .findEventSubscriptionsByQueryCriteria(q);</span>
+<span class="nc" id="L763">                assertThat(subs)</span>
+<span class="nc" id="L764">                        .extracting(EventSubscription::getEventName)</span>
+<span class="nc" id="L765">                        .containsExactly(&quot;test&quot;);</span>
+
+<span class="nc" id="L767">                return subs.get(0).getExecutionId();</span>
+            }
+        });
+
+        //send the message, after this we are inside the event subprocess
+<span class="nc" id="L772">        runtimeService.messageEventReceived(&quot;test&quot;, executionId);</span>
+<span class="nc" id="L773">        tasks = taskService.createTaskQuery()</span>
+<span class="nc" id="L774">                .processDefinitionId(instance.getProcessDefinitionId())</span>
+<span class="nc" id="L775">                .list();</span>
+
+        //since it is non interrupting, we now expect 3 tasks to be present
+<span class="nc" id="L778">        assertThat(tasks).hasSize(3);</span>
+
+<span class="nc" id="L780">    }</span>
+
+    protected List&lt;Execution&gt; getInactiveExecutionsInActivityId(String activityId) {
+<span class="nc" id="L783">        List&lt;Execution&gt; result = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L784">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().list();</span>
+<span class="nc" id="L785">        Iterator&lt;Execution&gt; iterator = executions.iterator();</span>
+<span class="nc bnc" id="L786" title="All 2 branches missed.">        while (iterator.hasNext()) {</span>
+<span class="nc" id="L787">            Execution execution = iterator.next();</span>
+<span class="nc bnc" id="L788" title="All 2 branches missed.">            if (execution.getActivityId() != null</span>
+<span class="nc bnc" id="L789" title="All 2 branches missed.">                    &amp;&amp; execution.getActivityId().equals(activityId)</span>
+<span class="nc bnc" id="L790" title="All 2 branches missed.">                    &amp;&amp; !((ExecutionEntity) execution).isActive()) {</span>
+<span class="nc" id="L791">                result.add(execution);</span>
+            }
+<span class="nc" id="L793">        }</span>
+<span class="nc" id="L794">        return result;</span>
+    }
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/gateway/InclusiveGatewayTest.insideMultiInstanceParallelSubProcess.bpmn20.xml&quot; })
+    public void testInclusiveGatewayInclusiveGatewayInsideParallelMultiInstanceSubProcess() {
+<span class="nc" id="L800">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;inclusiveGatewayInsideParallelMultiInstanceSubProcess&quot;);</span>
+
+<span class="nc" id="L802">        List&lt;Execution&gt; childExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        //1x MultiInstance root, 3x parallel MultiInstance and 9x UserTasks executions (3 task executions per parallel multiInstance subProcess)
+<span class="nc" id="L804">        assertThat(childExecutions).hasSize(13);</span>
+<span class="nc" id="L805">        Map&lt;String, List&lt;Execution&gt;&gt; classifiedExecutions = childExecutions.stream().collect(Collectors.groupingBy(Execution::getActivityId));</span>
+<span class="nc" id="L806">        assertThat(classifiedExecutions)</span>
+<span class="nc" id="L807">                .containsKeys(&quot;multiInstanceSubProcess&quot;, &quot;taskInclusive1&quot;, &quot;taskInclusive2&quot;, &quot;taskInclusive3&quot;);</span>
+<span class="nc" id="L808">        assertThat(classifiedExecutions.get(&quot;multiInstanceSubProcess&quot;)).hasSize(4);</span>
+<span class="nc" id="L809">        assertThat(classifiedExecutions.get(&quot;taskInclusive1&quot;)).hasSize(3);</span>
+<span class="nc" id="L810">        assertThat(classifiedExecutions.get(&quot;taskInclusive2&quot;)).hasSize(3);</span>
+<span class="nc" id="L811">        assertThat(classifiedExecutions.get(&quot;taskInclusive3&quot;)).hasSize(3);</span>
+
+        //9x UserTasks
+<span class="nc" id="L814">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L815">        Map&lt;String, List&lt;Task&gt;&gt; classifiedTasks = tasks.stream().collect(Collectors.groupingBy(Task::getTaskDefinitionKey));</span>
+<span class="nc" id="L816">        assertThat(classifiedTasks)</span>
+<span class="nc" id="L817">                .containsOnlyKeys(&quot;taskInclusive1&quot;, &quot;taskInclusive2&quot;, &quot;taskInclusive3&quot;);</span>
+<span class="nc" id="L818">        assertThat(classifiedTasks.get(&quot;taskInclusive1&quot;)).hasSize(3);</span>
+<span class="nc" id="L819">        assertThat(classifiedTasks.get(&quot;taskInclusive2&quot;)).hasSize(3);</span>
+<span class="nc" id="L820">        assertThat(classifiedTasks.get(&quot;taskInclusive3&quot;)).hasSize(3);</span>
+
+        //Finish a couple of tasks
+<span class="nc" id="L823">        taskService.complete(classifiedTasks.get(&quot;taskInclusive2&quot;).get(0).getId());</span>
+<span class="nc" id="L824">        taskService.complete(classifiedTasks.get(&quot;taskInclusive3&quot;).get(1).getId());</span>
+
+<span class="nc" id="L826">        childExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L827">        assertThat(childExecutions).hasSize(13);</span>
+<span class="nc" id="L828">        classifiedExecutions = childExecutions.stream().collect(Collectors.groupingBy(Execution::getActivityId));</span>
+<span class="nc" id="L829">        assertThat(classifiedExecutions)</span>
+<span class="nc" id="L830">                .containsKeys(&quot;multiInstanceSubProcess&quot;, &quot;taskInclusive1&quot;, &quot;taskInclusive2&quot;, &quot;taskInclusive3&quot;, &quot;inclusiveJoin&quot;);</span>
+<span class="nc" id="L831">        assertThat(classifiedExecutions.get(&quot;multiInstanceSubProcess&quot;)).hasSize(4);</span>
+<span class="nc" id="L832">        assertThat(classifiedExecutions.get(&quot;taskInclusive1&quot;)).hasSize(3);</span>
+<span class="nc" id="L833">        assertThat(classifiedExecutions.get(&quot;taskInclusive2&quot;)).hasSize(2);</span>
+<span class="nc" id="L834">        assertThat(classifiedExecutions.get(&quot;taskInclusive3&quot;)).hasSize(2);</span>
+<span class="nc" id="L835">        assertThat(classifiedExecutions.get(&quot;inclusiveJoin&quot;)).hasSize(2);</span>
+
+        //7x pending User Tasks
+<span class="nc" id="L838">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L839">        classifiedTasks = tasks.stream().collect(Collectors.groupingBy(Task::getTaskDefinitionKey));</span>
+<span class="nc" id="L840">        assertThat(classifiedTasks)</span>
+<span class="nc" id="L841">                .containsOnlyKeys(&quot;taskInclusive1&quot;, &quot;taskInclusive2&quot;, &quot;taskInclusive3&quot;);</span>
+<span class="nc" id="L842">        assertThat(classifiedTasks.get(&quot;taskInclusive1&quot;)).hasSize(3);</span>
+<span class="nc" id="L843">        assertThat(classifiedTasks.get(&quot;taskInclusive2&quot;)).hasSize(2);</span>
+<span class="nc" id="L844">        assertThat(classifiedTasks.get(&quot;taskInclusive3&quot;)).hasSize(2);</span>
+
+        //Finish the rest of the tasks
+<span class="nc" id="L847">        classifiedTasks.values().stream().flatMap(List::stream).forEach(this::completeTask);</span>
+
+<span class="nc" id="L849">        childExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L850">        assertThat(childExecutions).hasSize(7);</span>
+<span class="nc" id="L851">        classifiedExecutions = childExecutions.stream().collect(Collectors.groupingBy(Execution::getActivityId));</span>
+<span class="nc" id="L852">        assertThat(classifiedExecutions)</span>
+<span class="nc" id="L853">                .containsKeys(&quot;multiInstanceSubProcess&quot;, &quot;postForkTask&quot;);</span>
+<span class="nc" id="L854">        assertThat(classifiedExecutions.get(&quot;multiInstanceSubProcess&quot;)).hasSize(4);</span>
+<span class="nc" id="L855">        assertThat(classifiedExecutions.get(&quot;postForkTask&quot;)).hasSize(3);</span>
+
+        //3x pending User Tasks
+<span class="nc" id="L858">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L859">        assertThat(tasks).hasSize(3);</span>
+<span class="nc" id="L860">        tasks.forEach(task -&gt; assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;postForkTask&quot;));</span>
+
+        //Finish the remaining tasks in the SubProcess
+<span class="nc" id="L863">        tasks.forEach(this::completeTask);</span>
+
+        //MultiInstance subProcess ended, only the last task of the process remains
+<span class="nc" id="L866">        childExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L867">        assertThat(childExecutions).hasSize(1);</span>
+<span class="nc" id="L868">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L869">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;lastTask&quot;);</span>
+
+        //Finish the process
+<span class="nc" id="L872">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L874">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+<span class="nc" id="L875">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/gateway/InclusiveGatewayTest.insideMultiInstanceSequentialSubProcess.bpmn20.xml&quot; })
+    public void testInclusiveGatewayInclusiveGatewayInsideSequentialMultiInstanceSubProcess() {
+<span class="nc" id="L880">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;inclusiveGatewayInsideSequentialMultiInstanceSubProcess&quot;);</span>
+
+<span class="nc" id="L882">        List&lt;Execution&gt; childExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        //1x MultiInstance root, 1x Sequential MultiInstance and 3x UserTasks executions
+<span class="nc" id="L884">        assertThat(childExecutions).hasSize(5);</span>
+<span class="nc" id="L885">        Map&lt;String, List&lt;Execution&gt;&gt; classifiedExecutions = childExecutions.stream().collect(Collectors.groupingBy(Execution::getActivityId));</span>
+<span class="nc" id="L886">        assertThat(classifiedExecutions)</span>
+<span class="nc" id="L887">                .containsKeys(&quot;multiInstanceSubProcess&quot;, &quot;taskInclusive1&quot;, &quot;taskInclusive2&quot;, &quot;taskInclusive3&quot;);</span>
+<span class="nc" id="L888">        assertThat(classifiedExecutions.get(&quot;multiInstanceSubProcess&quot;)).hasSize(2);</span>
+<span class="nc" id="L889">        assertThat(classifiedExecutions.get(&quot;taskInclusive1&quot;)).hasSize(1);</span>
+<span class="nc" id="L890">        assertThat(classifiedExecutions.get(&quot;taskInclusive2&quot;)).hasSize(1);</span>
+<span class="nc" id="L891">        assertThat(classifiedExecutions.get(&quot;taskInclusive3&quot;)).hasSize(1);</span>
+
+        //3x UserTasks
+<span class="nc" id="L894">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L895">        Map&lt;String, List&lt;Task&gt;&gt; classifiedTasks = tasks.stream().collect(Collectors.groupingBy(Task::getTaskDefinitionKey));</span>
+<span class="nc" id="L896">        assertThat(classifiedTasks)</span>
+<span class="nc" id="L897">                .containsOnlyKeys(&quot;taskInclusive1&quot;, &quot;taskInclusive2&quot;, &quot;taskInclusive3&quot;);</span>
+<span class="nc" id="L898">        assertThat(classifiedTasks.get(&quot;taskInclusive1&quot;)).hasSize(1);</span>
+<span class="nc" id="L899">        assertThat(classifiedTasks.get(&quot;taskInclusive2&quot;)).hasSize(1);</span>
+<span class="nc" id="L900">        assertThat(classifiedTasks.get(&quot;taskInclusive3&quot;)).hasSize(1);</span>
+
+        //Finish one of the activities
+<span class="nc" id="L903">        taskService.complete(classifiedTasks.get(&quot;taskInclusive3&quot;).get(0).getId());</span>
+
+<span class="nc" id="L905">        childExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L906">        assertThat(childExecutions).hasSize(5);</span>
+<span class="nc" id="L907">        classifiedExecutions = childExecutions.stream().collect(Collectors.groupingBy(Execution::getActivityId));</span>
+<span class="nc" id="L908">        assertThat(classifiedExecutions)</span>
+<span class="nc" id="L909">                .containsKeys(&quot;multiInstanceSubProcess&quot;, &quot;taskInclusive1&quot;, &quot;taskInclusive2&quot;, &quot;inclusiveJoin&quot;)</span>
+<span class="nc" id="L910">                .doesNotContainKey(&quot;taskInclusive3&quot;);</span>
+<span class="nc" id="L911">        assertThat(classifiedExecutions.get(&quot;multiInstanceSubProcess&quot;)).hasSize(2);</span>
+<span class="nc" id="L912">        assertThat(classifiedExecutions.get(&quot;taskInclusive1&quot;)).hasSize(1);</span>
+<span class="nc" id="L913">        assertThat(classifiedExecutions.get(&quot;taskInclusive2&quot;)).hasSize(1);</span>
+<span class="nc" id="L914">        assertThat(classifiedExecutions.get(&quot;inclusiveJoin&quot;)).hasSize(1);</span>
+
+        //2x pending User Tasks
+<span class="nc" id="L917">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L918">        classifiedTasks = tasks.stream().collect(Collectors.groupingBy(Task::getTaskDefinitionKey));</span>
+<span class="nc" id="L919">        assertThat(classifiedTasks)</span>
+<span class="nc" id="L920">                .containsOnlyKeys(&quot;taskInclusive1&quot;, &quot;taskInclusive2&quot;)</span>
+<span class="nc" id="L921">                .doesNotContainKeys(&quot;taskInclusive3&quot;);</span>
+
+        //Finish the rest of the tasks
+<span class="nc" id="L924">        Stream.concat(classifiedTasks.get(&quot;taskInclusive1&quot;).stream(), classifiedTasks.get(&quot;taskInclusive2&quot;).stream())</span>
+<span class="nc" id="L925">                .forEach(this::completeTask);</span>
+
+        //1x MultiInstance root, 1x Sequential MultiInstance, 1x User Task after the gateway join
+<span class="nc" id="L928">        childExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L929">        assertThat(childExecutions).hasSize(3);</span>
+<span class="nc" id="L930">        classifiedExecutions = childExecutions.stream().collect(Collectors.groupingBy(Execution::getActivityId));</span>
+<span class="nc" id="L931">        assertThat(classifiedExecutions)</span>
+<span class="nc" id="L932">                .containsKeys(&quot;multiInstanceSubProcess&quot;, &quot;postForkTask&quot;);</span>
+<span class="nc" id="L933">        assertThat(classifiedExecutions.get(&quot;multiInstanceSubProcess&quot;)).hasSize(2);</span>
+<span class="nc" id="L934">        assertThat(classifiedExecutions.get(&quot;postForkTask&quot;)).hasSize(1);</span>
+
+        //Last task of this multiInstance subProcess instance
+<span class="nc" id="L937">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L938">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;postForkTask&quot;);</span>
+<span class="nc" id="L939">        taskService.complete(task.getId());</span>
+
+        //The next sequence should start
+<span class="nc" id="L942">        childExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        //1x MultiInstance root, 1x Sequential MultiInstance and 3x UserTasks executions
+<span class="nc" id="L944">        assertThat(childExecutions).hasSize(5);</span>
+<span class="nc" id="L945">        classifiedExecutions = childExecutions.stream().collect(Collectors.groupingBy(Execution::getActivityId));</span>
+<span class="nc" id="L946">        assertThat(classifiedExecutions)</span>
+<span class="nc" id="L947">                .containsKeys(&quot;multiInstanceSubProcess&quot;, &quot;taskInclusive1&quot;, &quot;taskInclusive2&quot;, &quot;taskInclusive3&quot;);</span>
+<span class="nc" id="L948">        assertThat(classifiedExecutions.get(&quot;multiInstanceSubProcess&quot;)).hasSize(2);</span>
+<span class="nc" id="L949">        assertThat(classifiedExecutions.get(&quot;taskInclusive1&quot;)).hasSize(1);</span>
+<span class="nc" id="L950">        assertThat(classifiedExecutions.get(&quot;taskInclusive2&quot;)).hasSize(1);</span>
+<span class="nc" id="L951">        assertThat(classifiedExecutions.get(&quot;taskInclusive3&quot;)).hasSize(1);</span>
+<span class="nc" id="L952">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L953">        classifiedTasks = tasks.stream().collect(Collectors.groupingBy(Task::getTaskDefinitionKey));</span>
+<span class="nc" id="L954">        assertThat(classifiedTasks)</span>
+<span class="nc" id="L955">                .containsOnlyKeys(&quot;taskInclusive1&quot;, &quot;taskInclusive2&quot;, &quot;taskInclusive3&quot;);</span>
+<span class="nc" id="L956">        assertThat(classifiedTasks.get(&quot;taskInclusive1&quot;)).hasSize(1);</span>
+<span class="nc" id="L957">        assertThat(classifiedTasks.get(&quot;taskInclusive2&quot;)).hasSize(1);</span>
+<span class="nc" id="L958">        assertThat(classifiedTasks.get(&quot;taskInclusive3&quot;)).hasSize(1);</span>
+
+        //Finish the inclusive gateway tasks
+<span class="nc" id="L961">        tasks.forEach(this::completeTask);</span>
+
+        //last task of the sequence
+<span class="nc" id="L964">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L965">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;postForkTask&quot;);</span>
+<span class="nc" id="L966">        taskService.complete(task.getId());</span>
+
+        //Last Sequence
+<span class="nc" id="L969">        childExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L970">        assertThat(childExecutions).hasSize(5);</span>
+<span class="nc" id="L971">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L972">        assertThat(tasks).hasSize(3);</span>
+<span class="nc" id="L973">        tasks.forEach(this::completeTask);</span>
+<span class="nc" id="L974">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L975">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;postForkTask&quot;);</span>
+<span class="nc" id="L976">        taskService.complete(task.getId());</span>
+
+        //last task of the process, after the multiInstance subProcess
+<span class="nc" id="L979">        childExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L980">        assertThat(childExecutions).hasSize(1);</span>
+<span class="nc" id="L981">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L982">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;lastTask&quot;);</span>
+
+        //Finish the process
+<span class="nc" id="L985">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L987">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+<span class="nc" id="L988">    }</span>
+
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/gateway/InclusiveGatewayTest.inSubProcessNestedInMultiInstanceParallelSubProcess.bpmn20.xml&quot; })
+    public void testInSubProcessNestedInMultiInstanceParallelSubProcess() {
+<span class="nc" id="L994">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;inclusiveGatewayInsideSubProcessNestedInMultiInstanceParallelSubProcess&quot;);</span>
+
+<span class="nc" id="L996">        List&lt;Execution&gt; childExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        //1x MultiInstance root, 3x parallel MultiInstance, 3x NestedSubProcess and 9x UserTasks executions
+<span class="nc" id="L998">        assertThat(childExecutions).hasSize(16);</span>
+<span class="nc" id="L999">        Map&lt;String, List&lt;Execution&gt;&gt; classifiedExecutions = childExecutions.stream().collect(Collectors.groupingBy(Execution::getActivityId));</span>
+<span class="nc" id="L1000">        assertThat(classifiedExecutions)</span>
+<span class="nc" id="L1001">                .containsKeys(&quot;multiInstanceSubProcess&quot;, &quot;nestedSubProcess&quot;, &quot;taskInclusive1&quot;, &quot;taskInclusive2&quot;, &quot;taskInclusive3&quot;);</span>
+<span class="nc" id="L1002">        assertThat(classifiedExecutions.get(&quot;multiInstanceSubProcess&quot;)).hasSize(4);</span>
+<span class="nc" id="L1003">        assertThat(classifiedExecutions.get(&quot;nestedSubProcess&quot;)).hasSize(3);</span>
+<span class="nc" id="L1004">        assertThat(classifiedExecutions.get(&quot;taskInclusive1&quot;)).hasSize(3);</span>
+<span class="nc" id="L1005">        assertThat(classifiedExecutions.get(&quot;taskInclusive2&quot;)).hasSize(3);</span>
+<span class="nc" id="L1006">        assertThat(classifiedExecutions.get(&quot;taskInclusive3&quot;)).hasSize(3);</span>
+
+        //9x UserTasks
+<span class="nc" id="L1009">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1010">        Map&lt;String, List&lt;Task&gt;&gt; classifiedTasks = tasks.stream().collect(Collectors.groupingBy(Task::getTaskDefinitionKey));</span>
+<span class="nc" id="L1011">        assertThat(classifiedTasks)</span>
+<span class="nc" id="L1012">                .containsOnlyKeys(&quot;taskInclusive1&quot;, &quot;taskInclusive2&quot;, &quot;taskInclusive3&quot;);</span>
+<span class="nc" id="L1013">        assertThat(classifiedTasks.get(&quot;taskInclusive1&quot;)).hasSize(3);</span>
+<span class="nc" id="L1014">        assertThat(classifiedTasks.get(&quot;taskInclusive2&quot;)).hasSize(3);</span>
+<span class="nc" id="L1015">        assertThat(classifiedTasks.get(&quot;taskInclusive3&quot;)).hasSize(3);</span>
+
+        //Finish a couple of Tasks
+<span class="nc" id="L1018">        taskService.complete(classifiedTasks.get(&quot;taskInclusive1&quot;).get(1).getId());</span>
+<span class="nc" id="L1019">        taskService.complete(classifiedTasks.get(&quot;taskInclusive3&quot;).get(2).getId());</span>
+
+<span class="nc" id="L1021">        childExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        //1x MultiInstance root, 3x parallel MultiInstance, 3x NestedSubProcess and 7x UserTasks executions, 2x Gw Join executions
+<span class="nc" id="L1023">        assertThat(childExecutions).hasSize(16);</span>
+<span class="nc" id="L1024">        classifiedExecutions = childExecutions.stream().collect(Collectors.groupingBy(Execution::getActivityId));</span>
+<span class="nc" id="L1025">        assertThat(classifiedExecutions)</span>
+<span class="nc" id="L1026">                .containsKeys(&quot;multiInstanceSubProcess&quot;, &quot;nestedSubProcess&quot;, &quot;taskInclusive1&quot;, &quot;taskInclusive2&quot;, &quot;taskInclusive3&quot;, &quot;inclusiveJoin&quot;);</span>
+<span class="nc" id="L1027">        assertThat(classifiedExecutions.get(&quot;multiInstanceSubProcess&quot;)).hasSize(4);</span>
+<span class="nc" id="L1028">        assertThat(classifiedExecutions.get(&quot;nestedSubProcess&quot;)).hasSize(3);</span>
+<span class="nc" id="L1029">        assertThat(classifiedExecutions.get(&quot;taskInclusive1&quot;)).hasSize(2);</span>
+<span class="nc" id="L1030">        assertThat(classifiedExecutions.get(&quot;taskInclusive2&quot;)).hasSize(3);</span>
+<span class="nc" id="L1031">        assertThat(classifiedExecutions.get(&quot;taskInclusive3&quot;)).hasSize(2);</span>
+<span class="nc" id="L1032">        assertThat(classifiedExecutions.get(&quot;inclusiveJoin&quot;)).hasSize(2);</span>
+
+        //7x UserTasks
+<span class="nc" id="L1035">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1036">        classifiedTasks = tasks.stream().collect(Collectors.groupingBy(Task::getTaskDefinitionKey));</span>
+<span class="nc" id="L1037">        assertThat(classifiedTasks)</span>
+<span class="nc" id="L1038">                .containsOnlyKeys(&quot;taskInclusive1&quot;, &quot;taskInclusive2&quot;, &quot;taskInclusive3&quot;);</span>
+<span class="nc" id="L1039">        assertThat(classifiedTasks.get(&quot;taskInclusive1&quot;)).hasSize(2);</span>
+<span class="nc" id="L1040">        assertThat(classifiedTasks.get(&quot;taskInclusive2&quot;)).hasSize(3);</span>
+<span class="nc" id="L1041">        assertThat(classifiedTasks.get(&quot;taskInclusive3&quot;)).hasSize(2);</span>
+
+        //Finish one &quot;multiInstance subProcess&quot;
+<span class="nc" id="L1044">        Stream&lt;Execution&gt; tempStream = Stream.concat(classifiedExecutions.get(&quot;taskInclusive1&quot;).stream(), classifiedExecutions.get(&quot;taskInclusive2&quot;).stream());</span>
+<span class="nc" id="L1045">        Map&lt;String, List&lt;Execution&gt;&gt; taskExecutionsByParent = Stream.concat(tempStream, classifiedExecutions.get(&quot;taskInclusive3&quot;).stream())</span>
+<span class="nc" id="L1046">            .collect(Collectors.groupingBy(Execution::getParentId));</span>
+        //Get the execution Ids of one with 3 task executions
+<span class="nc" id="L1048">        boolean doneFlag = false;</span>
+<span class="nc bnc" id="L1049" title="All 2 branches missed.">        for (List&lt;Execution&gt; executions : taskExecutionsByParent.values()) {</span>
+<span class="nc bnc" id="L1050" title="All 2 branches missed.">            if (executions.size() == 3) {</span>
+<span class="nc" id="L1051">                List&lt;String&gt; executionIds = executions.stream().map(Execution::getId).collect(Collectors.toList());</span>
+<span class="nc" id="L1052">                tasks.stream().filter(t -&gt; executionIds.contains(t.getExecutionId())).forEach(this::completeTask);</span>
+<span class="nc" id="L1053">                doneFlag = true;</span>
+<span class="nc" id="L1054">                break;</span>
+            }
+<span class="nc" id="L1056">        }</span>
+<span class="nc bnc" id="L1057" title="All 2 branches missed.">        if (!doneFlag) {</span>
+<span class="nc" id="L1058">            fail(&quot;Invalid test state, there should be subProcess instance with embedded gateway with all parallel tasks pending for execution&quot;);</span>
+        }
+
+<span class="nc" id="L1061">        childExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        //1x MultiInstance root, 3x parallel MultiInstance, 3x NestedSubProcess, 4x UserTasks executions, 2x Gw Join executions, 1 postFork task Execution
+<span class="nc" id="L1063">        assertThat(childExecutions).hasSize(14);</span>
+<span class="nc" id="L1064">        classifiedExecutions = childExecutions.stream().collect(Collectors.groupingBy(Execution::getActivityId));</span>
+<span class="nc" id="L1065">        assertThat(classifiedExecutions)</span>
+<span class="nc" id="L1066">                .containsKeys(&quot;multiInstanceSubProcess&quot;, &quot;nestedSubProcess&quot;, &quot;taskInclusive1&quot;, &quot;taskInclusive2&quot;, &quot;taskInclusive3&quot;, &quot;inclusiveJoin&quot;, &quot;postForkTask&quot;);</span>
+<span class="nc" id="L1067">        assertThat(classifiedExecutions.get(&quot;multiInstanceSubProcess&quot;)).hasSize(4);</span>
+<span class="nc" id="L1068">        assertThat(classifiedExecutions.get(&quot;nestedSubProcess&quot;)).hasSize(3);</span>
+<span class="nc" id="L1069">        assertThat(classifiedExecutions.get(&quot;taskInclusive1&quot;)).hasSize(1);</span>
+<span class="nc" id="L1070">        assertThat(classifiedExecutions.get(&quot;taskInclusive2&quot;)).hasSize(2);</span>
+<span class="nc" id="L1071">        assertThat(classifiedExecutions.get(&quot;taskInclusive3&quot;)).hasSize(1);</span>
+<span class="nc" id="L1072">        assertThat(classifiedExecutions.get(&quot;inclusiveJoin&quot;)).hasSize(2);</span>
+<span class="nc" id="L1073">        assertThat(classifiedExecutions.get(&quot;postForkTask&quot;)).hasSize(1);</span>
+
+        //5x UserTasks
+<span class="nc" id="L1076">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1077">        classifiedTasks = tasks.stream().collect(Collectors.groupingBy(Task::getTaskDefinitionKey));</span>
+<span class="nc" id="L1078">        assertThat(classifiedTasks)</span>
+<span class="nc" id="L1079">                .containsOnlyKeys(&quot;taskInclusive1&quot;, &quot;taskInclusive2&quot;, &quot;taskInclusive3&quot;, &quot;postForkTask&quot;);</span>
+<span class="nc" id="L1080">        assertThat(classifiedTasks.get(&quot;taskInclusive1&quot;)).hasSize(1);</span>
+<span class="nc" id="L1081">        assertThat(classifiedTasks.get(&quot;taskInclusive2&quot;)).hasSize(2);</span>
+<span class="nc" id="L1082">        assertThat(classifiedTasks.get(&quot;taskInclusive3&quot;)).hasSize(1);</span>
+<span class="nc" id="L1083">        assertThat(classifiedTasks.get(&quot;postForkTask&quot;)).hasSize(1);</span>
+
+        //Finish all gateWayTasks
+<span class="nc bnc" id="L1086" title="All 2 branches missed.">        tasks.stream().filter(t-&gt; !&quot;postForkTask&quot;.equals(t.getTaskDefinitionKey())).forEach(this::completeTask);</span>
+
+<span class="nc" id="L1088">        childExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        //1x MultiInstance root, 3x parallel MultiInstance, 3x NestedSubProcess, 4x postFork task Execution
+<span class="nc" id="L1090">        assertThat(childExecutions).hasSize(10);</span>
+<span class="nc" id="L1091">        classifiedExecutions = childExecutions.stream().collect(Collectors.groupingBy(Execution::getActivityId));</span>
+<span class="nc" id="L1092">        assertThat(classifiedExecutions)</span>
+<span class="nc" id="L1093">                .containsKeys(&quot;multiInstanceSubProcess&quot;, &quot;nestedSubProcess&quot;, &quot;postForkTask&quot;);</span>
+<span class="nc" id="L1094">        assertThat(classifiedExecutions.get(&quot;multiInstanceSubProcess&quot;)).hasSize(4);</span>
+<span class="nc" id="L1095">        assertThat(classifiedExecutions.get(&quot;nestedSubProcess&quot;)).hasSize(3);</span>
+<span class="nc" id="L1096">        assertThat(classifiedExecutions.get(&quot;postForkTask&quot;)).hasSize(3);</span>
+
+        //3x UserTasks
+<span class="nc" id="L1099">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1100">        classifiedTasks = tasks.stream().collect(Collectors.groupingBy(Task::getTaskDefinitionKey));</span>
+<span class="nc" id="L1101">        assertThat(classifiedTasks)</span>
+<span class="nc" id="L1102">                .containsOnlyKeys(&quot;postForkTask&quot;);</span>
+<span class="nc" id="L1103">        assertThat(classifiedTasks.get(&quot;postForkTask&quot;)).hasSize(3);</span>
+
+        //Finish the nested subprocess tasks
+<span class="nc" id="L1106">        tasks.forEach(this::completeTask);</span>
+
+        //MultiInstance subProcesses finish as the nested subProcesses end
+<span class="nc" id="L1109">        childExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+        //1x User task execution
+<span class="nc" id="L1111">        assertThat(childExecutions)</span>
+<span class="nc" id="L1112">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1113">                .containsExactly(&quot;lastTask&quot;);</span>
+<span class="nc" id="L1114">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1115">        assertThat(tasks)</span>
+<span class="nc" id="L1116">                .extracting(Task::getTaskDefinitionKey)</span>
+<span class="nc" id="L1117">                .containsExactly(&quot;lastTask&quot;);</span>
+
+        //Finish the process
+<span class="nc" id="L1120">        tasks.forEach(this::completeTask);</span>
+        
+<span class="nc" id="L1122">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+<span class="nc" id="L1123">    }</span>
+
+    @Test
+    @Deployment(resources = {&quot;org/flowable/engine/test/bpmn/gateway/InclusiveGatewayTest.inCalledActivityNestedInMultiInstanceParallelSubProcess.bpmn20.xml&quot;,
+    &quot;org/flowable/engine/test/bpmn/gateway/InclusiveGatewayTest.simpleParallelFlow.bpmn20.xml&quot;})
+    public void testInCalledActivityNestedInMultiInstanceSubProcess() {
+<span class="nc" id="L1129">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;inclusiveGatewayInsideCalledActivityNestedInMultiInstanceParallelSubProcess&quot;);</span>
+
+        //1x Process Root, 3x Call activity roots
+<span class="nc" id="L1132">        List&lt;Execution&gt; processExecutionRoots = runtimeService.createExecutionQuery().onlyProcessInstanceExecutions().list();</span>
+<span class="nc" id="L1133">        assertThat(processExecutionRoots).hasSize(4);</span>
+<span class="nc" id="L1134">        Map&lt;String, List&lt;Execution&gt;&gt; classifiedRoots = processExecutionRoots.stream()</span>
+<span class="nc bnc" id="L1135" title="All 2 branches missed.">            .collect(Collectors.toMap(e -&gt; e.getSuperExecutionId() != null ? &quot;callActivity&quot; : null, Collections::singletonList, AbstractFlowableTestCase::mergeLists));</span>
+<span class="nc" id="L1136">        assertThat(classifiedRoots.get(null)).hasSize(1);</span>
+<span class="nc" id="L1137">        assertThat(classifiedRoots.get(&quot;callActivity&quot;)).hasSize(3);</span>
+
+        //1x MultiInstance root, 3x parallel MultiInstance, 3x CalledActivitySubProcesses and 9x UserTasks executions
+<span class="nc" id="L1140">        List&lt;Execution&gt; childExecutions = processExecutionRoots.stream()</span>
+<span class="nc" id="L1141">            .flatMap(rootProcess -&gt; runtimeService.createExecutionQuery().processInstanceId(rootProcess.getId()).onlyChildExecutions().list().stream())</span>
+<span class="nc" id="L1142">            .collect(Collectors.toList());</span>
+<span class="nc" id="L1143">        assertThat(childExecutions).hasSize(16);</span>
+<span class="nc" id="L1144">        Map&lt;String, List&lt;Execution&gt;&gt; classifiedExecutions = childExecutions.stream().collect(Collectors.groupingBy(Execution::getActivityId));</span>
+<span class="nc" id="L1145">        assertThat(classifiedExecutions)</span>
+<span class="nc" id="L1146">                .containsKeys(&quot;multiInstanceSubProcess&quot;, &quot;callActivity&quot;, &quot;taskInclusive1&quot;, &quot;taskInclusive2&quot;, &quot;taskInclusive3&quot;);</span>
+<span class="nc" id="L1147">        assertThat(classifiedExecutions.get(&quot;multiInstanceSubProcess&quot;)).hasSize(4);</span>
+<span class="nc" id="L1148">        assertThat(classifiedExecutions.get(&quot;callActivity&quot;)).hasSize(3);</span>
+<span class="nc" id="L1149">        assertThat(classifiedExecutions.get(&quot;taskInclusive1&quot;)).hasSize(3);</span>
+<span class="nc" id="L1150">        assertThat(classifiedExecutions.get(&quot;taskInclusive2&quot;)).hasSize(3);</span>
+<span class="nc" id="L1151">        assertThat(classifiedExecutions.get(&quot;taskInclusive3&quot;)).hasSize(3);</span>
+
+        //9x UserTasks
+<span class="nc" id="L1154">        List&lt;Task&gt; tasks = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L1155">        Map&lt;String, List&lt;Task&gt;&gt; classifiedTasks = tasks.stream().collect(Collectors.groupingBy(Task::getTaskDefinitionKey));</span>
+<span class="nc" id="L1156">        assertThat(classifiedTasks)</span>
+<span class="nc" id="L1157">                .containsOnlyKeys(&quot;taskInclusive1&quot;, &quot;taskInclusive2&quot;, &quot;taskInclusive3&quot;);</span>
+<span class="nc" id="L1158">        assertThat(classifiedTasks.get(&quot;taskInclusive1&quot;)).hasSize(3);</span>
+<span class="nc" id="L1159">        assertThat(classifiedTasks.get(&quot;taskInclusive2&quot;)).hasSize(3);</span>
+<span class="nc" id="L1160">        assertThat(classifiedTasks.get(&quot;taskInclusive3&quot;)).hasSize(3);</span>
+
+        //Finish a couple of Tasks
+<span class="nc" id="L1163">        taskService.complete(classifiedTasks.get(&quot;taskInclusive1&quot;).get(1).getId());</span>
+<span class="nc" id="L1164">        taskService.complete(classifiedTasks.get(&quot;taskInclusive3&quot;).get(2).getId());</span>
+
+
+
+<span class="nc" id="L1168">        childExecutions = processExecutionRoots.stream()</span>
+<span class="nc" id="L1169">            .flatMap(rootProcess -&gt; runtimeService.createExecutionQuery().processInstanceId(rootProcess.getId()).onlyChildExecutions().list().stream())</span>
+<span class="nc" id="L1170">            .collect(Collectors.toList());</span>
+        //1x MultiInstance root, 3x parallel MultiInstance, 3x CalledActivitySubProcesses and 7x UserTasks executions
+<span class="nc" id="L1172">        assertThat(childExecutions).hasSize(14);</span>
+<span class="nc" id="L1173">        classifiedExecutions = childExecutions.stream().collect(Collectors.groupingBy(Execution::getActivityId));</span>
+<span class="nc" id="L1174">        assertThat(classifiedExecutions)</span>
+<span class="nc" id="L1175">                .containsKeys(&quot;multiInstanceSubProcess&quot;, &quot;callActivity&quot;, &quot;taskInclusive1&quot;, &quot;taskInclusive2&quot;, &quot;taskInclusive3&quot;);</span>
+<span class="nc" id="L1176">        assertThat(classifiedExecutions.get(&quot;multiInstanceSubProcess&quot;)).hasSize(4);</span>
+<span class="nc" id="L1177">        assertThat(classifiedExecutions.get(&quot;callActivity&quot;)).hasSize(3);</span>
+<span class="nc" id="L1178">        assertThat(classifiedExecutions.get(&quot;taskInclusive1&quot;)).hasSize(2);</span>
+<span class="nc" id="L1179">        assertThat(classifiedExecutions.get(&quot;taskInclusive2&quot;)).hasSize(3);</span>
+<span class="nc" id="L1180">        assertThat(classifiedExecutions.get(&quot;taskInclusive3&quot;)).hasSize(2);</span>
+
+        //7x UserTasks
+<span class="nc" id="L1183">        tasks = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L1184">        classifiedTasks = tasks.stream().collect(Collectors.groupingBy(Task::getTaskDefinitionKey));</span>
+<span class="nc" id="L1185">        assertThat(classifiedTasks)</span>
+<span class="nc" id="L1186">                .containsOnlyKeys(&quot;taskInclusive1&quot;, &quot;taskInclusive2&quot;, &quot;taskInclusive3&quot;);</span>
+<span class="nc" id="L1187">        assertThat(classifiedTasks.get(&quot;taskInclusive1&quot;)).hasSize(2);</span>
+<span class="nc" id="L1188">        assertThat(classifiedTasks.get(&quot;taskInclusive2&quot;)).hasSize(3);</span>
+<span class="nc" id="L1189">        assertThat(classifiedTasks.get(&quot;taskInclusive3&quot;)).hasSize(2);</span>
+
+        //Finish one &quot;multiInstance subProcess&quot;
+<span class="nc" id="L1192">        Stream&lt;Execution&gt; tempStream = Stream.concat(classifiedExecutions.get(&quot;taskInclusive1&quot;).stream(), classifiedExecutions.get(&quot;taskInclusive2&quot;).stream());</span>
+<span class="nc" id="L1193">        Map&lt;String, List&lt;Execution&gt;&gt; taskExecutionsByParent = Stream.concat(tempStream, classifiedExecutions.get(&quot;taskInclusive3&quot;).stream())</span>
+<span class="nc" id="L1194">            .collect(Collectors.groupingBy(Execution::getParentId));</span>
+        //Get the execution Ids of one with 3 task executions
+<span class="nc" id="L1196">        Optional&lt;List&lt;Execution&gt;&gt; completeSubProcessExecutions = taskExecutionsByParent.values().stream()</span>
+<span class="nc bnc" id="L1197" title="All 2 branches missed.">            .filter(l -&gt; l.size() == 3)</span>
+<span class="nc" id="L1198">            .findFirst();</span>
+
+<span class="nc bnc" id="L1200" title="All 2 branches missed.">        if (completeSubProcessExecutions.isPresent()) {</span>
+<span class="nc" id="L1201">            List&lt;String&gt; executionIds = completeSubProcessExecutions.get().stream()</span>
+<span class="nc" id="L1202">                .map(Execution::getId).collect(Collectors.toList());</span>
+<span class="nc" id="L1203">            tasks.stream().filter(t -&gt; executionIds.contains(t.getExecutionId())).forEach(this::completeTask);</span>
+<span class="nc" id="L1204">        } else {</span>
+<span class="nc" id="L1205">            fail(&quot;Invalid test state, there should be subProcess instance with embedded gateway with all parallel tasks pending for execution&quot;);</span>
+        }
+
+<span class="nc" id="L1208">        childExecutions = processExecutionRoots.stream()</span>
+<span class="nc" id="L1209">            .flatMap(rootProcess -&gt; runtimeService.createExecutionQuery().processInstanceId(rootProcess.getId()).onlyChildExecutions().list().stream())</span>
+<span class="nc" id="L1210">            .collect(Collectors.toList());</span>
+        //1x MultiInstance root, 2x parallel MultiInstance, 2x CalledActivitySubProcesses and 4x UserTasks executions
+<span class="nc" id="L1212">        assertThat(childExecutions).hasSize(10);</span>
+<span class="nc" id="L1213">        classifiedExecutions = childExecutions.stream().collect(Collectors.groupingBy(Execution::getActivityId));</span>
+<span class="nc" id="L1214">        assertThat(classifiedExecutions)</span>
+<span class="nc" id="L1215">                .containsKeys(&quot;multiInstanceSubProcess&quot;, &quot;callActivity&quot;, &quot;taskInclusive1&quot;, &quot;taskInclusive2&quot;, &quot;taskInclusive3&quot;);</span>
+<span class="nc" id="L1216">        assertThat(classifiedExecutions.get(&quot;multiInstanceSubProcess&quot;)).hasSize(4);</span>
+<span class="nc" id="L1217">        assertThat(classifiedExecutions.get(&quot;callActivity&quot;)).hasSize(2);</span>
+<span class="nc" id="L1218">        assertThat(classifiedExecutions.get(&quot;taskInclusive1&quot;)).hasSize(1);</span>
+<span class="nc" id="L1219">        assertThat(classifiedExecutions.get(&quot;taskInclusive2&quot;)).hasSize(2);</span>
+<span class="nc" id="L1220">        assertThat(classifiedExecutions.get(&quot;taskInclusive3&quot;)).hasSize(1);</span>
+
+        //4x UserTasks
+<span class="nc" id="L1223">        tasks = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L1224">        classifiedTasks = tasks.stream().collect(Collectors.groupingBy(Task::getTaskDefinitionKey));</span>
+<span class="nc" id="L1225">        assertThat(classifiedTasks)</span>
+<span class="nc" id="L1226">                .containsOnlyKeys(&quot;taskInclusive1&quot;, &quot;taskInclusive2&quot;, &quot;taskInclusive3&quot;);</span>
+<span class="nc" id="L1227">        assertThat(classifiedTasks.get(&quot;taskInclusive1&quot;)).hasSize(1);</span>
+<span class="nc" id="L1228">        assertThat(classifiedTasks.get(&quot;taskInclusive2&quot;)).hasSize(2);</span>
+<span class="nc" id="L1229">        assertThat(classifiedTasks.get(&quot;taskInclusive3&quot;)).hasSize(1);</span>
+
+        //Finish pending tasks
+<span class="nc" id="L1232">        tasks.stream().forEach(this::completeTask);</span>
+
+        //Called process should have ended, only the initial root process should remain
+        //1x Process Root, 3x Call activity roots
+<span class="nc" id="L1236">        processExecutionRoots = runtimeService.createExecutionQuery().onlyProcessInstanceExecutions().list();</span>
+<span class="nc" id="L1237">        assertThat(processExecutionRoots).hasSize(1);</span>
+<span class="nc" id="L1238">        assertThat(processExecutionRoots.get(0).getSuperExecutionId()).isNull();</span>
+
+<span class="nc" id="L1240">        childExecutions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L1241">        assertThat(childExecutions)</span>
+<span class="nc" id="L1242">                .extracting(Execution::getActivityId)</span>
+<span class="nc" id="L1243">                .containsExactly(&quot;lastTask&quot;);</span>
+
+        //1x UserTasks
+<span class="nc" id="L1246">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1247">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;lastTask&quot;);</span>
+
+        //Finish the process
+<span class="nc" id="L1250">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L1252">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L1253">    }</span>
+
+    @Test
+    @Deployment
+    void testWithFutureDelegates() {
+        // the setup of the test is the following:
+        // there are 3 delegate executions:
+        // delegate1_1 -&gt; delegate1_2
+        // delegate2_1
+        // for delegate 1_1 to complete delegate2_1 should start executing
+        // for delegate 1_2 to complete delegate2_1 should start executing and 1_1 should be done
+        // for delegate2_1 to complete delegate1_2 should complete
+
+<span class="nc" id="L1266">        CountDownLatch delegate1_1Done = new CountDownLatch(1);</span>
+<span class="nc" id="L1267">        CountDownLatch delegate1_2Done = new CountDownLatch(1);</span>
+<span class="nc" id="L1268">        CountDownLatch delegate2_1Done = new CountDownLatch(1);</span>
+<span class="nc" id="L1269">        CountDownLatch delegate2_1Start = new CountDownLatch(1);</span>
+
+<span class="nc" id="L1271">        MapBasedFlowableFutureJavaDelegate futureDelegate1_1 = new MapBasedFlowableFutureJavaDelegate() {</span>
+
+            @Override
+            public Map&lt;String, Object&gt; execute(ReadOnlyDelegateExecution inputData) {
+
+                try {
+
+<span class="nc bnc" id="L1278" title="All 2 branches missed.">                    if (delegate2_1Start.await(2, TimeUnit.SECONDS)) {</span>
+<span class="nc" id="L1279">                        AtomicInteger counter = (AtomicInteger) inputData.getVariable(&quot;counter&quot;);</span>
+<span class="nc" id="L1280">                        return Collections.singletonMap(&quot;counterDelegate1_1&quot;, counter.incrementAndGet());</span>
+                    }
+
+<span class="nc" id="L1283">                    throw new FlowableException(&quot;Delegate 2_1 did not start&quot;);</span>
+<span class="nc" id="L1284">                } catch (InterruptedException e) {</span>
+<span class="nc" id="L1285">                    Thread.currentThread().interrupt();</span>
+<span class="nc" id="L1286">                    throw new FlowableException(&quot;Thread was interrupted&quot;);</span>
+                }
+            }
+
+            @Override
+            public void afterExecution(DelegateExecution execution, Map&lt;String, Object&gt; executionData) {
+<span class="nc" id="L1292">                MapBasedFlowableFutureJavaDelegate.super.afterExecution(execution, executionData);</span>
+<span class="nc" id="L1293">                delegate1_1Done.countDown();</span>
+<span class="nc" id="L1294">            }</span>
+        };
+
+<span class="nc" id="L1297">        MapBasedFlowableFutureJavaDelegate futureDelegate1_2 = new MapBasedFlowableFutureJavaDelegate() {</span>
+
+            @Override
+            public Map&lt;String, Object&gt; execute(ReadOnlyDelegateExecution inputData) {
+<span class="nc" id="L1301">                assertThat(inputData.getVariable(&quot;counterDelegate1_1&quot;)).isEqualTo(1);</span>
+<span class="nc" id="L1302">                assertThat(inputData.hasVariable(&quot;counterDelegate1_2&quot;)).isFalse();</span>
+<span class="nc" id="L1303">                assertThat(inputData.hasVariable(&quot;counterDelegate2_1&quot;)).isFalse();</span>
+
+<span class="nc" id="L1305">                AtomicInteger counter = (AtomicInteger) inputData.getVariable(&quot;counter&quot;);</span>
+<span class="nc" id="L1306">                return Collections.singletonMap(&quot;counterDelegate1_2&quot;, counter.incrementAndGet());</span>
+            }
+
+            @Override
+            public void afterExecution(DelegateExecution execution, Map&lt;String, Object&gt; executionData) {
+<span class="nc" id="L1311">                MapBasedFlowableFutureJavaDelegate.super.afterExecution(execution, executionData);</span>
+<span class="nc" id="L1312">                delegate1_2Done.countDown();</span>
+<span class="nc" id="L1313">            }</span>
+        };
+
+<span class="nc" id="L1316">        MapBasedFlowableFutureJavaDelegate futureDelegate2_1 = new MapBasedFlowableFutureJavaDelegate() {</span>
+
+            @Override
+            public Map&lt;String, Object&gt; execute(ReadOnlyDelegateExecution inputData) {
+<span class="nc" id="L1320">                delegate2_1Start.countDown();</span>
+
+                try {
+<span class="nc bnc" id="L1323" title="All 2 branches missed.">                    if (delegate1_2Done.await(2, TimeUnit.SECONDS)) {</span>
+<span class="nc" id="L1324">                        AtomicInteger counter = (AtomicInteger) inputData.getVariable(&quot;counter&quot;);</span>
+<span class="nc" id="L1325">                        return Collections.singletonMap(&quot;counterDelegate2_1&quot;, counter.incrementAndGet());</span>
+                    }
+
+<span class="nc" id="L1328">                    throw new FlowableException(&quot;Delegate 1_2 did not complete&quot;);</span>
+<span class="nc" id="L1329">                } catch (InterruptedException e) {</span>
+<span class="nc" id="L1330">                    Thread.currentThread().interrupt();</span>
+<span class="nc" id="L1331">                    throw new FlowableException(&quot;Thread was interrupted&quot;);</span>
+                }
+            }
+
+            @Override
+            public void afterExecution(DelegateExecution execution, Map&lt;String, Object&gt; executionData) {
+<span class="nc" id="L1337">                assertThat(execution.getVariables())</span>
+<span class="nc" id="L1338">                        .contains(</span>
+<span class="nc" id="L1339">                                entry(&quot;counterDelegate1_1&quot;, 1),</span>
+<span class="nc" id="L1340">                                entry(&quot;counterDelegate1_2&quot;, 2)</span>
+                        )
+<span class="nc" id="L1342">                        .doesNotContainKeys(&quot;counterDelegate2_1&quot;);</span>
+<span class="nc" id="L1343">                MapBasedFlowableFutureJavaDelegate.super.afterExecution(execution, executionData);</span>
+<span class="nc" id="L1344">                delegate2_1Done.countDown();</span>
+<span class="nc" id="L1345">            }</span>
+        };
+
+<span class="nc" id="L1348">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L1349">                .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L1350">                .transientVariable(&quot;futureDelegate1_1&quot;, futureDelegate1_1)</span>
+<span class="nc" id="L1351">                .transientVariable(&quot;futureDelegate1_2&quot;, futureDelegate1_2)</span>
+<span class="nc" id="L1352">                .transientVariable(&quot;futureDelegate2_1&quot;, futureDelegate2_1)</span>
+<span class="nc" id="L1353">                .transientVariable(&quot;counter&quot;, new AtomicInteger(0))</span>
+<span class="nc" id="L1354">                .start();</span>
+
+<span class="nc" id="L1356">        assertProcessEnded(processInstance.getId());</span>
+
+<span class="nc bnc" id="L1358" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.AUDIT, processEngineConfiguration)) {</span>
+<span class="nc" id="L1359">            List&lt;HistoricVariableInstance&gt; historicVariableInstances = historyService.createHistoricVariableInstanceQuery().list();</span>
+<span class="nc" id="L1360">            Map&lt;String, Object&gt; historicVariables = historicVariableInstances.stream()</span>
+<span class="nc bnc" id="L1361" title="All 2 branches missed.">                    .filter(variable -&gt; !&quot;initiator&quot;.equals(variable.getVariableName()))</span>
+<span class="nc" id="L1362">                    .collect(Collectors.toMap(HistoricVariableInstance::getVariableName, HistoricVariableInstance::getValue));</span>
+
+<span class="nc" id="L1364">            assertThat(historicVariables)</span>
+<span class="nc" id="L1365">                    .containsOnly(</span>
+<span class="nc" id="L1366">                            entry(&quot;counterDelegate1_1&quot;, 1),</span>
+<span class="nc" id="L1367">                            entry(&quot;counterDelegate1_2&quot;, 2),</span>
+<span class="nc" id="L1368">                            entry(&quot;counterDelegate2_1&quot;, 3)</span>
+                    );
+        }
+<span class="nc" id="L1371">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

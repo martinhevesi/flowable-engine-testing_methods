@@ -1,0 +1,1265 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ExternalWorkerServiceTaskTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.externalworker</a> &gt; <span class="el_source">ExternalWorkerServiceTaskTest.java</span></div><h1>ExternalWorkerServiceTaskTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.test.externalworker;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.entry;
+import static org.assertj.core.api.Assertions.tuple;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Date;
+import java.util.List;
+
+import org.flowable.common.engine.api.FlowableIllegalArgumentException;
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.impl.history.HistoryLevel;
+import org.flowable.engine.impl.cmd.ClearProcessInstanceLockTimesCmd;
+import org.flowable.engine.impl.jobexecutor.ExternalWorkerTaskCompleteJobHandler;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntity;
+import org.flowable.engine.impl.test.HistoryTestHelper;
+import org.flowable.engine.impl.test.PluggableFlowableTestCase;
+import org.flowable.engine.interceptor.CreateExternalWorkerJobAfterContext;
+import org.flowable.engine.interceptor.CreateExternalWorkerJobBeforeContext;
+import org.flowable.engine.interceptor.CreateExternalWorkerJobInterceptor;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.test.Deployment;
+import org.flowable.identitylink.api.IdentityLink;
+import org.flowable.identitylink.api.IdentityLinkType;
+import org.flowable.identitylink.service.impl.persistence.entity.IdentityLinkEntity;
+import org.flowable.job.api.AcquiredExternalWorkerJob;
+import org.flowable.job.api.ExternalWorkerJob;
+import org.flowable.job.api.Job;
+import org.flowable.job.service.impl.persistence.entity.JobEntity;
+import org.flowable.task.api.TaskInfo;
+import org.flowable.variable.api.history.HistoricVariableInstance;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+/**
+ * @author Filip Hrisafov
+ */
+<span class="nc" id="L57">public class ExternalWorkerServiceTaskTest extends PluggableFlowableTestCase {</span>
+
+    private boolean asyncExecutorActivated;
+
+    /*
+        Need to disable the async executor during this test, as otherwise jobs will be picked up
+        which will make it impossible to test the lock releasing logic.
+     */
+
+    @BeforeEach
+    public void disableAsyncExecutorIfNeeded() {
+<span class="nc" id="L68">        asyncExecutorActivated = processEngineConfiguration.getAsyncExecutor().isActive();</span>
+
+<span class="nc bnc" id="L70" title="All 2 branches missed.">        if (asyncExecutorActivated) {</span>
+<span class="nc" id="L71">            processEngineConfiguration.getAsyncExecutor().shutdown();</span>
+        }
+<span class="nc" id="L73">    }</span>
+
+    @AfterEach
+    public void enabledAsyncExecutorIfNeeded() {
+<span class="nc bnc" id="L77" title="All 2 branches missed.">        if (asyncExecutorActivated) {</span>
+<span class="nc" id="L78">            processEngineConfiguration.getAsyncExecutor().start();</span>
+        }
+<span class="nc" id="L80">    }</span>
+
+    @Test
+    @Deployment
+    void testSimple() {
+<span class="nc" id="L85">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L86">                .processDefinitionKey(&quot;simpleExternalWorker&quot;)</span>
+<span class="nc" id="L87">                .variable(&quot;name&quot;, &quot;kermit&quot;)</span>
+<span class="nc" id="L88">                .start();</span>
+
+<span class="nc" id="L90">        assertThat(taskService.createTaskQuery().list()).isEmpty();</span>
+
+<span class="nc" id="L92">        ExternalWorkerJob externalWorkerJob = managementService.createExternalWorkerJobQuery().singleResult();</span>
+
+<span class="nc" id="L94">        assertThat(externalWorkerJob).isNotNull();</span>
+<span class="nc" id="L95">        assertThat(externalWorkerJob.getCorrelationId()).isNotNull();</span>
+<span class="nc" id="L96">        assertThat(externalWorkerJob.getJobType()).isEqualTo(Job.JOB_TYPE_EXTERNAL_WORKER);</span>
+<span class="nc" id="L97">        assertThat(externalWorkerJob.getElementId()).isEqualTo(&quot;externalWorkerTask&quot;);</span>
+<span class="nc" id="L98">        assertThat(externalWorkerJob.getProcessInstanceId()).isEqualTo(processInstance.getId());</span>
+<span class="nc" id="L99">        assertThat(externalWorkerJob.getJobHandlerConfiguration()).isEqualTo(&quot;simple&quot;);</span>
+<span class="nc" id="L100">        assertThat(externalWorkerJob.getRetries()).isEqualTo(processEngineConfiguration.getAsyncExecutorNumberOfRetries());</span>
+<span class="nc" id="L101">        assertThat(externalWorkerJob.getLockExpirationTime()).isNull();</span>
+<span class="nc" id="L102">        assertThat(externalWorkerJob.getLockOwner()).isNull();</span>
+
+<span class="nc" id="L104">        List&lt;AcquiredExternalWorkerJob&gt; acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L105">                .topic(&quot;simple&quot;, Duration.ofMinutes(30))</span>
+<span class="nc" id="L106">                .acquireAndLock(4, &quot;testWorker&quot;);</span>
+
+<span class="nc" id="L108">        externalWorkerJob = managementService.createExternalWorkerJobQuery().singleResult();</span>
+
+<span class="nc" id="L110">        assertThat(externalWorkerJob).isNotNull();</span>
+<span class="nc" id="L111">        assertThat(externalWorkerJob.getElementId()).isEqualTo(&quot;externalWorkerTask&quot;);</span>
+<span class="nc" id="L112">        assertThat(externalWorkerJob.getProcessInstanceId()).isEqualTo(processInstance.getId());</span>
+<span class="nc" id="L113">        assertThat(externalWorkerJob.getJobHandlerConfiguration()).isEqualTo(&quot;simple&quot;);</span>
+<span class="nc" id="L114">        assertThat(externalWorkerJob.getRetries()).isEqualTo(processEngineConfiguration.getAsyncExecutorNumberOfRetries());</span>
+<span class="nc" id="L115">        assertThat(externalWorkerJob.getLockExpirationTime()).isNotNull();</span>
+<span class="nc" id="L116">        assertThat(externalWorkerJob.getLockOwner()).isEqualTo(&quot;testWorker&quot;);</span>
+
+<span class="nc" id="L118">        assertThat(acquiredJobs).hasSize(1);</span>
+
+<span class="nc" id="L120">        AcquiredExternalWorkerJob acquiredJob = acquiredJobs.get(0);</span>
+<span class="nc" id="L121">        assertThat(acquiredJob.getVariables())</span>
+<span class="nc" id="L122">                .containsOnly(</span>
+<span class="nc" id="L123">                        entry(&quot;name&quot;, &quot;kermit&quot;)</span>
+                );
+
+<span class="nc" id="L126">        assertThat(acquiredJob.getElementId()).isEqualTo(&quot;externalWorkerTask&quot;);</span>
+<span class="nc" id="L127">        assertThat(acquiredJob.getProcessInstanceId()).isEqualTo(processInstance.getId());</span>
+<span class="nc" id="L128">        assertThat(acquiredJob.getJobHandlerConfiguration()).isEqualTo(&quot;simple&quot;);</span>
+<span class="nc" id="L129">        assertThat(acquiredJob.getRetries()).isEqualTo(processEngineConfiguration.getAsyncExecutorNumberOfRetries());</span>
+<span class="nc" id="L130">        assertThat(acquiredJob.getLockExpirationTime()).isNotNull();</span>
+<span class="nc" id="L131">        assertThat(acquiredJob.getLockOwner()).isEqualTo(&quot;testWorker&quot;);</span>
+
+<span class="nc" id="L133">        managementService.createExternalWorkerCompletionBuilder(externalWorkerJob.getId(), &quot;testWorker&quot;).complete();</span>
+
+<span class="nc" id="L135">        assertThat(taskService.createTaskQuery().list()).isEmpty();</span>
+<span class="nc" id="L136">        assertThat(managementService.createExternalWorkerJobQuery().singleResult()).isNull();</span>
+
+<span class="nc" id="L138">        Job executableJob = managementService.createJobQuery().singleResult();</span>
+
+<span class="nc" id="L140">        assertThat(executableJob).isNotNull();</span>
+<span class="nc" id="L141">        assertThat(executableJob.getJobType()).isEqualTo(Job.JOB_TYPE_MESSAGE);</span>
+<span class="nc" id="L142">        assertThat(executableJob.getElementId()).isEqualTo(&quot;externalWorkerTask&quot;);</span>
+<span class="nc" id="L143">        assertThat(executableJob.getProcessInstanceId()).isEqualTo(processInstance.getId());</span>
+<span class="nc" id="L144">        assertThat(executableJob.getJobHandlerConfiguration()).isNull();</span>
+<span class="nc" id="L145">        assertThat(executableJob.getRetries()).isEqualTo(processEngineConfiguration.getAsyncExecutorNumberOfRetries());</span>
+<span class="nc" id="L146">        assertThat(((JobEntity) executableJob).getLockExpirationTime()).isNull();</span>
+<span class="nc" id="L147">        assertThat(((JobEntity) executableJob).getLockOwner()).isNull();</span>
+
+<span class="nc" id="L149">        waitForJobExecutorToProcessAllJobs(5000, 300);</span>
+
+<span class="nc" id="L151">        assertThat(taskService.createTaskQuery().list()).hasSize(1);</span>
+<span class="nc" id="L152">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/externalworker/ExternalWorkerServiceTaskTest.testSimple.bpmn20.xml&quot;)
+    void testSimpleWithVariables() {
+<span class="nc" id="L157">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L158">                .processDefinitionKey(&quot;simpleExternalWorker&quot;)</span>
+<span class="nc" id="L159">                .variable(&quot;name&quot;, &quot;kermit&quot;)</span>
+<span class="nc" id="L160">                .start();</span>
+
+<span class="nc" id="L162">        assertThat(taskService.createTaskQuery().list()).isEmpty();</span>
+<span class="nc" id="L163">        assertThat(runtimeService.getVariables(processInstance.getId()))</span>
+<span class="nc" id="L164">                .containsOnly(</span>
+<span class="nc" id="L165">                        entry(&quot;name&quot;, &quot;kermit&quot;)</span>
+                );
+
+<span class="nc" id="L168">        ExternalWorkerJob externalWorkerJob = managementService.createExternalWorkerJobQuery().singleResult();</span>
+
+<span class="nc" id="L170">        assertThat(externalWorkerJob).isNotNull();</span>
+
+<span class="nc" id="L172">        List&lt;AcquiredExternalWorkerJob&gt; acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L173">                .topic(&quot;simple&quot;, Duration.ofMinutes(30))</span>
+<span class="nc" id="L174">                .acquireAndLock(4, &quot;testWorker&quot;);</span>
+
+<span class="nc" id="L176">        assertThat(acquiredJobs).hasSize(1);</span>
+
+<span class="nc" id="L178">        AcquiredExternalWorkerJob acquiredJob = acquiredJobs.get(0);</span>
+
+<span class="nc" id="L180">        managementService.createExternalWorkerCompletionBuilder(acquiredJob.getId(), &quot;testWorker&quot;)</span>
+<span class="nc" id="L181">                .variable(&quot;name&quot;, &quot;gonzo&quot;)</span>
+<span class="nc" id="L182">                .complete();</span>
+
+<span class="nc" id="L184">        assertThat(taskService.createTaskQuery().list()).isEmpty();</span>
+<span class="nc" id="L185">        assertThat(managementService.createExternalWorkerJobQuery().singleResult()).isNull();</span>
+<span class="nc" id="L186">        assertThat(runtimeService.getVariables(processInstance.getId()))</span>
+<span class="nc" id="L187">                .containsOnly(</span>
+<span class="nc" id="L188">                        entry(&quot;name&quot;, &quot;kermit&quot;)</span>
+                );
+
+<span class="nc" id="L191">        waitForJobExecutorToProcessAllJobs(5000, 300);</span>
+
+<span class="nc" id="L193">        assertThat(taskService.createTaskQuery().list()).hasSize(1);</span>
+
+<span class="nc" id="L195">        assertThat(runtimeService.getVariables(processInstance.getId()))</span>
+<span class="nc" id="L196">                .containsOnly(</span>
+<span class="nc" id="L197">                        entry(&quot;name&quot;, &quot;gonzo&quot;)</span>
+                );
+<span class="nc" id="L199">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/externalworker/ExternalWorkerServiceTaskTest.testSimple.bpmn20.xml&quot;)
+    void testExternalWorkerJobDeadLetterWithVariables() {
+<span class="nc" id="L204">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L205">                .processDefinitionKey(&quot;simpleExternalWorker&quot;)</span>
+<span class="nc" id="L206">                .variable(&quot;name&quot;, &quot;kermit&quot;)</span>
+<span class="nc" id="L207">                .start();</span>
+
+<span class="nc" id="L209">        assertThat(taskService.createTaskQuery().list()).isEmpty();</span>
+<span class="nc" id="L210">        assertThat(runtimeService.getVariables(processInstance.getId()))</span>
+<span class="nc" id="L211">                .containsOnly(</span>
+<span class="nc" id="L212">                        entry(&quot;name&quot;, &quot;kermit&quot;)</span>
+                );
+
+<span class="nc" id="L215">        ExternalWorkerJob externalWorkerJob = managementService.createExternalWorkerJobQuery().singleResult();</span>
+
+<span class="nc" id="L217">        assertThat(externalWorkerJob).isNotNull();</span>
+
+<span class="nc" id="L219">        List&lt;AcquiredExternalWorkerJob&gt; acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L220">                .topic(&quot;simple&quot;, Duration.ofMinutes(30))</span>
+<span class="nc" id="L221">                .acquireAndLock(4, &quot;testWorker&quot;);</span>
+
+<span class="nc" id="L223">        assertThat(acquiredJobs).hasSize(1);</span>
+
+<span class="nc" id="L225">        AcquiredExternalWorkerJob acquiredJob = acquiredJobs.get(0);</span>
+
+<span class="nc" id="L227">        managementService.createExternalWorkerCompletionBuilder(acquiredJob.getId(), &quot;testWorker&quot;)</span>
+<span class="nc" id="L228">                .variable(&quot;name&quot;, &quot;gonzo&quot;)</span>
+<span class="nc" id="L229">                .complete();</span>
+
+<span class="nc" id="L231">        assertThat(taskService.createTaskQuery().list()).isEmpty();</span>
+<span class="nc" id="L232">        assertThat(managementService.createExternalWorkerJobQuery().singleResult()).isNull();</span>
+<span class="nc" id="L233">        assertThat(runtimeService.getVariables(processInstance.getId()))</span>
+<span class="nc" id="L234">                .containsOnly(</span>
+<span class="nc" id="L235">                        entry(&quot;name&quot;, &quot;kermit&quot;)</span>
+                );
+
+<span class="nc" id="L238">        Job job = managementService.createJobQuery().singleResult();</span>
+<span class="nc" id="L239">        assertThat(job).isNotNull();</span>
+<span class="nc" id="L240">        assertThat(job.getJobHandlerType()).isEqualTo(ExternalWorkerTaskCompleteJobHandler.TYPE);</span>
+
+<span class="nc" id="L242">        managementService.moveJobToDeadLetterJob(job.getId());</span>
+
+<span class="nc" id="L244">        assertThat(managementService.createJobQuery().singleResult()).isNull();</span>
+
+<span class="nc" id="L246">        job = managementService.createDeadLetterJobQuery().singleResult();</span>
+<span class="nc" id="L247">        assertThat(job).isNotNull();</span>
+<span class="nc" id="L248">        assertThat(job.getJobHandlerType()).isEqualTo(ExternalWorkerTaskCompleteJobHandler.TYPE);</span>
+
+<span class="nc" id="L250">        managementService.moveDeadLetterJobToExecutableJob(job.getId(), 3);</span>
+
+<span class="nc" id="L252">        waitForJobExecutorToProcessAllJobs(5000, 300);</span>
+
+<span class="nc" id="L254">        assertThat(taskService.createTaskQuery().list()).hasSize(1);</span>
+
+<span class="nc" id="L256">        assertThat(runtimeService.getVariables(processInstance.getId()))</span>
+<span class="nc" id="L257">                .containsOnly(</span>
+<span class="nc" id="L258">                        entry(&quot;name&quot;, &quot;gonzo&quot;)</span>
+                );
+<span class="nc" id="L260">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/externalworker/ExternalWorkerServiceTaskTest.testSimple.bpmn20.xml&quot;)
+    void testSimpleSuspendProcessInstance() {
+<span class="nc" id="L265">        ProcessInstance processInstance1 = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L266">                .processDefinitionKey(&quot;simpleExternalWorker&quot;)</span>
+<span class="nc" id="L267">                .variable(&quot;name&quot;, &quot;kermit&quot;)</span>
+<span class="nc" id="L268">                .start();</span>
+<span class="nc" id="L269">        ProcessInstance processInstance2 = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L270">                .processDefinitionKey(&quot;simpleExternalWorker&quot;)</span>
+<span class="nc" id="L271">                .variable(&quot;name&quot;, &quot;kermit&quot;)</span>
+<span class="nc" id="L272">                .start();</span>
+
+<span class="nc" id="L274">        assertThat(managementService.createExternalWorkerJobQuery().list())</span>
+<span class="nc" id="L275">                .extracting(ExternalWorkerJob::getProcessInstanceId)</span>
+<span class="nc" id="L276">                .containsExactlyInAnyOrder(processInstance1.getId(), processInstance2.getId());</span>
+
+<span class="nc" id="L278">        assertThat(managementService.createSuspendedJobQuery().list()).isEmpty();</span>
+
+<span class="nc" id="L280">        runtimeService.suspendProcessInstanceById(processInstance1.getId());</span>
+
+<span class="nc" id="L282">        assertThat(managementService.createExternalWorkerJobQuery().list())</span>
+<span class="nc" id="L283">                .extracting(ExternalWorkerJob::getProcessInstanceId)</span>
+<span class="nc" id="L284">                .containsExactlyInAnyOrder(processInstance2.getId());</span>
+
+<span class="nc" id="L286">        assertThat(managementService.createSuspendedJobQuery().list())</span>
+<span class="nc" id="L287">                .extracting(Job::getProcessInstanceId)</span>
+<span class="nc" id="L288">                .containsExactlyInAnyOrder(processInstance1.getId());</span>
+
+<span class="nc" id="L290">        runtimeService.activateProcessInstanceById(processInstance1.getId());</span>
+
+<span class="nc" id="L292">        assertThat(managementService.createExternalWorkerJobQuery().list())</span>
+<span class="nc" id="L293">                .extracting(ExternalWorkerJob::getProcessInstanceId)</span>
+<span class="nc" id="L294">                .containsExactlyInAnyOrder(processInstance1.getId(), processInstance2.getId());</span>
+
+<span class="nc" id="L296">        assertThat(managementService.createSuspendedJobQuery().list()).isEmpty();</span>
+<span class="nc" id="L297">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/externalworker/ExternalWorkerServiceTaskTest.testSimple.bpmn20.xml&quot;)
+    void testExternalWorkerVariablesShouldBeDeletedWhenProcessInstancesIsCanceled() {
+<span class="nc" id="L302">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L303">                .processDefinitionKey(&quot;simpleExternalWorker&quot;)</span>
+<span class="nc" id="L304">                .variable(&quot;name&quot;, &quot;kermit&quot;)</span>
+<span class="nc" id="L305">                .start();</span>
+
+<span class="nc" id="L307">        assertThat(taskService.createTaskQuery().list()).isEmpty();</span>
+<span class="nc" id="L308">        assertThat(runtimeService.getVariables(processInstance.getId()))</span>
+<span class="nc" id="L309">                .containsOnly(</span>
+<span class="nc" id="L310">                        entry(&quot;name&quot;, &quot;kermit&quot;)</span>
+                );
+
+<span class="nc" id="L313">        ExternalWorkerJob externalWorkerJob = managementService.createExternalWorkerJobQuery().singleResult();</span>
+
+<span class="nc" id="L315">        assertThat(externalWorkerJob).isNotNull();</span>
+
+<span class="nc" id="L317">        List&lt;AcquiredExternalWorkerJob&gt; acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L318">                .topic(&quot;simple&quot;, Duration.ofMinutes(30))</span>
+<span class="nc" id="L319">                .acquireAndLock(4, &quot;testWorker&quot;);</span>
+
+<span class="nc" id="L321">        assertThat(acquiredJobs).hasSize(1);</span>
+
+<span class="nc" id="L323">        AcquiredExternalWorkerJob acquiredJob = acquiredJobs.get(0);</span>
+
+<span class="nc" id="L325">        managementService.createExternalWorkerCompletionBuilder(acquiredJob.getId(), &quot;testWorker&quot;)</span>
+<span class="nc" id="L326">                .variable(&quot;name&quot;, &quot;gonzo&quot;)</span>
+<span class="nc" id="L327">                .complete();</span>
+
+<span class="nc" id="L329">        assertThat(taskService.createTaskQuery().list()).isEmpty();</span>
+<span class="nc" id="L330">        assertThat(managementService.createExternalWorkerJobQuery().singleResult()).isNull();</span>
+<span class="nc" id="L331">        assertThat(runtimeService.getVariables(processInstance.getId()))</span>
+<span class="nc" id="L332">                .containsOnly(</span>
+<span class="nc" id="L333">                        entry(&quot;name&quot;, &quot;kermit&quot;)</span>
+                );
+
+<span class="nc" id="L336">        runtimeService.deleteProcessInstance(processInstance.getId(), &quot;deletion for test&quot;);</span>
+
+<span class="nc bnc" id="L338" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L339">            assertThat(historyService.createHistoricVariableInstanceQuery().list())</span>
+<span class="nc" id="L340">                    .extracting(HistoricVariableInstance::getVariableName, HistoricVariableInstance::getValue)</span>
+<span class="nc" id="L341">                    .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L342">                            tuple(&quot;name&quot;, &quot;kermit&quot;)</span>
+                    );
+        }
+<span class="nc" id="L345">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/externalworker/ExternalWorkerServiceTaskTest.testSimple.bpmn20.xml&quot;)
+    void testSimpleAcquireMultipleTimes() {
+<span class="nc" id="L350">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L351">                .processDefinitionKey(&quot;simpleExternalWorker&quot;)</span>
+<span class="nc" id="L352">                .variable(&quot;name&quot;, &quot;kermit&quot;)</span>
+<span class="nc" id="L353">                .start();</span>
+
+<span class="nc" id="L355">        assertThat(taskService.createTaskQuery().list()).isEmpty();</span>
+
+<span class="nc" id="L357">        ExternalWorkerJob externalWorkerJob = managementService.createExternalWorkerJobQuery().singleResult();</span>
+
+<span class="nc" id="L359">        assertThat(externalWorkerJob).isNotNull();</span>
+
+<span class="nc" id="L361">        List&lt;AcquiredExternalWorkerJob&gt; acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L362">                .topic(&quot;simple&quot;, Duration.ofMinutes(30))</span>
+<span class="nc" id="L363">                .acquireAndLock(4, &quot;testWorker&quot;);</span>
+
+<span class="nc" id="L365">        AcquiredExternalWorkerJob acquiredJob = acquiredJobs.get(0);</span>
+<span class="nc" id="L366">        assertThat(acquiredJob.getVariables())</span>
+<span class="nc" id="L367">                .containsOnly(</span>
+<span class="nc" id="L368">                        entry(&quot;name&quot;, &quot;kermit&quot;)</span>
+                );
+
+<span class="nc" id="L371">        assertThat(acquiredJob.getElementId()).isEqualTo(&quot;externalWorkerTask&quot;);</span>
+<span class="nc" id="L372">        assertThat(acquiredJob.getProcessInstanceId()).isEqualTo(processInstance.getId());</span>
+<span class="nc" id="L373">        assertThat(acquiredJob.getJobHandlerConfiguration()).isEqualTo(&quot;simple&quot;);</span>
+<span class="nc" id="L374">        assertThat(acquiredJob.getRetries()).isEqualTo(processEngineConfiguration.getAsyncExecutorNumberOfRetries());</span>
+<span class="nc" id="L375">        assertThat(acquiredJob.getLockExpirationTime()).isNotNull();</span>
+<span class="nc" id="L376">        assertThat(acquiredJob.getLockOwner()).isEqualTo(&quot;testWorker&quot;);</span>
+
+<span class="nc" id="L378">        acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L379">                .topic(&quot;simple&quot;, Duration.ofMinutes(30))</span>
+<span class="nc" id="L380">                .acquireAndLock(4, &quot;testWorker&quot;);</span>
+<span class="nc" id="L381">        assertThat(acquiredJobs).isEmpty();</span>
+
+<span class="nc" id="L383">        managementService.createExternalWorkerCompletionBuilder(externalWorkerJob.getId(), &quot;testWorker&quot;).complete();</span>
+
+<span class="nc" id="L385">        assertThat(taskService.createTaskQuery().list()).isEmpty();</span>
+<span class="nc" id="L386">        assertThat(managementService.createExternalWorkerJobQuery().singleResult()).isNull();</span>
+
+<span class="nc" id="L388">        Job executableJob = managementService.createJobQuery().singleResult();</span>
+
+<span class="nc" id="L390">        assertThat(executableJob).isNotNull();</span>
+<span class="nc" id="L391">        assertThat(executableJob.getJobType()).isEqualTo(Job.JOB_TYPE_MESSAGE);</span>
+<span class="nc" id="L392">        assertThat(executableJob.getElementId()).isEqualTo(&quot;externalWorkerTask&quot;);</span>
+<span class="nc" id="L393">        assertThat(executableJob.getProcessInstanceId()).isEqualTo(processInstance.getId());</span>
+<span class="nc" id="L394">        assertThat(executableJob.getJobHandlerConfiguration()).isNull();</span>
+<span class="nc" id="L395">        assertThat(executableJob.getRetries()).isEqualTo(processEngineConfiguration.getAsyncExecutorNumberOfRetries());</span>
+<span class="nc" id="L396">        assertThat(((JobEntity) executableJob).getLockExpirationTime()).isNull();</span>
+<span class="nc" id="L397">        assertThat(((JobEntity) executableJob).getLockOwner()).isNull();</span>
+
+<span class="nc" id="L399">        waitForJobExecutorToProcessAllJobs(5000, 300);</span>
+
+<span class="nc" id="L401">        assertThat(taskService.createTaskQuery().list()).hasSize(1);</span>
+<span class="nc" id="L402">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/externalworker/ExternalWorkerServiceTaskTest.testSimple.bpmn20.xml&quot;)
+    void testSimpleAcquireOnlyBpmn() {
+<span class="nc" id="L407">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L408">                .processDefinitionKey(&quot;simpleExternalWorker&quot;)</span>
+<span class="nc" id="L409">                .variable(&quot;name&quot;, &quot;kermit&quot;)</span>
+<span class="nc" id="L410">                .start();</span>
+
+<span class="nc" id="L412">        assertThat(taskService.createTaskQuery().list()).isEmpty();</span>
+
+<span class="nc" id="L414">        ExternalWorkerJob externalWorkerJob = managementService.createExternalWorkerJobQuery().singleResult();</span>
+
+<span class="nc" id="L416">        assertThat(externalWorkerJob).isNotNull();</span>
+
+<span class="nc" id="L418">        List&lt;AcquiredExternalWorkerJob&gt; acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L419">                .topic(&quot;simple&quot;, Duration.ofMinutes(30))</span>
+<span class="nc" id="L420">                .onlyCmmn()</span>
+<span class="nc" id="L421">                .acquireAndLock(4, &quot;testWorker&quot;);</span>
+
+<span class="nc" id="L423">        assertThat(acquiredJobs).isEmpty();</span>
+
+<span class="nc" id="L425">        acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L426">                .topic(&quot;simple&quot;, Duration.ofMinutes(30))</span>
+<span class="nc" id="L427">                .onlyBpmn()</span>
+<span class="nc" id="L428">                .acquireAndLock(4, &quot;testWorker&quot;);</span>
+
+<span class="nc" id="L430">        AcquiredExternalWorkerJob acquiredJob = acquiredJobs.get(0);</span>
+<span class="nc" id="L431">        assertThat(acquiredJob.getVariables())</span>
+<span class="nc" id="L432">                .containsOnly(</span>
+<span class="nc" id="L433">                        entry(&quot;name&quot;, &quot;kermit&quot;)</span>
+                );
+
+<span class="nc" id="L436">        acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L437">                .topic(&quot;simple&quot;, Duration.ofMinutes(30))</span>
+<span class="nc" id="L438">                .acquireAndLock(4, &quot;testWorker&quot;);</span>
+<span class="nc" id="L439">        assertThat(acquiredJobs).isEmpty();</span>
+
+<span class="nc" id="L441">        managementService.createExternalWorkerCompletionBuilder(externalWorkerJob.getId(), &quot;testWorker&quot;).complete();</span>
+
+<span class="nc" id="L443">        assertThat(taskService.createTaskQuery().list()).isEmpty();</span>
+<span class="nc" id="L444">        assertThat(managementService.createExternalWorkerJobQuery().singleResult()).isNull();</span>
+
+<span class="nc" id="L446">        waitForJobExecutorToProcessAllJobs(5000, 300);</span>
+
+<span class="nc" id="L448">        assertThat(taskService.createTaskQuery().list()).hasSize(1);</span>
+<span class="nc" id="L449">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/externalworker/ExternalWorkerServiceTaskTest.testSimple.bpmn20.xml&quot;)
+    void testSimpleAcquireByScopeType() {
+<span class="nc" id="L454">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L455">                .processDefinitionKey(&quot;simpleExternalWorker&quot;)</span>
+<span class="nc" id="L456">                .variable(&quot;name&quot;, &quot;kermit&quot;)</span>
+<span class="nc" id="L457">                .start();</span>
+
+<span class="nc" id="L459">        assertThat(taskService.createTaskQuery().list()).isEmpty();</span>
+
+<span class="nc" id="L461">        ExternalWorkerJob externalWorkerJob = managementService.createExternalWorkerJobQuery().singleResult();</span>
+
+<span class="nc" id="L463">        assertThat(externalWorkerJob).isNotNull();</span>
+
+<span class="nc" id="L465">        List&lt;AcquiredExternalWorkerJob&gt; acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L466">                .topic(&quot;simple&quot;, Duration.ofMinutes(30))</span>
+<span class="nc" id="L467">                .scopeType(ScopeTypes.TASK)</span>
+<span class="nc" id="L468">                .acquireAndLock(4, &quot;testWorker&quot;);</span>
+
+<span class="nc" id="L470">        assertThat(acquiredJobs).isEmpty();</span>
+
+<span class="nc" id="L472">        acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L473">                .topic(&quot;simple&quot;, Duration.ofMinutes(30))</span>
+<span class="nc" id="L474">                .scopeType(ScopeTypes.BPMN)</span>
+<span class="nc" id="L475">                .acquireAndLock(4, &quot;testWorker&quot;);</span>
+
+<span class="nc" id="L477">        AcquiredExternalWorkerJob acquiredJob = acquiredJobs.get(0);</span>
+<span class="nc" id="L478">        assertThat(acquiredJob.getVariables())</span>
+<span class="nc" id="L479">                .containsOnly(</span>
+<span class="nc" id="L480">                        entry(&quot;name&quot;, &quot;kermit&quot;)</span>
+                );
+
+<span class="nc" id="L483">        acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L484">                .topic(&quot;simple&quot;, Duration.ofMinutes(30))</span>
+<span class="nc" id="L485">                .acquireAndLock(4, &quot;testWorker&quot;);</span>
+<span class="nc" id="L486">        assertThat(acquiredJobs).isEmpty();</span>
+
+<span class="nc" id="L488">        managementService.createExternalWorkerCompletionBuilder(externalWorkerJob.getId(), &quot;testWorker&quot;).complete();</span>
+
+<span class="nc" id="L490">        assertThat(taskService.createTaskQuery().list()).isEmpty();</span>
+<span class="nc" id="L491">        assertThat(managementService.createExternalWorkerJobQuery().singleResult()).isNull();</span>
+
+<span class="nc" id="L493">        waitForJobExecutorToProcessAllJobs(5000, 300);</span>
+
+<span class="nc" id="L495">        assertThat(taskService.createTaskQuery().list()).hasSize(1);</span>
+<span class="nc" id="L496">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/externalworker/ExternalWorkerServiceTaskTest.testSimple.bpmn20.xml&quot;)
+    void testSimpleCompleteByDifferentWorker() {
+<span class="nc" id="L501">        runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L502">                .processDefinitionKey(&quot;simpleExternalWorker&quot;)</span>
+<span class="nc" id="L503">                .variable(&quot;name&quot;, &quot;kermit&quot;)</span>
+<span class="nc" id="L504">                .start();</span>
+
+<span class="nc" id="L506">        assertThat(taskService.createTaskQuery().list()).isEmpty();</span>
+
+<span class="nc" id="L508">        ExternalWorkerJob externalWorkerJob = managementService.createExternalWorkerJobQuery().singleResult();</span>
+
+<span class="nc" id="L510">        assertThat(externalWorkerJob).isNotNull();</span>
+
+<span class="nc" id="L512">        List&lt;AcquiredExternalWorkerJob&gt; acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L513">                .topic(&quot;simple&quot;, Duration.ofMinutes(30))</span>
+<span class="nc" id="L514">                .acquireAndLock(4, &quot;testWorker&quot;);</span>
+
+<span class="nc" id="L516">        AcquiredExternalWorkerJob acquiredJob = acquiredJobs.get(0);</span>
+<span class="nc" id="L517">        assertThat(acquiredJob.getVariables())</span>
+<span class="nc" id="L518">                .containsOnly(</span>
+<span class="nc" id="L519">                        entry(&quot;name&quot;, &quot;kermit&quot;)</span>
+                );
+
+<span class="nc" id="L522">        assertThat(acquiredJob.getLockExpirationTime()).isNotNull();</span>
+<span class="nc" id="L523">        assertThat(acquiredJob.getLockOwner()).isEqualTo(&quot;testWorker&quot;);</span>
+
+<span class="nc" id="L525">        assertThatThrownBy(() -&gt; managementService.createExternalWorkerCompletionBuilder(externalWorkerJob.getId(), &quot;otherWorker&quot;).complete())</span>
+<span class="nc" id="L526">                .isInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L527">                .hasMessage(&quot;otherWorker does not hold a lock on the requested job&quot;);</span>
+
+<span class="nc" id="L529">        assertThat(taskService.createTaskQuery().list()).isEmpty();</span>
+<span class="nc" id="L530">        assertThat(managementService.createExternalWorkerJobQuery().singleResult()).isNotNull();</span>
+<span class="nc" id="L531">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/externalworker/ExternalWorkerServiceTaskTest.testSimple.bpmn20.xml&quot;)
+    void testSimpleFailureByDifferentWorker() {
+<span class="nc" id="L536">        runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L537">                .processDefinitionKey(&quot;simpleExternalWorker&quot;)</span>
+<span class="nc" id="L538">                .variable(&quot;name&quot;, &quot;kermit&quot;)</span>
+<span class="nc" id="L539">                .start();</span>
+
+<span class="nc" id="L541">        assertThat(taskService.createTaskQuery().list()).isEmpty();</span>
+
+<span class="nc" id="L543">        ExternalWorkerJob externalWorkerJob = managementService.createExternalWorkerJobQuery().singleResult();</span>
+
+<span class="nc" id="L545">        assertThat(externalWorkerJob).isNotNull();</span>
+
+<span class="nc" id="L547">        List&lt;AcquiredExternalWorkerJob&gt; acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L548">                .topic(&quot;simple&quot;, Duration.ofMinutes(30))</span>
+<span class="nc" id="L549">                .acquireAndLock(4, &quot;testWorker&quot;);</span>
+
+<span class="nc" id="L551">        AcquiredExternalWorkerJob acquiredJob = acquiredJobs.get(0);</span>
+<span class="nc" id="L552">        assertThat(acquiredJob.getVariables())</span>
+<span class="nc" id="L553">                .containsOnly(</span>
+<span class="nc" id="L554">                        entry(&quot;name&quot;, &quot;kermit&quot;)</span>
+                );
+
+<span class="nc" id="L557">        assertThat(acquiredJob.getLockExpirationTime()).isNotNull();</span>
+<span class="nc" id="L558">        assertThat(acquiredJob.getLockOwner()).isEqualTo(&quot;testWorker&quot;);</span>
+
+<span class="nc" id="L560">        assertThatThrownBy(() -&gt; managementService.createExternalWorkerJobFailureBuilder(externalWorkerJob.getId(), &quot;otherWorker&quot;)</span>
+<span class="nc" id="L561">                .retries(3)</span>
+<span class="nc" id="L562">                .retryTimeout(Duration.ofMinutes(10))</span>
+<span class="nc" id="L563">                .fail())</span>
+<span class="nc" id="L564">                .isInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L565">                .hasMessage(&quot;otherWorker does not hold a lock on the requested job&quot;);</span>
+
+<span class="nc" id="L567">        assertThat(taskService.createTaskQuery().list()).isEmpty();</span>
+<span class="nc" id="L568">        assertThat(managementService.createExternalWorkerJobQuery().singleResult()).isNotNull();</span>
+<span class="nc" id="L569">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/externalworker/ExternalWorkerServiceTaskTest.testSimple.bpmn20.xml&quot;)
+    void testSimpleBpmnErrorByDifferentWorker() {
+<span class="nc" id="L574">        runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L575">                .processDefinitionKey(&quot;simpleExternalWorker&quot;)</span>
+<span class="nc" id="L576">                .variable(&quot;name&quot;, &quot;kermit&quot;)</span>
+<span class="nc" id="L577">                .start();</span>
+
+<span class="nc" id="L579">        assertThat(taskService.createTaskQuery().list()).isEmpty();</span>
+
+<span class="nc" id="L581">        ExternalWorkerJob externalWorkerJob = managementService.createExternalWorkerJobQuery().singleResult();</span>
+
+<span class="nc" id="L583">        assertThat(externalWorkerJob).isNotNull();</span>
+
+<span class="nc" id="L585">        List&lt;AcquiredExternalWorkerJob&gt; acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L586">                .topic(&quot;simple&quot;, Duration.ofMinutes(30))</span>
+<span class="nc" id="L587">                .acquireAndLock(4, &quot;testWorker&quot;);</span>
+
+<span class="nc" id="L589">        AcquiredExternalWorkerJob acquiredJob = acquiredJobs.get(0);</span>
+<span class="nc" id="L590">        assertThat(acquiredJob.getVariables())</span>
+<span class="nc" id="L591">                .containsOnly(</span>
+<span class="nc" id="L592">                        entry(&quot;name&quot;, &quot;kermit&quot;)</span>
+                );
+
+<span class="nc" id="L595">        assertThat(acquiredJob.getLockExpirationTime()).isNotNull();</span>
+<span class="nc" id="L596">        assertThat(acquiredJob.getLockOwner()).isEqualTo(&quot;testWorker&quot;);</span>
+
+<span class="nc" id="L598">        assertThatThrownBy(() -&gt; managementService.createExternalWorkerCompletionBuilder(externalWorkerJob.getId(), &quot;otherWorker&quot;).bpmnError(&quot;testError&quot;))</span>
+<span class="nc" id="L599">                .isInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L600">                .hasMessage(&quot;otherWorker does not hold a lock on the requested job&quot;);</span>
+
+<span class="nc" id="L602">        assertThat(taskService.createTaskQuery().list()).isEmpty();</span>
+<span class="nc" id="L603">        assertThat(managementService.createExternalWorkerJobQuery().singleResult()).isNotNull();</span>
+<span class="nc" id="L604">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/externalworker/ExternalWorkerServiceTaskTest.testSimple.bpmn20.xml&quot;)
+    void testSimpleFailure() {
+<span class="nc" id="L609">        Instant startTime = Instant.now().truncatedTo(ChronoUnit.SECONDS);</span>
+<span class="nc" id="L610">        setTime(startTime);</span>
+
+<span class="nc" id="L612">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L613">                .processDefinitionKey(&quot;simpleExternalWorker&quot;)</span>
+<span class="nc" id="L614">                .variable(&quot;name&quot;, &quot;kermit&quot;)</span>
+<span class="nc" id="L615">                .start();</span>
+
+<span class="nc" id="L617">        assertThat(taskService.createTaskQuery().list()).isEmpty();</span>
+
+<span class="nc" id="L619">        ExternalWorkerJob externalWorkerJob = managementService.createExternalWorkerJobQuery().singleResult();</span>
+
+<span class="nc" id="L621">        assertThat(externalWorkerJob).isNotNull();</span>
+<span class="nc" id="L622">        assertThat(externalWorkerJob.getRetries()).isEqualTo(processEngineConfiguration.getAsyncExecutorNumberOfRetries());</span>
+<span class="nc" id="L623">        assertThat(externalWorkerJob.getLockExpirationTime()).isNull();</span>
+<span class="nc" id="L624">        assertThat(externalWorkerJob.getLockOwner()).isNull();</span>
+
+<span class="nc" id="L626">        List&lt;AcquiredExternalWorkerJob&gt; acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L627">                .topic(&quot;simple&quot;, Duration.ofMinutes(30))</span>
+<span class="nc" id="L628">                .acquireAndLock(4, &quot;testWorker&quot;);</span>
+
+<span class="nc" id="L630">        externalWorkerJob = managementService.createExternalWorkerJobQuery().singleResult();</span>
+
+<span class="nc" id="L632">        assertThat(externalWorkerJob).isNotNull();</span>
+<span class="nc" id="L633">        assertThat(externalWorkerJob.getRetries()).isEqualTo(processEngineConfiguration.getAsyncExecutorNumberOfRetries());</span>
+<span class="nc" id="L634">        assertThat(externalWorkerJob.getLockExpirationTime()).isEqualTo(Date.from(startTime.plus(30, ChronoUnit.MINUTES)));</span>
+<span class="nc" id="L635">        assertThat(externalWorkerJob.getLockOwner()).isEqualTo(&quot;testWorker&quot;);</span>
+
+<span class="nc" id="L637">        assertThat(acquiredJobs).hasSize(1);</span>
+
+<span class="nc" id="L639">        AcquiredExternalWorkerJob acquiredJob = acquiredJobs.get(0);</span>
+<span class="nc" id="L640">        assertThat(acquiredJob.getVariables())</span>
+<span class="nc" id="L641">                .containsOnly(</span>
+<span class="nc" id="L642">                        entry(&quot;name&quot;, &quot;kermit&quot;)</span>
+                );
+
+<span class="nc" id="L645">        assertThat(acquiredJob.getRetries()).isEqualTo(processEngineConfiguration.getAsyncExecutorNumberOfRetries());</span>
+<span class="nc" id="L646">        assertThat(acquiredJob.getLockExpirationTime()).isEqualTo(Date.from(startTime.plus(30, ChronoUnit.MINUTES)));</span>
+<span class="nc" id="L647">        assertThat(acquiredJob.getLockOwner()).isEqualTo(&quot;testWorker&quot;);</span>
+
+<span class="nc" id="L649">        Instant executionTime = startTime.plus(20, ChronoUnit.MINUTES);</span>
+<span class="nc" id="L650">        setTime(executionTime);</span>
+<span class="nc" id="L651">        managementService.createExternalWorkerJobFailureBuilder(externalWorkerJob.getId(), &quot;testWorker&quot;)</span>
+<span class="nc" id="L652">                .errorMessage(&quot;Failed to run job&quot;)</span>
+<span class="nc" id="L653">                .errorDetails(&quot;Some complex error details&quot;)</span>
+<span class="nc" id="L654">                .retries(4)</span>
+<span class="nc" id="L655">                .retryTimeout(Duration.ofHours(1))</span>
+<span class="nc" id="L656">                .fail();</span>
+
+<span class="nc" id="L658">        externalWorkerJob = managementService.createExternalWorkerJobQuery().singleResult();</span>
+
+<span class="nc" id="L660">        assertThat(externalWorkerJob).isNotNull();</span>
+<span class="nc" id="L661">        assertThat(externalWorkerJob.getRetries()).isEqualTo(4);</span>
+<span class="nc" id="L662">        assertThat(externalWorkerJob.getLockExpirationTime()).isEqualTo(Date.from(executionTime.plus(1, ChronoUnit.HOURS)));</span>
+<span class="nc" id="L663">        assertThat(externalWorkerJob.getLockOwner()).isNull();</span>
+<span class="nc" id="L664">        assertThat(externalWorkerJob.getExceptionMessage()).isEqualTo(&quot;Failed to run job&quot;);</span>
+<span class="nc" id="L665">        assertThat(managementService.getExternalWorkerJobErrorDetails(externalWorkerJob.getId())).isEqualTo(&quot;Some complex error details&quot;);</span>
+
+<span class="nc" id="L667">        assertThat(taskService.createTaskQuery().list()).isEmpty();</span>
+<span class="nc" id="L668">        assertThat(managementService.createExternalWorkerJobQuery().singleResult()).isNotNull();</span>
+
+<span class="nc" id="L670">        acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L671">                .topic(&quot;simple&quot;, Duration.ofMinutes(10))</span>
+<span class="nc" id="L672">                .acquireAndLock(4, &quot;testWorker&quot;);</span>
+
+<span class="nc" id="L674">        assertThat(acquiredJobs).isEmpty();</span>
+
+<span class="nc" id="L676">        Instant resetTime = executionTime.plus(2, ChronoUnit.HOURS);</span>
+<span class="nc" id="L677">        setTime(resetTime);</span>
+
+<span class="nc bnc" id="L679" title="All 2 branches missed.">        waitForJobExecutorOnCondition(5000, 300, () -&gt; managementService.createExternalWorkerJobQuery().singleResult().getLockExpirationTime() == null);</span>
+
+<span class="nc" id="L681">        externalWorkerJob = managementService.createExternalWorkerJobQuery().singleResult();</span>
+
+<span class="nc" id="L683">        assertThat(externalWorkerJob).isNotNull();</span>
+<span class="nc" id="L684">        assertThat(externalWorkerJob.getRetries()).isEqualTo(4);</span>
+<span class="nc" id="L685">        assertThat(externalWorkerJob.getLockExpirationTime()).isNull();</span>
+<span class="nc" id="L686">        assertThat(externalWorkerJob.getLockOwner()).isNull();</span>
+<span class="nc" id="L687">        assertThat(externalWorkerJob.getExceptionMessage()).isEqualTo(&quot;Failed to run job&quot;);</span>
+
+<span class="nc" id="L689">        acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L690">                .topic(&quot;simple&quot;, Duration.ofMinutes(10))</span>
+<span class="nc" id="L691">                .acquireAndLock(4, &quot;testWorker&quot;);</span>
+
+<span class="nc" id="L693">        assertThat(acquiredJobs).hasSize(1);</span>
+
+<span class="nc" id="L695">        acquiredJob = acquiredJobs.get(0);</span>
+<span class="nc" id="L696">        assertThat(acquiredJob.getRetries()).isEqualTo(4);</span>
+<span class="nc" id="L697">        assertThat(acquiredJob.getLockExpirationTime()).isEqualTo(Date.from(resetTime.plus(10, ChronoUnit.MINUTES)));</span>
+<span class="nc" id="L698">        assertThat(acquiredJob.getLockOwner()).isEqualTo(&quot;testWorker&quot;);</span>
+
+<span class="nc" id="L700">        managementService.createExternalWorkerCompletionBuilder(acquiredJob.getId(), &quot;testWorker&quot;).complete();</span>
+
+<span class="nc" id="L702">        Job executableJob = managementService.createJobQuery().singleResult();</span>
+
+<span class="nc" id="L704">        assertThat(executableJob).isNotNull();</span>
+<span class="nc" id="L705">        assertThat(executableJob.getJobType()).isEqualTo(Job.JOB_TYPE_MESSAGE);</span>
+<span class="nc" id="L706">        assertThat(executableJob.getElementId()).isEqualTo(&quot;externalWorkerTask&quot;);</span>
+<span class="nc" id="L707">        assertThat(executableJob.getProcessInstanceId()).isEqualTo(processInstance.getId());</span>
+<span class="nc" id="L708">        assertThat(executableJob.getJobHandlerConfiguration()).isNull();</span>
+<span class="nc" id="L709">        assertThat(executableJob.getRetries()).isEqualTo(processEngineConfiguration.getAsyncExecutorNumberOfRetries());</span>
+<span class="nc" id="L710">        assertThat(((JobEntity) executableJob).getLockExpirationTime()).isNull();</span>
+<span class="nc" id="L711">        assertThat(((JobEntity) executableJob).getLockOwner()).isNull();</span>
+
+<span class="nc" id="L713">        waitForJobExecutorToProcessAllJobs(5000, 300);</span>
+
+<span class="nc" id="L715">        assertThat(taskService.createTaskQuery().list()).hasSize(1);</span>
+<span class="nc" id="L716">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/externalworker/ExternalWorkerServiceTaskTest.testSimple.bpmn20.xml&quot;)
+    void testSimpleFailureWithZeroRetries() {
+<span class="nc" id="L721">        runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L722">                .processDefinitionKey(&quot;simpleExternalWorker&quot;)</span>
+<span class="nc" id="L723">                .variable(&quot;name&quot;, &quot;kermit&quot;)</span>
+<span class="nc" id="L724">                .start();</span>
+
+<span class="nc" id="L726">        assertThat(taskService.createTaskQuery().list()).isEmpty();</span>
+
+<span class="nc" id="L728">        ExternalWorkerJob externalWorkerJob = managementService.createExternalWorkerJobQuery().singleResult();</span>
+
+<span class="nc" id="L730">        assertThat(externalWorkerJob).isNotNull();</span>
+
+<span class="nc" id="L732">        List&lt;AcquiredExternalWorkerJob&gt; acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L733">                .topic(&quot;simple&quot;, Duration.ofMinutes(30))</span>
+<span class="nc" id="L734">                .acquireAndLock(4, &quot;testWorker&quot;);</span>
+
+<span class="nc" id="L736">        assertThat(acquiredJobs).hasSize(1);</span>
+
+<span class="nc" id="L738">        AcquiredExternalWorkerJob acquiredJob = acquiredJobs.get(0);</span>
+<span class="nc" id="L739">        assertThat(acquiredJob.getVariables())</span>
+<span class="nc" id="L740">                .containsOnly(</span>
+<span class="nc" id="L741">                        entry(&quot;name&quot;, &quot;kermit&quot;)</span>
+                );
+
+<span class="nc" id="L744">        managementService.createExternalWorkerJobFailureBuilder(externalWorkerJob.getId(), &quot;testWorker&quot;)</span>
+<span class="nc" id="L745">                .errorMessage(&quot;Failed to run job&quot;)</span>
+<span class="nc" id="L746">                .errorDetails(&quot;Some complex error details&quot;)</span>
+<span class="nc" id="L747">                .retries(0)</span>
+<span class="nc" id="L748">                .fail();</span>
+
+<span class="nc" id="L750">        externalWorkerJob = managementService.createExternalWorkerJobQuery().singleResult();</span>
+
+<span class="nc" id="L752">        assertThat(externalWorkerJob).isNull();</span>
+
+<span class="nc" id="L754">        assertThat(taskService.createTaskQuery().list()).isEmpty();</span>
+<span class="nc" id="L755">        assertThat(managementService.createExternalWorkerJobQuery().singleResult()).isNull();</span>
+
+<span class="nc" id="L757">        Job deadLetterJob = managementService.createDeadLetterJobQuery().singleResult();</span>
+
+<span class="nc" id="L759">        assertThat(deadLetterJob).isNotNull();</span>
+<span class="nc" id="L760">        assertThat(deadLetterJob.getJobType()).isEqualTo(Job.JOB_TYPE_EXTERNAL_WORKER);</span>
+<span class="nc" id="L761">        assertThat(deadLetterJob.getExceptionMessage()).isEqualTo(&quot;Failed to run job&quot;);</span>
+<span class="nc" id="L762">        assertThat(managementService.getDeadLetterJobExceptionStacktrace(deadLetterJob.getId()))</span>
+<span class="nc" id="L763">                .isEqualTo(&quot;Some complex error details&quot;);</span>
+<span class="nc" id="L764">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/externalworker/ExternalWorkerServiceTaskTest.testSimple.bpmn20.xml&quot;)
+    void testSimpleFailureWithNoRetries() {
+<span class="nc" id="L769">        runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L770">                .processDefinitionKey(&quot;simpleExternalWorker&quot;)</span>
+<span class="nc" id="L771">                .variable(&quot;name&quot;, &quot;kermit&quot;)</span>
+<span class="nc" id="L772">                .start();</span>
+
+<span class="nc" id="L774">        assertThat(taskService.createTaskQuery().list()).isEmpty();</span>
+
+<span class="nc" id="L776">        ExternalWorkerJob externalWorkerJob = managementService.createExternalWorkerJobQuery().singleResult();</span>
+
+<span class="nc" id="L778">        assertThat(externalWorkerJob).isNotNull();</span>
+<span class="nc" id="L779">        assertThat(externalWorkerJob.getRetries()).isEqualTo(processEngineConfiguration.getAsyncExecutorNumberOfRetries());</span>
+
+<span class="nc" id="L781">        List&lt;AcquiredExternalWorkerJob&gt; acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L782">                .topic(&quot;simple&quot;, Duration.ofMinutes(30))</span>
+<span class="nc" id="L783">                .acquireAndLock(4, &quot;testWorker&quot;);</span>
+
+<span class="nc" id="L785">        assertThat(acquiredJobs).hasSize(1);</span>
+
+<span class="nc" id="L787">        AcquiredExternalWorkerJob acquiredJob = acquiredJobs.get(0);</span>
+<span class="nc" id="L788">        assertThat(acquiredJob.getVariables())</span>
+<span class="nc" id="L789">                .containsOnly(</span>
+<span class="nc" id="L790">                        entry(&quot;name&quot;, &quot;kermit&quot;)</span>
+                );
+
+<span class="nc" id="L793">        managementService.createExternalWorkerJobFailureBuilder(externalWorkerJob.getId(), &quot;testWorker&quot;)</span>
+<span class="nc" id="L794">                .errorMessage(&quot;Failed to run job&quot;)</span>
+<span class="nc" id="L795">                .errorDetails(&quot;Some complex error details&quot;)</span>
+<span class="nc" id="L796">                .fail();</span>
+
+<span class="nc" id="L798">        externalWorkerJob = managementService.createExternalWorkerJobQuery().singleResult();</span>
+
+<span class="nc" id="L800">        assertThat(externalWorkerJob).isNotNull();</span>
+<span class="nc" id="L801">        assertThat(externalWorkerJob.getRetries()).isEqualTo(processEngineConfiguration.getAsyncExecutorNumberOfRetries() - 1);</span>
+<span class="nc" id="L802">        assertThat(externalWorkerJob.getExceptionMessage()).isEqualTo(&quot;Failed to run job&quot;);</span>
+<span class="nc" id="L803">        assertThat(managementService.getExternalWorkerJobErrorDetails(externalWorkerJob.getId()))</span>
+<span class="nc" id="L804">                .isEqualTo(&quot;Some complex error details&quot;);</span>
+
+<span class="nc" id="L806">        assertThat(taskService.createTaskQuery().list()).isEmpty();</span>
+<span class="nc" id="L807">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/externalworker/ExternalWorkerServiceTaskTest.testSimple.bpmn20.xml&quot;)
+    void testSimpleFailureMoveFromDeadLetter() {
+<span class="nc" id="L812">        runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L813">                .processDefinitionKey(&quot;simpleExternalWorker&quot;)</span>
+<span class="nc" id="L814">                .start();</span>
+
+<span class="nc" id="L816">        assertThat(taskService.createTaskQuery().list()).isEmpty();</span>
+
+<span class="nc" id="L818">        ExternalWorkerJob externalWorkerJob = managementService.createExternalWorkerJobQuery().singleResult();</span>
+
+<span class="nc" id="L820">        assertThat(externalWorkerJob).isNotNull();</span>
+
+<span class="nc" id="L822">        managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L823">                .topic(&quot;simple&quot;, Duration.ofMinutes(10))</span>
+<span class="nc" id="L824">                .acquireAndLock(1, &quot;testWorker&quot;);</span>
+
+<span class="nc" id="L826">        managementService.createExternalWorkerJobFailureBuilder(externalWorkerJob.getId(), &quot;testWorker&quot;)</span>
+<span class="nc" id="L827">                .errorMessage(&quot;Failed to run job&quot;)</span>
+<span class="nc" id="L828">                .errorDetails(&quot;Some complex error details&quot;)</span>
+<span class="nc" id="L829">                .retries(0)</span>
+<span class="nc" id="L830">                .fail();</span>
+
+<span class="nc" id="L832">        externalWorkerJob = managementService.createExternalWorkerJobQuery().singleResult();</span>
+
+<span class="nc" id="L834">        assertThat(externalWorkerJob).isNull();</span>
+
+<span class="nc" id="L836">        assertThat(taskService.createTaskQuery().list()).isEmpty();</span>
+<span class="nc" id="L837">        assertThat(managementService.createExternalWorkerJobQuery().singleResult()).isNull();</span>
+
+<span class="nc" id="L839">        Job deadLetterJob = managementService.createDeadLetterJobQuery().singleResult();</span>
+
+<span class="nc" id="L841">        assertThat(deadLetterJob).isNotNull();</span>
+<span class="nc" id="L842">        assertThat(deadLetterJob.getJobType()).isEqualTo(Job.JOB_TYPE_EXTERNAL_WORKER);</span>
+<span class="nc" id="L843">        assertThat(deadLetterJob.getExceptionMessage()).isEqualTo(&quot;Failed to run job&quot;);</span>
+<span class="nc" id="L844">        assertThat(managementService.getDeadLetterJobExceptionStacktrace(deadLetterJob.getId()))</span>
+<span class="nc" id="L845">                .isEqualTo(&quot;Some complex error details&quot;);</span>
+
+<span class="nc" id="L847">        Job movedJob = managementService.moveDeadLetterJobToExecutableJob(deadLetterJob.getId(), 4);</span>
+
+<span class="nc" id="L849">        assertThat(movedJob).isInstanceOf(ExternalWorkerJob.class);</span>
+<span class="nc" id="L850">        assertThat(movedJob.getJobType()).isEqualTo(Job.JOB_TYPE_EXTERNAL_WORKER);</span>
+<span class="nc" id="L851">        assertThat(movedJob.getRetries()).isEqualTo(4);</span>
+
+<span class="nc" id="L853">        assertThat(managementService.createJobQuery().list()).isEmpty();</span>
+
+<span class="nc" id="L855">        externalWorkerJob = managementService.createExternalWorkerJobQuery().singleResult();</span>
+
+<span class="nc" id="L857">        assertThat(externalWorkerJob).isNotNull();</span>
+<span class="nc" id="L858">        assertThat(externalWorkerJob.getId()).isEqualTo(movedJob.getId());</span>
+
+<span class="nc" id="L860">    }</span>
+
+    @Test
+    @Deployment
+    void testSimpleWithBoundaryError() {
+<span class="nc" id="L865">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L866">                .processDefinitionKey(&quot;simpleExternalWorkerWithError&quot;)</span>
+<span class="nc" id="L867">                .start();</span>
+
+<span class="nc" id="L869">        assertThat(taskService.createTaskQuery().list()).isEmpty();</span>
+
+<span class="nc" id="L871">        ExternalWorkerJob externalWorkerJob = managementService.createExternalWorkerJobQuery().singleResult();</span>
+
+<span class="nc" id="L873">        assertThat(externalWorkerJob).isNotNull();</span>
+
+<span class="nc" id="L875">        List&lt;AcquiredExternalWorkerJob&gt; acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L876">                .topic(&quot;simple&quot;, Duration.ofMinutes(30))</span>
+<span class="nc" id="L877">                .acquireAndLock(4, &quot;testWorker&quot;);</span>
+
+<span class="nc" id="L879">        assertThat(acquiredJobs).hasSize(1);</span>
+
+<span class="nc" id="L881">        AcquiredExternalWorkerJob acquiredJob = acquiredJobs.get(0);</span>
+
+<span class="nc" id="L883">        managementService.createExternalWorkerCompletionBuilder(acquiredJob.getId(), &quot;testWorker&quot;).bpmnError(&quot;errorOne&quot;);</span>
+
+<span class="nc" id="L885">        assertThat(managementService.createExternalWorkerJobQuery().singleResult()).isNull();</span>
+
+<span class="nc" id="L887">        waitForJobExecutorToProcessAllJobs(5000, 300);</span>
+
+<span class="nc" id="L889">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L890">    }</span>
+
+    @Test
+    @Deployment
+    void testSimpleWithBoundaryErrorAndVariables() {
+<span class="nc" id="L895">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L896">                .processDefinitionKey(&quot;simpleExternalWorkerWithError&quot;)</span>
+<span class="nc" id="L897">                .variable(&quot;name&quot;, &quot;kermit&quot;)</span>
+<span class="nc" id="L898">                .start();</span>
+
+<span class="nc" id="L900">        assertThat(taskService.createTaskQuery().list()).isEmpty();</span>
+<span class="nc" id="L901">        assertThat(runtimeService.getVariables(processInstance.getId()))</span>
+<span class="nc" id="L902">                .containsOnly(</span>
+<span class="nc" id="L903">                        entry(&quot;name&quot;, &quot;kermit&quot;)</span>
+                );
+
+<span class="nc" id="L906">        ExternalWorkerJob externalWorkerJob = managementService.createExternalWorkerJobQuery().singleResult();</span>
+
+<span class="nc" id="L908">        assertThat(externalWorkerJob).isNotNull();</span>
+
+<span class="nc" id="L910">        List&lt;AcquiredExternalWorkerJob&gt; acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L911">                .topic(&quot;simple&quot;, Duration.ofMinutes(30))</span>
+<span class="nc" id="L912">                .acquireAndLock(4, &quot;testWorker&quot;);</span>
+
+<span class="nc" id="L914">        assertThat(acquiredJobs).hasSize(1);</span>
+
+<span class="nc" id="L916">        AcquiredExternalWorkerJob acquiredJob = acquiredJobs.get(0);</span>
+
+<span class="nc" id="L918">        managementService.createExternalWorkerCompletionBuilder(acquiredJob.getId(), &quot;testWorker&quot;)</span>
+<span class="nc" id="L919">                .variable(&quot;name&quot;, &quot;gonzo&quot;)</span>
+<span class="nc" id="L920">                .bpmnError(&quot;errorOne&quot;);</span>
+
+<span class="nc" id="L922">        assertThat(managementService.createExternalWorkerJobQuery().singleResult()).isNull();</span>
+<span class="nc" id="L923">        assertThat(runtimeService.getVariables(processInstance.getId()))</span>
+<span class="nc" id="L924">                .containsOnly(</span>
+<span class="nc" id="L925">                        entry(&quot;name&quot;, &quot;kermit&quot;)</span>
+                );
+
+<span class="nc" id="L928">        waitForJobExecutorToProcessAllJobs(5000, 300);</span>
+
+<span class="nc" id="L930">        assertThat(taskService.createTaskQuery().list())</span>
+<span class="nc" id="L931">                .extracting(TaskInfo::getTaskDefinitionKey)</span>
+<span class="nc" id="L932">                .containsExactlyInAnyOrder(&quot;taskAfterError&quot;);</span>
+
+<span class="nc" id="L934">        assertThat(runtimeService.getVariables(processInstance.getId()))</span>
+<span class="nc" id="L935">                .containsOnly(</span>
+<span class="nc" id="L936">                        entry(&quot;name&quot;, &quot;gonzo&quot;)</span>
+                );
+<span class="nc" id="L938">    }</span>
+
+    @Test
+    void testAcquireWithInvalidArguments() {
+<span class="nc" id="L942">        assertThatThrownBy(() -&gt; managementService.createExternalWorkerJobAcquireBuilder().acquireAndLock(10, &quot;someWorker&quot;))</span>
+<span class="nc" id="L943">                .isInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L944">                .hasMessage(&quot;topic must not be empty&quot;);</span>
+
+<span class="nc" id="L946">        assertThatThrownBy(() -&gt; managementService.createExternalWorkerJobAcquireBuilder().topic(&quot;simple&quot;, Duration.ofMinutes(10)).acquireAndLock(0, &quot;someWorker&quot;))</span>
+<span class="nc" id="L947">                .isInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L948">                .hasMessage(&quot;requested number of jobs must not be smaller than 1&quot;);</span>
+
+<span class="nc" id="L950">        assertThatThrownBy(() -&gt; managementService.createExternalWorkerJobAcquireBuilder().topic(&quot;simple&quot;, Duration.ofMinutes(10)).acquireAndLock(10, null))</span>
+<span class="nc" id="L951">                .isInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L952">                .hasMessage(&quot;workerId must not be empty&quot;);</span>
+
+<span class="nc" id="L954">        assertThatThrownBy(() -&gt; managementService.createExternalWorkerJobAcquireBuilder().onlyCmmn().onlyBpmn().acquireAndLock(10, null))</span>
+<span class="nc" id="L955">                .isInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L956">                .hasMessage(&quot;Cannot combine onlyCmmn() with onlyBpmn() in the same query&quot;);</span>
+
+<span class="nc" id="L958">        assertThatThrownBy(() -&gt; managementService.createExternalWorkerJobAcquireBuilder().onlyBpmn().onlyCmmn().acquireAndLock(10, null))</span>
+<span class="nc" id="L959">                .isInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L960">                .hasMessage(&quot;Cannot combine onlyBpmn() with onlyCmmn() in the same query&quot;);</span>
+
+<span class="nc" id="L962">        assertThatThrownBy(() -&gt; managementService.createExternalWorkerJobAcquireBuilder().scopeType(ScopeTypes.TASK).onlyBpmn().acquireAndLock(10, null))</span>
+<span class="nc" id="L963">                .isInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L964">                .hasMessage(&quot;Cannot combine scopeType(String) with onlyBpmn() in the same query&quot;);</span>
+
+<span class="nc" id="L966">        assertThatThrownBy(() -&gt; managementService.createExternalWorkerJobAcquireBuilder().scopeType(ScopeTypes.TASK).onlyCmmn().acquireAndLock(10, null))</span>
+<span class="nc" id="L967">                .isInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L968">                .hasMessage(&quot;Cannot combine scopeType(String) with onlyCmmn() in the same query&quot;);</span>
+<span class="nc" id="L969">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/externalworker/ExternalWorkerServiceTaskTest.testSimple.bpmn20.xml&quot;)
+    void testProcessInstanceIsCorrectlyLocked() {
+<span class="nc" id="L974">        runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L975">                .processDefinitionKey(&quot;simpleExternalWorker&quot;)</span>
+<span class="nc" id="L976">                .variable(&quot;name&quot;, &quot;kermit&quot;)</span>
+<span class="nc" id="L977">                .start();</span>
+<span class="nc" id="L978">        runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L979">                .processDefinitionKey(&quot;simpleExternalWorker&quot;)</span>
+<span class="nc" id="L980">                .variable(&quot;name&quot;, &quot;kermit&quot;)</span>
+<span class="nc" id="L981">                .start();</span>
+
+<span class="nc" id="L983">        List&lt;AcquiredExternalWorkerJob&gt; acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L984">                .topic(&quot;simple&quot;, Duration.ofHours(1))</span>
+<span class="nc" id="L985">                .acquireAndLock(1, &quot;worker1&quot;);</span>
+
+<span class="nc" id="L987">        AcquiredExternalWorkerJob acquiredJob = acquiredJobs.get(0);</span>
+
+<span class="nc" id="L989">        assertThat(acquiredJob.getLockOwner()).isEqualTo(&quot;worker1&quot;);</span>
+<span class="nc" id="L990">        assertThat(acquiredJob.getLockExpirationTime()).isNotNull();</span>
+
+<span class="nc" id="L992">        ExecutionEntity processInstance = (ExecutionEntity) runtimeService.createProcessInstanceQuery()</span>
+<span class="nc" id="L993">                .processInstanceId(acquiredJob.getProcessInstanceId())</span>
+<span class="nc" id="L994">                .singleResult();</span>
+
+<span class="nc" id="L996">        assertThat(processInstance.getLockOwner()).isEqualTo(&quot;worker1&quot;);</span>
+<span class="nc" id="L997">        assertThat(processInstance.getLockTime()).isEqualToIgnoringMillis(acquiredJob.getLockExpirationTime());</span>
+
+<span class="nc" id="L999">        managementService.executeCommand(new ClearProcessInstanceLockTimesCmd(processEngineConfiguration.getAsyncExecutor().getLockOwner()));</span>
+
+        // Clearing the async executor jobs times should not clear the ones which are locked by the external worker
+<span class="nc" id="L1002">        processInstance = (ExecutionEntity) runtimeService.createProcessInstanceQuery()</span>
+<span class="nc" id="L1003">                .processInstanceId(acquiredJob.getProcessInstanceId())</span>
+<span class="nc" id="L1004">                .singleResult();</span>
+
+<span class="nc" id="L1006">        assertThat(processInstance.getLockOwner()).isEqualTo(&quot;worker1&quot;);</span>
+<span class="nc" id="L1007">        assertThat(processInstance.getLockTime()).isEqualToIgnoringMillis(acquiredJob.getLockExpirationTime());</span>
+
+<span class="nc" id="L1009">        managementService.executeCommand(new ClearProcessInstanceLockTimesCmd(&quot;worker1&quot;));</span>
+
+        // Clearing the worker1 jobs times should clear the ones which are locked by it
+<span class="nc" id="L1012">        processInstance = (ExecutionEntity) runtimeService.createProcessInstanceQuery()</span>
+<span class="nc" id="L1013">                .processInstanceId(acquiredJob.getProcessInstanceId())</span>
+<span class="nc" id="L1014">                .singleResult();</span>
+
+<span class="nc" id="L1016">        assertThat(processInstance.getLockOwner()).isNull();</span>
+<span class="nc" id="L1017">        assertThat(processInstance.getLockTime()).isNull();</span>
+
+<span class="nc" id="L1019">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/externalworker/ExternalWorkerServiceTaskTest.testSimpleNotExclusive.bpmn20.xml&quot;)
+    void testProcessInstanceIsNotLockedByNotExclusiveJob() {
+<span class="nc" id="L1024">        runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L1025">                .processDefinitionKey(&quot;simpleExternalWorker&quot;)</span>
+<span class="nc" id="L1026">                .variable(&quot;name&quot;, &quot;kermit&quot;)</span>
+<span class="nc" id="L1027">                .start();</span>
+
+<span class="nc" id="L1029">        List&lt;AcquiredExternalWorkerJob&gt; acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L1030">                .topic(&quot;simple&quot;, Duration.ofHours(1))</span>
+<span class="nc" id="L1031">                .acquireAndLock(1, &quot;worker1&quot;);</span>
+
+<span class="nc" id="L1033">        AcquiredExternalWorkerJob acquiredJob = acquiredJobs.get(0);</span>
+
+<span class="nc" id="L1035">        assertThat(acquiredJob.getLockOwner()).isEqualTo(&quot;worker1&quot;);</span>
+<span class="nc" id="L1036">        assertThat(acquiredJob.getLockExpirationTime()).isNotNull();</span>
+
+<span class="nc" id="L1038">        ExecutionEntity processInstance = (ExecutionEntity) runtimeService.createProcessInstanceQuery()</span>
+<span class="nc" id="L1039">                .processInstanceId(acquiredJob.getProcessInstanceId())</span>
+<span class="nc" id="L1040">                .singleResult();</span>
+
+<span class="nc" id="L1042">        assertThat(processInstance.getLockOwner()).isNull();</span>
+<span class="nc" id="L1043">        assertThat(processInstance.getLockTime()).isNull();</span>
+<span class="nc" id="L1044">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/externalworker/ExternalWorkerServiceTaskTest.testSimple.bpmn20.xml&quot;)
+    void testCreateExternalWorkerJobInterceptor() {
+<span class="nc" id="L1049">        TestCreateExternalWorkerJobInterceptor interceptor = new TestCreateExternalWorkerJobInterceptor();</span>
+<span class="nc" id="L1050">        processEngineConfiguration.setCreateExternalWorkerJobInterceptor(interceptor);</span>
+
+        try {
+<span class="nc" id="L1053">            runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L1054">                    .processDefinitionKey(&quot;simpleExternalWorker&quot;)</span>
+<span class="nc" id="L1055">                    .variable(&quot;name&quot;, &quot;kermit&quot;)</span>
+<span class="nc" id="L1056">                    .start();</span>
+
+<span class="nc" id="L1058">            ExternalWorkerJob externalWorkerJob = managementService.createExternalWorkerJobQuery().singleResult();</span>
+
+<span class="nc" id="L1060">            assertThat(externalWorkerJob).isNotNull();</span>
+<span class="nc" id="L1061">            assertThat(externalWorkerJob.getJobHandlerConfiguration()).isEqualTo(&quot;simpleTest&quot;);</span>
+
+<span class="nc" id="L1063">            assertThat(interceptor.beforeCounter).isEqualTo(1);</span>
+<span class="nc" id="L1064">            assertThat(interceptor.afterCounter).isEqualTo(1);</span>
+        } finally {
+<span class="nc" id="L1066">            processEngineConfiguration.setCreateExternalWorkerJobInterceptor(null);</span>
+        }
+
+<span class="nc" id="L1069">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/externalworker/ExternalWorkerServiceTaskTest.testSimple.bpmn20.xml&quot;)
+    public void testAcquireForUserOrGroups() {
+<span class="nc" id="L1074">        runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L1075">                .processDefinitionKey(&quot;simpleExternalWorker&quot;)</span>
+<span class="nc" id="L1076">                .start();</span>
+
+<span class="nc" id="L1078">        runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L1079">                .processDefinitionKey(&quot;simpleExternalWorker&quot;)</span>
+<span class="nc" id="L1080">                .start();</span>
+
+<span class="nc" id="L1082">        runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L1083">                .processDefinitionKey(&quot;simpleExternalWorker&quot;)</span>
+<span class="nc" id="L1084">                .start();</span>
+
+<span class="nc" id="L1086">        List&lt;ExternalWorkerJob&gt; jobs = managementService.createExternalWorkerJobQuery().list();</span>
+<span class="nc" id="L1087">        assertThat(jobs).hasSize(3);</span>
+
+<span class="nc" id="L1089">        ExternalWorkerJob onlyUserJob = jobs.get(0);</span>
+<span class="nc" id="L1090">        ExternalWorkerJob onlyGroupJob = jobs.get(1);</span>
+<span class="nc" id="L1091">        ExternalWorkerJob userAndGroupJob = jobs.get(2);</span>
+
+<span class="nc" id="L1093">        addUserIdentityLinkToJob(onlyUserJob, &quot;gonzo&quot;);</span>
+<span class="nc" id="L1094">        addGroupIdentityLinkToJob(onlyGroupJob, &quot;bears&quot;);</span>
+<span class="nc" id="L1095">        addGroupIdentityLinkToJob(userAndGroupJob, &quot;frogs&quot;);</span>
+<span class="nc" id="L1096">        addUserIdentityLinkToJob(userAndGroupJob, &quot;fozzie&quot;);</span>
+
+<span class="nc" id="L1098">        List&lt;AcquiredExternalWorkerJob&gt; acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L1099">                .topic(&quot;simple&quot;, Duration.ofMinutes(30))</span>
+<span class="nc" id="L1100">                .forUserOrGroups(&quot;kermit&quot;, Collections.singleton(&quot;muppets&quot;))</span>
+<span class="nc" id="L1101">                .acquireAndLock(4, &quot;testWorker&quot;);</span>
+
+<span class="nc" id="L1103">        assertThat(acquiredJobs).isEmpty();</span>
+
+<span class="nc" id="L1105">        acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L1106">                .topic(&quot;simple&quot;, Duration.ofMinutes(30))</span>
+<span class="nc" id="L1107">                .forUserOrGroups(&quot;gonzo&quot;, Collections.singleton(&quot;muppets&quot;))</span>
+<span class="nc" id="L1108">                .acquireAndLock(4, &quot;testWorker&quot;);</span>
+
+<span class="nc" id="L1110">        assertThat(acquiredJobs)</span>
+<span class="nc" id="L1111">                .extracting(AcquiredExternalWorkerJob::getId)</span>
+<span class="nc" id="L1112">                .containsExactlyInAnyOrder(onlyUserJob.getId());</span>
+
+<span class="nc" id="L1114">        managementService.createExternalWorkerJobFailureBuilder(onlyUserJob.getId(), &quot;testWorker&quot;).fail();</span>
+
+<span class="nc" id="L1116">        acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L1117">                .topic(&quot;simple&quot;, Duration.ofMinutes(30))</span>
+<span class="nc" id="L1118">                .forUserOrGroups(&quot;fozzie&quot;, Collections.singleton(&quot;bears&quot;))</span>
+<span class="nc" id="L1119">                .acquireAndLock(4, &quot;testWorker&quot;);</span>
+
+<span class="nc" id="L1121">        assertThat(acquiredJobs)</span>
+<span class="nc" id="L1122">                .extracting(AcquiredExternalWorkerJob::getId)</span>
+<span class="nc" id="L1123">                .containsExactlyInAnyOrder(onlyGroupJob.getId(), userAndGroupJob.getId());</span>
+
+<span class="nc" id="L1125">        managementService.createExternalWorkerJobFailureBuilder(onlyGroupJob.getId(), &quot;testWorker&quot;).fail();</span>
+<span class="nc" id="L1126">        managementService.createExternalWorkerJobFailureBuilder(userAndGroupJob.getId(), &quot;testWorker&quot;).fail();</span>
+
+<span class="nc" id="L1128">        acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L1129">                .topic(&quot;simple&quot;, Duration.ofMinutes(30))</span>
+<span class="nc" id="L1130">                .forUserOrGroups(null, Collections.singleton(&quot;bears&quot;))</span>
+<span class="nc" id="L1131">                .acquireAndLock(4, &quot;testWorker&quot;);</span>
+
+<span class="nc" id="L1133">        assertThat(acquiredJobs)</span>
+<span class="nc" id="L1134">                .extracting(AcquiredExternalWorkerJob::getId)</span>
+<span class="nc" id="L1135">                .containsExactlyInAnyOrder(onlyGroupJob.getId());</span>
+
+<span class="nc" id="L1137">        managementService.createExternalWorkerCompletionBuilder(onlyGroupJob.getId(), &quot;testWorker&quot;).complete();</span>
+
+<span class="nc" id="L1139">        assertThat(getJobIdentityLinks(onlyGroupJob)).isEmpty();</span>
+
+<span class="nc" id="L1141">        acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L1142">                .topic(&quot;simple&quot;, Duration.ofMinutes(30))</span>
+<span class="nc" id="L1143">                .forUserOrGroups(&quot;fozzie&quot;, Collections.emptyList())</span>
+<span class="nc" id="L1144">                .acquireAndLock(4, &quot;testWorker&quot;);</span>
+
+<span class="nc" id="L1146">        assertThat(acquiredJobs)</span>
+<span class="nc" id="L1147">                .extracting(AcquiredExternalWorkerJob::getId)</span>
+<span class="nc" id="L1148">                .containsExactlyInAnyOrder(userAndGroupJob.getId());</span>
+
+<span class="nc" id="L1150">        managementService.createExternalWorkerCompletionBuilder(userAndGroupJob.getId(), &quot;testWorker&quot;).bpmnError(&quot;errorCode&quot;);</span>
+<span class="nc" id="L1151">        assertThat(getJobIdentityLinks(userAndGroupJob)).isEmpty();</span>
+
+<span class="nc" id="L1153">        assertThat(getJobIdentityLinks(onlyUserJob))</span>
+<span class="nc" id="L1154">                .extracting(IdentityLink::getUserId)</span>
+<span class="nc" id="L1155">                .containsOnly(&quot;gonzo&quot;);</span>
+<span class="nc" id="L1156">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/externalworker/ExternalWorkerServiceTaskTest.testSimple.bpmn20.xml&quot;)
+    public void testAcquireByTenantId() {
+<span class="nc" id="L1161">        runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L1162">                .processDefinitionKey(&quot;simpleExternalWorker&quot;)</span>
+<span class="nc" id="L1163">                .overrideProcessDefinitionTenantId(&quot;flowable&quot;)</span>
+<span class="nc" id="L1164">                .start();</span>
+
+<span class="nc" id="L1166">        runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L1167">                .processDefinitionKey(&quot;simpleExternalWorker&quot;)</span>
+<span class="nc" id="L1168">                .overrideProcessDefinitionTenantId(&quot;acme&quot;)</span>
+<span class="nc" id="L1169">                .start();</span>
+
+<span class="nc" id="L1171">        runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L1172">                .processDefinitionKey(&quot;simpleExternalWorker&quot;)</span>
+<span class="nc" id="L1173">                .start();</span>
+
+<span class="nc" id="L1175">        List&lt;ExternalWorkerJob&gt; jobs = managementService.createExternalWorkerJobQuery().list();</span>
+<span class="nc" id="L1176">        assertThat(jobs).hasSize(3);</span>
+
+<span class="nc" id="L1178">        ExternalWorkerJob flowableJob = managementService.createExternalWorkerJobQuery().jobTenantId(&quot;flowable&quot;).singleResult();</span>
+<span class="nc" id="L1179">        ExternalWorkerJob acmeJob = managementService.createExternalWorkerJobQuery().jobTenantId(&quot;acme&quot;).singleResult();</span>
+<span class="nc" id="L1180">        ExternalWorkerJob noTenantJob = managementService.createExternalWorkerJobQuery().jobWithoutTenantId().singleResult();</span>
+
+<span class="nc" id="L1182">        List&lt;AcquiredExternalWorkerJob&gt; acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L1183">                .topic(&quot;simple&quot;, Duration.ofMinutes(30))</span>
+<span class="nc" id="L1184">                .tenantId(&quot;megacorp&quot;)</span>
+<span class="nc" id="L1185">                .acquireAndLock(4, &quot;testWorker&quot;);</span>
+
+<span class="nc" id="L1187">        assertThat(acquiredJobs).isEmpty();</span>
+
+<span class="nc" id="L1189">        acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L1190">                .topic(&quot;simple&quot;, Duration.ofMinutes(30))</span>
+<span class="nc" id="L1191">                .tenantId(&quot;flowable&quot;)</span>
+<span class="nc" id="L1192">                .acquireAndLock(4, &quot;testWorker&quot;);</span>
+
+<span class="nc" id="L1194">        assertThat(acquiredJobs)</span>
+<span class="nc" id="L1195">                .extracting(AcquiredExternalWorkerJob::getId)</span>
+<span class="nc" id="L1196">                .containsExactlyInAnyOrder(flowableJob.getId());</span>
+<span class="nc" id="L1197">        managementService.createExternalWorkerJobFailureBuilder(flowableJob.getId(), &quot;testWorker&quot;).fail();</span>
+
+<span class="nc" id="L1199">        acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L1200">                .topic(&quot;simple&quot;, Duration.ofMinutes(30))</span>
+<span class="nc" id="L1201">                .tenantId(&quot;acme&quot;)</span>
+<span class="nc" id="L1202">                .acquireAndLock(4, &quot;testWorker&quot;);</span>
+
+<span class="nc" id="L1204">        assertThat(acquiredJobs)</span>
+<span class="nc" id="L1205">                .extracting(AcquiredExternalWorkerJob::getId)</span>
+<span class="nc" id="L1206">                .containsExactlyInAnyOrder(acmeJob.getId());</span>
+
+<span class="nc" id="L1208">        managementService.createExternalWorkerJobFailureBuilder(acmeJob.getId(), &quot;testWorker&quot;).fail();</span>
+
+<span class="nc" id="L1210">        acquiredJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L1211">                .topic(&quot;simple&quot;, Duration.ofMinutes(30))</span>
+<span class="nc" id="L1212">                .tenantId(&quot;&quot;)</span>
+<span class="nc" id="L1213">                .acquireAndLock(4, &quot;testWorker&quot;);</span>
+
+<span class="nc" id="L1215">        assertThat(acquiredJobs)</span>
+<span class="nc" id="L1216">                .extracting(AcquiredExternalWorkerJob::getId)</span>
+<span class="nc" id="L1217">                .containsExactlyInAnyOrder(noTenantJob.getId());</span>
+
+<span class="nc" id="L1219">        managementService.createExternalWorkerJobFailureBuilder(noTenantJob.getId(), &quot;testWorker&quot;).fail();</span>
+<span class="nc" id="L1220">    }</span>
+
+    protected void addUserIdentityLinkToJob(Job job, String userId) {
+<span class="nc" id="L1223">        managementService.executeCommand(commandContext -&gt; {</span>
+<span class="nc" id="L1224">                    processEngineConfiguration.getIdentityLinkServiceConfiguration().getIdentityLinkService()</span>
+<span class="nc" id="L1225">                            .createScopeIdentityLink(null, job.getCorrelationId(), ScopeTypes.EXTERNAL_WORKER, userId, null, IdentityLinkType.PARTICIPANT);</span>
+
+<span class="nc" id="L1227">                    return null;</span>
+                });
+<span class="nc" id="L1229">    }</span>
+
+    protected void addGroupIdentityLinkToJob(Job job, String groupId) {
+<span class="nc" id="L1232">        managementService.executeCommand(commandContext -&gt; {</span>
+<span class="nc" id="L1233">                    processEngineConfiguration.getIdentityLinkServiceConfiguration().getIdentityLinkService()</span>
+<span class="nc" id="L1234">                            .createScopeIdentityLink(null, job.getCorrelationId(), ScopeTypes.EXTERNAL_WORKER, null, groupId, IdentityLinkType.PARTICIPANT);</span>
+<span class="nc" id="L1235">                    return null;</span>
+                });
+<span class="nc" id="L1237">    }</span>
+
+    protected Collection&lt;IdentityLinkEntity&gt; getJobIdentityLinks(Job job) {
+<span class="nc" id="L1240">        return managementService.executeCommand(commandContext -&gt; processEngineConfiguration.getIdentityLinkServiceConfiguration().getIdentityLinkService()</span>
+<span class="nc" id="L1241">                        .findIdentityLinksByScopeIdAndType(job.getCorrelationId(), ScopeTypes.EXTERNAL_WORKER));</span>
+    }
+
+    protected void setTime(Instant time) {
+<span class="nc" id="L1245">        processEngineConfiguration.getClock().setCurrentTime(Date.from(time));</span>
+<span class="nc" id="L1246">    }</span>
+
+<span class="nc" id="L1248">    protected static class TestCreateExternalWorkerJobInterceptor implements CreateExternalWorkerJobInterceptor {</span>
+
+<span class="nc" id="L1250">        protected int beforeCounter = 0;</span>
+<span class="nc" id="L1251">        protected int afterCounter = 0;</span>
+
+        @Override
+        public void beforeCreateExternalWorkerJob(CreateExternalWorkerJobBeforeContext beforeContext) {
+<span class="nc" id="L1255">            beforeCounter++;</span>
+<span class="nc" id="L1256">            beforeContext.setJobTopicExpression(beforeContext.getExternalWorkerServiceTask().getTopic() + &quot;Test&quot;);</span>
+<span class="nc" id="L1257">        }</span>
+
+        @Override
+        public void afterCreateExternalWorkerJob(CreateExternalWorkerJobAfterContext createExternalWorkerJobAfterContext) {
+<span class="nc" id="L1261">            afterCounter++;</span>
+<span class="nc" id="L1262">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,325 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ExpressionFactory.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.common.engine.impl.javax.el</a> &gt; <span class="el_source">ExpressionFactory.java</span></div><h1>ExpressionFactory.java</h1><pre class="source lang-java linenums">/*
+ * Copyright 2006-2009 Odysseus Software GmbH
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.common.engine.impl.javax.el;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.lang.reflect.Constructor;
+import java.nio.charset.StandardCharsets;
+import java.util.Properties;
+
+/**
+ * Parses a String into a {@link ValueExpression} or {@link MethodExpression} instance for later
+ * evaluation. Classes that implement the EL expression language expose their functionality via this
+ * abstract class. There is no concrete implementation of this API available in this package.
+ * Technologies such as JavaServer Pages and JavaServer Faces provide access to an implementation
+ * via factory methods. The {@link #createValueExpression(ELContext, String, Class)} method is used
+ * to parse expressions that evaluate to values (both l-values and r-values are supported). The
+ * {@link #createMethodExpression(ELContext, String, Class, Class[])} method is used to parse
+ * expressions that evaluate to a reference to a method on an object. Unlike previous incarnations
+ * of this API, there is no way to parse and evaluate an expression in one single step. The
+ * expression needs to first be parsed, and then evaluated. Resolution of model objects is performed
+ * at evaluation time, via the {@link ELResolver} associated with the {@link ELContext} passed to
+ * the ValueExpression or MethodExpression. The ELContext object also provides access to the
+ * {@link FunctionMapper} and {@link VariableMapper} to be used when parsing the expression. EL
+ * function and variable mapping is performed at parse-time, and the results are bound to the
+ * expression. Therefore, the {@link ELContext}, {@link FunctionMapper}, and {@link VariableMapper}
+ * are not stored for future use and do not have to be Serializable. The createValueExpression and
+ * createMethodExpression methods must be thread-safe. That is, multiple threads may call these
+ * methods on the same ExpressionFactory object simultaneously. Implementations should synchronize
+ * access if they depend on transient state. Implementations should not, however, assume that only
+ * one object of each ExpressionFactory type will be instantiated; global caching should therefore
+ * be static. The ExpressionFactory must be able to handle the following types of input for the
+ * expression parameter:
+ * &lt;ul&gt;
+ * &lt;li&gt;Single expressions using the ${} delimiter (e.g. &quot;${employee.lastName}&quot;).&lt;/li&gt;
+ * &lt;li&gt;Single expressions using the #{} delimiter (e.g. &quot;#{employee.lastName}&quot;).&lt;/li&gt;
+ * &lt;li&gt;Literal text containing no ${} or #{} delimiters (e.g. &quot;John Doe&quot;).&lt;/li&gt;
+ * &lt;li&gt;Multiple expressions using the same delimiter (e.g.
+ * &quot;${employee.firstName}${employee.lastName}&quot; or &quot;#{employee.firstName}#{employee.lastName}&quot;).&lt;/li&gt;
+ * &lt;li&gt;Mixed literal text and expressions using the same delimiter (e.g. &quot;Name:
+ * ${employee.firstName} ${employee.lastName}&quot;).&lt;/li&gt;
+ * &lt;/ul&gt;
+ * The following types of input are illegal and must cause an {@link ELException} to be thrown:
+ * &lt;ul&gt;
+ * &lt;li&gt;Multiple expressions using different delimiters (e.g.
+ * &quot;${employee.firstName}#{employee.lastName}&quot;).&lt;/li&gt;
+ * &lt;li&gt;Mixed literal text and expressions using different delimiters(e.g. &quot;Name:
+ * ${employee.firstName} #{employee.lastName}&quot;).&lt;/li&gt;
+ * &lt;/ul&gt;
+ */
+<span class="nc" id="L68">public abstract class ExpressionFactory {</span>
+	/**
+	 * Creates a new instance of a ExpressionFactory. This method uses the following ordered lookup
+	 * procedure to determine the ExpressionFactory implementation class to load:
+	 * &lt;ul&gt;
+	 * &lt;li&gt;Use the Services API (as detailed in the JAR specification). If a resource with the name
+	 * of META-INF/services/javax.el.ExpressionFactory exists, then its first line, if present, is
+	 * used as the UTF-8 encoded name of the implementation class.&lt;/li&gt;
+	 * &lt;li&gt;Use the properties file &quot;lib/el.properties&quot; in the JRE directory. If this file exists and
+	 * it is readable by the java.util.Properties.load(InputStream) method, and it contains an entry
+	 * whose key is &quot;javax.el.ExpressionFactory&quot;, then the value of that entry is used as the name
+	 * of the implementation class.&lt;/li&gt;
+	 * &lt;li&gt;Use the javax.el.ExpressionFactory system property. If a system property with this name
+	 * is defined, then its value is used as the name of the implementation class.&lt;/li&gt;
+	 * &lt;li&gt;Use a platform default implementation.&lt;/li&gt;
+	 * &lt;/ul&gt;
+	 * 
+	 * @return An instance of ExpressionFactory.
+	 * @throws ELException
+	 *             if a factory class cannot be found or instantiation fails.
+	 */
+	public static ExpressionFactory newInstance() {
+<span class="nc" id="L90">		return newInstance(null);</span>
+	}
+
+	/**
+	 * Create a new instance of a ExpressionFactory, with optional properties. This method uses the
+	 * same lookup procedure as the one used in newInstance(). If the argument properties is not
+	 * null, and if the implementation contains a constructor with a single parameter of type
+	 * java.util.Properties, then the constructor is used to create the instance. Properties are
+	 * optional and can be ignored by an implementation. The name of a property should start with
+	 * &quot;javax.el.&quot; The following are some suggested names for properties.
+	 * &lt;ul&gt;
+	 * &lt;li&gt;javax.el.cacheSize&lt;/li&gt;
+	 * &lt;/ul&gt;
+	 * 
+	 * @param properties
+	 *            Properties passed to the constructor of the implementation.
+	 * @return An instance of ExpressionFactory.
+	 * @throws ELException
+	 *             if a factory class cannot be found or instantiation fails.
+	 */
+	public static ExpressionFactory newInstance(Properties properties) {
+		ClassLoader classLoader;
+		try {
+<span class="nc" id="L113">			classLoader = Thread.currentThread().getContextClassLoader();</span>
+<span class="nc" id="L114">		} catch (SecurityException e) {</span>
+<span class="nc" id="L115">			classLoader = ExpressionFactory.class.getClassLoader();</span>
+<span class="nc" id="L116">		}</span>
+
+<span class="nc" id="L118">		String className = null;</span>
+
+<span class="nc" id="L120">		String serviceId = &quot;META-INF/services/&quot; + ExpressionFactory.class.getName();</span>
+<span class="nc" id="L121">		InputStream input = classLoader.getResourceAsStream(serviceId);</span>
+		try {
+<span class="nc bnc" id="L123" title="All 2 branches missed.">			if (input != null) {</span>
+<span class="nc" id="L124">				BufferedReader reader = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8));</span>
+<span class="nc" id="L125">				className = reader.readLine();</span>
+<span class="nc" id="L126">				reader.close();</span>
+			}
+<span class="nc" id="L128">		} catch (IOException e) {</span>
+			// do nothing
+		} finally {
+<span class="nc bnc" id="L131" title="All 2 branches missed.">			if (input != null) {</span>
+				try {
+<span class="nc" id="L133">					input.close();</span>
+<span class="nc" id="L134">				} catch (Exception io) {</span>
+					// do nothing
+				} finally {
+<span class="nc" id="L137">					input = null;</span>
+				}
+			}
+		}
+
+<span class="nc bnc" id="L142" title="All 4 branches missed.">		if (className == null || className.trim().length() == 0) {</span>
+			try {
+<span class="nc" id="L144">				String home = System.getProperty(&quot;java.home&quot;);</span>
+<span class="nc bnc" id="L145" title="All 2 branches missed.">				if (home != null) {</span>
+<span class="nc" id="L146">					String path = home + File.separator + &quot;lib&quot; + File.separator + &quot;el.properties&quot;;</span>
+<span class="nc" id="L147">					File file = new File(path);</span>
+<span class="nc bnc" id="L148" title="All 2 branches missed.">					if (file.exists()) {</span>
+<span class="nc" id="L149">						input = new FileInputStream(file);</span>
+<span class="nc" id="L150">						Properties props = new Properties();</span>
+<span class="nc" id="L151">						props.load(input);</span>
+<span class="nc" id="L152">						className = props.getProperty(ExpressionFactory.class.getName());</span>
+					}
+				}
+<span class="nc" id="L155">			} catch (IOException | SecurityException e) {</span>
+				// do nothing
+			} finally {
+<span class="nc bnc" id="L158" title="All 2 branches missed.">				if (input != null) {</span>
+					try {
+<span class="nc" id="L160">						input.close();</span>
+<span class="nc" id="L161">					} catch (IOException io) {</span>
+						// do nothing
+					} finally {
+<span class="nc" id="L164">						input = null;</span>
+					}
+				}
+			}
+		}
+
+<span class="nc bnc" id="L170" title="All 4 branches missed.">		if (className == null || className.trim().length() == 0) {</span>
+			try {
+<span class="nc" id="L172">				className = System.getProperty(ExpressionFactory.class.getName());</span>
+<span class="nc" id="L173">			} catch (Exception se) {</span>
+				// do nothing
+<span class="nc" id="L175">			}</span>
+		}
+
+<span class="nc bnc" id="L178" title="All 4 branches missed.">		if (className == null || className.trim().length() == 0) {</span>
+<span class="nc" id="L179">			className = &quot;org.flowable.common.engine.impl.de.odysseus.el.ExpressionFactoryImpl&quot;;</span>
+		}
+
+<span class="nc" id="L182">		return newInstance(properties, className, classLoader);</span>
+	}
+
+	/**
+	 * Create an ExpressionFactory instance.
+	 * 
+	 * @param properties
+	 *            Properties passed to the constructor of the implementation.
+	 * @param className
+	 *            The name of the ExpressionFactory class.
+	 * @param classLoader
+	 *            The class loader to be used to load the class.
+	 * @return An instance of ExpressionFactory.
+	 * @throws ELException
+	 *             if the class could not be found or if it is not a subclass of ExpressionFactory
+	 *             or if the class could not be instantiated.
+	 */
+	private static ExpressionFactory newInstance(Properties properties, String className, ClassLoader classLoader) {
+<span class="nc" id="L200">		Class&lt;?&gt; clazz = null;</span>
+		try {
+<span class="nc" id="L202">			clazz = classLoader.loadClass(className.trim());</span>
+<span class="nc bnc" id="L203" title="All 2 branches missed.">			if (!ExpressionFactory.class.isAssignableFrom(clazz)) {</span>
+<span class="nc" id="L204">				throw new ELException(&quot;Invalid expression factory class: &quot; + clazz.getName());</span>
+			}
+<span class="nc" id="L206">		} catch (ClassNotFoundException e) {</span>
+<span class="nc" id="L207">			throw new ELException(&quot;Could not find expression factory class&quot;, e);</span>
+<span class="nc" id="L208">		}</span>
+		try {
+<span class="nc bnc" id="L210" title="All 2 branches missed.">			if (properties != null) {</span>
+<span class="nc" id="L211">				Constructor&lt;?&gt; constructor = null;</span>
+				try {
+<span class="nc" id="L213">					constructor = clazz.getConstructor(Properties.class);</span>
+<span class="nc" id="L214">				} catch (Exception e) {</span>
+					// do nothing
+<span class="nc" id="L216">				}</span>
+<span class="nc bnc" id="L217" title="All 2 branches missed.">				if (constructor != null) {</span>
+<span class="nc" id="L218">					return (ExpressionFactory) constructor.newInstance(properties);</span>
+				}
+			}
+<span class="nc" id="L221">			return (ExpressionFactory) clazz.newInstance();</span>
+<span class="nc" id="L222">		} catch (Exception e) {</span>
+<span class="nc" id="L223">			throw new ELException(&quot;Could not create expression factory instance&quot;, e);</span>
+		}
+	}
+
+	/**
+	 * Coerces an object to a specific type according to the EL type conversion rules. An
+	 * {@link ELException} is thrown if an error results from applying the conversion rules.
+	 * 
+	 * @param obj
+	 *            The object to coerce.
+	 * @param targetType
+	 *            The target type for the coercion.
+	 * @return the coerced object
+	 * @throws ELException
+	 *             if an error results from applying the conversion rules.
+	 */
+	public abstract Object coerceToType(Object obj, Class&lt;?&gt; targetType);
+
+	/**
+	 * Parses an expression into a {@link MethodExpression} for later evaluation. Use this method
+	 * for expressions that refer to methods. If the expression is a String literal, a
+	 * MethodExpression is created, which when invoked, returns the String literal, coerced to
+	 * expectedReturnType. An ELException is thrown if expectedReturnType is void or if the coercion
+	 * of the String literal to the expectedReturnType yields an error (see Section &quot;1.16 Type
+	 * Conversion&quot;). This method should perform syntactic validation of the expression. If in doing
+	 * so it detects errors, it should raise an ELException.
+	 * 
+	 * @param context
+	 *            The EL context used to parse the expression. The FunctionMapper and VariableMapper
+	 *            stored in the ELContext are used to resolve functions and variables found in the
+	 *            expression. They can be null, in which case functions or variables are not
+	 *            supported for this expression. The object returned must invoke the same functions
+	 *            and access the same variable mappings regardless of whether the mappings in the
+	 *            provided FunctionMapper and VariableMapper instances change between calling
+	 *            ExpressionFactory.createMethodExpression() and any method on MethodExpression.
+	 *            Note that within the EL, the ${} and #{} syntaxes are treated identically. This
+	 *            includes the use of VariableMapper and FunctionMapper at expression creation time.
+	 *            Each is invoked if not null, independent of whether the #{} or ${} syntax is used
+	 *            for the expression.
+	 * @param expression
+	 *            The expression to parse
+	 * @param expectedReturnType
+	 *            The expected return type for the method to be found. After evaluating the
+	 *            expression, the MethodExpression must check that the return type of the actual
+	 *            method matches this type. Passing in a value of null indicates the caller does not
+	 *            care what the return type is, and the check is disabled.
+	 * @param expectedParamTypes
+	 *            The expected parameter types for the method to be found. Must be an array with no
+	 *            elements if there are no parameters expected. It is illegal to pass null, unless
+	 *            the method is specified with arguments in the EL expression.
+	 * @return The parsed expression
+	 * @throws ELException
+	 *             Thrown if there are syntactical errors in the provided expression.
+	 * @throws NullPointerException
+	 *             if paramTypes is null.
+	 */
+	public abstract MethodExpression createMethodExpression(ELContext context, String expression,
+			Class&lt;?&gt; expectedReturnType, Class&lt;?&gt;[] expectedParamTypes);
+
+	/**
+	 * Parses an expression into a {@link ValueExpression} for later evaluation. Use this method for
+	 * expressions that refer to values. This method should perform syntactic validation of the
+	 * expression. If in doing so it detects errors, it should raise an ELException.
+	 * 
+	 * @param context
+	 *            The EL context used to parse the expression. The FunctionMapper and VariableMapper
+	 *            stored in the ELContext are used to resolve functions and variables found in the
+	 *            expression. They can be null, in which case functions or variables are not
+	 *            supported for this expression. The object returned must invoke the same functions
+	 *            and access the same variable mappings regardless of whether the mappings in the
+	 *            provided FunctionMapper and VariableMapper instances change between calling
+	 *            ExpressionFactory.createValueExpression() and any method on ValueExpression. Note
+	 *            that within the EL, the ${} and #{} syntaxes are treated identically. This
+	 *            includes the use of VariableMapper and FunctionMapper at expression creation time.
+	 *            Each is invoked if not null, independent of whether the #{} or ${} syntax is used
+	 *            for the expression.
+	 * @param expression
+	 *            The expression to parse
+	 * @param expectedType
+	 *            The type the result of the expression will be coerced to after evaluation.
+	 * @return The parsed expression
+	 * @throws ELException
+	 *             Thrown if there are syntactical errors in the provided expression.
+	 * @throws NullPointerException
+	 *             if paramTypes is null.
+	 */
+	public abstract ValueExpression createValueExpression(ELContext context, String expression, Class&lt;?&gt; expectedType);
+
+	/**
+	 * Creates a ValueExpression that wraps an object instance. This method can be used to pass any
+	 * object as a ValueExpression. The wrapper ValueExpression is read only, and returns the
+	 * wrapped object via its getValue() method, optionally coerced.
+	 * 
+	 * @param instance
+	 *            The object instance to be wrapped.
+	 * @param expectedType
+	 *            The type the result of the expression will be coerced to after evaluation. There
+	 *            will be no coercion if it is Object.class,
+	 * @return a ValueExpression that wraps the given object instance.
+	 */
+	public abstract ValueExpression createValueExpression(Object instance, Class&lt;?&gt; expectedType);
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

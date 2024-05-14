@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DefaultEventRegistryChangeDetectionManager.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.eventregistry.impl.management</a> &gt; <span class="el_source">DefaultEventRegistryChangeDetectionManager.java</span></div><h1>DefaultEventRegistryChangeDetectionManager.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.eventregistry.impl.management;
+
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.List;
+
+import org.flowable.eventregistry.api.ChannelDefinition;
+import org.flowable.eventregistry.api.InboundChannelModelCacheManager;
+import org.flowable.eventregistry.api.management.EventRegistryChangeDetectionManager;
+import org.flowable.eventregistry.impl.EventRegistryEngineConfiguration;
+import org.flowable.eventregistry.impl.util.CommandContextUtil;
+import org.flowable.eventregistry.model.ChannelModel;
+import org.flowable.eventregistry.model.InboundChannelModel;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * @author Joram Barrez
+ * @author Filip Hrisafov
+ */
+public class DefaultEventRegistryChangeDetectionManager implements EventRegistryChangeDetectionManager {
+
+<span class="nc" id="L35">    private static final Logger LOGGER = LoggerFactory.getLogger(DefaultEventRegistryChangeDetectionManager.class);</span>
+
+    protected EventRegistryEngineConfiguration eventRegistryEngineConfiguration;
+
+<span class="nc" id="L39">    public DefaultEventRegistryChangeDetectionManager(EventRegistryEngineConfiguration eventRegistryEngineConfiguration) {</span>
+<span class="nc" id="L40">        this.eventRegistryEngineConfiguration = eventRegistryEngineConfiguration;</span>
+<span class="nc" id="L41">    }</span>
+
+    @Override
+    public void detectChanges() {
+        // This query could be optimized in the future by keeping a timestamp of the last query
+        // and querying by createtime (but detecting deletes would need dedicated logic!).
+        // The amount of channel definitions however, should typically not be large.
+<span class="nc" id="L48">        List&lt;ChannelDefinition&gt; channelDefinitions = eventRegistryEngineConfiguration.getEventRepositoryService()</span>
+<span class="nc" id="L49">            .createChannelDefinitionQuery()</span>
+<span class="nc" id="L50">            .latestVersion()</span>
+<span class="nc" id="L51">            .list();</span>
+
+<span class="nc" id="L53">        InboundChannelModelCacheManager inboundChannelModelCacheManager = eventRegistryEngineConfiguration.getInboundChannelModelCacheManager();</span>
+<span class="nc" id="L54">        Collection&lt;String&gt; latestChannelDefinitionIds = new HashSet&lt;&gt;();</span>
+
+        // Check for new deployments
+<span class="nc bnc" id="L57" title="All 2 branches missed.">        for (ChannelDefinition channelDefinition : channelDefinitions) {</span>
+<span class="nc" id="L58">            latestChannelDefinitionIds.add(channelDefinition.getId());</span>
+<span class="nc" id="L59">            InboundChannelModelCacheManager.RegisteredChannel registeredChannel = inboundChannelModelCacheManager.findRegisteredChannel(channelDefinition);</span>
+<span class="nc bnc" id="L60" title="All 2 branches missed.">            if (registeredChannel != null) {</span>
+<span class="nc bnc" id="L61" title="All 2 branches missed.">                if (registeredChannel.getChannelDefinitionId().equals(channelDefinition.getId())) {</span>
+                    // The latest definition is already deployed nothing to do
+<span class="nc" id="L63">                    continue;</span>
+                }
+
+<span class="nc bnc" id="L66" title="All 2 branches missed.">                if (registeredChannel.getChannelDefinitionVersion() &gt; channelDefinition.getVersion()) {</span>
+                    // If the registered channel has a version higher than the latest one then we need to remove it
+                    // This can happen when a deployment was reverted (i.e. a newer deployment was deleted)
+<span class="nc" id="L69">                    ChannelDefinition unregisteredChannel = eventRegistryEngineConfiguration.getDeploymentManager().removeChannelDefinitionFromCache(registeredChannel.getChannelDefinitionId());</span>
+<span class="nc bnc" id="L70" title="All 2 branches missed.">                    if (unregisteredChannel != null) {</span>
+<span class="nc" id="L71">                        LOGGER.info(&quot;Unregistered channel definition with key {} and tenant {} from cache&quot;, unregisteredChannel.getKey(), unregisteredChannel.getTenantId());</span>
+                    }
+                }
+            }
+            // If the registered channel IDs does not contain the latest version we need to deploy it
+            // fetching the channel model by ID will trigger its deployment. If it does not we will manually do it
+<span class="nc" id="L77">            ChannelModel channelModel = eventRegistryEngineConfiguration.getEventRepositoryService().getChannelModelById(channelDefinition.getId());</span>
+<span class="nc bnc" id="L78" title="All 2 branches missed.">            if (channelModel instanceof InboundChannelModel) {</span>
+<span class="nc bnc" id="L79" title="All 2 branches missed.">                if (inboundChannelModelCacheManager.findRegisteredChannel(channelDefinition) == null) {</span>
+                    // The model has not been registered in the inbound cache manager
+                    // This means that most likely a newer deployment was deleted
+                    // We need to manually register it.
+<span class="nc" id="L83">                    eventRegistryEngineConfiguration.getCommandExecutor()</span>
+<span class="nc" id="L84">                            .execute(commandContext -&gt; {</span>
+<span class="nc" id="L85">                                EventRegistryEngineConfiguration eventRegistryConfiguration = CommandContextUtil.getEventRegistryConfiguration(commandContext);</span>
+<span class="nc" id="L86">                                eventRegistryConfiguration</span>
+<span class="nc" id="L87">                                        .getEventDeployer()</span>
+<span class="nc" id="L88">                                        .getCachingAndArtifcatsManager()</span>
+<span class="nc" id="L89">                                        .registerChannelModel(channelModel, channelDefinition, eventRegistryEngineConfiguration);</span>
+<span class="nc" id="L90">                                return null;</span>
+                            });
+                }
+<span class="nc" id="L93">                LOGGER.info(&quot;Deployed channel definition with key {} and tenant {}&quot;, channelDefinition.getKey(), channelDefinition.getTenantId());</span>
+            }
+<span class="nc" id="L95">        }</span>
+
+        // Once the latest definitions are deployed we need to see if there are any lingering older channels that should be unregistered
+<span class="nc" id="L98">        Collection&lt;InboundChannelModelCacheManager.RegisteredChannel&gt; registeredChannels = inboundChannelModelCacheManager</span>
+<span class="nc" id="L99">                .getRegisteredChannels();</span>
+
+<span class="nc bnc" id="L101" title="All 2 branches missed.">        for (InboundChannelModelCacheManager.RegisteredChannel registeredChannel : registeredChannels) {</span>
+<span class="nc bnc" id="L102" title="All 2 branches missed.">            if (!latestChannelDefinitionIds.contains(registeredChannel.getChannelDefinitionId())) {</span>
+                // If a registered channel is not within the latest channel definitions then we need to unregister it
+                // This can happen when all deployments for a particular channel have been removed
+                // The cache is a synchronized map (default impl), so no need to synchronize, both adds (during deployment) and remove (here) are synchronized
+<span class="nc" id="L106">                ChannelDefinition unregisteredChannel = eventRegistryEngineConfiguration.getDeploymentManager().removeChannelDefinitionFromCache(registeredChannel.getChannelDefinitionId());</span>
+<span class="nc bnc" id="L107" title="All 2 branches missed.">                if (unregisteredChannel != null) {</span>
+<span class="nc" id="L108">                    LOGGER.info(&quot;Unregistered channel definition with key {} and tenant {} from cache&quot;, unregisteredChannel.getKey(), unregisteredChannel.getTenantId());</span>
+                }
+            }
+<span class="nc" id="L111">        }</span>
+<span class="nc" id="L112">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

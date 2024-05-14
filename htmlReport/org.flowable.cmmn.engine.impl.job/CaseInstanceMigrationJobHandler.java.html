@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CaseInstanceMigrationJobHandler.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.cmmn.engine.impl.job</a> &gt; <span class="el_source">CaseInstanceMigrationJobHandler.java</span></div><h1>CaseInstanceMigrationJobHandler.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.cmmn.engine.impl.job;
+
+import java.io.PrintWriter;
+import java.io.StringWriter;
+
+import org.flowable.batch.api.Batch;
+import org.flowable.batch.api.BatchPart;
+import org.flowable.batch.api.BatchService;
+import org.flowable.cmmn.api.migration.CaseInstanceBatchMigrationResult;
+import org.flowable.cmmn.api.migration.CaseInstanceMigrationDocument;
+import org.flowable.cmmn.engine.CmmnEngineConfiguration;
+import org.flowable.cmmn.engine.impl.migration.CaseInstanceMigrationDocumentImpl;
+import org.flowable.cmmn.engine.impl.migration.CaseInstanceMigrationManager;
+import org.flowable.cmmn.engine.impl.util.CommandContextUtil;
+import org.flowable.common.engine.api.FlowableBatchPartMigrationException;
+import org.flowable.common.engine.impl.interceptor.Command;
+import org.flowable.common.engine.impl.interceptor.CommandConfig;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.job.service.impl.persistence.entity.JobEntity;
+import org.flowable.variable.api.delegate.VariableScope;
+
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+<span class="nc" id="L36">public class CaseInstanceMigrationJobHandler extends AbstractCaseInstanceMigrationJobHandler {</span>
+
+    public static final String TYPE = &quot;case-migration&quot;;
+
+    @Override
+    public String getType() {
+<span class="nc" id="L42">        return TYPE;</span>
+    }
+
+    @Override
+    public void execute(JobEntity job, String configuration, VariableScope variableScope, CommandContext commandContext) {
+<span class="nc" id="L47">        CmmnEngineConfiguration engineConfiguration = CommandContextUtil.getCmmnEngineConfiguration(commandContext);</span>
+<span class="nc" id="L48">        BatchService batchService = engineConfiguration.getBatchServiceConfiguration().getBatchService();</span>
+<span class="nc" id="L49">        CaseInstanceMigrationManager migrationManager = engineConfiguration.getCaseInstanceMigrationManager();</span>
+
+<span class="nc" id="L51">        String batchPartId = getBatchPartIdFromHandlerCfg(configuration);</span>
+<span class="nc" id="L52">        BatchPart batchPart = batchService.getBatchPart(batchPartId);</span>
+<span class="nc" id="L53">        Batch batch = batchService.getBatch(batchPart.getBatchId());</span>
+<span class="nc" id="L54">        CaseInstanceMigrationDocument migrationDocument = CaseInstanceMigrationDocumentImpl.fromJson(</span>
+<span class="nc" id="L55">                batch.getBatchDocumentJson(engineConfiguration.getEngineCfgKey()));</span>
+
+        try {
+<span class="nc" id="L58">            migrationManager.migrateCaseInstance(batchPart.getScopeId(), migrationDocument, commandContext);</span>
+<span class="nc" id="L59">        } catch (Exception e) {</span>
+<span class="nc" id="L60">            String exceptionMessage = e.getMessage();</span>
+            
+<span class="nc" id="L62">            engineConfiguration.getCommandExecutor().execute(new Command&lt;&gt;() {</span>
+                @Override
+                public Void execute(CommandContext commandContext) {
+<span class="nc" id="L65">                    CommandConfig commandConfig = engineConfiguration.getCommandExecutor().getDefaultConfig().transactionRequiresNew();</span>
+<span class="nc" id="L66">                    return engineConfiguration.getCommandExecutor().execute(commandConfig, new Command&lt;&gt;() {</span>
+                        @Override
+                        public Void execute(CommandContext commandContext2) {
+<span class="nc" id="L69">                            String resultAsJsonString = prepareResultAsJsonString(exceptionMessage, e);</span>
+<span class="nc" id="L70">                            batchService.completeBatchPart(batchPartId, CaseInstanceBatchMigrationResult.RESULT_FAIL, resultAsJsonString);</span>
+
+<span class="nc" id="L72">                            return null;</span>
+                        }
+                    });
+                }
+            });
+            
+<span class="nc" id="L78">            FlowableBatchPartMigrationException wrappedException = new FlowableBatchPartMigrationException(e.getMessage(), e);</span>
+<span class="nc" id="L79">            wrappedException.setIgnoreFailedJob(true);</span>
+<span class="nc" id="L80">            throw wrappedException;</span>
+<span class="nc" id="L81">        }</span>
+        
+<span class="nc" id="L83">        String resultAsJsonString = prepareResultAsJsonString();</span>
+<span class="nc" id="L84">        batchService.completeBatchPart(batchPartId, CaseInstanceBatchMigrationResult.RESULT_SUCCESS, resultAsJsonString);</span>
+<span class="nc" id="L85">    }</span>
+
+    protected String prepareResultAsJsonString(String exceptionMessage, Exception e) {
+<span class="nc" id="L88">        ObjectNode objectNode = getObjectMapper().createObjectNode();</span>
+<span class="nc" id="L89">        objectNode.put(BATCH_RESULT_STATUS_LABEL, CaseInstanceBatchMigrationResult.RESULT_FAIL);</span>
+<span class="nc" id="L90">        objectNode.put(BATCH_RESULT_MESSAGE_LABEL, exceptionMessage);</span>
+<span class="nc" id="L91">        objectNode.put(BATCH_RESULT_STACKTRACE_LABEL, getExceptionStacktrace(e));</span>
+<span class="nc" id="L92">        return objectNode.toString();</span>
+    }
+    
+    protected String prepareResultAsJsonString() {
+<span class="nc" id="L96">        ObjectNode objectNode = getObjectMapper().createObjectNode();</span>
+<span class="nc" id="L97">        objectNode.put(BATCH_RESULT_STATUS_LABEL, CaseInstanceBatchMigrationResult.RESULT_SUCCESS);</span>
+<span class="nc" id="L98">        return objectNode.toString();</span>
+    }
+
+    protected String getExceptionStacktrace(Throwable exception) {
+<span class="nc" id="L102">        StringWriter stringWriter = new StringWriter();</span>
+<span class="nc" id="L103">        exception.printStackTrace(new PrintWriter(stringWriter));</span>
+<span class="nc" id="L104">        return stringWriter.toString();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

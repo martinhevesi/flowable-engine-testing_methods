@@ -1,0 +1,380 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CmmnScriptTaskTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.cmmn.test.task</a> &gt; <span class="el_source">CmmnScriptTaskTest.java</span></div><h1>CmmnScriptTaskTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.cmmn.test.task;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import java.io.Serializable;
+import java.util.List;
+import java.util.Map;
+
+import org.flowable.cmmn.api.history.HistoricPlanItemInstance;
+import org.flowable.cmmn.api.runtime.CaseInstance;
+import org.flowable.cmmn.api.runtime.PlanItemDefinitionType;
+import org.flowable.cmmn.api.runtime.PlanItemInstance;
+import org.flowable.cmmn.engine.test.CmmnDeployment;
+import org.flowable.cmmn.engine.test.FlowableCmmnTestCase;
+import org.flowable.cmmn.engine.test.impl.CmmnHistoryTestHelper;
+import org.flowable.common.engine.api.FlowableIllegalArgumentException;
+import org.flowable.common.engine.impl.history.HistoryLevel;
+import org.flowable.common.engine.impl.scripting.FlowableScriptEvaluationException;
+import org.flowable.variable.api.history.HistoricVariableInstance;
+import org.junit.Test;
+
+/**
+ * @author Dennis Federico
+ * @author Filip Hrisafov
+ */
+<span class="nc" id="L39">public class CmmnScriptTaskTest extends FlowableCmmnTestCase {</span>
+
+    @Test
+    @CmmnDeployment
+    public void testSimpleScript() {
+<span class="nc" id="L44">        CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L45">                .caseDefinitionKey(&quot;scriptCase&quot;)</span>
+<span class="nc" id="L46">                .start();</span>
+<span class="nc" id="L47">        assertThat(caseInstance).isNotNull();</span>
+
+<span class="nc" id="L49">        PlanItemInstance planItemInstance = cmmnRuntimeService.createPlanItemInstanceQuery().planItemInstanceElementId(&quot;planItemTaskA&quot;).singleResult();</span>
+<span class="nc" id="L50">        assertThat(planItemInstance)</span>
+<span class="nc" id="L51">                .extracting(PlanItemInstance::getName, PlanItemInstance::getPlanItemDefinitionId)</span>
+<span class="nc" id="L52">                .containsExactly(&quot;Plan Item One&quot;, &quot;taskA&quot;);</span>
+<span class="nc" id="L53">        assertCaseInstanceNotEnded(caseInstance);</span>
+
+<span class="nc" id="L55">        planItemInstance = cmmnRuntimeService.createPlanItemInstanceQuery().planItemInstanceElementId(&quot;blockerPlanItem&quot;).singleResult();</span>
+<span class="nc" id="L56">        assertThat(planItemInstance).isNotNull();</span>
+<span class="nc" id="L57">        cmmnRuntimeService.triggerPlanItemInstance(planItemInstance.getId());</span>
+<span class="nc" id="L58">        assertCaseInstanceEnded(caseInstance);</span>
+
+<span class="nc" id="L60">        Map&lt;String, Object&gt; variables = cmmnRuntimeService.getVariables(caseInstance.getId());</span>
+<span class="nc" id="L61">        assertThat(variables).isEmpty();</span>
+<span class="nc" id="L62">    }</span>
+
+    @Test
+    @CmmnDeployment
+    public void testPlanItemInstanceVarScopeAndVarHistory() {
+<span class="nc" id="L67">        CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L68">                .caseDefinitionKey(&quot;scriptCase&quot;)</span>
+<span class="nc" id="L69">                .start();</span>
+<span class="nc" id="L70">        assertThat(caseInstance).isNotNull();</span>
+
+        //Keep the ScriptTaskPlanItem id to check the historic scope later
+<span class="nc" id="L73">        PlanItemInstance planItemInstance = cmmnRuntimeService.createPlanItemInstanceQuery().planItemInstanceElementId(&quot;planItemTaskA&quot;).singleResult();</span>
+<span class="nc" id="L74">        assertThat(planItemInstance).isNotNull();</span>
+<span class="nc" id="L75">        String scriptTaskPlanInstanceId = planItemInstance.getId();</span>
+
+        //No variables set and no variables created yet by the script, because it has not run
+<span class="nc" id="L78">        assertThat(cmmnRuntimeService.getVariables(caseInstance.getId())).isEmpty();</span>
+<span class="nc" id="L79">        assertThat(cmmnRuntimeService.getLocalVariables(scriptTaskPlanInstanceId)).isEmpty();</span>
+
+        //Initialize one of the script variables to set its scope local to the planItemInstance, otherwise it goes up in the hierarchy up to the case by default
+<span class="nc" id="L82">        cmmnRuntimeService.setLocalVariable(scriptTaskPlanInstanceId, &quot;aString&quot;, &quot;VALUE TO OVERWRITE&quot;);</span>
+<span class="nc" id="L83">        assertThat(cmmnRuntimeService.getLocalVariables(scriptTaskPlanInstanceId)).hasSize(1);</span>
+<span class="nc" id="L84">        assertThat(cmmnRuntimeService.getVariables(caseInstance.getId())).isEmpty();</span>
+
+        //Trigger the task entry event
+<span class="nc" id="L87">        PlanItemInstance blocker = cmmnRuntimeService.createPlanItemInstanceQuery().planItemInstanceElementId(&quot;taskBlocker&quot;).singleResult();</span>
+<span class="nc" id="L88">        assertThat(blocker).isNotNull();</span>
+<span class="nc" id="L89">        cmmnRuntimeService.triggerPlanItemInstance(blocker.getId());</span>
+
+        //The case has not ended yet
+<span class="nc" id="L92">        assertCaseInstanceNotEnded(caseInstance);</span>
+
+        //Check the case variables, one will be created by the script execution
+<span class="nc" id="L95">        Map&lt;String, Object&gt; caseVariables = cmmnRuntimeService.getVariables(caseInstance.getId());</span>
+<span class="nc" id="L96">        assertThat(caseVariables).hasSize(1);</span>
+<span class="nc" id="L97">        assertThat(cmmnRuntimeService.hasVariable(caseInstance.getId(), &quot;aInt&quot;)).isTrue();</span>
+<span class="nc" id="L98">        Object integer = cmmnRuntimeService.getVariable(caseInstance.getId(), &quot;aInt&quot;);</span>
+<span class="nc" id="L99">        assertThat(integer)</span>
+<span class="nc" id="L100">                .isInstanceOf(Integer.class)</span>
+<span class="nc" id="L101">                .isEqualTo(5);</span>
+
+        //The planItemInstance scope variable is available on the history service
+<span class="nc bnc" id="L104" title="All 2 branches missed.">        if (CmmnHistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, cmmnEngineConfiguration)) {</span>
+<span class="nc" id="L105">            List&lt;HistoricVariableInstance&gt; historicVariables = cmmnHistoryService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L106">                    .caseInstanceId(caseInstance.getId())</span>
+<span class="nc" id="L107">                    .planItemInstanceId(scriptTaskPlanInstanceId)</span>
+<span class="nc" id="L108">                    .list();</span>
+<span class="nc" id="L109">            assertThat(historicVariables).hasSize(1);</span>
+
+<span class="nc" id="L111">            HistoricVariableInstance planItemInstanceVariable = historicVariables.get(0);</span>
+<span class="nc" id="L112">            assertThat(planItemInstanceVariable).isNotNull();</span>
+<span class="nc" id="L113">            assertThat(planItemInstanceVariable.getVariableName()).isEqualTo(&quot;aString&quot;);</span>
+<span class="nc" id="L114">            assertThat(planItemInstanceVariable.getVariableTypeName()).isEqualTo(&quot;string&quot;);</span>
+<span class="nc" id="L115">            assertThat(planItemInstanceVariable.getValue()).isEqualTo(&quot;value set in the script&quot;);</span>
+<span class="nc" id="L116">            assertThat(planItemInstanceVariable.getSubScopeId()).isEqualTo(scriptTaskPlanInstanceId);</span>
+        }
+
+<span class="nc" id="L119">        endTestCase();</span>
+<span class="nc" id="L120">        assertCaseInstanceEnded(caseInstance);</span>
+
+        //Both variables are still in the history
+<span class="nc bnc" id="L123" title="All 2 branches missed.">        if (CmmnHistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, cmmnEngineConfiguration)) {</span>
+<span class="nc" id="L124">            List&lt;HistoricVariableInstance&gt; historicVariables = cmmnHistoryService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L125">                    .caseInstanceId(caseInstance.getId())</span>
+<span class="nc" id="L126">                    .list();</span>
+<span class="nc" id="L127">            assertThat(historicVariables).hasSize(2);</span>
+
+<span class="nc bnc" id="L129" title="All 2 branches missed.">            HistoricVariableInstance caseScopeVariable = historicVariables.stream().filter(v -&gt; v.getSubScopeId() == null).findFirst().get();</span>
+<span class="nc" id="L130">            assertThat(caseScopeVariable)</span>
+<span class="nc" id="L131">                    .extracting(HistoricVariableInstance::getVariableName,</span>
+                            HistoricVariableInstance::getVariableTypeName,
+                            HistoricVariableInstance::getValue)
+<span class="nc" id="L134">                    .containsExactly(&quot;aInt&quot;, &quot;integer&quot;, 5);</span>
+
+<span class="nc bnc" id="L136" title="All 2 branches missed.">            HistoricVariableInstance planItemScopeVariable = historicVariables.stream().filter(v -&gt; v.getSubScopeId() != null).findFirst().get();</span>
+<span class="nc" id="L137">            assertThat(planItemScopeVariable)</span>
+<span class="nc" id="L138">                    .extracting(HistoricVariableInstance::getVariableName,</span>
+                            HistoricVariableInstance::getVariableTypeName,
+                            HistoricVariableInstance::getValue)
+<span class="nc" id="L141">                    .containsExactly(&quot;aString&quot;, &quot;string&quot;, &quot;value set in the script&quot;);</span>
+        }
+<span class="nc" id="L143">    }</span>
+
+    @Test
+    @CmmnDeployment
+    public void testSimpleResult() {
+<span class="nc" id="L148">        CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L149">                .caseDefinitionKey(&quot;scriptCase&quot;)</span>
+<span class="nc" id="L150">                .start();</span>
+<span class="nc" id="L151">        assertThat(caseInstance).isNotNull();</span>
+
+<span class="nc" id="L153">        assertThat(cmmnRuntimeService.hasVariable(caseInstance.getId(), &quot;scriptResult&quot;)).isTrue();</span>
+<span class="nc" id="L154">        Object result = cmmnRuntimeService.getVariable(caseInstance.getId(), &quot;scriptResult&quot;);</span>
+<span class="nc" id="L155">        assertThat(result).isInstanceOf(Number.class);</span>
+<span class="nc" id="L156">        assertThat(((Number) result).intValue()).isEqualTo(7);</span>
+
+<span class="nc" id="L158">        assertCaseInstanceNotEnded(caseInstance);</span>
+<span class="nc" id="L159">        endTestCase();</span>
+<span class="nc" id="L160">        assertCaseInstanceEnded(caseInstance);</span>
+<span class="nc" id="L161">    }</span>
+
+    @Test
+    @CmmnDeployment
+    public void testVariableResult() {
+<span class="nc" id="L166">        CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L167">                .caseDefinitionKey(&quot;scriptCase&quot;)</span>
+<span class="nc" id="L168">                .variable(&quot;a&quot;, 3)</span>
+<span class="nc" id="L169">                .variable(&quot;b&quot;, 7)</span>
+<span class="nc" id="L170">                .start();</span>
+<span class="nc" id="L171">        assertThat(caseInstance).isNotNull();</span>
+
+<span class="nc" id="L173">        assertThat(cmmnRuntimeService.hasVariable(caseInstance.getId(), &quot;scriptResult&quot;)).isTrue();</span>
+<span class="nc" id="L174">        Object result = cmmnRuntimeService.getVariable(caseInstance.getId(), &quot;scriptResult&quot;);</span>
+<span class="nc" id="L175">        assertThat(result).isInstanceOf(Number.class);</span>
+<span class="nc" id="L176">        assertThat(((Number) result).intValue()).isEqualTo(10);</span>
+
+<span class="nc" id="L178">        assertCaseInstanceNotEnded(caseInstance);</span>
+<span class="nc" id="L179">        endTestCase();</span>
+<span class="nc" id="L180">        assertCaseInstanceEnded(caseInstance);</span>
+<span class="nc" id="L181">    }</span>
+
+    @Test
+    @CmmnDeployment
+    public void testObjectVariables() {
+<span class="nc" id="L186">        CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L187">                .caseDefinitionKey(&quot;scriptCase&quot;)</span>
+<span class="nc" id="L188">                .variable(&quot;a&quot;, new IntValueHolder(3))</span>
+<span class="nc" id="L189">                .variable(&quot;b&quot;, 7)</span>
+<span class="nc" id="L190">                .start();</span>
+<span class="nc" id="L191">        assertThat(caseInstance).isNotNull();</span>
+
+<span class="nc" id="L193">        assertThat(cmmnRuntimeService.hasVariable(caseInstance.getId(), &quot;scriptResult&quot;)).isTrue();</span>
+<span class="nc" id="L194">        Object result = cmmnRuntimeService.getVariable(caseInstance.getId(), &quot;scriptResult&quot;);</span>
+<span class="nc" id="L195">        assertThat(result).isInstanceOf(Number.class);</span>
+<span class="nc" id="L196">        assertThat(((Number) result).intValue()).isEqualTo(12);</span>
+
+<span class="nc" id="L198">        assertThat(cmmnRuntimeService.hasVariable(caseInstance.getId(), &quot;a&quot;)).isTrue();</span>
+<span class="nc" id="L199">        Object a = cmmnRuntimeService.getVariable(caseInstance.getId(), &quot;a&quot;);</span>
+<span class="nc" id="L200">        assertThat(a).isInstanceOf(IntValueHolder.class);</span>
+<span class="nc" id="L201">        assertThat(((IntValueHolder) a).getValue()).isEqualTo(5);</span>
+
+<span class="nc" id="L203">        assertCaseInstanceNotEnded(caseInstance);</span>
+<span class="nc" id="L204">        endTestCase();</span>
+<span class="nc" id="L205">        assertCaseInstanceEnded(caseInstance);</span>
+<span class="nc" id="L206">    }</span>
+
+    @Test
+    @CmmnDeployment
+    public void testReturnJavaObject() {
+<span class="nc" id="L211">        CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L212">                .caseDefinitionKey(&quot;scriptCase&quot;)</span>
+<span class="nc" id="L213">                .variable(&quot;a&quot;, new IntValueHolder(3))</span>
+<span class="nc" id="L214">                .variable(&quot;b&quot;, 7)</span>
+<span class="nc" id="L215">                .start();</span>
+<span class="nc" id="L216">        assertThat(caseInstance).isNotNull();</span>
+
+<span class="nc" id="L218">        assertThat(cmmnRuntimeService.hasVariable(caseInstance.getId(), &quot;scriptResult&quot;)).isTrue();</span>
+<span class="nc" id="L219">        Object result = cmmnRuntimeService.getVariable(caseInstance.getId(), &quot;scriptResult&quot;);</span>
+<span class="nc" id="L220">        assertThat(result).isInstanceOf(IntValueHolder.class);</span>
+<span class="nc" id="L221">        assertThat(((IntValueHolder) result).getValue()).isEqualTo(10);</span>
+
+<span class="nc" id="L223">        assertCaseInstanceNotEnded(caseInstance);</span>
+<span class="nc" id="L224">        endTestCase();</span>
+<span class="nc" id="L225">        assertCaseInstanceEnded(caseInstance);</span>
+<span class="nc" id="L226">    }</span>
+
+    @Test
+    @CmmnDeployment
+    public void testGroovyAutoStoreVariables() {
+<span class="nc" id="L231">        CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L232">                .caseDefinitionKey(&quot;scriptCase&quot;)</span>
+<span class="nc" id="L233">                .variable(&quot;inputArray&quot;, new int[] { 1, 2, 3, 4, 5 })</span>
+<span class="nc" id="L234">                .start();</span>
+<span class="nc" id="L235">        assertThat(caseInstance).isNotNull();</span>
+
+<span class="nc" id="L237">        Map&lt;String, Object&gt; variables = cmmnRuntimeService.getVariables(caseInstance.getId());</span>
+<span class="nc" id="L238">        assertThat(variables).hasSize(2);</span>
+
+<span class="nc" id="L240">        assertThat(cmmnRuntimeService.hasVariable(caseInstance.getId(), &quot;sum&quot;)).isTrue();</span>
+<span class="nc" id="L241">        Object result = cmmnRuntimeService.getVariable(caseInstance.getId(), &quot;sum&quot;);</span>
+<span class="nc" id="L242">        assertThat(result).isInstanceOf(Integer.class);</span>
+<span class="nc" id="L243">        assertThat(((Number) result).intValue()).isEqualTo(15);</span>
+
+<span class="nc" id="L245">        assertCaseInstanceNotEnded(caseInstance);</span>
+<span class="nc" id="L246">        endTestCase();</span>
+<span class="nc" id="L247">        assertCaseInstanceEnded(caseInstance);</span>
+<span class="nc" id="L248">    }</span>
+
+    @Test
+    @CmmnDeployment
+    public void testGroovyNoAutoStoreVariables() {
+<span class="nc" id="L253">        CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L254">                .caseDefinitionKey(&quot;scriptCase&quot;)</span>
+<span class="nc" id="L255">                .variable(&quot;inputArray&quot;, new int[] { 1, 2, 3, 4, 5 })</span>
+<span class="nc" id="L256">                .start();</span>
+<span class="nc" id="L257">        assertThat(caseInstance).isNotNull();</span>
+
+<span class="nc" id="L259">        Map&lt;String, Object&gt; variables = cmmnRuntimeService.getVariables(caseInstance.getId());</span>
+<span class="nc" id="L260">        assertThat(variables).hasSize(1);</span>
+
+<span class="nc" id="L262">        assertThat(cmmnRuntimeService.hasVariable(caseInstance.getId(), &quot;sum&quot;)).isFalse();</span>
+
+<span class="nc" id="L264">        assertCaseInstanceNotEnded(caseInstance);</span>
+<span class="nc" id="L265">        endTestCase();</span>
+<span class="nc" id="L266">        assertCaseInstanceEnded(caseInstance);</span>
+<span class="nc" id="L267">    }</span>
+
+    @Test
+    @CmmnDeployment
+    public void testScriptThrowsFlowableException() {
+<span class="nc" id="L272">        CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L273">                .caseDefinitionKey(&quot;scriptCase&quot;)</span>
+<span class="nc" id="L274">                .start();</span>
+<span class="nc" id="L275">        assertThat(caseInstance).isNotNull();</span>
+
+<span class="nc" id="L277">        PlanItemInstance planItemInstance = cmmnRuntimeService.createPlanItemInstanceQuery().planItemInstanceElementId(&quot;planItemTaskA&quot;).singleResult();</span>
+<span class="nc" id="L278">        assertThat(planItemInstance)</span>
+<span class="nc" id="L279">                .extracting(PlanItemInstance::getName, PlanItemInstance::getPlanItemDefinitionId)</span>
+<span class="nc" id="L280">                .containsExactly(&quot;Plan Item One&quot;, &quot;taskA&quot;);</span>
+<span class="nc" id="L281">        assertCaseInstanceNotEnded(caseInstance);</span>
+
+<span class="nc" id="L283">        PlanItemInstance blockerPlanItemInstance = cmmnRuntimeService.createPlanItemInstanceQuery().planItemInstanceElementId(&quot;blockerPlanItem&quot;).singleResult();</span>
+<span class="nc" id="L284">        assertThat(blockerPlanItemInstance).isNotNull();</span>
+<span class="nc" id="L285">        assertThatThrownBy(() -&gt; cmmnRuntimeService.triggerPlanItemInstance(blockerPlanItemInstance.getId()))</span>
+<span class="nc" id="L286">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L287">                .hasNoCause()</span>
+<span class="nc" id="L288">                .hasMessage(&quot;Illegal argument in script&quot;);</span>
+
+<span class="nc" id="L290">        assertCaseInstanceNotEnded(caseInstance);</span>
+<span class="nc" id="L291">    }</span>
+
+    /**
+     * Tests {@link org.flowable.cmmn.engine.impl.scripting.CmmnEngineScriptTraceEnhancer}
+     * together with {@link org.flowable.cmmn.engine.impl.behavior.impl.ScriptTaskActivityBehavior}
+     * contributing the expected error trace information
+     */
+    @Test
+    @CmmnDeployment(tenantId = &quot;myTenant&quot;)
+    public void testScriptThrowsNonFlowableException() {
+<span class="nc" id="L301">        CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L302">                .tenantId(&quot;myTenant&quot;)</span>
+<span class="nc" id="L303">                .caseDefinitionKey(&quot;scriptCase&quot;)</span>
+<span class="nc" id="L304">                .start();</span>
+<span class="nc" id="L305">        assertThat(caseInstance).isNotNull();</span>
+
+<span class="nc" id="L307">        PlanItemInstance planItemInstance = cmmnRuntimeService.createPlanItemInstanceQuery().planItemInstanceElementId(&quot;planItemTaskA&quot;).singleResult();</span>
+<span class="nc" id="L308">        assertThat(planItemInstance)</span>
+<span class="nc" id="L309">                .extracting(PlanItemInstance::getName, PlanItemInstance::getPlanItemDefinitionId)</span>
+<span class="nc" id="L310">                .containsExactly(&quot;Plan Item One&quot;, &quot;taskA&quot;);</span>
+<span class="nc" id="L311">        assertCaseInstanceNotEnded(caseInstance);</span>
+
+<span class="nc" id="L313">        PlanItemInstance blockerPlanItemInstance = cmmnRuntimeService.createPlanItemInstanceQuery().planItemInstanceElementId(&quot;blockerPlanItem&quot;).singleResult();</span>
+<span class="nc" id="L314">        assertThat(blockerPlanItemInstance).isNotNull();</span>
+
+<span class="nc" id="L316">        String errorMessage =</span>
+                &quot;JavaScript script evaluation failed: 'java.lang.RuntimeException: Illegal argument in script in &lt;eval&gt; at line number 2 at column number 28'&quot;
+<span class="nc" id="L318">                        + &quot; Trace: scopeType=cmmn, scopeDefinitionKey=scriptCase, scopeDefinitionId=&quot; + planItemInstance.getCaseDefinitionId() + &quot;,&quot;</span>
+                        + &quot; subScopeDefinitionKey=taskA, tenantId=myTenant, type=scriptTask&quot;;
+<span class="nc" id="L320">        assertThatThrownBy(() -&gt; cmmnRuntimeService.triggerPlanItemInstance(blockerPlanItemInstance.getId()))</span>
+<span class="nc" id="L321">                .isExactlyInstanceOf(FlowableScriptEvaluationException.class)</span>
+<span class="nc" id="L322">                .hasMessage(errorMessage)</span>
+<span class="nc" id="L323">                .rootCause()</span>
+<span class="nc" id="L324">                .isExactlyInstanceOf(RuntimeException.class)</span>
+<span class="nc" id="L325">                .hasMessage(&quot;Illegal argument in script&quot;);</span>
+
+<span class="nc" id="L327">        assertCaseInstanceNotEnded(caseInstance);</span>
+<span class="nc" id="L328">    }</span>
+
+    @Test
+    @CmmnDeployment
+    public void testAccessCurrentScopeInformation() {
+<span class="nc" id="L333">        CaseInstance caseInstance = cmmnRuntimeService.createCaseInstanceBuilder()</span>
+<span class="nc" id="L334">                .caseDefinitionKey(&quot;testAccessCurrentScopeInformation&quot;)</span>
+<span class="nc" id="L335">                .start();</span>
+
+<span class="nc" id="L337">        assertThat(cmmnRuntimeService.getVariable(caseInstance.getId(), &quot;theCaseInstanceId&quot;)).isEqualTo(caseInstance.getId());</span>
+<span class="nc" id="L338">        assertThat(cmmnRuntimeService.getVariable(caseInstance.getId(), &quot;thePlanItemInstanceId&quot;)).isNotEqualTo(caseInstance.getId());</span>
+
+<span class="nc bnc" id="L340" title="All 2 branches missed.">        if (CmmnHistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, cmmnEngineConfiguration)) {</span>
+<span class="nc" id="L341">            HistoricPlanItemInstance historicPlanItemInstance = cmmnHistoryService.createHistoricPlanItemInstanceQuery()</span>
+<span class="nc" id="L342">                    .planItemInstanceDefinitionType(PlanItemDefinitionType.SCRIPT_SERVICE_TASK)</span>
+<span class="nc" id="L343">                    .singleResult();</span>
+
+<span class="nc" id="L345">            assertThat(cmmnRuntimeService.getVariable(caseInstance.getId(), &quot;thePlanItemInstanceId&quot;)).isEqualTo(historicPlanItemInstance.getId());</span>
+        }
+<span class="nc" id="L347">    }</span>
+
+
+    private void endTestCase() {
+<span class="nc" id="L351">        PlanItemInstance planItemInstance = cmmnRuntimeService.createPlanItemInstanceQuery().planItemInstanceElementId(&quot;blockerPlanItem&quot;).singleResult();</span>
+<span class="nc" id="L352">        assertThat(planItemInstance).isNotNull();</span>
+<span class="nc" id="L353">        cmmnRuntimeService.triggerPlanItemInstance(planItemInstance.getId());</span>
+<span class="nc" id="L354">    }</span>
+
+    public static class IntValueHolder implements Serializable {
+
+        private int value;
+
+<span class="nc" id="L360">        public IntValueHolder(int value) {</span>
+<span class="nc" id="L361">            this.value = value;</span>
+<span class="nc" id="L362">        }</span>
+
+        public int getValue() {
+<span class="nc" id="L365">            return value;</span>
+        }
+
+        public void setValue(int value) {
+<span class="nc" id="L369">            this.value = value;</span>
+<span class="nc" id="L370">        }</span>
+
+        @Override
+        public String toString() {
+<span class="nc" id="L374">            return &quot;IntValueHolder{&quot; +</span>
+                    &quot;value=&quot; + value +
+                    '}';
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

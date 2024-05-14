@@ -1,0 +1,1037 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TaskEntityImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.task.service.impl.persistence.entity</a> &gt; <span class="el_source">TaskEntityImpl.java</span></div><h1>TaskEntityImpl.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.task.service.impl.persistence.entity;
+
+import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.impl.AbstractEngineConfiguration;
+import org.flowable.common.engine.impl.context.Context;
+import org.flowable.common.engine.impl.db.SuspensionState;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.common.engine.impl.interceptor.EngineConfigurationConstants;
+import org.flowable.identitylink.api.IdentityLink;
+import org.flowable.identitylink.api.IdentityLinkType;
+import org.flowable.identitylink.service.IdentityLinkServiceConfiguration;
+import org.flowable.identitylink.service.impl.persistence.entity.IdentityLinkEntity;
+import org.flowable.identitylink.service.impl.persistence.entity.IdentityLinkEntityManager;
+import org.flowable.task.api.DelegationState;
+import org.flowable.task.api.Task;
+import org.flowable.task.service.InternalTaskAssignmentManager;
+import org.flowable.task.service.TaskServiceConfiguration;
+import org.flowable.task.service.impl.persistence.CountingTaskEntity;
+import org.flowable.task.service.impl.util.CountingTaskUtil;
+import org.flowable.task.service.impl.util.TaskVariableUtils;
+import org.flowable.variable.api.persistence.entity.VariableInstance;
+import org.flowable.variable.service.VariableServiceConfiguration;
+import org.flowable.variable.service.impl.persistence.entity.VariableInitializingList;
+import org.flowable.variable.service.impl.persistence.entity.VariableInstanceEntity;
+import org.flowable.variable.service.impl.persistence.entity.VariableScopeImpl;
+import org.flowable.variable.service.impl.util.CommandContextUtil;
+
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+/**
+ * @author Tom Baeyens
+ * @author Joram Barrez
+ * @author Falko Menge
+ * @author Tijs Rademakers
+ */
+<span class="nc" id="L60">public class TaskEntityImpl extends AbstractTaskServiceVariableScopeEntity implements TaskEntity, CountingTaskEntity, Serializable {</span>
+
+    public static final String DELETE_REASON_COMPLETED = &quot;completed&quot;;
+    public static final String DELETE_REASON_DELETED = &quot;deleted&quot;;
+
+    private static final long serialVersionUID = 1L;
+
+    protected String owner;
+    protected int assigneeUpdatedCount; // needed for v5 compatibility
+    protected String originalAssignee; // needed for v5 compatibility
+    protected String assignee;
+    protected DelegationState delegationState;
+
+    protected String parentTaskId;
+
+    protected String name;
+    protected String localizedName;
+    protected String description;
+    protected String localizedDescription;
+<span class="nc" id="L79">    protected int priority = DEFAULT_PRIORITY;</span>
+    protected String state;
+    protected Date createTime; // The time when the task has been created
+    protected Date inProgressStartTime;
+    protected String inProgressStartedBy;
+    protected Date claimTime;
+    protected String claimedBy;
+    protected Date suspendedTime;
+    protected String suspendedBy;
+    protected Date inProgressStartDueDate;
+    protected Date dueDate;
+<span class="nc" id="L90">    protected int suspensionState = SuspensionState.ACTIVE.getStateCode();</span>
+    protected String category;
+
+    protected boolean isIdentityLinksInitialized;
+<span class="nc" id="L94">    protected List&lt;IdentityLinkEntity&gt; taskIdentityLinkEntities = new ArrayList&lt;&gt;();</span>
+
+    protected String executionId;
+    protected String processInstanceId;
+    protected String processDefinitionId;
+    protected String taskDefinitionId;
+    
+    protected String scopeId;
+    protected String subScopeId;
+    protected String scopeType;
+    protected String scopeDefinitionId;
+    protected String propagatedStageInstanceId;
+
+    protected String taskDefinitionKey;
+    protected String formKey;
+
+    protected boolean isCanceled;
+
+    private boolean isCountEnabled;
+    protected int variableCount;
+    protected int identityLinkCount;
+    protected int subTaskCount;
+
+<span class="nc" id="L117">    protected String tenantId = TaskServiceConfiguration.NO_TENANT_ID;</span>
+
+    // Non-persisted
+    protected String eventName;
+    protected String eventHandlerId;
+    protected String tempCompletedBy;
+    protected List&lt;VariableInstanceEntity&gt; queryVariables;
+    protected List&lt;IdentityLinkEntity&gt; queryIdentityLinks;
+    protected boolean forcedUpdate;
+
+    @Override
+    public Object getPersistentState() {
+<span class="nc" id="L129">        Map&lt;String, Object&gt; persistentState = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L130">        persistentState.put(&quot;assignee&quot;, this.assignee);</span>
+<span class="nc" id="L131">        persistentState.put(&quot;owner&quot;, this.owner);</span>
+<span class="nc" id="L132">        persistentState.put(&quot;name&quot;, this.name);</span>
+<span class="nc" id="L133">        persistentState.put(&quot;priority&quot;, this.priority);</span>
+<span class="nc" id="L134">        persistentState.put(&quot;category&quot;, this.category);</span>
+<span class="nc" id="L135">        persistentState.put(&quot;formKey&quot;, this.formKey);</span>
+<span class="nc bnc" id="L136" title="All 2 branches missed.">        if (executionId != null) {</span>
+<span class="nc" id="L137">            persistentState.put(&quot;executionId&quot;, this.executionId);</span>
+        }
+<span class="nc bnc" id="L139" title="All 2 branches missed.">        if (processInstanceId != null) {</span>
+<span class="nc" id="L140">            persistentState.put(&quot;processInstanceId&quot;, this.processInstanceId);</span>
+        }
+<span class="nc bnc" id="L142" title="All 2 branches missed.">        if (processDefinitionId != null) {</span>
+<span class="nc" id="L143">            persistentState.put(&quot;processDefinitionId&quot;, this.processDefinitionId);</span>
+        }
+<span class="nc bnc" id="L145" title="All 2 branches missed.">        if (taskDefinitionId != null) {</span>
+<span class="nc" id="L146">            persistentState.put(&quot;taskDefinitionId&quot;, this.taskDefinitionId);</span>
+        }
+<span class="nc bnc" id="L148" title="All 2 branches missed.">        if (taskDefinitionKey != null) {</span>
+<span class="nc" id="L149">            persistentState.put(&quot;taskDefinitionKey&quot;, this.taskDefinitionKey);</span>
+        }
+<span class="nc bnc" id="L151" title="All 2 branches missed.">        if (scopeId != null) {</span>
+<span class="nc" id="L152">            persistentState.put(&quot;scopeId&quot;, this.scopeId);</span>
+        }
+<span class="nc bnc" id="L154" title="All 2 branches missed.">        if (subScopeId != null) {</span>
+<span class="nc" id="L155">            persistentState.put(&quot;subScopeId&quot;, this.subScopeId);</span>
+        }
+<span class="nc bnc" id="L157" title="All 2 branches missed.">        if (scopeType != null) {</span>
+<span class="nc" id="L158">            persistentState.put(&quot;scopeType&quot;, this.scopeType);</span>
+        }
+<span class="nc bnc" id="L160" title="All 2 branches missed.">        if (scopeDefinitionId != null) {</span>
+<span class="nc" id="L161">            persistentState.put(&quot;scopeDefinitionId&quot;, this.scopeDefinitionId);</span>
+        }
+<span class="nc bnc" id="L163" title="All 2 branches missed.">        if (propagatedStageInstanceId != null) {</span>
+<span class="nc" id="L164">            persistentState.put(&quot;propagatedStageInstanceId&quot;, propagatedStageInstanceId);</span>
+        }
+<span class="nc bnc" id="L166" title="All 2 branches missed.">        if (state != null) {</span>
+<span class="nc" id="L167">            persistentState.put(&quot;state&quot;, this.state);</span>
+        }
+<span class="nc bnc" id="L169" title="All 2 branches missed.">        if (createTime != null) {</span>
+<span class="nc" id="L170">            persistentState.put(&quot;createTime&quot;, this.createTime);</span>
+        }
+<span class="nc bnc" id="L172" title="All 2 branches missed.">        if (inProgressStartTime != null) {</span>
+<span class="nc" id="L173">            persistentState.put(&quot;inProgressStartTime&quot;, this.inProgressStartTime);</span>
+        }
+<span class="nc bnc" id="L175" title="All 2 branches missed.">        if (inProgressStartedBy != null) {</span>
+<span class="nc" id="L176">            persistentState.put(&quot;inProgressStartedBy&quot;, this.inProgressStartedBy);</span>
+        }
+<span class="nc bnc" id="L178" title="All 2 branches missed.">        if (claimTime != null) {</span>
+<span class="nc" id="L179">            persistentState.put(&quot;claimTime&quot;, this.claimTime);</span>
+        }
+<span class="nc bnc" id="L181" title="All 2 branches missed.">        if (claimedBy != null) {</span>
+<span class="nc" id="L182">            persistentState.put(&quot;claimedBy&quot;, this.claimedBy);</span>
+        }
+<span class="nc bnc" id="L184" title="All 2 branches missed.">        if (suspendedTime != null) {</span>
+<span class="nc" id="L185">            persistentState.put(&quot;suspendedTime&quot;, this.suspendedTime);</span>
+        }
+<span class="nc bnc" id="L187" title="All 2 branches missed.">        if (suspendedBy != null) {</span>
+<span class="nc" id="L188">            persistentState.put(&quot;suspendedBy&quot;, this.suspendedBy);</span>
+        }
+<span class="nc bnc" id="L190" title="All 2 branches missed.">        if (description != null) {</span>
+<span class="nc" id="L191">            persistentState.put(&quot;description&quot;, this.description);</span>
+        }
+<span class="nc bnc" id="L193" title="All 2 branches missed.">        if (inProgressStartDueDate != null) {</span>
+<span class="nc" id="L194">            persistentState.put(&quot;inProgressStartDueDate&quot;, this.inProgressStartDueDate);</span>
+        }
+<span class="nc bnc" id="L196" title="All 2 branches missed.">        if (dueDate != null) {</span>
+<span class="nc" id="L197">            persistentState.put(&quot;dueDate&quot;, this.dueDate);</span>
+        }
+<span class="nc bnc" id="L199" title="All 2 branches missed.">        if (parentTaskId != null) {</span>
+<span class="nc" id="L200">            persistentState.put(&quot;parentTaskId&quot;, this.parentTaskId);</span>
+        }
+<span class="nc bnc" id="L202" title="All 2 branches missed.">        if (delegationState != null) {</span>
+<span class="nc" id="L203">            persistentState.put(&quot;delegationState&quot;, this.delegationState);</span>
+<span class="nc" id="L204">            persistentState.put(&quot;delegationStateString&quot;, getDelegationStateString());</span>
+        }
+
+<span class="nc" id="L207">        persistentState.put(&quot;suspensionState&quot;, this.suspensionState);</span>
+
+<span class="nc bnc" id="L209" title="All 2 branches missed.">        if (forcedUpdate) {</span>
+<span class="nc" id="L210">            persistentState.put(&quot;forcedUpdate&quot;, Boolean.TRUE);</span>
+        }
+
+<span class="nc" id="L213">        persistentState.put(&quot;isCountEnabled&quot;, this.isCountEnabled);</span>
+<span class="nc" id="L214">        persistentState.put(&quot;variableCount&quot;, this.variableCount);</span>
+<span class="nc" id="L215">        persistentState.put(&quot;identityLinkCount&quot;, this.identityLinkCount);</span>
+<span class="nc" id="L216">        persistentState.put(&quot;subTaskCount&quot;, this.subTaskCount);</span>
+
+<span class="nc" id="L218">        return persistentState;</span>
+    }
+
+    @Override
+    public void forceUpdate() {
+<span class="nc" id="L223">        this.forcedUpdate = true;</span>
+<span class="nc" id="L224">    }</span>
+
+    // variables //////////////////////////////////////////////////////////////////
+
+    @Override
+    protected VariableScopeImpl getParentVariableScope() {
+<span class="nc" id="L230">        return getTaskServiceConfiguration().getInternalTaskVariableScopeResolver().resolveParentVariableScope(this);</span>
+    }
+
+    @Override
+    protected void initializeVariableInstanceBackPointer(VariableInstance variableInstance) {
+<span class="nc" id="L235">        variableInstance.setTaskId(id);</span>
+<span class="nc bnc" id="L236" title="All 2 branches missed.">        if (ScopeTypes.CMMN.equals(this.scopeType)) {</span>
+<span class="nc" id="L237">            variableInstance.setScopeId(this.scopeId);</span>
+<span class="nc" id="L238">            variableInstance.setScopeType(this.scopeType);</span>
+<span class="nc" id="L239">            variableInstance.setSubScopeId(this.subScopeId);</span>
+        } else {
+<span class="nc" id="L241">            variableInstance.setExecutionId(this.executionId);</span>
+<span class="nc" id="L242">            variableInstance.setProcessInstanceId(this.processInstanceId);</span>
+<span class="nc" id="L243">            variableInstance.setProcessDefinitionId(this.processDefinitionId);</span>
+        }
+<span class="nc" id="L245">    }</span>
+
+    @Override
+    protected void addLoggingSessionInfo(ObjectNode loggingNode) {
+        // TODO
+<span class="nc" id="L250">    }</span>
+
+    @Override
+    protected List&lt;VariableInstanceEntity&gt; loadVariableInstances() {
+<span class="nc" id="L254">        return getVariableServiceConfiguration().getVariableService().createInternalVariableInstanceQuery().taskId(id).list();</span>
+    }
+    
+    @Override
+    protected VariableInstanceEntity createVariableInstance(String variableName, Object value) {
+<span class="nc" id="L259">        VariableInstanceEntity variableInstance = super.createVariableInstance(variableName, value);</span>
+        
+<span class="nc" id="L261">        CountingTaskUtil.handleInsertVariableInstanceEntityCount(variableInstance, getTaskServiceConfiguration());</span>
+
+<span class="nc" id="L263">        return variableInstance;</span>
+        
+    }
+    
+    @Override
+    protected void deleteVariableInstanceForExplicitUserCall(VariableInstanceEntity variableInstance) {
+<span class="nc" id="L269">        super.deleteVariableInstanceForExplicitUserCall(variableInstance);</span>
+        
+<span class="nc" id="L271">        CountingTaskUtil.handleDeleteVariableInstanceEntityCount(variableInstance, true, getTaskServiceConfiguration());</span>
+<span class="nc" id="L272">    }</span>
+
+    // task assignment ////////////////////////////////////////////////////////////
+
+    @Override
+    public Set&lt;IdentityLink&gt; getCandidates() {
+<span class="nc" id="L278">        Set&lt;IdentityLink&gt; potentialOwners = new HashSet&lt;&gt;();</span>
+<span class="nc bnc" id="L279" title="All 2 branches missed.">        for (IdentityLinkEntity identityLinkEntity : getIdentityLinks()) {</span>
+<span class="nc bnc" id="L280" title="All 2 branches missed.">            if (IdentityLinkType.CANDIDATE.equals(identityLinkEntity.getType())) {</span>
+<span class="nc" id="L281">                potentialOwners.add(identityLinkEntity);</span>
+            }
+<span class="nc" id="L283">        }</span>
+<span class="nc" id="L284">        return potentialOwners;</span>
+    }
+
+    @Override
+    public List&lt;IdentityLinkEntity&gt; getIdentityLinks() {
+<span class="nc bnc" id="L289" title="All 2 branches missed.">        if (!isIdentityLinksInitialized) {</span>
+<span class="nc bnc" id="L290" title="All 2 branches missed.">            if (queryIdentityLinks == null) {</span>
+<span class="nc" id="L291">                taskIdentityLinkEntities = getIdentityLinkServiceConfiguration().getIdentityLinkEntityManager().findIdentityLinksByTaskId(id);</span>
+            } else {
+<span class="nc" id="L293">                taskIdentityLinkEntities = queryIdentityLinks;</span>
+            }
+<span class="nc" id="L295">            isIdentityLinksInitialized = true;</span>
+        }
+
+<span class="nc" id="L298">        return taskIdentityLinkEntities;</span>
+    }
+
+    @Override
+    public void setName(String taskName) {
+<span class="nc" id="L303">        this.name = taskName;</span>
+<span class="nc" id="L304">    }</span>
+
+    @Override
+    public void setDescription(String description) {
+<span class="nc" id="L308">        this.description = description;</span>
+<span class="nc" id="L309">    }</span>
+
+    @Override
+    public void setAssignee(String assignee) {
+<span class="nc" id="L313">        this.originalAssignee = this.assignee;</span>
+<span class="nc" id="L314">        this.assignee = assignee;</span>
+<span class="nc" id="L315">        assigneeUpdatedCount++;</span>
+<span class="nc" id="L316">    }</span>
+    
+    @Override
+    public void setAssigneeValue(String assignee) {
+<span class="nc" id="L320">        InternalTaskAssignmentManager taskAssignmentManager = getTaskAssignmentManager();</span>
+<span class="nc bnc" id="L321" title="All 2 branches missed.">        if (taskAssignmentManager != null) {</span>
+<span class="nc" id="L322">            taskAssignmentManager.changeAssignee(this, assignee);</span>
+        } else {
+<span class="nc" id="L324">            this.originalAssignee = this.assignee;</span>
+<span class="nc" id="L325">            this.assignee = assignee;</span>
+<span class="nc" id="L326">            assigneeUpdatedCount++;</span>
+        }
+<span class="nc" id="L328">    }</span>
+
+    @Override
+    public void setOwner(String owner) {
+<span class="nc" id="L332">        this.owner = owner;</span>
+<span class="nc" id="L333">    }</span>
+    
+    @Override
+    public void setOwnerValue(String owner) {
+<span class="nc" id="L337">        InternalTaskAssignmentManager taskAssignmentManager = getTaskAssignmentManager();</span>
+<span class="nc bnc" id="L338" title="All 2 branches missed.">        if (taskAssignmentManager != null) {</span>
+<span class="nc" id="L339">            taskAssignmentManager.changeOwner(this, owner);</span>
+        } else {
+<span class="nc" id="L341">            this.owner = owner;</span>
+        }
+<span class="nc" id="L343">    }</span>
+    
+    @Override
+    public void setInProgressStartDueDate(Date inProgressStartDueDate) {
+<span class="nc" id="L347">        this.inProgressStartDueDate = inProgressStartDueDate;</span>
+<span class="nc" id="L348">    }</span>
+
+    @Override
+    public void setDueDate(Date dueDate) {
+<span class="nc" id="L352">        this.dueDate = dueDate;</span>
+<span class="nc" id="L353">    }</span>
+
+    @Override
+    public void setPriority(int priority) {
+<span class="nc" id="L357">        this.priority = priority;</span>
+<span class="nc" id="L358">    }</span>
+
+    @Override
+    public void setCategory(String category) {
+<span class="nc" id="L362">        this.category = category;</span>
+<span class="nc" id="L363">    }</span>
+
+    @Override
+    public void addUserIdentityLink(String userId, String identityLinkType) {
+<span class="nc" id="L367">        IdentityLinkEntityManager identityLinkEntityManager = getIdentityLinkServiceConfiguration().getIdentityLinkEntityManager();</span>
+<span class="nc" id="L368">        IdentityLinkEntity identityLink = identityLinkEntityManager.addTaskIdentityLink(this.id, userId, null, identityLinkType);</span>
+<span class="nc" id="L369">        InternalTaskAssignmentManager taskAssignmentManager = getTaskAssignmentManager();</span>
+<span class="nc bnc" id="L370" title="All 2 branches missed.">        if (taskAssignmentManager != null) {</span>
+<span class="nc" id="L371">            taskAssignmentManager.addUserIdentityLink(this, identityLink);</span>
+        }
+<span class="nc" id="L373">    }</span>
+
+    @Override
+    public void addGroupIdentityLink(String groupId, String identityLinkType) {
+<span class="nc" id="L377">        IdentityLinkEntityManager identityLinkEntityManager = getIdentityLinkServiceConfiguration().getIdentityLinkEntityManager();</span>
+<span class="nc" id="L378">        IdentityLinkEntity identityLink = identityLinkEntityManager.addTaskIdentityLink(this.id, null, groupId, identityLinkType);</span>
+<span class="nc" id="L379">        InternalTaskAssignmentManager taskAssignmentManager = getTaskAssignmentManager();</span>
+<span class="nc bnc" id="L380" title="All 2 branches missed.">        if (taskAssignmentManager != null) {</span>
+<span class="nc" id="L381">            taskAssignmentManager.addGroupIdentityLink(this, identityLink);</span>
+        }
+<span class="nc" id="L383">    }</span>
+
+    @Override
+    public void deleteCandidateUser(String userId) {
+<span class="nc" id="L387">        deleteUserIdentityLink(userId, IdentityLinkType.CANDIDATE);</span>
+<span class="nc" id="L388">    }</span>
+
+    @Override
+    public void deleteCandidateGroup(String groupId) {
+<span class="nc" id="L392">        deleteGroupIdentityLink(groupId, IdentityLinkType.CANDIDATE);</span>
+<span class="nc" id="L393">    }</span>
+    
+    @Override
+    public void deleteUserIdentityLink(String userId, String identityLinkType) {
+<span class="nc" id="L397">        IdentityLinkEntityManager identityLinkEntityManager = getIdentityLinkServiceConfiguration().getIdentityLinkEntityManager();</span>
+<span class="nc" id="L398">        identityLinkEntityManager.deleteTaskIdentityLink(this.id, getIdentityLinks(), userId, null, identityLinkType);</span>
+<span class="nc" id="L399">    }</span>
+    
+    @Override
+    public void deleteGroupIdentityLink(String groupId, String identityLinkType) {
+<span class="nc" id="L403">        IdentityLinkEntityManager identityLinkEntityManager = getIdentityLinkServiceConfiguration().getIdentityLinkEntityManager();</span>
+<span class="nc" id="L404">        identityLinkEntityManager.deleteTaskIdentityLink(this.id, getIdentityLinks(), null, groupId,identityLinkType);</span>
+<span class="nc" id="L405">    }</span>
+
+    @Override
+    public void setParentTaskId(String parentTaskId) {
+<span class="nc" id="L409">        this.parentTaskId = parentTaskId;</span>
+<span class="nc" id="L410">    }</span>
+
+    @Override
+    public String getFormKey() {
+<span class="nc" id="L414">        return formKey;</span>
+    }
+
+    @Override
+    public void setFormKey(String formKey) {
+<span class="nc" id="L419">        this.formKey = formKey;</span>
+<span class="nc" id="L420">    }</span>
+
+    // Override from VariableScopeImpl
+
+    @Override
+    protected boolean isPropagateToHistoricVariable() {
+<span class="nc" id="L426">        return true;</span>
+    }
+
+    // Overridden to avoid fetching *all* variables (as is the case in the super // call)
+    @Override
+    protected VariableInstanceEntity getSpecificVariable(String variableName) {
+<span class="nc" id="L432">        CommandContext commandContext = Context.getCommandContext();</span>
+<span class="nc bnc" id="L433" title="All 2 branches missed.">        if (commandContext == null) {</span>
+<span class="nc" id="L434">            throw new FlowableException(&quot;lazy loading outside command context for &quot; + this);</span>
+        }
+
+<span class="nc" id="L437">        return getVariableServiceConfiguration().getVariableService()</span>
+<span class="nc" id="L438">                .createInternalVariableInstanceQuery()</span>
+<span class="nc" id="L439">                .taskId(id)</span>
+<span class="nc" id="L440">                .name(variableName)</span>
+<span class="nc" id="L441">                .singleResult();</span>
+    }
+
+    @Override
+    protected List&lt;VariableInstanceEntity&gt; getSpecificVariables(Collection&lt;String&gt; variableNames) {
+<span class="nc" id="L446">        CommandContext commandContext = Context.getCommandContext();</span>
+<span class="nc bnc" id="L447" title="All 2 branches missed.">        if (commandContext == null) {</span>
+<span class="nc" id="L448">            throw new FlowableException(&quot;lazy loading outside command context for &quot; + this);</span>
+        }
+<span class="nc" id="L450">        return getVariableServiceConfiguration().getVariableService()</span>
+<span class="nc" id="L451">                .createInternalVariableInstanceQuery()</span>
+<span class="nc" id="L452">                .taskId(id)</span>
+<span class="nc" id="L453">                .names(variableNames)</span>
+<span class="nc" id="L454">                .list();</span>
+    }
+
+    // regular getters and setters ////////////////////////////////////////////////////////
+
+    @Override
+    public String getName() {
+<span class="nc bnc" id="L461" title="All 4 branches missed.">        if (localizedName != null &amp;&amp; localizedName.length() &gt; 0) {</span>
+<span class="nc" id="L462">            return localizedName;</span>
+        } else {
+<span class="nc" id="L464">            return name;</span>
+        }
+    }
+
+    public String getLocalizedName() {
+<span class="nc" id="L469">        return localizedName;</span>
+    }
+
+    @Override
+    public void setLocalizedName(String localizedName) {
+<span class="nc" id="L474">        this.localizedName = localizedName;</span>
+<span class="nc" id="L475">    }</span>
+
+    @Override
+    public String getDescription() {
+<span class="nc bnc" id="L479" title="All 4 branches missed.">        if (localizedDescription != null &amp;&amp; localizedDescription.length() &gt; 0) {</span>
+<span class="nc" id="L480">            return localizedDescription;</span>
+        } else {
+<span class="nc" id="L482">            return description;</span>
+        }
+    }
+
+    public String getLocalizedDescription() {
+<span class="nc" id="L487">        return localizedDescription;</span>
+    }
+
+    @Override
+    public void setLocalizedDescription(String localizedDescription) {
+<span class="nc" id="L492">        this.localizedDescription = localizedDescription;</span>
+<span class="nc" id="L493">    }</span>
+    
+    @Override
+    public Date getInProgressStartDueDate() {
+<span class="nc" id="L497">        return inProgressStartDueDate;</span>
+    }
+
+    @Override
+    public Date getDueDate() {
+<span class="nc" id="L502">        return dueDate;</span>
+    }
+
+    @Override
+    public int getPriority() {
+<span class="nc" id="L507">        return priority;</span>
+    }
+    
+    @Override
+    public String getState() {
+<span class="nc" id="L512">        return state;</span>
+    }
+
+    @Override
+    public void setState(String state) {
+<span class="nc" id="L517">        this.state = state;</span>
+<span class="nc" id="L518">    }</span>
+
+    @Override
+    public Date getCreateTime() {
+<span class="nc" id="L522">        return createTime;</span>
+    }
+
+    @Override
+    public void setCreateTime(Date createTime) {
+<span class="nc" id="L527">        this.createTime = createTime;</span>
+<span class="nc" id="L528">    }</span>
+
+    @Override
+    public Date getInProgressStartTime() {
+<span class="nc" id="L532">        return inProgressStartTime;</span>
+    }
+
+    @Override
+    public void setInProgressStartTime(Date inProgressStartTime) {
+<span class="nc" id="L537">        this.inProgressStartTime = inProgressStartTime;</span>
+<span class="nc" id="L538">    }</span>
+
+    @Override
+    public String getInProgressStartedBy() {
+<span class="nc" id="L542">        return inProgressStartedBy;</span>
+    }
+
+    @Override
+    public void setInProgressStartedBy(String inProgressStartedBy) {
+<span class="nc" id="L547">        this.inProgressStartedBy = inProgressStartedBy;</span>
+<span class="nc" id="L548">    }</span>
+    
+    @Override
+    public Date getClaimTime() {
+<span class="nc" id="L552">        return claimTime;</span>
+    }
+
+    @Override
+    public void setClaimTime(Date claimTime) {
+<span class="nc" id="L557">        this.claimTime = claimTime;</span>
+<span class="nc" id="L558">    }</span>
+
+    @Override
+    public String getClaimedBy() {
+<span class="nc" id="L562">        return claimedBy;</span>
+    }
+
+    @Override
+    public void setClaimedBy(String claimedBy) {
+<span class="nc" id="L567">        this.claimedBy = claimedBy;</span>
+<span class="nc" id="L568">    }</span>
+
+    @Override
+    public Date getSuspendedTime() {
+<span class="nc" id="L572">        return suspendedTime;</span>
+    }
+
+    @Override
+    public void setSuspendedTime(Date suspendedTime) {
+<span class="nc" id="L577">        this.suspendedTime = suspendedTime;</span>
+<span class="nc" id="L578">    }</span>
+
+    @Override
+    public String getSuspendedBy() {
+<span class="nc" id="L582">        return suspendedBy;</span>
+    }
+
+    @Override
+    public void setSuspendedBy(String suspendedBy) {
+<span class="nc" id="L587">        this.suspendedBy = suspendedBy;</span>
+<span class="nc" id="L588">    }</span>
+
+    @Override
+    public String getExecutionId() {
+<span class="nc" id="L592">        return executionId;</span>
+    }
+
+    @Override
+    public String getProcessInstanceId() {
+<span class="nc" id="L597">        return processInstanceId;</span>
+    }
+
+    @Override
+    public String getProcessDefinitionId() {
+<span class="nc" id="L602">        return processDefinitionId;</span>
+    }
+
+    @Override
+    public void setProcessDefinitionId(String processDefinitionId) {
+<span class="nc" id="L607">        this.processDefinitionId = processDefinitionId;</span>
+<span class="nc" id="L608">    }</span>
+
+    @Override
+    public String getTaskDefinitionId() {
+<span class="nc" id="L612">        return taskDefinitionId;</span>
+    }
+
+    @Override
+    public void setTaskDefinitionId(String taskDefinitionId) {
+<span class="nc" id="L617">        this.taskDefinitionId = taskDefinitionId;</span>
+<span class="nc" id="L618">    }</span>
+
+    @Override
+    public String getScopeId() {
+<span class="nc" id="L622">        return scopeId;</span>
+    }
+
+    @Override
+    public void setScopeId(String scopeId) {
+<span class="nc" id="L627">        this.scopeId = scopeId;</span>
+<span class="nc" id="L628">    }</span>
+
+    @Override
+    public String getSubScopeId() {
+<span class="nc" id="L632">        return subScopeId;</span>
+    }
+
+    @Override
+    public void setSubScopeId(String subScopeId) {
+<span class="nc" id="L637">        this.subScopeId = subScopeId;</span>
+<span class="nc" id="L638">    }</span>
+
+    @Override
+    public String getScopeType() {
+<span class="nc" id="L642">        return scopeType;</span>
+    }
+
+    @Override
+    public void setScopeType(String scopeType) {
+<span class="nc" id="L647">        this.scopeType = scopeType;</span>
+<span class="nc" id="L648">    }</span>
+
+    @Override
+    public String getScopeDefinitionId() {
+<span class="nc" id="L652">        return scopeDefinitionId;</span>
+    }
+
+    @Override
+    public void setScopeDefinitionId(String scopeDefinitionId) {
+<span class="nc" id="L657">        this.scopeDefinitionId = scopeDefinitionId;</span>
+<span class="nc" id="L658">    }</span>
+
+    @Override
+    public void setPropagatedStageInstanceId(String propagatedStageInstanceId) {
+<span class="nc" id="L662">        this.propagatedStageInstanceId = propagatedStageInstanceId;</span>
+<span class="nc" id="L663">    }</span>
+
+    @Override
+    public String getPropagatedStageInstanceId() {
+<span class="nc" id="L667">        return propagatedStageInstanceId;</span>
+    }
+
+    @Override
+    public String getAssignee() {
+<span class="nc" id="L672">        return assignee;</span>
+    }
+
+    public String getOriginalAssignee() {
+        // Don't ask. A stupid hack for v5 compatibility
+<span class="nc bnc" id="L677" title="All 2 branches missed.">        if (assigneeUpdatedCount &gt; 1) {</span>
+<span class="nc" id="L678">            return originalAssignee;</span>
+        } else {
+<span class="nc" id="L680">            return assignee;</span>
+        }
+    }
+
+    @Override
+    public String getTaskDefinitionKey() {
+<span class="nc" id="L686">        return taskDefinitionKey;</span>
+    }
+
+    @Override
+    public void setTaskDefinitionKey(String taskDefinitionKey) {
+<span class="nc" id="L691">        this.taskDefinitionKey = taskDefinitionKey;</span>
+<span class="nc" id="L692">    }</span>
+
+    @Override
+    public String getEventName() {
+<span class="nc" id="L696">        return eventName;</span>
+    }
+
+    @Override
+    public void setEventName(String eventName) {
+<span class="nc" id="L701">        this.eventName = eventName;</span>
+<span class="nc" id="L702">    }</span>
+    
+    @Override
+    public String getEventHandlerId() {
+<span class="nc" id="L706">        return eventHandlerId;</span>
+    }
+    
+    @Override
+    public void setEventHandlerId(String eventHandlerId) {
+<span class="nc" id="L711">        this.eventHandlerId = eventHandlerId;</span>
+<span class="nc" id="L712">    }</span>
+    
+    @Override
+    public String getTempCompletedBy() {
+<span class="nc" id="L716">        return tempCompletedBy;</span>
+    }
+
+    @Override
+    public void setTempCompletedBy(String tempCompletedBy) {
+<span class="nc" id="L721">        this.tempCompletedBy = tempCompletedBy;</span>
+<span class="nc" id="L722">    }</span>
+
+    @Override
+    public void setExecutionId(String executionId) {
+<span class="nc" id="L726">        this.executionId = executionId;</span>
+<span class="nc" id="L727">    }</span>
+
+    @Override
+    public void setProcessInstanceId(String processInstanceId) {
+<span class="nc" id="L731">        this.processInstanceId = processInstanceId;</span>
+<span class="nc" id="L732">    }</span>
+
+    @Override
+    public String getOwner() {
+<span class="nc" id="L736">        return owner;</span>
+    }
+
+    @Override
+    public DelegationState getDelegationState() {
+<span class="nc" id="L741">        return delegationState;</span>
+    }
+    
+    @Override
+    public void addCandidateUser(String userId) {
+<span class="nc" id="L746">        IdentityLinkEntityManager identityLinkEntityManager = getIdentityLinkServiceConfiguration().getIdentityLinkEntityManager();</span>
+<span class="nc" id="L747">        IdentityLinkEntity identityLink = identityLinkEntityManager.addCandidateUser(this.id, userId);</span>
+<span class="nc" id="L748">        InternalTaskAssignmentManager taskAssignmentManager = getTaskAssignmentManager();</span>
+<span class="nc bnc" id="L749" title="All 2 branches missed.">        if (taskAssignmentManager != null) {</span>
+<span class="nc" id="L750">            taskAssignmentManager.addCandidateUser(this, identityLink);</span>
+        }
+<span class="nc" id="L752">    }</span>
+    
+    @Override
+    public void addCandidateUsers(Collection&lt;String&gt; candidateUsers) {
+<span class="nc" id="L756">        IdentityLinkEntityManager identityLinkEntityManager = getIdentityLinkServiceConfiguration().getIdentityLinkEntityManager();</span>
+<span class="nc" id="L757">        List&lt;IdentityLinkEntity&gt; identityLinks = identityLinkEntityManager.addCandidateUsers(this.id, candidateUsers);</span>
+<span class="nc" id="L758">        InternalTaskAssignmentManager taskAssignmentManager = getTaskAssignmentManager();</span>
+<span class="nc bnc" id="L759" title="All 2 branches missed.">        if (taskAssignmentManager != null) {</span>
+<span class="nc" id="L760">            taskAssignmentManager.addCandidateUsers(this, convertToIdentityLinks(identityLinks));</span>
+        }
+<span class="nc" id="L762">    }</span>
+    
+    @Override
+    public void addCandidateGroup(String groupId) {
+<span class="nc" id="L766">        IdentityLinkEntityManager identityLinkEntityManager = getIdentityLinkServiceConfiguration().getIdentityLinkEntityManager();</span>
+<span class="nc" id="L767">        IdentityLinkEntity identityLink = identityLinkEntityManager.addCandidateGroup(this.id, groupId);</span>
+<span class="nc" id="L768">        InternalTaskAssignmentManager taskAssignmentManager = getTaskAssignmentManager();</span>
+<span class="nc bnc" id="L769" title="All 2 branches missed.">        if (taskAssignmentManager != null) {</span>
+<span class="nc" id="L770">            taskAssignmentManager.addCandidateGroup(this, identityLink);</span>
+        }
+<span class="nc" id="L772">    }</span>
+    
+    @Override
+    public void addCandidateGroups(Collection&lt;String&gt; candidateGroups) {
+<span class="nc" id="L776">        IdentityLinkEntityManager identityLinkEntityManager = getIdentityLinkServiceConfiguration().getIdentityLinkEntityManager();</span>
+<span class="nc" id="L777">        List&lt;IdentityLinkEntity&gt; identityLinks = identityLinkEntityManager.addCandidateGroups(this.id, candidateGroups);</span>
+<span class="nc" id="L778">        InternalTaskAssignmentManager taskAssignmentManager = getTaskAssignmentManager();</span>
+<span class="nc bnc" id="L779" title="All 2 branches missed.">        if (taskAssignmentManager != null) {</span>
+<span class="nc" id="L780">            taskAssignmentManager.addCandidateGroups(this, convertToIdentityLinks(identityLinks));</span>
+        }
+<span class="nc" id="L782">    }</span>
+    
+    protected List&lt;IdentityLink&gt; convertToIdentityLinks(List&lt;IdentityLinkEntity&gt; identityLinks) {
+<span class="nc" id="L785">        List&lt;IdentityLink&gt; identityLinkObjects = new ArrayList&lt;&gt;(identityLinks);</span>
+<span class="nc" id="L786">        return identityLinkObjects;</span>
+    }
+    
+    protected InternalTaskAssignmentManager getTaskAssignmentManager() {
+<span class="nc" id="L790">        TaskServiceConfiguration taskServiceConfiguration = getTaskServiceConfiguration();</span>
+<span class="nc bnc" id="L791" title="All 2 branches missed.">        if (taskServiceConfiguration != null) {</span>
+<span class="nc" id="L792">            return taskServiceConfiguration.getInternalTaskAssignmentManager();</span>
+        }
+        
+<span class="nc" id="L795">        return null;</span>
+    }
+
+    protected TaskServiceConfiguration getTaskServiceConfiguration() {
+<span class="nc" id="L799">        return (TaskServiceConfiguration) getTaskEngineConfiguration().getServiceConfigurations().get(EngineConfigurationConstants.KEY_TASK_SERVICE_CONFIG);</span>
+    }
+
+    protected IdentityLinkServiceConfiguration getIdentityLinkServiceConfiguration() {
+<span class="nc" id="L803">        return (IdentityLinkServiceConfiguration) getTaskEngineConfiguration().getServiceConfigurations().get(EngineConfigurationConstants.KEY_IDENTITY_LINK_SERVICE_CONFIG);</span>
+    }
+
+    @Override
+    protected VariableServiceConfiguration getVariableServiceConfiguration() {
+<span class="nc" id="L808">        return (VariableServiceConfiguration) getTaskEngineConfiguration().getServiceConfigurations().get(EngineConfigurationConstants.KEY_VARIABLE_SERVICE_CONFIG);</span>
+    }
+
+    protected AbstractEngineConfiguration getTaskEngineConfiguration() {
+<span class="nc" id="L812">        Map&lt;String, AbstractEngineConfiguration&gt; engineConfigurations = CommandContextUtil.getCommandContext().getEngineConfigurations();</span>
+<span class="nc" id="L813">        AbstractEngineConfiguration engineConfiguration = null;</span>
+<span class="nc bnc" id="L814" title="All 2 branches missed.">        if (ScopeTypes.CMMN.equals(scopeType)) {</span>
+<span class="nc" id="L815">            engineConfiguration = engineConfigurations.get(EngineConfigurationConstants.KEY_CMMN_ENGINE_CONFIG);</span>
+        } else {
+<span class="nc" id="L817">            engineConfiguration = engineConfigurations.get(EngineConfigurationConstants.KEY_PROCESS_ENGINE_CONFIG);</span>
+<span class="nc bnc" id="L818" title="All 2 branches missed.">            if (engineConfiguration == null) {</span>
+<span class="nc" id="L819">                engineConfiguration = engineConfigurations.get(EngineConfigurationConstants.KEY_CMMN_ENGINE_CONFIG);</span>
+            }
+        }
+
+<span class="nc" id="L823">        return engineConfiguration;</span>
+    }
+
+    @Override
+    public void setDelegationState(DelegationState delegationState) {
+<span class="nc" id="L828">        this.delegationState = delegationState;</span>
+<span class="nc" id="L829">    }</span>
+
+    public String getDelegationStateString() { // Needed for Activiti 5 compatibility, not exposed in interface
+<span class="nc bnc" id="L832" title="All 2 branches missed.">        return (delegationState != null ? delegationState.toString() : null);</span>
+    }
+
+    public void setDelegationStateString(String delegationStateString) {
+<span class="nc bnc" id="L836" title="All 2 branches missed.">        this.delegationState = (delegationStateString != null ? DelegationState.valueOf(DelegationState.class, delegationStateString) : null);</span>
+<span class="nc" id="L837">    }</span>
+
+    @Override
+    public boolean isDeleted() {
+<span class="nc" id="L841">        return isDeleted;</span>
+    }
+
+    @Override
+    public void setDeleted(boolean isDeleted) {
+<span class="nc" id="L846">        this.isDeleted = isDeleted;</span>
+<span class="nc" id="L847">    }</span>
+
+    @Override
+    public boolean isCanceled() {
+<span class="nc" id="L851">        return isCanceled;</span>
+    }
+
+    @Override
+    public void setCanceled(boolean isCanceled) {
+<span class="nc" id="L856">        this.isCanceled = isCanceled;</span>
+<span class="nc" id="L857">    }</span>
+
+    @Override
+    public String getParentTaskId() {
+<span class="nc" id="L861">        return parentTaskId;</span>
+    }
+
+    @Override
+    public Map&lt;String, VariableInstanceEntity&gt; getVariableInstanceEntities() {
+<span class="nc" id="L866">        ensureVariableInstancesInitialized();</span>
+<span class="nc" id="L867">        return variableInstances;</span>
+    }
+
+    @Override
+    public int getSuspensionState() {
+<span class="nc" id="L872">        return suspensionState;</span>
+    }
+
+    @Override
+    public void setSuspensionState(int suspensionState) {
+<span class="nc" id="L877">        this.suspensionState = suspensionState;</span>
+<span class="nc" id="L878">    }</span>
+
+    @Override
+    public String getCategory() {
+<span class="nc" id="L882">        return category;</span>
+    }
+
+    @Override
+    public boolean isSuspended() {
+<span class="nc bnc" id="L887" title="All 4 branches missed.">        return suspensionState == SuspensionState.SUSPENDED.getStateCode() || Task.SUSPENDED.equals(state);</span>
+    }
+
+    @Override
+    public Map&lt;String, Object&gt; getTaskLocalVariables() {
+<span class="nc" id="L892">        Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L893" title="All 2 branches missed.">        if (queryVariables != null) {</span>
+<span class="nc bnc" id="L894" title="All 2 branches missed.">            for (VariableInstanceEntity variableInstance : queryVariables) {</span>
+<span class="nc bnc" id="L895" title="All 4 branches missed.">                if (variableInstance.getId() != null &amp;&amp; variableInstance.getTaskId() != null) {</span>
+<span class="nc" id="L896">                    variables.put(variableInstance.getName(), variableInstance.getValue());</span>
+                }
+<span class="nc" id="L898">            }</span>
+        }
+<span class="nc" id="L900">        return variables;</span>
+    }
+
+    @Override
+    public Map&lt;String, Object&gt; getProcessVariables() {
+<span class="nc" id="L905">        Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L906" title="All 2 branches missed.">        if (queryVariables != null) {</span>
+<span class="nc bnc" id="L907" title="All 2 branches missed.">            for (VariableInstanceEntity variableInstance : queryVariables) {</span>
+<span class="nc bnc" id="L908" title="All 2 branches missed.">                if (this.getProcessInstanceId() != null &amp;&amp; this.getProcessInstanceId()</span>
+<span class="nc bnc" id="L909" title="All 4 branches missed.">                        .equals(variableInstance.getProcessInstanceId()) &amp;&amp; variableInstance.getTaskId() == null) {</span>
+<span class="nc" id="L910">                    variables.put(variableInstance.getName(), variableInstance.getValue());</span>
+                }
+<span class="nc" id="L912">            }</span>
+        }
+<span class="nc" id="L914">        return variables;</span>
+    }
+
+    @Override
+    public Map&lt;String, Object&gt; getCaseVariables() {
+<span class="nc" id="L919">        Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L920" title="All 2 branches missed.">        if (queryVariables != null) {</span>
+<span class="nc bnc" id="L921" title="All 2 branches missed.">            for (VariableInstanceEntity variableInstance : queryVariables) {</span>
+<span class="nc bnc" id="L922" title="All 4 branches missed.">                if (TaskVariableUtils.isCaseRelated(variableInstance) &amp;&amp; variableInstance.getScopeId().equals(this.getScopeId())</span>
+<span class="nc bnc" id="L923" title="All 2 branches missed.">                        &amp;&amp; variableInstance.getTaskId() == null) {</span>
+<span class="nc" id="L924">                    variables.put(variableInstance.getName(), variableInstance.getValue());</span>
+                }
+<span class="nc" id="L926">            }</span>
+        }
+<span class="nc" id="L928">        return variables;</span>
+    }
+
+    @Override
+    public String getTenantId() {
+<span class="nc" id="L933">        return tenantId;</span>
+    }
+
+    @Override
+    public void setTenantId(String tenantId) {
+<span class="nc" id="L938">        this.tenantId = tenantId;</span>
+<span class="nc" id="L939">    }</span>
+
+    @Override
+    public List&lt;VariableInstanceEntity&gt; getQueryVariables() {
+<span class="nc bnc" id="L943" title="All 4 branches missed.">        if (queryVariables == null &amp;&amp; Context.getCommandContext() != null) {</span>
+<span class="nc" id="L944">            queryVariables = new VariableInitializingList();</span>
+        }
+<span class="nc" id="L946">        return queryVariables;</span>
+    }
+
+    public void setQueryVariables(List&lt;VariableInstanceEntity&gt; queryVariables) {
+<span class="nc" id="L950">        this.queryVariables = queryVariables;</span>
+<span class="nc" id="L951">    }</span>
+
+    public List&lt;IdentityLinkEntity&gt; getQueryIdentityLinks() {
+<span class="nc bnc" id="L954" title="All 2 branches missed.">        if (queryIdentityLinks == null) {</span>
+<span class="nc" id="L955">            queryIdentityLinks = new LinkedList&lt;&gt;();</span>
+        }
+<span class="nc" id="L957">        return queryIdentityLinks;</span>
+    }
+
+    public void setQueryIdentityLinks(List&lt;IdentityLinkEntity&gt; identityLinks) {
+<span class="nc" id="L961">        queryIdentityLinks = identityLinks;</span>
+<span class="nc" id="L962">    }</span>
+
+    @Override
+    public String toString() {
+<span class="nc" id="L966">        StringBuilder strb = new StringBuilder();</span>
+<span class="nc" id="L967">        strb.append(&quot;Task[&quot;);</span>
+<span class="nc" id="L968">        strb.append(&quot;id=&quot;).append(id);</span>
+<span class="nc" id="L969">        strb.append(&quot;, key=&quot;).append(taskDefinitionKey);</span>
+<span class="nc" id="L970">        strb.append(&quot;, name=&quot;).append(name);</span>
+<span class="nc bnc" id="L971" title="All 2 branches missed.">        if (executionId != null) {</span>
+<span class="nc" id="L972">            strb.append(&quot;, processInstanceId=&quot;).append(processInstanceId)</span>
+<span class="nc" id="L973">                    .append(&quot;, executionId=&quot;).append(executionId)</span>
+<span class="nc" id="L974">                    .append(&quot;, processDefinitionId=&quot;).append(processDefinitionId);</span>
+<span class="nc bnc" id="L975" title="All 2 branches missed.">        } else if (scopeId != null) {</span>
+<span class="nc" id="L976">            strb.append(&quot;, scopeInstanceId=&quot;).append(scopeId)</span>
+<span class="nc" id="L977">                    .append(&quot;, subScopeId=&quot;).append(subScopeId)</span>
+<span class="nc" id="L978">                    .append(&quot;, scopeDefinitionId=&quot;).append(scopeDefinitionId);</span>
+        }
+<span class="nc" id="L980">        strb.append(&quot;]&quot;);</span>
+<span class="nc" id="L981">        return strb.toString();</span>
+    }
+
+    @Override
+    public boolean isCountEnabled() {
+<span class="nc" id="L986">        return isCountEnabled;</span>
+    }
+
+    public boolean getIsCountEnabled() {
+<span class="nc" id="L990">        return isCountEnabled;</span>
+    }
+
+    @Override
+    public void setCountEnabled(boolean isCountEnabled) {
+<span class="nc" id="L995">        this.isCountEnabled = isCountEnabled;</span>
+<span class="nc" id="L996">    }</span>
+
+    public void setIsCountEnabled(boolean isCountEnabled) {
+<span class="nc" id="L999">        this.isCountEnabled = isCountEnabled;</span>
+<span class="nc" id="L1000">    }</span>
+
+    @Override
+    public void setVariableCount(int variableCount) {
+<span class="nc" id="L1004">        this.variableCount = variableCount;</span>
+<span class="nc" id="L1005">    }</span>
+
+    @Override
+    public int getVariableCount() {
+<span class="nc" id="L1009">        return variableCount;</span>
+    }
+
+    @Override
+    public void setIdentityLinkCount(int identityLinkCount) {
+<span class="nc" id="L1014">        this.identityLinkCount = identityLinkCount;</span>
+<span class="nc" id="L1015">    }</span>
+
+    @Override
+    public int getIdentityLinkCount() {
+<span class="nc" id="L1019">        return identityLinkCount;</span>
+    }
+
+    @Override
+    public int getSubTaskCount() {
+<span class="nc" id="L1024">        return subTaskCount;</span>
+    }
+
+    @Override
+    public void setSubTaskCount(int subTaskCount) {
+<span class="nc" id="L1029">        this.subTaskCount = subTaskCount;</span>
+<span class="nc" id="L1030">    }</span>
+
+    @Override
+    public boolean isIdentityLinksInitialized() {
+<span class="nc" id="L1034">        return isIdentityLinksInitialized;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,334 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AbstractDataManager.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.common.engine.impl.db</a> &gt; <span class="el_source">AbstractDataManager.java</span></div><h1>AbstractDataManager.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.common.engine.impl.db;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.function.Consumer;
+
+import org.flowable.common.engine.impl.cfg.IdGenerator;
+import org.flowable.common.engine.impl.context.Context;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.common.engine.impl.persistence.cache.CachedEntity;
+import org.flowable.common.engine.impl.persistence.cache.CachedEntityMatcher;
+import org.flowable.common.engine.impl.persistence.cache.EntityCache;
+import org.flowable.common.engine.impl.persistence.entity.Entity;
+import org.flowable.common.engine.impl.persistence.entity.data.DataManager;
+import org.flowable.common.engine.impl.util.CollectionUtil;
+
+/**
+ * @author Joram Barrez
+ * @author Tijs Rademakers
+ */
+<span class="nc" id="L37">public abstract class AbstractDataManager&lt;EntityImpl extends Entity&gt; implements DataManager&lt;EntityImpl&gt; {</span>
+
+    public static final int MAX_ENTRIES_IN_CLAUSE = 1000; // limitation from oracle (max 1000 elements in in() clause of where)
+
+    public abstract Class&lt;? extends EntityImpl&gt; getManagedEntityClass();
+
+    public List&lt;Class&lt;? extends EntityImpl&gt;&gt; getManagedEntitySubClasses() {
+<span class="nc" id="L44">        return null;</span>
+    }
+    
+    protected CommandContext getCommandContext() {
+<span class="nc" id="L48">        return Context.getCommandContext();</span>
+    }
+
+    protected &lt;T&gt; T getSession(Class&lt;T&gt; sessionClass) {
+<span class="nc" id="L52">        return getCommandContext().getSession(sessionClass);</span>
+    }
+
+    protected DbSqlSession getDbSqlSession() {
+<span class="nc" id="L56">        return getSession(DbSqlSession.class);</span>
+    }
+    
+    protected EntityCache getEntityCache() {
+<span class="nc" id="L60">        return getSession(EntityCache.class);</span>
+    }
+
+    @Override
+    public EntityImpl findById(String entityId) {
+<span class="nc bnc" id="L65" title="All 2 branches missed.">        if (entityId == null) {</span>
+<span class="nc" id="L66">            return null;</span>
+        }
+
+        // Cache
+<span class="nc" id="L70">        EntityImpl cachedEntity = getEntityCache().findInCache(getManagedEntityClass(), entityId);</span>
+<span class="nc bnc" id="L71" title="All 2 branches missed.">        if (cachedEntity != null) {</span>
+<span class="nc" id="L72">            return cachedEntity;</span>
+        }
+
+        // Database
+<span class="nc" id="L76">        return getDbSqlSession().selectById(getManagedEntityClass(), entityId, false);</span>
+    }
+
+    @Override
+    public void insert(EntityImpl entity) {
+<span class="nc" id="L81">        getDbSqlSession().insert(entity, getIdGenerator());</span>
+<span class="nc" id="L82">    }</span>
+
+    @Override
+    public EntityImpl update(EntityImpl entity) {
+<span class="nc" id="L86">        getDbSqlSession().update(entity);</span>
+<span class="nc" id="L87">        return entity;</span>
+    }
+
+    @Override
+    public void delete(String id) {
+<span class="nc" id="L92">        EntityImpl entity = findById(id);</span>
+<span class="nc" id="L93">        delete(entity);</span>
+<span class="nc" id="L94">    }</span>
+
+    @Override
+    public void delete(EntityImpl entity) {
+<span class="nc" id="L98">        getDbSqlSession().delete(entity);</span>
+<span class="nc" id="L99">    }</span>
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    protected EntityImpl findByQuery(String selectQuery, Object parameter) {
+<span class="nc" id="L103">        return (EntityImpl) getDbSqlSession().selectOne(selectQuery, parameter);</span>
+    }
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    protected List&lt;EntityImpl&gt; getList(String dbQueryName, Object parameter) {
+<span class="nc" id="L108">        Collection&lt;EntityImpl&gt; result = getDbSqlSession().selectList(dbQueryName, parameter);</span>
+<span class="nc" id="L109">        return new ArrayList&lt;&gt;(result);</span>
+    }
+    
+    @SuppressWarnings(&quot;unchecked&quot;)
+    protected EntityImpl getEntity(String selectQuery, Object parameter, SingleCachedEntityMatcher&lt;EntityImpl&gt; cachedEntityMatcher, boolean checkDatabase) {
+        // Cache
+<span class="nc bnc" id="L115" title="All 2 branches missed.">        for (EntityImpl cachedEntity : getEntityCache().findInCache(getManagedEntityClass())) {</span>
+<span class="nc bnc" id="L116" title="All 2 branches missed.">            if (cachedEntityMatcher.isRetained(cachedEntity, parameter)) {</span>
+<span class="nc" id="L117">                return cachedEntity;</span>
+            }
+<span class="nc" id="L119">        }</span>
+
+        // Database
+<span class="nc bnc" id="L122" title="All 2 branches missed.">        if (checkDatabase) {</span>
+<span class="nc" id="L123">            return (EntityImpl) getDbSqlSession().selectOne(selectQuery, parameter);</span>
+        }
+
+<span class="nc" id="L126">        return null;</span>
+    }
+    
+    protected List&lt;EntityImpl&gt; getList(String dbQueryName, Object parameter, CachedEntityMatcher&lt;EntityImpl&gt; cachedEntityMatcher) {
+<span class="nc" id="L130">        return getList(dbQueryName, parameter, cachedEntityMatcher, true);</span>
+    }
+
+    /**
+     * Gets a list by querying the database and the cache using {@link CachedEntityMatcher}. First, the entities are fetched from the database using the provided query. The cache is then queried for
+     * the entities of the same type. If an entity matches the {@link CachedEntityMatcher} condition, it replaces the entity from the database (as it is newer).
+     * 
+     * @param dbQueryName
+     *            The query name that needs to be executed.
+     * @param parameter
+     *            The parameters for the query.
+     * @param cachedEntityMatcher
+     *            The matcher used to determine which entities from the cache needs to be retained
+     * @param checkCache
+     *            If false, no cache check will be done, and the returned list will simply be the list from the database.
+     */
+    protected List&lt;EntityImpl&gt; getList(String dbQueryName, Object parameter,
+            CachedEntityMatcher&lt;EntityImpl&gt; cachedEntityMatcher, boolean checkCache) {
+<span class="nc" id="L148">        return getList(getDbSqlSession(), dbQueryName, parameter, cachedEntityMatcher, checkCache);</span>
+    }
+    
+    
+    protected List&lt;EntityImpl&gt; getList(DbSqlSession dbSqlSession, String dbQueryName, Object parameter,
+            CachedEntityMatcher&lt;EntityImpl&gt; cachedEntityMatcher, boolean checkCache) {
+        
+<span class="nc" id="L155">        return getList(dbSqlSession, dbQueryName, parameter, cachedEntityMatcher, checkCache, false);</span>
+    }
+    
+    @SuppressWarnings(&quot;unchecked&quot;)
+    protected List&lt;EntityImpl&gt; getList(DbSqlSession dbSqlSession, String dbQueryName, Object parameter,
+            CachedEntityMatcher&lt;EntityImpl&gt; cachedEntityMatcher, boolean checkCache, boolean includeDeleted) {
+
+<span class="nc" id="L162">        Collection&lt;EntityImpl&gt; result = dbSqlSession.selectList(dbQueryName, parameter);</span>
+
+<span class="nc bnc" id="L164" title="All 2 branches missed.">        if (checkCache) {</span>
+
+<span class="nc" id="L166">            Collection&lt;CachedEntity&gt; cachedObjects = getEntityCache().findInCacheAsCachedObjects(getManagedEntityClass());</span>
+
+<span class="nc bnc" id="L168" title="All 6 branches missed.">            if ((cachedObjects != null &amp;&amp; cachedObjects.size() &gt; 0) || getManagedEntitySubClasses() != null) {</span>
+
+<span class="nc" id="L170">                HashMap&lt;String, EntityImpl&gt; entityMap = new HashMap&lt;&gt;(result.size());</span>
+
+                // Database entities
+<span class="nc bnc" id="L173" title="All 2 branches missed.">                for (EntityImpl entity : result) {</span>
+<span class="nc" id="L174">                    entityMap.put(entity.getId(), entity);</span>
+<span class="nc" id="L175">                }</span>
+
+                // Cache entities
+<span class="nc bnc" id="L178" title="All 4 branches missed.">                if (cachedObjects != null &amp;&amp; cachedEntityMatcher != null) {</span>
+<span class="nc bnc" id="L179" title="All 2 branches missed.">                    for (CachedEntity cachedObject : cachedObjects) {</span>
+<span class="nc" id="L180">                        EntityImpl cachedEntity = (EntityImpl) cachedObject.getEntity();</span>
+<span class="nc bnc" id="L181" title="All 2 branches missed.">                        if (cachedEntityMatcher.isRetained(result, cachedObjects, cachedEntity, parameter)) {</span>
+<span class="nc" id="L182">                            entityMap.put(cachedEntity.getId(), cachedEntity); // will overwrite db version with newer version</span>
+                        }
+<span class="nc" id="L184">                    }</span>
+                }
+
+<span class="nc bnc" id="L187" title="All 4 branches missed.">                if (getManagedEntitySubClasses() != null &amp;&amp; cachedEntityMatcher != null) {</span>
+<span class="nc bnc" id="L188" title="All 2 branches missed.">                    for (Class&lt;? extends EntityImpl&gt; entitySubClass : getManagedEntitySubClasses()) {</span>
+<span class="nc" id="L189">                        Collection&lt;CachedEntity&gt; subclassCachedObjects = getEntityCache().findInCacheAsCachedObjects(entitySubClass);</span>
+<span class="nc bnc" id="L190" title="All 2 branches missed.">                        if (subclassCachedObjects != null) {</span>
+<span class="nc bnc" id="L191" title="All 2 branches missed.">                            for (CachedEntity subclassCachedObject : subclassCachedObjects) {</span>
+<span class="nc" id="L192">                                EntityImpl cachedSubclassEntity = (EntityImpl) subclassCachedObject.getEntity();</span>
+<span class="nc bnc" id="L193" title="All 2 branches missed.">                                if (cachedEntityMatcher.isRetained(result, cachedObjects, cachedSubclassEntity, parameter)) {</span>
+<span class="nc" id="L194">                                    entityMap.put(cachedSubclassEntity.getId(), cachedSubclassEntity); // will overwrite db version with newer version</span>
+                                }
+<span class="nc" id="L196">                            }</span>
+                        }
+<span class="nc" id="L198">                    }</span>
+                }
+
+<span class="nc" id="L201">                result = entityMap.values();</span>
+
+            }
+
+        }
+
+        // Remove entries which are already deleted
+<span class="nc bnc" id="L208" title="All 4 branches missed.">        if (!includeDeleted &amp;&amp; result.size() &gt; 0) {</span>
+<span class="nc" id="L209">            Iterator&lt;EntityImpl&gt; resultIterator = result.iterator();</span>
+<span class="nc bnc" id="L210" title="All 2 branches missed.">            while (resultIterator.hasNext()) {</span>
+<span class="nc bnc" id="L211" title="All 2 branches missed.">                if (dbSqlSession.isEntityToBeDeleted(resultIterator.next())) {</span>
+<span class="nc" id="L212">                    resultIterator.remove();</span>
+                }
+            }
+        }
+
+<span class="nc" id="L217">        return new ArrayList&lt;&gt;(result);</span>
+    }
+
+    protected List&lt;EntityImpl&gt; getListFromCache(CachedEntityMatcher&lt;EntityImpl&gt; entityMatcher, Object parameter) {
+<span class="nc" id="L221">        return getListFromCache(entityMatcher, parameter, false);</span>
+    }
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    protected List&lt;EntityImpl&gt; getListFromCache(CachedEntityMatcher&lt;EntityImpl&gt; entityMatcher, Object parameter, boolean includeDeletedEntities) {
+<span class="nc" id="L226">        Collection&lt;CachedEntity&gt; cachedObjects = getEntityCache().findInCacheAsCachedObjects(getManagedEntityClass());</span>
+
+<span class="nc" id="L228">        DbSqlSession dbSqlSession = getDbSqlSession();</span>
+
+<span class="nc bnc" id="L230" title="All 2 branches missed.">        List&lt;EntityImpl&gt; result = new ArrayList&lt;&gt;(cachedObjects != null ? cachedObjects.size() : 1);</span>
+<span class="nc bnc" id="L231" title="All 4 branches missed.">        if (cachedObjects != null &amp;&amp; entityMatcher != null) {</span>
+<span class="nc bnc" id="L232" title="All 2 branches missed.">            for (CachedEntity cachedObject : cachedObjects) {</span>
+<span class="nc" id="L233">                EntityImpl cachedEntity = (EntityImpl) cachedObject.getEntity();</span>
+<span class="nc bnc" id="L234" title="All 4 branches missed.">                if (entityMatcher.isRetained(null, cachedObjects, cachedEntity, parameter)</span>
+<span class="nc bnc" id="L235" title="All 2 branches missed.">                        &amp;&amp; (includeDeletedEntities || !dbSqlSession.isEntityToBeDeleted(cachedEntity))) {</span>
+<span class="nc" id="L236">                    result.add(cachedEntity);</span>
+                }
+<span class="nc" id="L238">            }</span>
+        }
+
+<span class="nc bnc" id="L241" title="All 4 branches missed.">        if (getManagedEntitySubClasses() != null &amp;&amp; entityMatcher != null) {</span>
+<span class="nc bnc" id="L242" title="All 2 branches missed.">            for (Class&lt;? extends EntityImpl&gt; entitySubClass : getManagedEntitySubClasses()) {</span>
+<span class="nc" id="L243">                Collection&lt;CachedEntity&gt; subclassCachedObjects = getEntityCache().findInCacheAsCachedObjects(entitySubClass);</span>
+<span class="nc bnc" id="L244" title="All 2 branches missed.">                if (subclassCachedObjects != null) {</span>
+<span class="nc bnc" id="L245" title="All 2 branches missed.">                    for (CachedEntity subclassCachedObject : subclassCachedObjects) {</span>
+<span class="nc" id="L246">                        EntityImpl cachedSubclassEntity = (EntityImpl) subclassCachedObject.getEntity();</span>
+<span class="nc bnc" id="L247" title="All 4 branches missed.">                        if (entityMatcher.isRetained(null, cachedObjects, cachedSubclassEntity, parameter) &amp;&amp; !dbSqlSession.isEntityToBeDeleted(cachedSubclassEntity)) {</span>
+<span class="nc" id="L248">                            result.add(cachedSubclassEntity);</span>
+                        }
+<span class="nc" id="L250">                    }</span>
+                }
+<span class="nc" id="L252">            }</span>
+        }
+
+<span class="nc" id="L255">        return result;</span>
+    }
+    
+    /**
+     * Does a bulk delete, but also uses the provided {@link CachedEntityMatcher}
+     * to look in the cache to mark the cached entities as deleted. 
+     * (This is necessary if entities are inserted and deleted in the same operation). 
+     */
+    public void bulkDelete(String statement, CachedEntityMatcher&lt;EntityImpl&gt; cachedEntityMatcher, Object parameter) {
+<span class="nc" id="L264">        DbSqlSession dbSqlSession = getDbSqlSession();</span>
+        
+        // Regular bulk delete
+<span class="nc" id="L267">        dbSqlSession.delete(statement, parameter, getManagedEntityClass());</span>
+        
+        // Special care needs to be taken for entities that have been in inserted in the same transaction
+        // as when this bulk delete is issued: the entities needs to be added to the deleted list. 
+        // This will not trigger an actual delete in the database, but will have as result that the entity will be
+        // a) marked as deleted
+        // b) the insert and the delete will cancel out each other, leaving only the bulk delete.
+<span class="nc" id="L274">        deleteCachedEntities(dbSqlSession, cachedEntityMatcher, parameter);</span>
+<span class="nc" id="L275">    }</span>
+
+    protected void deleteCachedEntities(DbSqlSession dbSqlSession,  CachedEntityMatcher&lt;EntityImpl&gt; cachedEntityMatcher, Object parameter) {
+<span class="nc" id="L278">        deleteCachedEntities(dbSqlSession, getEntityCache().findInCacheAsCachedObjects(getManagedEntityClass()), cachedEntityMatcher, parameter);</span>
+<span class="nc bnc" id="L279" title="All 4 branches missed.">        if (getManagedEntitySubClasses() != null &amp;&amp; cachedEntityMatcher != null) {</span>
+<span class="nc bnc" id="L280" title="All 2 branches missed.">            for (Class&lt;? extends EntityImpl&gt; entitySubClass : getManagedEntitySubClasses()) {</span>
+<span class="nc" id="L281">                deleteCachedEntities(dbSqlSession, getEntityCache().findInCacheAsCachedObjects(entitySubClass), cachedEntityMatcher, parameter);</span>
+<span class="nc" id="L282">            }</span>
+        }
+<span class="nc" id="L284">    }</span>
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    protected void deleteCachedEntities(DbSqlSession dbSqlSession, Collection&lt;CachedEntity&gt; cachedObjects, 
+            CachedEntityMatcher&lt;EntityImpl&gt; cachedEntityMatcher,  Object parameter) {
+<span class="nc bnc" id="L289" title="All 4 branches missed.">        if (cachedObjects != null &amp;&amp; cachedEntityMatcher != null) {</span>
+<span class="nc bnc" id="L290" title="All 2 branches missed.">            for (CachedEntity cachedObject : cachedObjects) {</span>
+<span class="nc" id="L291">                EntityImpl cachedEntity = (EntityImpl) cachedObject.getEntity();</span>
+<span class="nc" id="L292">                boolean entityMatches = cachedEntityMatcher.isRetained(null, cachedObjects, cachedEntity, parameter);</span>
+<span class="nc bnc" id="L293" title="All 4 branches missed.">                if (cachedEntity.isInserted() &amp;&amp; entityMatches) {</span>
+<span class="nc" id="L294">                    dbSqlSession.delete(cachedEntity);</span>
+                }
+<span class="nc bnc" id="L296" title="All 2 branches missed.">                if (entityMatches) {</span>
+<span class="nc" id="L297">                    cachedEntity.setDeleted(true);</span>
+                }
+<span class="nc" id="L299">            }</span>
+        }
+<span class="nc" id="L301">    }</span>
+    
+    protected List&lt;List&lt;String&gt;&gt; createSafeInValuesList(Collection&lt;String&gt; values) {
+        // need to split into different parts due to some dbs not supporting more than MAX_ENTRIES_IN_CLAUSE for in()
+<span class="nc" id="L305">        return CollectionUtil.partition(values, MAX_ENTRIES_IN_CLAUSE);</span>
+    }
+
+    protected void executeChangeWithInClause(List&lt;EntityImpl&gt; entities, Consumer&lt;List&lt;EntityImpl&gt;&gt; consumer) {
+        // need to split into different parts due to some dbs not supporting more than MAX_ENTRIES_IN_CLAUSE for in()
+<span class="nc" id="L310">        CollectionUtil.consumePartitions(entities, MAX_ENTRIES_IN_CLAUSE, consumer);</span>
+<span class="nc" id="L311">    }</span>
+
+    protected void bulkDeleteEntities(String statement, List&lt;EntityImpl&gt; entities) {
+<span class="nc" id="L314">        executeChangeWithInClause(entities, entitiesParameter -&gt; {</span>
+<span class="nc" id="L315">            getDbSqlSession().delete(statement, entitiesParameter, getManagedEntityClass());</span>
+<span class="nc" id="L316">        });</span>
+<span class="nc" id="L317">    }</span>
+
+    protected void bulkUpdateEntities(String statement, Map&lt;String, Object&gt; parameters, String collectionNameInSqlStatement, List&lt;EntityImpl&gt; entities) {
+<span class="nc" id="L320">        executeChangeWithInClause(entities, entitiesParameter -&gt; {</span>
+<span class="nc" id="L321">            Map&lt;String, Object&gt; copyParameters = new HashMap&lt;&gt;(parameters);</span>
+<span class="nc" id="L322">            copyParameters.put(collectionNameInSqlStatement, entitiesParameter);</span>
+<span class="nc" id="L323">            getDbSqlSession().directUpdate(statement, copyParameters);</span>
+<span class="nc" id="L324">        });</span>
+<span class="nc" id="L325">    }</span>
+    
+    protected boolean isEntityInserted(DbSqlSession dbSqlSession, String entityLogicalName, String entityId) {
+<span class="nc" id="L328">        Class&lt;?&gt; executionEntityClass = dbSqlSession.getDbSqlSessionFactory().getLogicalNameToClassMapping().get(entityLogicalName);</span>
+<span class="nc bnc" id="L329" title="All 4 branches missed.">        return executionEntityClass != null &amp;&amp; dbSqlSession.isEntityInserted(executionEntityClass, entityId);</span>
+    }
+
+    protected abstract IdGenerator getIdGenerator();
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

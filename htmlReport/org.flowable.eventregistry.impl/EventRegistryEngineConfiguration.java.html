@@ -1,0 +1,1010 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>EventRegistryEngineConfiguration.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.eventregistry.impl</a> &gt; <span class="el_source">EventRegistryEngineConfiguration.java</span></div><h1>EventRegistryEngineConfiguration.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.eventregistry.impl;
+
+import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.function.Consumer;
+
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.impl.AbstractEngineConfiguration;
+import org.flowable.common.engine.impl.HasExpressionManagerEngineConfiguration;
+import org.flowable.common.engine.impl.cfg.BeansConfigurationHelper;
+import org.flowable.common.engine.impl.db.DbSqlSessionFactory;
+import org.flowable.common.engine.impl.el.DefaultExpressionManager;
+import org.flowable.common.engine.impl.el.ExpressionManager;
+import org.flowable.common.engine.impl.interceptor.CommandInterceptor;
+import org.flowable.common.engine.impl.interceptor.EngineConfigurationConstants;
+import org.flowable.common.engine.impl.javax.el.ELResolver;
+import org.flowable.common.engine.impl.persistence.deploy.DefaultDeploymentCache;
+import org.flowable.common.engine.impl.persistence.deploy.DeploymentCache;
+import org.flowable.common.engine.impl.persistence.deploy.FullDeploymentCache;
+import org.flowable.common.engine.impl.persistence.entity.TableDataManager;
+import org.flowable.eventregistry.api.ChannelModelProcessor;
+import org.flowable.eventregistry.api.EventManagementService;
+import org.flowable.eventregistry.api.EventRegistry;
+import org.flowable.eventregistry.api.EventRegistryConfigurationApi;
+import org.flowable.eventregistry.api.EventRegistryNonMatchingEventConsumer;
+import org.flowable.eventregistry.api.EventRepositoryService;
+import org.flowable.eventregistry.api.InboundChannelModelCacheManager;
+import org.flowable.eventregistry.api.InboundEventPayloadExtractor;
+import org.flowable.eventregistry.api.InboundEventProcessor;
+import org.flowable.eventregistry.api.OutboundEventProcessor;
+import org.flowable.eventregistry.api.management.EventRegistryChangeDetectionExecutor;
+import org.flowable.eventregistry.api.management.EventRegistryChangeDetectionManager;
+import org.flowable.eventregistry.impl.cfg.StandaloneEventRegistryEngineConfiguration;
+import org.flowable.eventregistry.impl.cfg.StandaloneInMemEventRegistryEngineConfiguration;
+import org.flowable.eventregistry.impl.cmd.SchemaOperationsEventRegistryEngineBuild;
+import org.flowable.eventregistry.impl.db.EntityDependencyOrder;
+import org.flowable.eventregistry.impl.db.EventDbSchemaManager;
+import org.flowable.eventregistry.impl.deployer.CachingAndArtifactsManager;
+import org.flowable.eventregistry.impl.deployer.ChannelDefinitionDeploymentHelper;
+import org.flowable.eventregistry.impl.deployer.DefaultInboundChannelModelCacheManager;
+import org.flowable.eventregistry.impl.deployer.EventDefinitionDeployer;
+import org.flowable.eventregistry.impl.deployer.EventDefinitionDeploymentHelper;
+import org.flowable.eventregistry.impl.deployer.ParsedDeploymentBuilderFactory;
+import org.flowable.eventregistry.impl.management.DefaultEventRegistryChangeDetectionExecutor;
+import org.flowable.eventregistry.impl.management.DefaultEventRegistryChangeDetectionManager;
+import org.flowable.eventregistry.impl.parser.ChannelDefinitionParseFactory;
+import org.flowable.eventregistry.impl.parser.EventDefinitionParseFactory;
+import org.flowable.eventregistry.impl.payload.HeadersPayloadExtractor;
+import org.flowable.eventregistry.impl.persistence.deploy.ChannelDefinitionCacheEntry;
+import org.flowable.eventregistry.impl.persistence.deploy.Deployer;
+import org.flowable.eventregistry.impl.persistence.deploy.EventDefinitionCacheEntry;
+import org.flowable.eventregistry.impl.persistence.deploy.EventDeploymentManager;
+import org.flowable.eventregistry.impl.persistence.entity.ChannelDefinitionEntityManager;
+import org.flowable.eventregistry.impl.persistence.entity.ChannelDefinitionEntityManagerImpl;
+import org.flowable.eventregistry.impl.persistence.entity.EventDefinitionEntityManager;
+import org.flowable.eventregistry.impl.persistence.entity.EventDefinitionEntityManagerImpl;
+import org.flowable.eventregistry.impl.persistence.entity.EventDeploymentEntityManager;
+import org.flowable.eventregistry.impl.persistence.entity.EventDeploymentEntityManagerImpl;
+import org.flowable.eventregistry.impl.persistence.entity.EventResourceEntityManager;
+import org.flowable.eventregistry.impl.persistence.entity.EventResourceEntityManagerImpl;
+import org.flowable.eventregistry.impl.persistence.entity.data.ChannelDefinitionDataManager;
+import org.flowable.eventregistry.impl.persistence.entity.data.EventDefinitionDataManager;
+import org.flowable.eventregistry.impl.persistence.entity.data.EventDeploymentDataManager;
+import org.flowable.eventregistry.impl.persistence.entity.data.EventResourceDataManager;
+import org.flowable.eventregistry.impl.persistence.entity.data.impl.MybatisChannelDefinitionDataManager;
+import org.flowable.eventregistry.impl.persistence.entity.data.impl.MybatisEventDefinitionDataManager;
+import org.flowable.eventregistry.impl.persistence.entity.data.impl.MybatisEventDeploymentDataManager;
+import org.flowable.eventregistry.impl.persistence.entity.data.impl.MybatisEventResourceDataManager;
+import org.flowable.eventregistry.impl.pipeline.DelegateExpressionInboundChannelModelProcessor;
+import org.flowable.eventregistry.impl.pipeline.DelegateExpressionOutboundChannelModelProcessor;
+import org.flowable.eventregistry.impl.pipeline.InMemoryOutboundEventChannelAdapter;
+import org.flowable.eventregistry.impl.pipeline.InMemoryOutboundEventProcessingPipeline;
+import org.flowable.eventregistry.impl.pipeline.InboundChannelModelProcessor;
+import org.flowable.eventregistry.impl.pipeline.OutboundChannelModelProcessor;
+import org.flowable.eventregistry.json.converter.ChannelJsonConverter;
+import org.flowable.eventregistry.json.converter.EventJsonConverter;
+
+import liquibase.Liquibase;
+import liquibase.database.Database;
+import liquibase.exception.DatabaseException;
+
+<span class="nc" id="L98">public class EventRegistryEngineConfiguration extends AbstractEngineConfiguration</span>
+        implements EventRegistryConfigurationApi, HasExpressionManagerEngineConfiguration {
+
+    public static final String DEFAULT_MYBATIS_MAPPING_FILE = &quot;org/flowable/eventregistry/db/mapping/mappings.xml&quot;;
+
+    public static final String LIQUIBASE_CHANGELOG_PREFIX = &quot;FLW_EV_&quot;;
+
+<span class="nc" id="L105">    protected String eventRegistryEngineName = EventRegistryEngines.NAME_DEFAULT;</span>
+
+    // SERVICES
+    // /////////////////////////////////////////////////////////////////
+
+<span class="nc" id="L110">    protected EventRepositoryService eventRepositoryService = new EventRepositoryServiceImpl(this);</span>
+<span class="nc" id="L111">    protected EventManagementService eventManagementService = new EventManagementServiceImpl(this);</span>
+
+    // DATA MANAGERS ///////////////////////////////////////////////////
+
+    protected EventDeploymentDataManager deploymentDataManager;
+    protected EventDefinitionDataManager eventDefinitionDataManager;
+    protected ChannelDefinitionDataManager channelDefinitionDataManager;
+    protected EventResourceDataManager resourceDataManager;
+
+    // ENTITY MANAGERS /////////////////////////////////////////////////
+    protected EventDeploymentEntityManager deploymentEntityManager;
+    protected EventDefinitionEntityManager eventDefinitionEntityManager;
+    protected ChannelDefinitionEntityManager channelDefinitionEntityManager;
+    protected EventResourceEntityManager resourceEntityManager;
+
+    protected ExpressionManager expressionManager;
+    protected Collection&lt;Consumer&lt;ExpressionManager&gt;&gt; expressionManagerConfigurers;
+    protected Collection&lt;ELResolver&gt; preDefaultELResolvers;
+    protected Collection&lt;ELResolver&gt; preBeanELResolvers;
+    protected Collection&lt;ELResolver&gt; postDefaultELResolvers;
+
+<span class="nc" id="L132">    protected EventJsonConverter eventJsonConverter = new EventJsonConverter();</span>
+<span class="nc" id="L133">    protected ChannelJsonConverter channelJsonConverter = new ChannelJsonConverter();</span>
+
+    // DEPLOYERS
+    // ////////////////////////////////////////////////////////////////
+
+    protected EventDefinitionDeployer eventDeployer;
+    protected EventDefinitionParseFactory eventParseFactory;
+    protected ChannelDefinitionParseFactory channelParseFactory;
+    protected ParsedDeploymentBuilderFactory parsedDeploymentBuilderFactory;
+    protected EventDefinitionDeploymentHelper eventDeploymentHelper;
+    protected ChannelDefinitionDeploymentHelper channelDeploymentHelper;
+    protected CachingAndArtifactsManager cachingAndArtifactsManager;
+    protected List&lt;Deployer&gt; customPreDeployers;
+    protected List&lt;Deployer&gt; customPostDeployers;
+    protected List&lt;Deployer&gt; deployers;
+    protected EventDeploymentManager deploymentManager;
+    protected InboundChannelModelCacheManager inboundChannelModelCacheManager;
+
+<span class="nc" id="L151">    protected int eventDefinitionCacheLimit = -1; // By default, no limit</span>
+    protected DeploymentCache&lt;EventDefinitionCacheEntry&gt; eventDefinitionCache;
+    protected DeploymentCache&lt;ChannelDefinitionCacheEntry&gt; channelDefinitionCache;
+
+<span class="nc" id="L155">    protected Collection&lt;ChannelModelProcessor&gt; channelModelProcessors = new ArrayList&lt;&gt;();</span>
+
+    // Event registry
+    protected EventRegistry eventRegistry;
+    protected InboundEventProcessor inboundEventProcessor;
+    protected OutboundEventProcessor outboundEventProcessor;
+    protected OutboundEventProcessor systemOutboundEventProcessor;
+
+    protected Map&lt;String, InboundEventPayloadExtractor&lt;?&gt;&gt; inboundEventPayloadExtractorsByChannelType;
+    protected InboundEventPayloadExtractor&lt;?&gt; defaultInboundEventPayloadExtractor;
+    
+    // Change detection
+    protected boolean enableEventRegistryChangeDetection;
+<span class="nc" id="L168">    protected long eventRegistryChangeDetectionInitialDelayInMs = 10000L;</span>
+<span class="nc" id="L169">    protected long eventRegistryChangeDetectionDelayInMs = 60000L;</span>
+    protected EventRegistryChangeDetectionManager eventRegistryChangeDetectionManager;
+    protected EventRegistryChangeDetectionExecutor eventRegistryChangeDetectionExecutor;
+    
+    protected EventRegistryNonMatchingEventConsumer nonMatchingEventConsumer;
+
+<span class="nc" id="L175">    protected boolean enableEventRegistryChangeDetectionAfterEngineCreate = true;</span>
+
+    public static EventRegistryEngineConfiguration createEventRegistryEngineConfigurationFromResourceDefault() {
+<span class="nc" id="L178">        return createEventRegistryEngineConfigurationFromResource(&quot;flowable.eventregistry.cfg.xml&quot;, &quot;eventRegistryEngineConfiguration&quot;);</span>
+    }
+
+    public static EventRegistryEngineConfiguration createEventRegistryEngineConfigurationFromResource(String resource) {
+<span class="nc" id="L182">        return createEventRegistryEngineConfigurationFromResource(resource, &quot;eventRegistryEngineConfiguration&quot;);</span>
+    }
+
+    public static EventRegistryEngineConfiguration createEventRegistryEngineConfigurationFromResource(String resource, String beanName) {
+<span class="nc" id="L186">        return (EventRegistryEngineConfiguration) BeansConfigurationHelper.parseEngineConfigurationFromResource(resource, beanName);</span>
+    }
+
+    public static EventRegistryEngineConfiguration createEventRegistryEngineConfigurationFromInputStream(InputStream inputStream) {
+<span class="nc" id="L190">        return createEventRegistryEngineConfigurationFromInputStream(inputStream, &quot;eventRegistryEngineConfiguration&quot;);</span>
+    }
+
+    public static EventRegistryEngineConfiguration createEventRegistryEngineConfigurationFromInputStream(InputStream inputStream, String beanName) {
+<span class="nc" id="L194">        return (EventRegistryEngineConfiguration) BeansConfigurationHelper.parseEngineConfigurationFromInputStream(inputStream, beanName);</span>
+    }
+
+    public static EventRegistryEngineConfiguration createStandaloneEventRegistryEngineConfiguration() {
+<span class="nc" id="L198">        return new StandaloneEventRegistryEngineConfiguration();</span>
+    }
+
+    public static EventRegistryEngineConfiguration createStandaloneInMemEventRegistryEngineConfiguration() {
+<span class="nc" id="L202">        return new StandaloneInMemEventRegistryEngineConfiguration();</span>
+    }
+
+    // buildEventRegistryEngine
+    // ///////////////////////////////////////////////////////
+
+    public EventRegistryEngine buildEventRegistryEngine() {
+<span class="nc" id="L209">        init();</span>
+<span class="nc" id="L210">        EventRegistryEngineImpl eventRegistryEngine = new EventRegistryEngineImpl(this);</span>
+
+<span class="nc bnc" id="L212" title="All 2 branches missed.">        if (enableEventRegistryChangeDetectionAfterEngineCreate) {</span>
+
+<span class="nc" id="L214">            eventRegistryEngine.handleDeployedChannelDefinitions();</span>
+
+<span class="nc bnc" id="L216" title="All 2 branches missed.">            if (enableEventRegistryChangeDetection) {</span>
+<span class="nc" id="L217">                eventRegistryChangeDetectionExecutor.initialize();</span>
+            }
+        }
+
+<span class="nc" id="L221">        return eventRegistryEngine;</span>
+    }
+
+    // init
+    // /////////////////////////////////////////////////////////////////////
+
+    protected void init() {
+<span class="nc" id="L228">        initEngineConfigurations();</span>
+<span class="nc" id="L229">        initConfigurators();</span>
+<span class="nc" id="L230">        configuratorsBeforeInit();</span>
+<span class="nc" id="L231">        initClock();</span>
+<span class="nc" id="L232">        initObjectMapper();</span>
+<span class="nc" id="L233">        initBeans();</span>
+<span class="nc" id="L234">        initExpressionManager();</span>
+<span class="nc" id="L235">        initCommandContextFactory();</span>
+<span class="nc" id="L236">        initTransactionContextFactory();</span>
+<span class="nc" id="L237">        initCommandExecutors();</span>
+<span class="nc" id="L238">        initIdGenerator();</span>
+
+<span class="nc bnc" id="L240" title="All 2 branches missed.">        if (usingRelationalDatabase) {</span>
+<span class="nc" id="L241">            initDataSource();</span>
+        }
+        
+<span class="nc bnc" id="L244" title="All 4 branches missed.">        if (usingRelationalDatabase || usingSchemaMgmt) {</span>
+<span class="nc" id="L245">            initSchemaManager();</span>
+<span class="nc" id="L246">            initSchemaManagementCommand();</span>
+        }
+
+<span class="nc" id="L249">        initTransactionFactory();</span>
+
+<span class="nc bnc" id="L251" title="All 2 branches missed.">        if (usingRelationalDatabase) {</span>
+<span class="nc" id="L252">            initSqlSessionFactory();</span>
+        }
+
+<span class="nc" id="L255">        initSessionFactories();</span>
+<span class="nc" id="L256">        initServices();</span>
+<span class="nc" id="L257">        configuratorsAfterInit();</span>
+<span class="nc" id="L258">        initDataManagers();</span>
+<span class="nc" id="L259">        initEntityManagers();</span>
+<span class="nc" id="L260">        initEventRegistry();</span>
+<span class="nc" id="L261">        initInboundEventProcessor();</span>
+<span class="nc" id="L262">        initOutboundEventProcessor();</span>
+<span class="nc" id="L263">        initSystemOutboundEventProcessor();</span>
+<span class="nc" id="L264">        initInboundEventPayloadExtractorProvider();</span>
+<span class="nc" id="L265">        initChannelDefinitionProcessors();</span>
+<span class="nc" id="L266">        initDeployers();</span>
+<span class="nc" id="L267">        initInboundChannelModelCacheManager();</span>
+<span class="nc" id="L268">        initChangeDetectionManager();</span>
+<span class="nc" id="L269">        initChangeDetectionExecutor();</span>
+<span class="nc" id="L270">    }</span>
+
+    // services
+    // /////////////////////////////////////////////////////////////////
+
+    protected void initServices() {
+<span class="nc" id="L276">        initService(eventRepositoryService);</span>
+<span class="nc" id="L277">        initService(eventManagementService);</span>
+<span class="nc" id="L278">    }</span>
+
+    public void initExpressionManager() {
+<span class="nc bnc" id="L281" title="All 2 branches missed.">        if (expressionManager == null) {</span>
+<span class="nc" id="L282">            DefaultExpressionManager eventRegistryExpressionManager = new DefaultExpressionManager(beans);</span>
+
+<span class="nc bnc" id="L284" title="All 2 branches missed.">            if (preDefaultELResolvers != null) {</span>
+<span class="nc" id="L285">                preDefaultELResolvers.forEach(eventRegistryExpressionManager::addPreDefaultResolver);</span>
+            }
+
+<span class="nc bnc" id="L288" title="All 2 branches missed.">            if (preBeanELResolvers != null) {</span>
+<span class="nc" id="L289">                preBeanELResolvers.forEach(eventRegistryExpressionManager::addPreBeanResolver);</span>
+            }
+
+<span class="nc bnc" id="L292" title="All 2 branches missed.">            if (postDefaultELResolvers != null) {</span>
+<span class="nc" id="L293">                postDefaultELResolvers.forEach(eventRegistryExpressionManager::addPostDefaultResolver);</span>
+            }
+
+<span class="nc bnc" id="L296" title="All 2 branches missed.">            if (expressionManagerConfigurers != null) {</span>
+<span class="nc" id="L297">                expressionManagerConfigurers.forEach(configurer -&gt; configurer.accept(eventRegistryExpressionManager));</span>
+            }
+
+<span class="nc" id="L300">            expressionManager = eventRegistryExpressionManager;</span>
+        }
+<span class="nc" id="L302">    }</span>
+
+    // Data managers
+    ///////////////////////////////////////////////////////////
+
+    @Override
+    public void initDataManagers() {
+<span class="nc" id="L309">        super.initDataManagers();</span>
+<span class="nc bnc" id="L310" title="All 2 branches missed.">        if (deploymentDataManager == null) {</span>
+<span class="nc" id="L311">            deploymentDataManager = new MybatisEventDeploymentDataManager(this);</span>
+        }
+<span class="nc bnc" id="L313" title="All 2 branches missed.">        if (eventDefinitionDataManager == null) {</span>
+<span class="nc" id="L314">            eventDefinitionDataManager = new MybatisEventDefinitionDataManager(this);</span>
+        }
+<span class="nc bnc" id="L316" title="All 2 branches missed.">        if (channelDefinitionDataManager == null) {</span>
+<span class="nc" id="L317">            channelDefinitionDataManager = new MybatisChannelDefinitionDataManager(this);</span>
+        }
+<span class="nc bnc" id="L319" title="All 2 branches missed.">        if (resourceDataManager == null) {</span>
+<span class="nc" id="L320">            resourceDataManager = new MybatisEventResourceDataManager(this);</span>
+        }
+<span class="nc" id="L322">    }</span>
+
+    @Override
+    public void initEntityManagers() {
+<span class="nc" id="L326">        super.initEntityManagers();</span>
+<span class="nc bnc" id="L327" title="All 2 branches missed.">        if (deploymentEntityManager == null) {</span>
+<span class="nc" id="L328">            deploymentEntityManager = new EventDeploymentEntityManagerImpl(this, deploymentDataManager);</span>
+        }
+<span class="nc bnc" id="L330" title="All 2 branches missed.">        if (eventDefinitionEntityManager == null) {</span>
+<span class="nc" id="L331">            eventDefinitionEntityManager = new EventDefinitionEntityManagerImpl(this, eventDefinitionDataManager);</span>
+        }
+<span class="nc bnc" id="L333" title="All 2 branches missed.">        if (channelDefinitionEntityManager == null) {</span>
+<span class="nc" id="L334">            channelDefinitionEntityManager = new ChannelDefinitionEntityManagerImpl(this, channelDefinitionDataManager);</span>
+        }
+<span class="nc bnc" id="L336" title="All 2 branches missed.">        if (resourceEntityManager == null) {</span>
+<span class="nc" id="L337">            resourceEntityManager = new EventResourceEntityManagerImpl(this, resourceDataManager);</span>
+        }
+<span class="nc" id="L339">    }</span>
+
+    // data model ///////////////////////////////////////////////////////////////
+
+    @Override
+    public void initSchemaManager() {
+<span class="nc" id="L345">        super.initSchemaManager();</span>
+<span class="nc bnc" id="L346" title="All 2 branches missed.">        if (this.schemaManager == null) {</span>
+<span class="nc" id="L347">            this.schemaManager = new EventDbSchemaManager();</span>
+        }
+<span class="nc" id="L349">    }</span>
+    
+    public void initSchemaManagementCommand() {
+<span class="nc bnc" id="L352" title="All 2 branches missed.">        if (schemaManagementCmd == null) {</span>
+<span class="nc bnc" id="L353" title="All 4 branches missed.">            if (usingRelationalDatabase &amp;&amp; databaseSchemaUpdate != null) {</span>
+<span class="nc" id="L354">                this.schemaManagementCmd = new SchemaOperationsEventRegistryEngineBuild();</span>
+            }
+        }
+<span class="nc" id="L357">    }</span>
+
+    private void closeDatabase(Liquibase liquibase) {
+<span class="nc bnc" id="L360" title="All 2 branches missed.">        if (liquibase != null) {</span>
+<span class="nc" id="L361">            Database database = liquibase.getDatabase();</span>
+<span class="nc bnc" id="L362" title="All 2 branches missed.">            if (database != null) {</span>
+                try {
+<span class="nc" id="L364">                    database.close();</span>
+<span class="nc" id="L365">                } catch (DatabaseException e) {</span>
+<span class="nc" id="L366">                    logger.warn(&quot;Error closing database&quot;, e);</span>
+<span class="nc" id="L367">                }</span>
+            }
+        }
+<span class="nc" id="L370">    }</span>
+
+    // session factories ////////////////////////////////////////////////////////
+
+    @Override
+    public void initDbSqlSessionFactory() {
+<span class="nc bnc" id="L376" title="All 2 branches missed.">        if (dbSqlSessionFactory == null) {</span>
+<span class="nc" id="L377">            dbSqlSessionFactory = createDbSqlSessionFactory();</span>
+<span class="nc" id="L378">            dbSqlSessionFactory.setDatabaseType(databaseType);</span>
+<span class="nc" id="L379">            dbSqlSessionFactory.setSqlSessionFactory(sqlSessionFactory);</span>
+<span class="nc" id="L380">            dbSqlSessionFactory.setDatabaseTablePrefix(databaseTablePrefix);</span>
+<span class="nc" id="L381">            dbSqlSessionFactory.setTablePrefixIsSchema(tablePrefixIsSchema);</span>
+<span class="nc" id="L382">            dbSqlSessionFactory.setDatabaseCatalog(databaseCatalog);</span>
+<span class="nc" id="L383">            dbSqlSessionFactory.setDatabaseSchema(databaseSchema);</span>
+<span class="nc" id="L384">            addSessionFactory(dbSqlSessionFactory);</span>
+        }
+<span class="nc" id="L386">        initDbSqlSessionFactoryEntitySettings();</span>
+<span class="nc" id="L387">    }</span>
+
+    @Override
+    protected void initDbSqlSessionFactoryEntitySettings() {
+<span class="nc" id="L391">        defaultInitDbSqlSessionFactoryEntitySettings(EntityDependencyOrder.INSERT_ORDER, EntityDependencyOrder.DELETE_ORDER);</span>
+<span class="nc" id="L392">    }</span>
+
+    @Override
+    public DbSqlSessionFactory createDbSqlSessionFactory() {
+<span class="nc" id="L396">        return new DbSqlSessionFactory(usePrefixId);</span>
+    }
+
+    // command executors
+    // ////////////////////////////////////////////////////////
+
+    @Override
+    public void initCommandExecutors() {
+<span class="nc" id="L404">        initDefaultCommandConfig();</span>
+<span class="nc" id="L405">        initSchemaCommandConfig();</span>
+<span class="nc" id="L406">        initCommandInvoker();</span>
+<span class="nc" id="L407">        initCommandInterceptors();</span>
+<span class="nc" id="L408">        initCommandExecutor();</span>
+<span class="nc" id="L409">    }</span>
+
+    @Override
+    public void initCommandInterceptors() {
+<span class="nc bnc" id="L413" title="All 2 branches missed.">        if (commandInterceptors == null) {</span>
+<span class="nc" id="L414">            commandInterceptors = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L415" title="All 2 branches missed.">            if (customPreCommandInterceptors != null) {</span>
+<span class="nc" id="L416">                commandInterceptors.addAll(customPreCommandInterceptors);</span>
+            }
+<span class="nc" id="L418">            commandInterceptors.addAll(getDefaultCommandInterceptors());</span>
+<span class="nc bnc" id="L419" title="All 2 branches missed.">            if (customPostCommandInterceptors != null) {</span>
+<span class="nc" id="L420">                commandInterceptors.addAll(customPostCommandInterceptors);</span>
+            }
+<span class="nc" id="L422">            commandInterceptors.add(commandInvoker);</span>
+        }
+<span class="nc" id="L424">    }</span>
+
+    @Override
+    public String getEngineCfgKey() {
+<span class="nc" id="L428">        return EngineConfigurationConstants.KEY_EVENT_REGISTRY_CONFIG;</span>
+    }
+    
+    @Override
+    public String getEngineScopeType() {
+<span class="nc" id="L433">        return ScopeTypes.EVENT_REGISTRY;</span>
+    }
+
+    @Override
+    public CommandInterceptor createTransactionInterceptor() {
+<span class="nc" id="L438">        return null;</span>
+    }
+
+    // deployers
+    // ////////////////////////////////////////////////////////////////
+
+    protected void initDeployers() {
+<span class="nc bnc" id="L445" title="All 2 branches missed.">        if (eventParseFactory == null) {</span>
+<span class="nc" id="L446">            eventParseFactory = new EventDefinitionParseFactory();</span>
+        }
+        
+<span class="nc bnc" id="L449" title="All 2 branches missed.">        if (channelParseFactory == null) {</span>
+<span class="nc" id="L450">            channelParseFactory = new ChannelDefinitionParseFactory();</span>
+        }
+
+<span class="nc bnc" id="L453" title="All 2 branches missed.">        if (this.eventDeployer == null) {</span>
+<span class="nc" id="L454">            this.deployers = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L455" title="All 2 branches missed.">            if (customPreDeployers != null) {</span>
+<span class="nc" id="L456">                this.deployers.addAll(customPreDeployers);</span>
+            }
+<span class="nc" id="L458">            this.deployers.addAll(getDefaultDeployers());</span>
+<span class="nc bnc" id="L459" title="All 2 branches missed.">            if (customPostDeployers != null) {</span>
+<span class="nc" id="L460">                this.deployers.addAll(customPostDeployers);</span>
+            }
+        }
+
+<span class="nc bnc" id="L464" title="All 2 branches missed.">        if (eventDefinitionCache == null) {</span>
+<span class="nc bnc" id="L465" title="All 2 branches missed.">            if (eventDefinitionCacheLimit &lt;= 0) {</span>
+<span class="nc" id="L466">                eventDefinitionCache = new DefaultDeploymentCache&lt;&gt;();</span>
+            } else {
+<span class="nc" id="L468">                eventDefinitionCache = new DefaultDeploymentCache&lt;&gt;(eventDefinitionCacheLimit);</span>
+            }
+        }
+        
+<span class="nc bnc" id="L472" title="All 2 branches missed.">        if (channelDefinitionCache == null) {</span>
+<span class="nc" id="L473">            channelDefinitionCache = new FullDeploymentCache&lt;&gt;();</span>
+        }
+
+<span class="nc" id="L476">        deploymentManager = new EventDeploymentManager(eventDefinitionCache, channelDefinitionCache, this);</span>
+<span class="nc" id="L477">        deploymentManager.setDeployers(deployers);</span>
+<span class="nc" id="L478">        deploymentManager.setDeploymentEntityManager(deploymentEntityManager);</span>
+<span class="nc" id="L479">        deploymentManager.setEventDefinitionEntityManager(eventDefinitionEntityManager);</span>
+<span class="nc" id="L480">        deploymentManager.setChannelDefinitionEntityManager(channelDefinitionEntityManager);</span>
+<span class="nc" id="L481">    }</span>
+
+    public Collection&lt;? extends Deployer&gt; getDefaultDeployers() {
+<span class="nc" id="L484">        List&lt;Deployer&gt; defaultDeployers = new ArrayList&lt;&gt;();</span>
+
+<span class="nc bnc" id="L486" title="All 2 branches missed.">        if (eventDeployer == null) {</span>
+<span class="nc" id="L487">            eventDeployer = new EventDefinitionDeployer();</span>
+        }
+
+<span class="nc" id="L490">        initEventDeployerDependencies();</span>
+
+<span class="nc" id="L492">        eventDeployer.setIdGenerator(idGenerator);</span>
+<span class="nc" id="L493">        eventDeployer.setParsedDeploymentBuilderFactory(parsedDeploymentBuilderFactory);</span>
+<span class="nc" id="L494">        eventDeployer.setEventDeploymentHelper(eventDeploymentHelper);</span>
+<span class="nc" id="L495">        eventDeployer.setChannelDeploymentHelper(channelDeploymentHelper);</span>
+<span class="nc" id="L496">        eventDeployer.setCachingAndArtifactsManager(cachingAndArtifactsManager);</span>
+<span class="nc" id="L497">        eventDeployer.setUsePrefixId(usePrefixId);</span>
+
+<span class="nc" id="L499">        defaultDeployers.add(eventDeployer);</span>
+<span class="nc" id="L500">        return defaultDeployers;</span>
+    }
+
+    public void initEventDeployerDependencies() {
+<span class="nc bnc" id="L504" title="All 2 branches missed.">        if (parsedDeploymentBuilderFactory == null) {</span>
+<span class="nc" id="L505">            parsedDeploymentBuilderFactory = new ParsedDeploymentBuilderFactory();</span>
+        }
+        
+<span class="nc bnc" id="L508" title="All 2 branches missed.">        if (parsedDeploymentBuilderFactory.getEventParseFactory() == null) {</span>
+<span class="nc" id="L509">            parsedDeploymentBuilderFactory.setEventParseFactory(eventParseFactory);</span>
+        }
+        
+<span class="nc bnc" id="L512" title="All 2 branches missed.">        if (parsedDeploymentBuilderFactory.getChannelParseFactory() == null) {</span>
+<span class="nc" id="L513">            parsedDeploymentBuilderFactory.setChannelParseFactory(channelParseFactory);</span>
+        }
+
+<span class="nc bnc" id="L516" title="All 2 branches missed.">        if (eventDeploymentHelper == null) {</span>
+<span class="nc" id="L517">            eventDeploymentHelper = new EventDefinitionDeploymentHelper();</span>
+        }
+        
+<span class="nc bnc" id="L520" title="All 2 branches missed.">        if (channelDeploymentHelper == null) {</span>
+<span class="nc" id="L521">            channelDeploymentHelper = new ChannelDefinitionDeploymentHelper();</span>
+        }
+
+<span class="nc bnc" id="L524" title="All 2 branches missed.">        if (cachingAndArtifactsManager == null) {</span>
+<span class="nc" id="L525">            cachingAndArtifactsManager = new CachingAndArtifactsManager();</span>
+        }
+<span class="nc" id="L527">    }</span>
+    
+    public void initInboundChannelModelCacheManager() {
+<span class="nc bnc" id="L530" title="All 2 branches missed.">        if (inboundChannelModelCacheManager == null) {</span>
+<span class="nc" id="L531">            inboundChannelModelCacheManager = new DefaultInboundChannelModelCacheManager(this);</span>
+        }
+<span class="nc" id="L533">    }</span>
+    
+    public void initEventRegistry() {
+<span class="nc bnc" id="L536" title="All 2 branches missed.">        if (this.eventRegistry == null) {</span>
+<span class="nc" id="L537">            this.eventRegistry = new DefaultEventRegistry(this);</span>
+        }
+<span class="nc" id="L539">    }</span>
+
+    public void initInboundEventProcessor() {
+<span class="nc bnc" id="L542" title="All 2 branches missed.">        if (this.inboundEventProcessor == null) {</span>
+<span class="nc" id="L543">            this.inboundEventProcessor = new DefaultInboundEventProcessor(eventRegistry);</span>
+        }
+<span class="nc" id="L545">        this.eventRegistry.setInboundEventProcessor(this.inboundEventProcessor);</span>
+<span class="nc" id="L546">    }</span>
+
+    public void initOutboundEventProcessor() {
+<span class="nc bnc" id="L549" title="All 2 branches missed.">        if (this.outboundEventProcessor == null) {</span>
+<span class="nc" id="L550">            this.outboundEventProcessor = new DefaultOutboundEventProcessor(eventRepositoryService, fallbackToDefaultTenant);</span>
+        }
+<span class="nc" id="L552">        this.eventRegistry.setOutboundEventProcessor(outboundEventProcessor);</span>
+<span class="nc" id="L553">    }</span>
+
+    public void initSystemOutboundEventProcessor() {
+<span class="nc bnc" id="L556" title="All 2 branches missed.">        if (this.systemOutboundEventProcessor == null) {</span>
+<span class="nc" id="L557">            this.systemOutboundEventProcessor = new SystemOutboundEventProcessor&lt;&gt;(</span>
+                    new InMemoryOutboundEventChannelAdapter(eventRegistry),
+                    new InMemoryOutboundEventProcessingPipeline()
+            );
+        }
+<span class="nc" id="L562">        this.eventRegistry.setSystemOutboundEventProcessor(systemOutboundEventProcessor);</span>
+<span class="nc" id="L563">    }</span>
+
+    public void initInboundEventPayloadExtractorProvider() {
+<span class="nc bnc" id="L566" title="All 2 branches missed.">        if (this.defaultInboundEventPayloadExtractor == null) {</span>
+<span class="nc" id="L567">            this.defaultInboundEventPayloadExtractor = new HeadersPayloadExtractor&lt;&gt;();</span>
+        }
+<span class="nc" id="L569">    }</span>
+    
+    public void initChannelDefinitionProcessors() {
+<span class="nc" id="L572">        channelModelProcessors.add(new DelegateExpressionInboundChannelModelProcessor(this, objectMapper));</span>
+<span class="nc" id="L573">        channelModelProcessors.add(new DelegateExpressionOutboundChannelModelProcessor(this, objectMapper));</span>
+<span class="nc" id="L574">        channelModelProcessors.add(new InboundChannelModelProcessor(this, objectMapper));</span>
+<span class="nc" id="L575">        channelModelProcessors.add(new OutboundChannelModelProcessor(objectMapper));</span>
+<span class="nc" id="L576">    }</span>
+
+    public void initChangeDetectionManager() {
+<span class="nc bnc" id="L579" title="All 2 branches missed.">        if (this.eventRegistryChangeDetectionManager == null) {</span>
+<span class="nc" id="L580">            this.eventRegistryChangeDetectionManager = new DefaultEventRegistryChangeDetectionManager(this);</span>
+        }
+<span class="nc" id="L582">    }</span>
+
+    public void initChangeDetectionExecutor() {
+<span class="nc bnc" id="L585" title="All 2 branches missed.">        if (this.eventRegistryChangeDetectionExecutor == null) {</span>
+<span class="nc" id="L586">            this.eventRegistryChangeDetectionExecutor = new DefaultEventRegistryChangeDetectionExecutor(eventRegistryChangeDetectionManager,</span>
+                eventRegistryChangeDetectionInitialDelayInMs, eventRegistryChangeDetectionDelayInMs);
+        }
+<span class="nc" id="L589">    }</span>
+
+    // myBatis SqlSessionFactory
+    // ////////////////////////////////////////////////
+
+    @Override
+    public InputStream getMyBatisXmlConfigurationStream() {
+<span class="nc" id="L596">        return getResourceAsStream(DEFAULT_MYBATIS_MAPPING_FILE);</span>
+    }
+
+    // getters and setters
+    // //////////////////////////////////////////////////////
+
+    @Override
+    public String getEngineName() {
+<span class="nc" id="L604">        return eventRegistryEngineName;</span>
+    }
+
+    public EventRegistryEngineConfiguration setEngineName(String eventRegistryEngineName) {
+<span class="nc" id="L608">        this.eventRegistryEngineName = eventRegistryEngineName;</span>
+<span class="nc" id="L609">        return this;</span>
+    }
+
+    @Override
+    public EventRepositoryService getEventRepositoryService() {
+<span class="nc" id="L614">        return eventRepositoryService;</span>
+    }
+
+    public EventRegistryEngineConfiguration setEventRepositoryService(EventRepositoryService eventRepositoryService) {
+<span class="nc" id="L618">        this.eventRepositoryService = eventRepositoryService;</span>
+<span class="nc" id="L619">        return this;</span>
+    }
+
+    @Override
+    public EventManagementService getEventManagementService() {
+<span class="nc" id="L624">        return eventManagementService;</span>
+    }
+
+    public EventRegistryEngineConfiguration setEventManagementService(EventManagementService eventManagementService) {
+<span class="nc" id="L628">        this.eventManagementService = eventManagementService;</span>
+<span class="nc" id="L629">        return this;</span>
+    }
+
+    public EventDeploymentManager getDeploymentManager() {
+<span class="nc" id="L633">        return deploymentManager;</span>
+    }
+
+    public EventRegistryEngineConfiguration getFormEngineConfiguration() {
+<span class="nc" id="L637">        return this;</span>
+    }
+
+    public EventDefinitionDeployer getEventDeployer() {
+<span class="nc" id="L641">        return eventDeployer;</span>
+    }
+
+    public EventRegistryEngineConfiguration setEventDeployer(EventDefinitionDeployer eventDeployer) {
+<span class="nc" id="L645">        this.eventDeployer = eventDeployer;</span>
+<span class="nc" id="L646">        return this;</span>
+    }
+
+    public EventDefinitionParseFactory getEventParseFactory() {
+<span class="nc" id="L650">        return eventParseFactory;</span>
+    }
+
+    public EventRegistryEngineConfiguration setEventParseFactory(EventDefinitionParseFactory eventParseFactory) {
+<span class="nc" id="L654">        this.eventParseFactory = eventParseFactory;</span>
+<span class="nc" id="L655">        return this;</span>
+    }
+    
+    @Override
+    public EventRegistry getEventRegistry() {
+<span class="nc" id="L660">        return eventRegistry;</span>
+    }
+
+    public EventRegistryEngineConfiguration setEventRegistry(EventRegistry eventRegistry) {
+<span class="nc" id="L664">        this.eventRegistry = eventRegistry;</span>
+<span class="nc" id="L665">        return this;</span>
+    }
+
+    public InboundEventProcessor getInboundEventProcessor() {
+<span class="nc" id="L669">        return inboundEventProcessor;</span>
+    }
+
+    public EventRegistryEngineConfiguration setInboundEventProcessor(InboundEventProcessor inboundEventProcessor) {
+<span class="nc" id="L673">        this.inboundEventProcessor = inboundEventProcessor;</span>
+<span class="nc" id="L674">        return this;</span>
+    }
+
+    public OutboundEventProcessor getOutboundEventProcessor() {
+<span class="nc" id="L678">        return outboundEventProcessor;</span>
+    }
+
+    public EventRegistryEngineConfiguration setOutboundEventProcessor(OutboundEventProcessor outboundEventProcessor) {
+<span class="nc" id="L682">        this.outboundEventProcessor = outboundEventProcessor;</span>
+<span class="nc" id="L683">        return this;</span>
+    }
+
+    public OutboundEventProcessor getSystemOutboundEventProcessor() {
+<span class="nc" id="L687">        return systemOutboundEventProcessor;</span>
+    }
+
+    public EventRegistryEngineConfiguration setSystemOutboundEventProcessor(OutboundEventProcessor systemOutboundEventProcessor) {
+<span class="nc" id="L691">        this.systemOutboundEventProcessor = systemOutboundEventProcessor;</span>
+<span class="nc" id="L692">        return this;</span>
+    }
+
+    public Map&lt;String, InboundEventPayloadExtractor&lt;?&gt;&gt; getInboundEventPayloadExtractorsByChannelType() {
+<span class="nc" id="L696">        return inboundEventPayloadExtractorsByChannelType;</span>
+    }
+
+    public EventRegistryEngineConfiguration setInboundEventPayloadExtractorsByChannelType(Map&lt;String, InboundEventPayloadExtractor&lt;?&gt;&gt; inboundEventPayloadExtractorsByChannelType) {
+<span class="nc" id="L700">        this.inboundEventPayloadExtractorsByChannelType = inboundEventPayloadExtractorsByChannelType;</span>
+<span class="nc" id="L701">        return this;</span>
+    }
+
+    public EventRegistryEngineConfiguration registerInboundEventPayloadExtractor(String channelType, InboundEventPayloadExtractor&lt;?&gt; payloadExtractor) {
+<span class="nc bnc" id="L705" title="All 2 branches missed.">        if (this.inboundEventPayloadExtractorsByChannelType == null) {</span>
+<span class="nc" id="L706">            this.inboundEventPayloadExtractorsByChannelType = new HashMap&lt;&gt;();</span>
+        }
+
+<span class="nc" id="L709">        this.inboundEventPayloadExtractorsByChannelType.put(channelType, payloadExtractor);</span>
+<span class="nc" id="L710">        return this;</span>
+    }
+
+    public EventRegistryEngineConfiguration removeInboundEventPayloadExtractor(String channelType) {
+<span class="nc bnc" id="L714" title="All 2 branches missed.">        if (this.inboundEventPayloadExtractorsByChannelType != null) {</span>
+<span class="nc" id="L715">            this.inboundEventPayloadExtractorsByChannelType.remove(channelType);</span>
+        }
+
+<span class="nc" id="L718">        return this;</span>
+    }
+
+    public InboundEventPayloadExtractor&lt;?&gt; getDefaultInboundEventPayloadExtractor() {
+<span class="nc" id="L722">        return defaultInboundEventPayloadExtractor;</span>
+    }
+
+    public EventRegistryEngineConfiguration setDefaultInboundEventPayloadExtractor(InboundEventPayloadExtractor&lt;?&gt; defaultInboundEventPayloadExtractor) {
+<span class="nc" id="L726">        this.defaultInboundEventPayloadExtractor = defaultInboundEventPayloadExtractor;</span>
+<span class="nc" id="L727">        return this;</span>
+    }
+
+    public boolean isEnableEventRegistryChangeDetection() {
+<span class="nc" id="L731">        return enableEventRegistryChangeDetection;</span>
+    }
+
+    public EventRegistryEngineConfiguration setEnableEventRegistryChangeDetection(boolean enableEventRegistryChangeDetection) {
+<span class="nc" id="L735">        this.enableEventRegistryChangeDetection = enableEventRegistryChangeDetection;</span>
+<span class="nc" id="L736">        return this;</span>
+    }
+
+    public long getEventRegistryChangeDetectionInitialDelayInMs() {
+<span class="nc" id="L740">        return eventRegistryChangeDetectionInitialDelayInMs;</span>
+    }
+
+    public EventRegistryEngineConfiguration setEventRegistryChangeDetectionInitialDelayInMs(long eventRegistryChangeDetectionInitialDelayInMs) {
+<span class="nc" id="L744">        this.eventRegistryChangeDetectionInitialDelayInMs = eventRegistryChangeDetectionInitialDelayInMs;</span>
+<span class="nc" id="L745">        return this;</span>
+    }
+
+    public long getEventRegistryChangeDetectionDelayInMs() {
+<span class="nc" id="L749">        return eventRegistryChangeDetectionDelayInMs;</span>
+    }
+
+    public EventRegistryEngineConfiguration setEventRegistryChangeDetectionDelayInMs(long eventRegistryChangeDetectionDelayInMs) {
+<span class="nc" id="L753">        this.eventRegistryChangeDetectionDelayInMs = eventRegistryChangeDetectionDelayInMs;</span>
+<span class="nc" id="L754">        return this;</span>
+    }
+
+    public EventRegistryChangeDetectionManager getEventRegistryChangeDetectionManager() {
+<span class="nc" id="L758">        return eventRegistryChangeDetectionManager;</span>
+    }
+
+    public EventRegistryEngineConfiguration setEventRegistryChangeDetectionManager(EventRegistryChangeDetectionManager eventRegistryChangeDetectionManager) {
+<span class="nc" id="L762">        this.eventRegistryChangeDetectionManager = eventRegistryChangeDetectionManager;</span>
+<span class="nc" id="L763">        return this;</span>
+    }
+
+    public EventRegistryChangeDetectionExecutor getEventRegistryChangeDetectionExecutor() {
+<span class="nc" id="L767">        return eventRegistryChangeDetectionExecutor;</span>
+    }
+    public EventRegistryEngineConfiguration setEventRegistryChangeDetectionExecutor(EventRegistryChangeDetectionExecutor eventRegistryChangeDetectionExecutor) {
+<span class="nc" id="L770">        this.eventRegistryChangeDetectionExecutor = eventRegistryChangeDetectionExecutor;</span>
+<span class="nc" id="L771">        return this;</span>
+    }
+
+    public EventRegistryNonMatchingEventConsumer getNonMatchingEventConsumer() {
+<span class="nc" id="L775">        return nonMatchingEventConsumer;</span>
+    }
+
+    public EventRegistryEngineConfiguration setNonMatchingEventConsumer(EventRegistryNonMatchingEventConsumer nonMatchingEventConsumer) {
+<span class="nc" id="L779">        this.nonMatchingEventConsumer = nonMatchingEventConsumer;</span>
+<span class="nc" id="L780">        return this;</span>
+    }
+
+    public int getEventDefinitionCacheLimit() {
+<span class="nc" id="L784">        return eventDefinitionCacheLimit;</span>
+    }
+
+    public EventRegistryEngineConfiguration setEventDefinitionCacheLimit(int eventDefinitionCacheLimit) {
+<span class="nc" id="L788">        this.eventDefinitionCacheLimit = eventDefinitionCacheLimit;</span>
+<span class="nc" id="L789">        return this;</span>
+    }
+
+    public DeploymentCache&lt;EventDefinitionCacheEntry&gt; getEventDefinitionCache() {
+<span class="nc" id="L793">        return eventDefinitionCache;</span>
+    }
+
+    public EventRegistryEngineConfiguration setEventDefinitionCache(DeploymentCache&lt;EventDefinitionCacheEntry&gt; eventDefinitionCache) {
+<span class="nc" id="L797">        this.eventDefinitionCache = eventDefinitionCache;</span>
+<span class="nc" id="L798">        return this;</span>
+    }
+
+    public DeploymentCache&lt;ChannelDefinitionCacheEntry&gt; getChannelDefinitionCache() {
+<span class="nc" id="L802">        return channelDefinitionCache;</span>
+    }
+
+    public EventRegistryEngineConfiguration setChannelDefinitionCache(DeploymentCache&lt;ChannelDefinitionCacheEntry&gt; channelDefinitionCache) {
+<span class="nc" id="L806">        this.channelDefinitionCache = channelDefinitionCache;</span>
+<span class="nc" id="L807">        return this;</span>
+    }
+    
+    public InboundChannelModelCacheManager getInboundChannelModelCacheManager() {
+<span class="nc" id="L811">        return inboundChannelModelCacheManager;</span>
+    }
+
+    public EventRegistryEngineConfiguration setInboundChannelModelCacheManager(InboundChannelModelCacheManager inboundChannelModelCacheManager) {
+<span class="nc" id="L815">        this.inboundChannelModelCacheManager = inboundChannelModelCacheManager;</span>
+<span class="nc" id="L816">        return this;</span>
+    }
+
+    public Collection&lt;ChannelModelProcessor&gt; getChannelModelProcessors() {
+<span class="nc" id="L820">        return channelModelProcessors;</span>
+    }
+
+    public void addChannelModelProcessor(ChannelModelProcessor channelModelProcessor) {
+<span class="nc bnc" id="L824" title="All 2 branches missed.">        if (this.channelModelProcessors == null) {</span>
+<span class="nc" id="L825">            this.channelModelProcessors = new ArrayList&lt;&gt;();</span>
+        }
+<span class="nc" id="L827">        this.channelModelProcessors.add(channelModelProcessor);</span>
+<span class="nc" id="L828">    }</span>
+
+    public EventRegistryEngineConfiguration setChannelModelProcessors(Collection&lt;ChannelModelProcessor&gt; channelModelProcessors) {
+<span class="nc" id="L831">        this.channelModelProcessors = channelModelProcessors;</span>
+<span class="nc" id="L832">        return this;</span>
+    }
+
+    public EventDeploymentDataManager getDeploymentDataManager() {
+<span class="nc" id="L836">        return deploymentDataManager;</span>
+    }
+
+    public EventRegistryEngineConfiguration setDeploymentDataManager(EventDeploymentDataManager deploymentDataManager) {
+<span class="nc" id="L840">        this.deploymentDataManager = deploymentDataManager;</span>
+<span class="nc" id="L841">        return this;</span>
+    }
+
+    public EventDefinitionDataManager getEventDefinitionDataManager() {
+<span class="nc" id="L845">        return eventDefinitionDataManager;</span>
+    }
+
+    public EventRegistryEngineConfiguration setEventDefinitionDataManager(EventDefinitionDataManager eventDefinitionDataManager) {
+<span class="nc" id="L849">        this.eventDefinitionDataManager = eventDefinitionDataManager;</span>
+<span class="nc" id="L850">        return this;</span>
+    }
+
+    public EventResourceDataManager getResourceDataManager() {
+<span class="nc" id="L854">        return resourceDataManager;</span>
+    }
+
+    public EventRegistryEngineConfiguration setResourceDataManager(EventResourceDataManager resourceDataManager) {
+<span class="nc" id="L858">        this.resourceDataManager = resourceDataManager;</span>
+<span class="nc" id="L859">        return this;</span>
+    }
+
+    public EventDeploymentEntityManager getDeploymentEntityManager() {
+<span class="nc" id="L863">        return deploymentEntityManager;</span>
+    }
+
+    public EventRegistryEngineConfiguration setDeploymentEntityManager(EventDeploymentEntityManager deploymentEntityManager) {
+<span class="nc" id="L867">        this.deploymentEntityManager = deploymentEntityManager;</span>
+<span class="nc" id="L868">        return this;</span>
+    }
+
+    public EventDefinitionEntityManager getEventDefinitionEntityManager() {
+<span class="nc" id="L872">        return eventDefinitionEntityManager;</span>
+    }
+
+    public EventRegistryEngineConfiguration setEventDefinitionEntityManager(EventDefinitionEntityManager eventDefinitionEntityManager) {
+<span class="nc" id="L876">        this.eventDefinitionEntityManager = eventDefinitionEntityManager;</span>
+<span class="nc" id="L877">        return this;</span>
+    }
+    
+    public ChannelDefinitionEntityManager getChannelDefinitionEntityManager() {
+<span class="nc" id="L881">        return channelDefinitionEntityManager;</span>
+    }
+
+    public EventRegistryEngineConfiguration setChannelDefinitionEntityManager(ChannelDefinitionEntityManager channelDefinitionEntityManager) {
+<span class="nc" id="L885">        this.channelDefinitionEntityManager = channelDefinitionEntityManager;</span>
+<span class="nc" id="L886">        return this;</span>
+    }
+
+    public EventResourceEntityManager getResourceEntityManager() {
+<span class="nc" id="L890">        return resourceEntityManager;</span>
+    }
+
+    public EventRegistryEngineConfiguration setResourceEntityManager(EventResourceEntityManager resourceEntityManager) {
+<span class="nc" id="L894">        this.resourceEntityManager = resourceEntityManager;</span>
+<span class="nc" id="L895">        return this;</span>
+    }
+
+    @Override
+    public EventRegistryEngineConfiguration setTableDataManager(TableDataManager tableDataManager) {
+<span class="nc" id="L900">        this.tableDataManager = tableDataManager;</span>
+<span class="nc" id="L901">        return this;</span>
+    }
+
+    @Override
+    public ExpressionManager getExpressionManager() {
+<span class="nc" id="L906">        return expressionManager;</span>
+    }
+
+    @Override
+    public EventRegistryEngineConfiguration setExpressionManager(ExpressionManager expressionManager) {
+<span class="nc" id="L911">        this.expressionManager = expressionManager;</span>
+<span class="nc" id="L912">        return this;</span>
+    }
+
+    public Collection&lt;Consumer&lt;ExpressionManager&gt;&gt; getExpressionManagerConfigurers() {
+<span class="nc" id="L916">        return expressionManagerConfigurers;</span>
+    }
+
+    @Override
+    public AbstractEngineConfiguration addExpressionManagerConfigurer(Consumer&lt;ExpressionManager&gt; configurer) {
+<span class="nc bnc" id="L921" title="All 2 branches missed.">        if (this.expressionManagerConfigurers == null) {</span>
+<span class="nc" id="L922">            this.expressionManagerConfigurers = new ArrayList&lt;&gt;();</span>
+        }
+<span class="nc" id="L924">        this.expressionManagerConfigurers.add(configurer);</span>
+<span class="nc" id="L925">        return this;</span>
+    }
+
+    public Collection&lt;ELResolver&gt; getPreDefaultELResolvers() {
+<span class="nc" id="L929">        return preDefaultELResolvers;</span>
+    }
+
+    public EventRegistryEngineConfiguration setPreDefaultELResolvers(Collection&lt;ELResolver&gt; preDefaultELResolvers) {
+<span class="nc" id="L933">        this.preDefaultELResolvers = preDefaultELResolvers;</span>
+<span class="nc" id="L934">        return this;</span>
+    }
+
+    public EventRegistryEngineConfiguration addPreDefaultELResolver(ELResolver elResolver) {
+<span class="nc bnc" id="L938" title="All 2 branches missed.">        if (this.preDefaultELResolvers == null) {</span>
+<span class="nc" id="L939">            this.preDefaultELResolvers = new ArrayList&lt;&gt;();</span>
+        }
+
+<span class="nc" id="L942">        this.preDefaultELResolvers.add(elResolver);</span>
+<span class="nc" id="L943">        return this;</span>
+    }
+
+    public Collection&lt;ELResolver&gt; getPreBeanELResolvers() {
+<span class="nc" id="L947">        return preBeanELResolvers;</span>
+    }
+
+    public EventRegistryEngineConfiguration setPreBeanELResolvers(Collection&lt;ELResolver&gt; preBeanELResolvers) {
+<span class="nc" id="L951">        this.preBeanELResolvers = preBeanELResolvers;</span>
+<span class="nc" id="L952">        return this;</span>
+    }
+
+    public EventRegistryEngineConfiguration addPreBeanELResolver(ELResolver elResolver) {
+<span class="nc bnc" id="L956" title="All 2 branches missed.">        if (this.preBeanELResolvers == null) {</span>
+<span class="nc" id="L957">            this.preBeanELResolvers = new ArrayList&lt;&gt;();</span>
+        }
+
+<span class="nc" id="L960">        this.preBeanELResolvers.add(elResolver);</span>
+<span class="nc" id="L961">        return this;</span>
+    }
+
+    public Collection&lt;ELResolver&gt; getPostDefaultELResolvers() {
+<span class="nc" id="L965">        return postDefaultELResolvers;</span>
+    }
+
+    public EventRegistryEngineConfiguration setPostDefaultELResolvers(Collection&lt;ELResolver&gt; postDefaultELResolvers) {
+<span class="nc" id="L969">        this.postDefaultELResolvers = postDefaultELResolvers;</span>
+<span class="nc" id="L970">        return this;</span>
+    }
+
+    public EventRegistryEngineConfiguration addPostDefaultELResolver(ELResolver elResolver) {
+<span class="nc bnc" id="L974" title="All 2 branches missed.">        if (this.postDefaultELResolvers == null) {</span>
+<span class="nc" id="L975">            this.postDefaultELResolvers = new ArrayList&lt;&gt;();</span>
+        }
+
+<span class="nc" id="L978">        this.postDefaultELResolvers.add(elResolver);</span>
+<span class="nc" id="L979">        return this;</span>
+    }
+
+    public EventJsonConverter getEventJsonConverter() {
+<span class="nc" id="L983">        return eventJsonConverter;</span>
+    }
+
+    public EventRegistryEngineConfiguration setEventJsonConverter(EventJsonConverter eventJsonConverter) {
+<span class="nc" id="L987">        this.eventJsonConverter = eventJsonConverter;</span>
+<span class="nc" id="L988">        return this;</span>
+    }
+
+    public ChannelJsonConverter getChannelJsonConverter() {
+<span class="nc" id="L992">        return channelJsonConverter;</span>
+    }
+
+    public EventRegistryEngineConfiguration setChannelJsonConverter(ChannelJsonConverter channelJsonConverter) {
+<span class="nc" id="L996">        this.channelJsonConverter = channelJsonConverter;</span>
+<span class="nc" id="L997">        return this;</span>
+    }
+
+    public boolean isEnableEventRegistryChangeDetectionAfterEngineCreate() {
+<span class="nc" id="L1001">        return enableEventRegistryChangeDetectionAfterEngineCreate;</span>
+    }
+
+    public EventRegistryEngineConfiguration setEnableEventRegistryChangeDetectionAfterEngineCreate(boolean enableEventRegistryChangeDetectionAfterEngineCreate) {
+<span class="nc" id="L1005">        this.enableEventRegistryChangeDetectionAfterEngineCreate = enableEventRegistryChangeDetectionAfterEngineCreate;</span>
+<span class="nc" id="L1006">        return this;</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

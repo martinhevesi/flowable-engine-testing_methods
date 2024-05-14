@@ -1,0 +1,566 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BeanELResolver.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.common.engine.impl.javax.el</a> &gt; <span class="el_source">BeanELResolver.java</span></div><h1>BeanELResolver.java</h1><pre class="source lang-java linenums">/*
+ * Copyright 2006-2009 Odysseus Software GmbH
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.common.engine.impl.javax.el;
+
+import java.beans.FeatureDescriptor;
+import java.beans.IntrospectionException;
+import java.beans.Introspector;
+import java.beans.PropertyDescriptor;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
+// This class is adapted to match the BeanELResolver from Tomcat from https://github.com/apache/tomcat/tree/febda9acf2a9d6ed833382c4c49eec8964bc1431/java/jakarta/el
+// The adaptations are done in order for us to use the Util class for finding methods
+/**
+ * Defines property resolution behavior on objects using the JavaBeans component architecture. This
+ * resolver handles base objects of any type, as long as the base is not null. It accepts any object
+ * as a property, and coerces it to a string. That string is then used to find a JavaBeans compliant
+ * property on the base object. The value is accessed using JavaBeans getters and setters. This
+ * resolver can be constructed in read-only mode, which means that isReadOnly will always return
+ * true and {@link #setValue(ELContext, Object, Object, Object)} will always throw
+ * PropertyNotWritableException. ELResolvers are combined together using {@link CompositeELResolver}
+ * s, to define rich semantics for evaluating an expression. See the javadocs for {@link ELResolver}
+ * for details. Because this resolver handles base objects of any type, it should be placed near the
+ * end of a composite resolver. Otherwise, it will claim to have resolved a property before any
+ * resolvers that come after it get a chance to test if they can do so as well.
+ * 
+ * @see CompositeELResolver
+ * @see ELResolver
+ */
+public class BeanELResolver extends ELResolver {
+	protected static final class BeanProperties {
+<span class="nc" id="L50">		private final Map&lt;String, BeanProperty&gt; map = new HashMap&lt;&gt;();</span>
+
+<span class="nc" id="L52">		public BeanProperties(Class&lt;?&gt; baseClass) {</span>
+			PropertyDescriptor[] descriptors;
+			try {
+<span class="nc" id="L55">				descriptors = Introspector.getBeanInfo(baseClass).getPropertyDescriptors();</span>
+<span class="nc" id="L56">			} catch (IntrospectionException e) {</span>
+<span class="nc" id="L57">				throw new ELException(e);</span>
+<span class="nc" id="L58">			}</span>
+<span class="nc bnc" id="L59" title="All 2 branches missed.">			for (PropertyDescriptor descriptor : descriptors) {</span>
+<span class="nc" id="L60">				map.put(descriptor.getName(), new BeanProperty(baseClass, descriptor));</span>
+			}
+<span class="nc" id="L62">		}</span>
+
+		public BeanProperty getBeanProperty(String property) {
+<span class="nc" id="L65">			return map.get(property);</span>
+		}
+	}
+
+	protected static final class BeanProperty {
+
+		private final Class&lt;?&gt; owner;
+		private final PropertyDescriptor descriptor;
+		
+		private Method readMethod;
+		private Method writedMethod;
+
+<span class="nc" id="L77">		public BeanProperty(Class&lt;?&gt; owner, PropertyDescriptor descriptor) {</span>
+<span class="nc" id="L78">			this.owner = owner;</span>
+<span class="nc" id="L79">			this.descriptor = descriptor;</span>
+<span class="nc" id="L80">		}</span>
+
+		public Class&lt;?&gt; getPropertyType() {
+<span class="nc" id="L83">			return descriptor.getPropertyType();</span>
+		}
+
+		public Method getReadMethod(Object base) {
+<span class="nc bnc" id="L87" title="All 2 branches missed.">			if (readMethod == null) {</span>
+<span class="nc" id="L88">				readMethod = Util.getMethod(owner, base, descriptor.getReadMethod());</span>
+			}
+<span class="nc" id="L90">			return readMethod;</span>
+		}
+
+		public Method getWriteMethod(Object base) {
+<span class="nc bnc" id="L94" title="All 2 branches missed.">			if (writedMethod == null) {</span>
+<span class="nc" id="L95">				writedMethod = Util.getMethod(owner, base, descriptor.getWriteMethod());</span>
+			}
+<span class="nc" id="L97">			return writedMethod;</span>
+		}
+
+		public boolean isReadOnly(Object base) {
+<span class="nc bnc" id="L101" title="All 2 branches missed.">			return getWriteMethod(base) == null;</span>
+		}
+	}
+
+	private final boolean readOnly;
+	private final ConcurrentHashMap&lt;Class&lt;?&gt;, BeanProperties&gt; cache;
+	
+	private ExpressionFactory defaultFactory;
+
+	/**
+	 * Creates a new read/write BeanELResolver.
+	 */
+	public BeanELResolver() {
+<span class="nc" id="L114">		this(false);</span>
+<span class="nc" id="L115">	}</span>
+
+	/**
+	 * Creates a new BeanELResolver whose read-only status is determined by the given parameter.
+	 */
+<span class="nc" id="L120">	public BeanELResolver(boolean readOnly) {</span>
+<span class="nc" id="L121">		this.readOnly = readOnly;</span>
+<span class="nc" id="L122">		this.cache = new ConcurrentHashMap&lt;&gt;();</span>
+<span class="nc" id="L123">	}</span>
+
+	/**
+	 * If the base object is not null, returns the most general type that this resolver accepts for
+	 * the property argument. Otherwise, returns null. Assuming the base is not null, this method
+	 * will always return Object.class. This is because any object is accepted as a key and is
+	 * coerced into a string.
+	 * 
+	 * @param context
+	 *            The context of this evaluation.
+	 * @param base
+	 *            The bean to analyze.
+	 * @return null if base is null; otherwise Object.class.
+	 */
+	@Override
+	public Class&lt;?&gt; getCommonPropertyType(ELContext context, Object base) {
+<span class="nc bnc" id="L139" title="All 2 branches missed.">		return isResolvable(base) ? Object.class : null;</span>
+	}
+
+	/**
+	 * If the base object is not null, returns an Iterator containing the set of JavaBeans
+	 * properties available on the given object. Otherwise, returns null. The Iterator returned must
+	 * contain zero or more instances of java.beans.FeatureDescriptor. Each info object contains
+	 * information about a property in the bean, as obtained by calling the
+	 * BeanInfo.getPropertyDescriptors method. The FeatureDescriptor is initialized using the same
+	 * fields as are present in the PropertyDescriptor, with the additional required named
+	 * attributes &quot;type&quot; and &quot;resolvableAtDesignTime&quot; set as follows:
+	 * &lt;ul&gt;
+	 * &lt;li&gt;{@link ELResolver#TYPE} - The runtime type of the property, from
+	 * PropertyDescriptor.getPropertyType().&lt;/li&gt;
+	 * &lt;li&gt;{@link ELResolver#RESOLVABLE_AT_DESIGN_TIME} - true.&lt;/li&gt;
+	 * &lt;/ul&gt;
+	 * 
+	 * @param context
+	 *            The context of this evaluation.
+	 * @param base
+	 *            The bean to analyze.
+	 * @return An Iterator containing zero or more FeatureDescriptor objects, each representing a
+	 *         property on this bean, or null if the base object is null.
+	 */
+	@Override
+	public Iterator&lt;FeatureDescriptor&gt; getFeatureDescriptors(ELContext context, Object base) {
+<span class="nc bnc" id="L165" title="All 2 branches missed.">		if (isResolvable(base)) {</span>
+			final PropertyDescriptor[] properties;
+			try {
+<span class="nc" id="L168">				properties = Introspector.getBeanInfo(base.getClass()).getPropertyDescriptors();</span>
+<span class="nc" id="L169">			} catch (IntrospectionException e) {</span>
+<span class="nc" id="L170">				return Collections.&lt;FeatureDescriptor&gt; emptyList().iterator();</span>
+<span class="nc" id="L171">			}</span>
+<span class="nc" id="L172">			return new Iterator&lt;&gt;() {</span>
+<span class="nc" id="L173">                int next = 0;</span>
+
+                @Override
+                public boolean hasNext() {
+<span class="nc bnc" id="L177" title="All 4 branches missed.">                    return properties != null &amp;&amp; next &lt; properties.length;</span>
+                }
+
+                @Override
+                public FeatureDescriptor next() {
+<span class="nc" id="L182">                    PropertyDescriptor property = properties[next++];</span>
+<span class="nc" id="L183">                    FeatureDescriptor feature = new FeatureDescriptor();</span>
+<span class="nc" id="L184">                    feature.setDisplayName(property.getDisplayName());</span>
+<span class="nc" id="L185">                    feature.setName(property.getName());</span>
+<span class="nc" id="L186">                    feature.setShortDescription(property.getShortDescription());</span>
+<span class="nc" id="L187">                    feature.setExpert(property.isExpert());</span>
+<span class="nc" id="L188">                    feature.setHidden(property.isHidden());</span>
+<span class="nc" id="L189">                    feature.setPreferred(property.isPreferred());</span>
+<span class="nc" id="L190">                    feature.setValue(TYPE, property.getPropertyType());</span>
+<span class="nc" id="L191">                    feature.setValue(RESOLVABLE_AT_DESIGN_TIME, true);</span>
+<span class="nc" id="L192">                    return feature;</span>
+                }
+
+                @Override
+                public void remove() {
+<span class="nc" id="L197">                    throw new UnsupportedOperationException(&quot;cannot remove&quot;);</span>
+                }
+            };
+		}
+<span class="nc" id="L201">		return null;</span>
+	}
+
+	/**
+	 * If the base object is not null, returns the most general acceptable type that can be set on
+	 * this bean property. If the base is not null, the propertyResolved property of the ELContext
+	 * object must be set to true by this resolver, before returning. If this property is not true
+	 * after this method is called, the caller should ignore the return value. The provided property
+	 * will first be coerced to a String. If there is a BeanInfoProperty for this property and there
+	 * were no errors retrieving it, the propertyType of the propertyDescriptor is returned.
+	 * Otherwise, a PropertyNotFoundException is thrown.
+	 * 
+	 * @param context
+	 *            The context of this evaluation.
+	 * @param base
+	 *            The bean to analyze.
+	 * @param property
+	 *            The name of the property to analyze. Will be coerced to a String.
+	 * @return If the propertyResolved property of ELContext was set to true, then the most general
+	 *         acceptable type; otherwise undefined.
+	 * @throws NullPointerException
+	 *             if context is null
+	 * @throws PropertyNotFoundException
+	 *             if base is not null and the specified property does not exist or is not readable.
+	 * @throws ELException
+	 *             if an exception was thrown while performing the property or variable resolution.
+	 *             The thrown exception must be included as the cause property of this exception, if
+	 *             available.
+	 */
+	@Override
+	public Class&lt;?&gt; getType(ELContext context, Object base, Object property) {
+<span class="nc bnc" id="L232" title="All 2 branches missed.">		if (context == null) {</span>
+<span class="nc" id="L233">			throw new NullPointerException();</span>
+		}
+<span class="nc" id="L235">		Class&lt;?&gt; result = null;</span>
+<span class="nc bnc" id="L236" title="All 2 branches missed.">		if (isResolvable(base)) {</span>
+<span class="nc" id="L237">			BeanProperty beanProperty = toBeanProperty(base, property);</span>
+<span class="nc bnc" id="L238" title="All 2 branches missed.">			if (beanProperty != null) {</span>
+<span class="nc" id="L239">				result = beanProperty.getPropertyType();</span>
+<span class="nc bnc" id="L240" title="All 2 branches missed.">				if (result != null) {</span>
+<span class="nc" id="L241">					context.setPropertyResolved(true);</span>
+				}
+			}
+		}
+<span class="nc" id="L245">		return result;</span>
+	}
+
+	/**
+	 * If the base object is not null, returns the current value of the given property on this bean.
+	 * If the base is not null, the propertyResolved property of the ELContext object must be set to
+	 * true by this resolver, before returning. If this property is not true after this method is
+	 * called, the caller should ignore the return value. The provided property name will first be
+	 * coerced to a String. If the property is a readable property of the base object, as per the
+	 * JavaBeans specification, then return the result of the getter call. If the getter throws an
+	 * exception, it is propagated to the caller. If the property was not found or is not readable, a
+	 * PropertyNotFoundException is thrown.
+	 * 
+	 * @param context
+	 *            The context of this evaluation.
+	 * @param base
+	 *            The bean to analyze.
+	 * @param property
+	 *            The name of the property to analyze. Will be coerced to a String.
+	 * @return If the propertyResolved property of ELContext was set to true, then the value of the
+	 *         given property. Otherwise, undefined.
+	 * @throws NullPointerException
+	 *             if context is null
+	 * @throws PropertyNotFoundException
+	 *             if base is not null and the specified property does not exist or is not readable.
+	 * @throws ELException
+	 *             if an exception was thrown while performing the property or variable resolution.
+	 *             The thrown exception must be included as the cause property of this exception, if
+	 *             available.
+	 */
+	@Override
+	public Object getValue(ELContext context, Object base, Object property) {
+<span class="nc bnc" id="L277" title="All 2 branches missed.">		if (context == null) {</span>
+<span class="nc" id="L278">			throw new NullPointerException();</span>
+		}
+<span class="nc" id="L280">		Object result = null;</span>
+<span class="nc bnc" id="L281" title="All 2 branches missed.">		if (isResolvable(base)) {</span>
+<span class="nc" id="L282">			BeanProperty beanProperty = toBeanProperty(base, property);</span>
+<span class="nc bnc" id="L283" title="All 2 branches missed.">			if (beanProperty != null) {</span>
+<span class="nc" id="L284">				Method method = beanProperty.getReadMethod(base);</span>
+<span class="nc bnc" id="L285" title="All 2 branches missed.">				if (method != null) {</span>
+					try {
+<span class="nc" id="L287">						result = invoke(method, base);</span>
+<span class="nc" id="L288">					} catch (InvocationTargetException e) {</span>
+<span class="nc" id="L289">						throw new ELException(e.getCause());</span>
+<span class="nc" id="L290">					} catch (Exception e) {</span>
+<span class="nc" id="L291">						throw new ELException(e);</span>
+<span class="nc" id="L292">					}</span>
+<span class="nc" id="L293">					context.setPropertyResolved(true);</span>
+				}
+			}
+		}
+<span class="nc" id="L297">		return result;</span>
+	}
+
+	/**
+	 * If the base object is not null, returns whether a call to
+	 * {@link #setValue(ELContext, Object, Object, Object)} will always fail. If the base is not
+	 * null, the propertyResolved property of the ELContext object must be set to true by this
+	 * resolver, before returning. If this property is not true after this method is called, the
+	 * caller can safely assume no value was set.
+	 * 
+	 * @param context
+	 *            The context of this evaluation.
+	 * @param base
+	 *            The bean to analyze.
+	 * @param property
+	 *            The name of the property to analyze. Will be coerced to a String.
+	 * @return If the propertyResolved property of ELContext was set to true, then true if calling
+	 *         the setValue method will always fail or false if it is possible that such a call may
+	 *         succeed; otherwise undefined.
+	 * @throws NullPointerException
+	 *             if context is null
+	 * @throws PropertyNotFoundException
+	 *             if base is not null and the specified property does not exist or is not readable.
+	 * @throws ELException
+	 *             if an exception was thrown while performing the property or variable resolution.
+	 *             The thrown exception must be included as the cause property of this exception, if
+	 *             available.
+	 */
+	@Override
+	public boolean isReadOnly(ELContext context, Object base, Object property) {
+<span class="nc bnc" id="L327" title="All 2 branches missed.">		if (context == null) {</span>
+<span class="nc" id="L328">			throw new NullPointerException();</span>
+		}
+<span class="nc" id="L330">		boolean result = readOnly;</span>
+<span class="nc bnc" id="L331" title="All 2 branches missed.">		if (isResolvable(base)) {</span>
+<span class="nc" id="L332">			BeanProperty beanProperty = toBeanProperty(base, property);</span>
+<span class="nc bnc" id="L333" title="All 2 branches missed.">			if (beanProperty != null) {</span>
+<span class="nc" id="L334">				result |= beanProperty.isReadOnly(base);</span>
+<span class="nc" id="L335">				context.setPropertyResolved(true);</span>
+			}
+		}
+<span class="nc" id="L338">		return result;</span>
+	}
+
+	/**
+	 * If the base object is not null, attempts to set the value of the given property on this bean.
+	 * If the base is not null, the propertyResolved property of the ELContext object must be set to
+	 * true by this resolver, before returning. If this property is not true after this method is
+	 * called, the caller can safely assume no value was set. If this resolver was constructed in
+	 * read-only mode, this method will always throw PropertyNotWritableException. The provided
+	 * property name will first be coerced to a String. If property is a writable property of base
+	 * (as per the JavaBeans Specification), the setter method is called (passing value). If the
+	 * property exists but does not have a setter, then a PropertyNotFoundException is thrown. If
+	 * the property does not exist, a PropertyNotFoundException is thrown.
+	 * 
+	 * @param context
+	 *            The context of this evaluation.
+	 * @param base
+	 *            The bean to analyze.
+	 * @param property
+	 *            The name of the property to analyze. Will be coerced to a String.
+	 * @param value
+	 *            The value to be associated with the specified key.
+	 * @throws NullPointerException
+	 *             if context is null
+	 * @throws PropertyNotFoundException
+	 *             if base is not null and the specified property does not exist or is not readable.
+	 * @throws PropertyNotWritableException
+	 *             if this resolver was constructed in read-only mode, or if there is no setter for
+	 *             the property
+	 * @throws ELException
+	 *             if an exception was thrown while performing the property or variable resolution.
+	 *             The thrown exception must be included as the cause property of this exception, if
+	 *             available.
+	 */
+	@Override
+	public void setValue(ELContext context, Object base, Object property, Object value) {
+<span class="nc bnc" id="L374" title="All 2 branches missed.">		if (context == null) {</span>
+<span class="nc" id="L375">			throw new NullPointerException();</span>
+		}
+<span class="nc bnc" id="L377" title="All 2 branches missed.">		if (isResolvable(base)) {</span>
+<span class="nc bnc" id="L378" title="All 2 branches missed.">			if (readOnly) {</span>
+<span class="nc" id="L379">				throw new PropertyNotWritableException(&quot;resolver is read-only&quot;);</span>
+			}
+<span class="nc" id="L381">			BeanProperty beanProperty = toBeanProperty(base, property);</span>
+<span class="nc bnc" id="L382" title="All 2 branches missed.">			if (beanProperty != null) {</span>
+<span class="nc" id="L383">				Method method = beanProperty.getWriteMethod(base);</span>
+<span class="nc bnc" id="L384" title="All 2 branches missed.">				if (method == null) {</span>
+<span class="nc" id="L385">					throw new PropertyNotWritableException(&quot;Cannot write property: &quot; + property);</span>
+				}
+				try {
+<span class="nc" id="L388">					invoke(method, base, value);</span>
+<span class="nc" id="L389">				} catch (InvocationTargetException e) {</span>
+<span class="nc" id="L390">					throw new ELException(&quot;Cannot write property: &quot; + property, e.getCause());</span>
+<span class="nc" id="L391">				} catch (IllegalArgumentException e) {</span>
+<span class="nc" id="L392">					throw new ELException(&quot;Cannot write property: &quot; + property, e);</span>
+<span class="nc" id="L393">				} catch (IllegalAccessException e) {</span>
+<span class="nc" id="L394">					throw new PropertyNotWritableException(&quot;Cannot write property: &quot; + property, e);</span>
+<span class="nc" id="L395">				}</span>
+<span class="nc" id="L396">				context.setPropertyResolved(true);</span>
+ 			}
+		}
+<span class="nc" id="L399">	}</span>
+
+	/**
+	 * If the base object is not &lt;code&gt;null&lt;/code&gt;, invoke the method, with the given parameters on
+	 * this bean. The return value from the method is returned.
+	 * 
+	 * &lt;p&gt;
+	 * If the base is not &lt;code&gt;null&lt;/code&gt;, the &lt;code&gt;propertyResolved&lt;/code&gt; property of the
+	 * &lt;code&gt;ELContext&lt;/code&gt; object must be set to &lt;code&gt;true&lt;/code&gt; by this resolver, before
+	 * returning. If this property is not &lt;code&gt;true&lt;/code&gt; after this method is called, the caller
+	 * should ignore the return value.
+	 * &lt;/p&gt;
+	 * 
+	 * &lt;p&gt;
+	 * The provided method object will first be coerced to a &lt;code&gt;String&lt;/code&gt;. The methods in the
+	 * bean is then examined and an attempt will be made to select one for invocation. If no
+	 * suitable can be found, a &lt;code&gt;MethodNotFoundException&lt;/code&gt; is thrown.
+	 * 
+	 * If the given paramTypes is not &lt;code&gt;null&lt;/code&gt;, select the method with the given name and
+	 * parameter types.
+	 * 
+	 * Else select the method with the given name that has the same number of parameters. If there
+	 * are more than one such method, the method selection process is undefined.
+	 * 
+	 * Else select the method with the given name that takes a variable number of arguments.
+	 * 
+	 * Note the resolution for overloaded methods will likely be clarified in a future version of
+	 * the spec.
+	 * 
+	 * The provided parameters are coerced to the corresponding parameter types of the method, and
+	 * the method is then invoked.
+	 * 
+	 * @param context
+	 *            The context of this evaluation.
+	 * @param base
+	 *            The bean on which to invoke the method
+	 * @param method
+	 *            The simple name of the method to invoke. Will be coerced to a &lt;code&gt;String&lt;/code&gt;.
+	 *            If method is &quot;&amp;lt;init&amp;gt;&quot;or &quot;&amp;lt;clinit&amp;gt;&quot; a MethodNotFoundException is
+	 *            thrown.
+	 * @param paramTypes
+	 *            An array of Class objects identifying the method's formal parameter types, in
+	 *            declared order. Use an empty array if the method has no parameters. Can be
+	 *            &lt;code&gt;null&lt;/code&gt;, in which case the method's formal parameter types are assumed
+	 *            to be unknown.
+	 * @param params
+	 *            The parameters to pass to the method, or &lt;code&gt;null&lt;/code&gt; if no parameters.
+	 * @return The result of the method invocation (&lt;code&gt;null&lt;/code&gt; if the method has a
+	 *         &lt;code&gt;void&lt;/code&gt; return type).
+	 * @throws MethodNotFoundException
+	 *             if no suitable method can be found.
+	 * @throws ELException
+	 *             if an exception was thrown while performing (base, method) resolution. The thrown
+	 *             exception must be included as the cause property of this exception, if available.
+	 *             If the exception thrown is an &lt;code&gt;InvocationTargetException&lt;/code&gt;, extract its
+	 *             &lt;code&gt;cause&lt;/code&gt; and pass it to the &lt;code&gt;ELException&lt;/code&gt; constructor.
+	 * @since 2.2
+	 */
+	@Override
+	public Object invoke(ELContext context, Object base, Object method, Class&lt;?&gt;[] paramTypes, Object[] params) {
+<span class="nc bnc" id="L459" title="All 2 branches missed.">		if (context == null) {</span>
+<span class="nc" id="L460">			throw new NullPointerException();</span>
+		}
+<span class="nc" id="L462">		Object result = null;</span>
+<span class="nc bnc" id="L463" title="All 2 branches missed.">		if (isResolvable(base)) {</span>
+<span class="nc bnc" id="L464" title="All 2 branches missed.">			if (params == null) {</span>
+<span class="nc" id="L465">				params = new Object[0];</span>
+			}
+<span class="nc" id="L467">			String name = method.toString();</span>
+<span class="nc" id="L468">			ExpressionFactory factory = getExpressionFactory(context);</span>
+<span class="nc" id="L469">			Method target = Util.findMethod(base.getClass(), base, name, paramTypes, params, factory);</span>
+<span class="nc bnc" id="L470" title="All 2 branches missed.">			if (target == null) {</span>
+<span class="nc" id="L471">				throw new MethodNotFoundException(&quot;Cannot find method &quot; + name + &quot; with &quot; + params.length + &quot; parameters in &quot; + base.getClass());</span>
+			}
+
+<span class="nc" id="L474">			Object[] parameters = Util.buildParameters(target.getParameterTypes(), target.isVarArgs(), params, factory);</span>
+			try {
+<span class="nc" id="L476">				result = invoke(target, base, parameters);</span>
+<span class="nc" id="L477">			} catch (InvocationTargetException e) {</span>
+<span class="nc" id="L478">				throw new ELException(e.getCause());</span>
+<span class="nc" id="L479">			} catch (IllegalAccessException e) {</span>
+<span class="nc" id="L480">				throw new ELException(e);</span>
+<span class="nc" id="L481">			}</span>
+<span class="nc" id="L482">			context.setPropertyResolved(true);</span>
+		}
+<span class="nc" id="L484">		return result;</span>
+	}
+
+	protected Object invoke(Method target, Object base, Object... parameters) throws InvocationTargetException, IllegalAccessException {
+<span class="nc" id="L488">		return target.invoke(base, parameters);</span>
+	}
+
+	/**
+	 * Lookup an expression factory used to coerce method parameters in context under key
+	 * &lt;code&gt;&quot;javax.el.ExpressionFactory&quot;&lt;/code&gt;.
+	 * If no expression factory can be found under that key, use a default instance created with
+	 * {@link ExpressionFactory#newInstance()}.
+	 * @param context
+	 *            The context of this evaluation.
+	 * @return expression factory instance
+	 */
+	private ExpressionFactory getExpressionFactory(ELContext context) {
+<span class="nc" id="L501">		Object obj = context.getContext(ExpressionFactory.class);</span>
+<span class="nc bnc" id="L502" title="All 2 branches missed.">		if (obj instanceof ExpressionFactory) {</span>
+<span class="nc" id="L503">			return (ExpressionFactory)obj;</span>
+		}
+<span class="nc bnc" id="L505" title="All 2 branches missed.">		if (defaultFactory == null) {</span>
+<span class="nc" id="L506">			defaultFactory = ExpressionFactory.newInstance();</span>
+		}
+<span class="nc" id="L508">		return defaultFactory;</span>
+	}
+	
+	/**
+	 * Test whether the given base should be resolved by this ELResolver.
+	 * 
+	 * @param base
+	 *            The bean to analyze.
+	 * @return base != null
+	 */
+	private final boolean isResolvable(Object base) {
+<span class="nc bnc" id="L519" title="All 2 branches missed.">		return base != null;</span>
+	}
+
+	/**
+	 * Lookup BeanProperty for the given (base, property) pair.
+	 * 
+	 * @param base
+	 *            The bean to analyze.
+	 * @param property
+	 *            The name of the property to analyze. Will be coerced to a String.
+	 * @return The BeanProperty representing (base, property).
+	 * @throws PropertyNotFoundException
+	 *             if no BeanProperty can be found.
+	 */
+	private final BeanProperty toBeanProperty(Object base, Object property) {
+<span class="nc" id="L534">		BeanProperties beanProperties = cache.get(base.getClass());</span>
+<span class="nc bnc" id="L535" title="All 2 branches missed.">		if (beanProperties == null) {</span>
+<span class="nc" id="L536">			BeanProperties newBeanProperties = new BeanProperties(base.getClass());</span>
+<span class="nc" id="L537">			beanProperties = cache.putIfAbsent(base.getClass(), newBeanProperties);</span>
+<span class="nc bnc" id="L538" title="All 2 branches missed.">			if (beanProperties == null) { // put succeeded, use new value</span>
+<span class="nc" id="L539">				beanProperties = newBeanProperties;</span>
+			}
+		}
+<span class="nc bnc" id="L542" title="All 2 branches missed.">		BeanProperty beanProperty = property == null ? null : beanProperties.getBeanProperty(property.toString());</span>
+<span class="nc" id="L543">		return beanProperty;</span>
+	}
+
+	/**
+	 * This method is not part of the API, though it can be used (reflectively) by clients of this
+	 * class to remove entries from the cache when the beans are being unloaded.
+	 * 
+	 * Note: this method is present in the reference implementation, so we're adding it here to ease
+	 * migration.
+	 * 
+	 * @param loader
+	 *            The classLoader used to load the beans.
+	 */
+	@SuppressWarnings(&quot;unused&quot;)
+	private final void purgeBeanClasses(ClassLoader loader) {
+<span class="nc" id="L558">		Iterator&lt;Class&lt;?&gt;&gt; classes = cache.keySet().iterator();</span>
+<span class="nc bnc" id="L559" title="All 2 branches missed.">		while (classes.hasNext()) {</span>
+<span class="nc bnc" id="L560" title="All 2 branches missed.">			if (loader == classes.next().getClassLoader()) {</span>
+<span class="nc" id="L561">				classes.remove();</span>
+			}
+		}
+<span class="nc" id="L564">	}</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

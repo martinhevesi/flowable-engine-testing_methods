@@ -1,0 +1,256 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>UnacquireOwnedJobsTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.jobexecutor</a> &gt; <span class="el_source">UnacquireOwnedJobsTest.java</span></div><h1>UnacquireOwnedJobsTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.test.jobexecutor;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.engine.impl.test.PluggableFlowableTestCase;
+import org.flowable.engine.test.Deployment;
+import org.flowable.job.service.impl.asyncexecutor.DefaultAsyncJobExecutor;
+import org.flowable.job.service.impl.cmd.AcquireJobsCmd;
+import org.flowable.job.service.impl.cmd.UnacquireOwnedJobsCmd;
+import org.flowable.job.service.impl.persistence.entity.JobInfoEntity;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+/**
+ * @author Filip Hrisafov
+ */
+<span class="nc" id="L35">class UnacquireOwnedJobsTest extends PluggableFlowableTestCase {</span>
+    // This test case tests that jobs unlocked by the AsyncExecutor are correctly released
+
+    private boolean asyncExecutorActivated;
+
+    /*
+        Need to disable the async executor during this test, as otherwise jobs will be picked up
+        which will make it impossible to test the lock releasing logic.
+     */
+
+    @BeforeEach
+    void disableAsyncExecutorIfNeeded() {
+<span class="nc" id="L47">        asyncExecutorActivated = processEngineConfiguration.getAsyncExecutor().isActive();</span>
+
+<span class="nc bnc" id="L49" title="All 2 branches missed.">        if (asyncExecutorActivated) {</span>
+<span class="nc" id="L50">            processEngineConfiguration.getAsyncExecutor().shutdown();</span>
+        }
+<span class="nc" id="L52">    }</span>
+
+    @AfterEach
+    void enabledAsyncExecutorIfNeeded() {
+<span class="nc bnc" id="L56" title="All 2 branches missed.">        if (asyncExecutorActivated) {</span>
+<span class="nc" id="L57">            processEngineConfiguration.getAsyncExecutor().start();</span>
+        }
+<span class="nc" id="L59">    }</span>
+
+    @Test
+    @Deployment
+    void testUnlockOwnJobs() {
+
+        // Tests the command, not the execution of the logic on close.
+        // But this way, the SQL gets tested on all databases
+
+        // Each process will have one async job
+<span class="nc" id="L69">        int nrOfProcessInstances = 5;</span>
+<span class="nc bnc" id="L70" title="All 2 branches missed.">        for (int i = 0; i &lt; nrOfProcessInstances; i++) {</span>
+<span class="nc" id="L71">            runtimeService.startProcessInstanceByKey(&quot;myProcess&quot;);</span>
+        }
+
+<span class="nc" id="L74">        assertThat(managementService.createJobQuery().list())</span>
+<span class="nc" id="L75">                .hasSize(5)</span>
+<span class="nc" id="L76">                .extracting(job -&gt; ((JobInfoEntity) job).getLockOwner())</span>
+<span class="nc" id="L77">                .containsOnlyNulls();</span>
+
+<span class="nc" id="L79">        DefaultAsyncJobExecutor asyncExecutor = (DefaultAsyncJobExecutor) processEngineConfiguration.getAsyncExecutor();</span>
+
+
+        // Acquire jobs (mimic the async executor behavior)
+<span class="nc" id="L83">        List&lt;JobInfoEntity&gt; acquiredJobs = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L84" title="All 2 branches missed.">        while (acquiredJobs.size() &lt; 5) {</span>
+<span class="nc" id="L85">            List&lt;? extends JobInfoEntity&gt; jobs = processEngineConfiguration.getCommandExecutor()</span>
+<span class="nc" id="L86">                    .execute(new AcquireJobsCmd(asyncExecutor));</span>
+<span class="nc" id="L87">            acquiredJobs.addAll(jobs);</span>
+<span class="nc" id="L88">        }</span>
+
+        // Validate lock owner and time set after acquiring
+<span class="nc" id="L91">        assertThat(acquiredJobs).hasSize(5);</span>
+
+<span class="nc bnc" id="L93" title="All 2 branches missed.">        for (JobInfoEntity acquiredJob : acquiredJobs) {</span>
+
+            // After locking, the lockowner should be set
+<span class="nc" id="L96">            assertThat(acquiredJob.getLockOwner()).isEqualTo(asyncExecutor.getLockOwner());</span>
+<span class="nc" id="L97">            assertThat(acquiredJob.getLockExpirationTime()).isNotNull();</span>
+<span class="nc" id="L98">        }</span>
+
+<span class="nc" id="L100">        processEngineConfiguration.getCommandExecutor()</span>
+<span class="nc" id="L101">                .execute(new UnacquireOwnedJobsCmd(asyncExecutor.getLockOwner(), asyncExecutor.getTenantId(), asyncExecutor.getJobServiceConfiguration()));</span>
+
+<span class="nc" id="L103">        assertThat(managementService.createJobQuery().list())</span>
+<span class="nc" id="L104">                .hasSize(5)</span>
+<span class="nc" id="L105">                .extracting(job -&gt; ((JobInfoEntity) job).getLockOwner())</span>
+<span class="nc" id="L106">                .containsOnlyNulls();</span>
+<span class="nc" id="L107">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/jobexecutor/UnacquireOwnedJobsTest.testUnlockOwnJobs.bpmn20.xml&quot;)
+    void testUnlockOwnJobsDifferentTenantsUsingSpecificTenant() {
+
+        // Tests the command, not the execution of the logic on close.
+        // But this way, the SQL gets tested on all databases
+
+<span class="nc" id="L116">        runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L117">                .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L118">                .overrideProcessDefinitionTenantId(&quot;tenant1&quot;)</span>
+<span class="nc" id="L119">                .start();</span>
+<span class="nc" id="L120">        runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L121">                .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L122">                .overrideProcessDefinitionTenantId(&quot;tenant1&quot;)</span>
+<span class="nc" id="L123">                .start();</span>
+<span class="nc" id="L124">        runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L125">                .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L126">                .overrideProcessDefinitionTenantId(&quot;tenant2&quot;)</span>
+<span class="nc" id="L127">                .start();</span>
+<span class="nc" id="L128">        runtimeService.startProcessInstanceByKey(&quot;myProcess&quot;);</span>
+<span class="nc" id="L129">        runtimeService.startProcessInstanceByKey(&quot;myProcess&quot;);</span>
+
+<span class="nc" id="L131">        assertThat(managementService.createJobQuery().list())</span>
+<span class="nc" id="L132">                .hasSize(5)</span>
+<span class="nc" id="L133">                .extracting(job -&gt; ((JobInfoEntity) job).getLockOwner())</span>
+<span class="nc" id="L134">                .containsOnlyNulls();</span>
+
+<span class="nc" id="L136">        DefaultAsyncJobExecutor asyncExecutor = (DefaultAsyncJobExecutor) processEngineConfiguration.getAsyncExecutor();</span>
+
+
+        // Acquire jobs (mimic the async executor behavior)
+<span class="nc" id="L140">        List&lt;JobInfoEntity&gt; acquiredJobs = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L141" title="All 2 branches missed.">        while (acquiredJobs.size() &lt; 5) {</span>
+<span class="nc" id="L142">            List&lt;? extends JobInfoEntity&gt; jobs = processEngineConfiguration.getCommandExecutor()</span>
+<span class="nc" id="L143">                    .execute(new AcquireJobsCmd(asyncExecutor));</span>
+<span class="nc" id="L144">            acquiredJobs.addAll(jobs);</span>
+<span class="nc" id="L145">        }</span>
+
+        // Validate lock owner and time set after acquiring
+<span class="nc" id="L148">        assertThat(acquiredJobs).hasSize(5);</span>
+
+<span class="nc" id="L150">        String lockOwner = asyncExecutor.getLockOwner();</span>
+<span class="nc bnc" id="L151" title="All 2 branches missed.">        for (JobInfoEntity acquiredJob : acquiredJobs) {</span>
+
+            // After locking, the lockowner should be set
+<span class="nc" id="L154">            assertThat(acquiredJob.getLockOwner()).isEqualTo(lockOwner);</span>
+<span class="nc" id="L155">            assertThat(acquiredJob.getLockExpirationTime()).isNotNull();</span>
+<span class="nc" id="L156">        }</span>
+
+        // Unacquiring should only release the jobs from the defined tenant
+<span class="nc" id="L159">        processEngineConfiguration.getCommandExecutor()</span>
+<span class="nc" id="L160">                .execute(new UnacquireOwnedJobsCmd(lockOwner, &quot;tenant1&quot;, asyncExecutor.getJobServiceConfiguration()));</span>
+
+<span class="nc" id="L162">        assertThat(managementService.createJobQuery().list())</span>
+<span class="nc" id="L163">                .hasSize(5)</span>
+<span class="nc" id="L164">                .extracting(job -&gt; StringUtils.defaultIfEmpty(job.getTenantId(), &quot;&quot;), job -&gt; ((JobInfoEntity) job).getLockOwner())</span>
+<span class="nc" id="L165">                .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L166">                        tuple(&quot;&quot;, lockOwner),</span>
+<span class="nc" id="L167">                        tuple(&quot;&quot;, lockOwner),</span>
+<span class="nc" id="L168">                        tuple(&quot;tenant2&quot;, lockOwner),</span>
+<span class="nc" id="L169">                        tuple(&quot;tenant1&quot;, null),</span>
+<span class="nc" id="L170">                        tuple(&quot;tenant1&quot;, null)</span>
+                );
+
+        // Explicitly using the empty tenant should release only the jobs without a tenant id
+<span class="nc" id="L174">        processEngineConfiguration.getCommandExecutor()</span>
+<span class="nc" id="L175">                .execute(new UnacquireOwnedJobsCmd(lockOwner, &quot;&quot;, asyncExecutor.getJobServiceConfiguration()));</span>
+
+<span class="nc" id="L177">        assertThat(managementService.createJobQuery().list())</span>
+<span class="nc" id="L178">                .hasSize(5)</span>
+<span class="nc" id="L179">                .extracting(job -&gt; StringUtils.defaultIfEmpty(job.getTenantId(), &quot;&quot;), job -&gt; ((JobInfoEntity) job).getLockOwner())</span>
+<span class="nc" id="L180">                .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L181">                        tuple(&quot;&quot;, null),</span>
+<span class="nc" id="L182">                        tuple(&quot;&quot;, null),</span>
+<span class="nc" id="L183">                        tuple(&quot;tenant2&quot;, lockOwner),</span>
+<span class="nc" id="L184">                        tuple(&quot;tenant1&quot;, null),</span>
+<span class="nc" id="L185">                        tuple(&quot;tenant1&quot;, null)</span>
+                );
+<span class="nc" id="L187">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/jobexecutor/UnacquireOwnedJobsTest.testUnlockOwnJobs.bpmn20.xml&quot;)
+    void testUnlockOwnJobsDifferentTenantsUsingNullTenant() {
+
+        // Tests the command, not the execution of the logic on close.
+        // But this way, the SQL gets tested on all databases
+
+        // Each process will have one async job
+<span class="nc" id="L197">        runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L198">                .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L199">                .overrideProcessDefinitionTenantId(&quot;tenant1&quot;)</span>
+<span class="nc" id="L200">                .start();</span>
+<span class="nc" id="L201">        runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L202">                .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L203">                .overrideProcessDefinitionTenantId(&quot;tenant1&quot;)</span>
+<span class="nc" id="L204">                .start();</span>
+<span class="nc" id="L205">        runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L206">                .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L207">                .overrideProcessDefinitionTenantId(&quot;tenant2&quot;)</span>
+<span class="nc" id="L208">                .start();</span>
+<span class="nc" id="L209">        runtimeService.startProcessInstanceByKey(&quot;myProcess&quot;);</span>
+<span class="nc" id="L210">        runtimeService.startProcessInstanceByKey(&quot;myProcess&quot;);</span>
+
+<span class="nc" id="L212">        assertThat(managementService.createJobQuery().list())</span>
+<span class="nc" id="L213">                .hasSize(5)</span>
+<span class="nc" id="L214">                .extracting(job -&gt; ((JobInfoEntity) job).getLockOwner())</span>
+<span class="nc" id="L215">                .containsOnlyNulls();</span>
+
+<span class="nc" id="L217">        DefaultAsyncJobExecutor asyncExecutor = (DefaultAsyncJobExecutor) processEngineConfiguration.getAsyncExecutor();</span>
+
+
+        // Acquire jobs (mimic the async executor behavior)
+<span class="nc" id="L221">        List&lt;JobInfoEntity&gt; acquiredJobs = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L222" title="All 2 branches missed.">        while (acquiredJobs.size() &lt; 5) {</span>
+<span class="nc" id="L223">            List&lt;? extends JobInfoEntity&gt; jobs = processEngineConfiguration.getCommandExecutor()</span>
+<span class="nc" id="L224">                    .execute(new AcquireJobsCmd(asyncExecutor));</span>
+<span class="nc" id="L225">            acquiredJobs.addAll(jobs);</span>
+<span class="nc" id="L226">        }</span>
+
+        // Validate lock owner and time set after acquiring
+<span class="nc" id="L229">        assertThat(acquiredJobs).hasSize(5);</span>
+
+<span class="nc" id="L231">        String lockOwner = asyncExecutor.getLockOwner();</span>
+<span class="nc bnc" id="L232" title="All 2 branches missed.">        for (JobInfoEntity acquiredJob : acquiredJobs) {</span>
+
+            // After locking, the lockowner should be set
+<span class="nc" id="L235">            assertThat(acquiredJob.getLockOwner()).isEqualTo(lockOwner);</span>
+<span class="nc" id="L236">            assertThat(acquiredJob.getLockExpirationTime()).isNotNull();</span>
+<span class="nc" id="L237">        }</span>
+
+        // Unacquiring using the null tenant should release all jobs
+<span class="nc" id="L240">        processEngineConfiguration.getCommandExecutor()</span>
+<span class="nc" id="L241">                .execute(new UnacquireOwnedJobsCmd(lockOwner, null, asyncExecutor.getJobServiceConfiguration()));</span>
+
+<span class="nc" id="L243">        assertThat(managementService.createJobQuery().list())</span>
+<span class="nc" id="L244">                .hasSize(5)</span>
+<span class="nc" id="L245">                .extracting(job -&gt; StringUtils.defaultIfEmpty(job.getTenantId(), &quot;&quot;), job -&gt; ((JobInfoEntity) job).getLockOwner())</span>
+<span class="nc" id="L246">                .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L247">                        tuple(&quot;&quot;, null),</span>
+<span class="nc" id="L248">                        tuple(&quot;&quot;, null),</span>
+<span class="nc" id="L249">                        tuple(&quot;tenant2&quot;, null),</span>
+<span class="nc" id="L250">                        tuple(&quot;tenant1&quot;, null),</span>
+<span class="nc" id="L251">                        tuple(&quot;tenant1&quot;, null)</span>
+                );
+<span class="nc" id="L253">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

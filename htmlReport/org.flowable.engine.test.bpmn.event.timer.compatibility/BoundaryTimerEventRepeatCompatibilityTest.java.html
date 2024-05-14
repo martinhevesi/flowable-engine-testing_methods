@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BoundaryTimerEventRepeatCompatibilityTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.bpmn.event.timer.compatibility</a> &gt; <span class="el_source">BoundaryTimerEventRepeatCompatibilityTest.java</span></div><h1>BoundaryTimerEventRepeatCompatibilityTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.test.bpmn.event.timer.compatibility;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Date;
+import java.util.List;
+
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.test.Deployment;
+import org.flowable.job.api.Job;
+import org.flowable.job.service.impl.persistence.entity.TimerJobEntity;
+import org.flowable.task.api.Task;
+import org.joda.time.DateTime;
+import org.joda.time.format.DateTimeFormatter;
+import org.joda.time.format.ISODateTimeFormat;
+import org.junit.jupiter.api.Test;
+
+<span class="nc" id="L33">public class BoundaryTimerEventRepeatCompatibilityTest extends TimerEventCompatibilityTest {</span>
+
+    @Test
+    @Deployment
+    public void testRepeatWithoutEnd() throws Throwable {
+
+        // We need to make sure the time ends on .000, .003 or .007 due to SQL Server rounding to that
+<span class="nc" id="L40">        Instant baseInstant = Instant.now().truncatedTo(ChronoUnit.SECONDS).plusMillis(337);</span>
+
+        // expect to stop boundary jobs after 20 minutes
+<span class="nc" id="L43">        DateTimeFormatter fmt = ISODateTimeFormat.dateTime();</span>
+<span class="nc" id="L44">        DateTime dt = new DateTime(new DateTime(baseInstant.plus(20, ChronoUnit.MINUTES).getEpochSecond()));</span>
+<span class="nc" id="L45">        String dateStr = fmt.print(dt);</span>
+
+        // reset the timer
+<span class="nc" id="L48">        Instant nextTimeInstant = baseInstant;</span>
+<span class="nc" id="L49">        processEngineConfiguration.getClock().setCurrentTime(Date.from(nextTimeInstant));</span>
+
+<span class="nc" id="L51">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;repeatWithEnd&quot;);</span>
+
+<span class="nc" id="L53">        runtimeService.setVariable(processInstance.getId(), &quot;EndDateForBoundary&quot;, dateStr);</span>
+
+<span class="nc" id="L55">        List&lt;org.flowable.task.api.Task&gt; tasks = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L56">        assertThat(tasks)</span>
+<span class="nc" id="L57">                .extracting(Task::getName)</span>
+<span class="nc" id="L58">                .containsOnly(&quot;Task A&quot;);</span>
+
+        // Test Boundary Events
+        // complete will cause timer to be created
+<span class="nc" id="L62">        taskService.complete(tasks.get(0).getId());</span>
+
+<span class="nc" id="L64">        List&lt;Job&gt; jobs = managementService.createTimerJobQuery().list();</span>
+<span class="nc" id="L65">        assertThat(jobs).hasSize(1);</span>
+
+        // change the job in old mode (the configuration should not be json in
+        // &quot;old mode&quot; but a simple string).
+<span class="nc" id="L69">        TimerJobEntity job = (TimerJobEntity) jobs.get(0);</span>
+<span class="nc" id="L70">        changeConfigurationToPlainText(job);</span>
+
+        // boundary events
+
+<span class="nc" id="L74">        waitForJobExecutorToProcessAllJobs(7000, 100);</span>
+
+        // a new job must be prepared because there are 10 repeats 2 seconds interval
+<span class="nc" id="L77">        jobs = managementService.createTimerJobQuery().list();</span>
+<span class="nc" id="L78">        assertThat(jobs).hasSize(1);</span>
+
+<span class="nc bnc" id="L80" title="All 2 branches missed.">        for (int i = 0; i &lt; 9; i++) {</span>
+<span class="nc" id="L81">            nextTimeInstant = nextTimeInstant.plus(2, ChronoUnit.SECONDS);</span>
+<span class="nc" id="L82">            processEngineConfiguration.getClock().setCurrentTime(Date.from(nextTimeInstant));</span>
+<span class="nc" id="L83">            waitForJobExecutorToProcessAllJobs(7000, 100);</span>
+            // a new job must be prepared because there are 10 repeats 2 seconds interval
+
+<span class="nc" id="L86">            jobs = managementService.createTimerJobQuery().list();</span>
+<span class="nc" id="L87">            assertThat(jobs).hasSize(1);</span>
+        }
+
+<span class="nc" id="L90">        nextTimeInstant = nextTimeInstant.plus(2, ChronoUnit.SECONDS);</span>
+<span class="nc" id="L91">        processEngineConfiguration.getClock().setCurrentTime(Date.from(nextTimeInstant));</span>
+
+<span class="nc" id="L93">        assertThatCode(() -&gt; { waitForJobExecutorToProcessAllJobs(7000, 100); })</span>
+<span class="nc" id="L94">                .as(&quot;Should not have any other jobs because the endDate is reached&quot;)</span>
+<span class="nc" id="L95">                .doesNotThrowAnyException();</span>
+
+<span class="nc" id="L97">        tasks = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L98">        assertThat(tasks)</span>
+<span class="nc" id="L99">                .extracting(Task::getName)</span>
+<span class="nc" id="L100">                .containsOnly(&quot;Task B&quot;);</span>
+<span class="nc" id="L101">        taskService.complete(tasks.get(0).getId());</span>
+
+<span class="nc" id="L103">        assertThatCode(() -&gt; { waitForJobExecutorToProcessAllJobs(7000, 500); })</span>
+<span class="nc" id="L104">                .as(&quot;No jobs should be active here.&quot;)</span>
+<span class="nc" id="L105">                .doesNotThrowAnyException();</span>
+
+        // now All the process instances should be completed
+<span class="nc" id="L108">        List&lt;ProcessInstance&gt; processInstances = runtimeService.createProcessInstanceQuery().list();</span>
+<span class="nc" id="L109">        assertThat(processInstances).isEmpty();</span>
+
+        // no jobs
+<span class="nc" id="L112">        jobs = managementService.createJobQuery().list();</span>
+<span class="nc" id="L113">        assertThat(jobs).isEmpty();</span>
+<span class="nc" id="L114">        jobs = managementService.createTimerJobQuery().list();</span>
+<span class="nc" id="L115">        assertThat(jobs).isEmpty();</span>
+
+        // no tasks
+<span class="nc" id="L118">        tasks = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L119">        assertThat(tasks).isEmpty();</span>
+
+<span class="nc" id="L121">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

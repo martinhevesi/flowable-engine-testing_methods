@@ -1,0 +1,422 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CommandContext.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.common.engine.impl.interceptor</a> &gt; <span class="el_source">CommandContext.java</span></div><h1>CommandContext.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.common.engine.impl.interceptor;
+
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.FlowableOptimisticLockingException;
+import org.flowable.common.engine.impl.AbstractEngineConfiguration;
+import org.flowable.common.engine.impl.runtime.Clock;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+/**
+ * @author Tom Baeyens
+ * @author Agim Emruli
+ * @author Joram Barrez
+ */
+public class CommandContext {
+    
+<span class="nc" id="L38">    private static final Logger LOGGER = LoggerFactory.getLogger(CommandContext.class);</span>
+
+    protected Map&lt;String, AbstractEngineConfiguration&gt; engineConfigurations;
+<span class="nc" id="L41">    protected LinkedList&lt;String&gt; engineCfgStack = new LinkedList&lt;&gt;();</span>
+    protected Command&lt;?&gt; command;
+    protected Map&lt;Class&lt;?&gt;, SessionFactory&gt; sessionFactories;
+<span class="nc" id="L44">    protected Map&lt;Class&lt;?&gt;, Session&gt; sessions = new HashMap&lt;&gt;();</span>
+    protected Throwable exception;
+    protected List&lt;CommandContextCloseListener&gt; closeListeners;
+    protected Map&lt;String, Object&gt; attributes; // General-purpose storing of anything during the lifetime of a command context
+    protected boolean reused;
+<span class="nc" id="L49">    protected LinkedList&lt;Object&gt; resultStack = new LinkedList&lt;&gt;(); // needs to be a stack, as JavaDelegates can do api calls again</span>
+    protected CommandExecutor commandExecutor;
+    protected ClassLoader classLoader;
+    protected boolean useClassForNameClassLoading;
+    protected Clock clock;
+    protected ObjectMapper objectMapper;
+    /**
+     * The start time when the command context was created.
+     * This is the result of {@link System#currentTimeMillis()} when the command context was created.
+     */
+    protected final long startTime;
+    
+<span class="nc" id="L61">    public CommandContext(Command&lt;?&gt; command) {</span>
+<span class="nc" id="L62">        this.command = command;</span>
+<span class="nc" id="L63">        this.startTime = System.currentTimeMillis();</span>
+<span class="nc" id="L64">    }</span>
+
+    public void close() {
+
+        // The intention of this method is that all resources are closed properly, even if exceptions occur
+        // in close or flush methods of the sessions or the transaction context.
+
+        try {
+            try {
+                try {
+<span class="nc bnc" id="L74" title="All 2 branches missed.">                    if (exception == null) {</span>
+<span class="nc" id="L75">                        executeCloseListenersClosing();</span>
+<span class="nc" id="L76">                        flushSessions();</span>
+                    }
+<span class="nc" id="L78">                } catch (Throwable exception) {</span>
+<span class="nc" id="L79">                    exception(exception);</span>
+
+                } finally {
+
+                    try {
+<span class="nc bnc" id="L84" title="All 2 branches missed.">                        if (exception == null) {</span>
+<span class="nc" id="L85">                            executeCloseListenersAfterSessionFlushed();</span>
+                        }
+<span class="nc" id="L87">                    } catch (Throwable exception) {</span>
+<span class="nc" id="L88">                        exception(exception);</span>
+<span class="nc" id="L89">                    }</span>
+
+<span class="nc bnc" id="L91" title="All 2 branches missed.">                    if (exception != null) {</span>
+<span class="nc" id="L92">                        logException();</span>
+<span class="nc" id="L93">                        executeCloseListenersCloseFailure();</span>
+                    } else {
+<span class="nc" id="L95">                        executeCloseListenersClosed();</span>
+                    }
+
+                }
+<span class="nc" id="L99">            } catch (Throwable exception) {</span>
+                // Catch exceptions during rollback
+<span class="nc" id="L101">                exception(exception);</span>
+            } finally {
+                // Sessions need to be closed, regardless of exceptions/commit/rollback
+<span class="nc" id="L104">                closeSessions();</span>
+            }
+            
+<span class="nc" id="L107">        } catch (Throwable exception) {</span>
+            // Catch exceptions during session closing
+<span class="nc" id="L109">            exception(exception);</span>
+<span class="nc" id="L110">        }</span>
+
+<span class="nc bnc" id="L112" title="All 2 branches missed.">        if (exception != null) {</span>
+<span class="nc" id="L113">            rethrowExceptionIfNeeded();</span>
+        }
+<span class="nc" id="L115">    }</span>
+
+    protected void logException() {
+<span class="nc bnc" id="L118" title="All 4 branches missed.">        if (exception instanceof FlowableException &amp;&amp; !((FlowableException) exception).isLogged()) {</span>
+<span class="nc" id="L119">            return;</span>
+        }
+        
+<span class="nc bnc" id="L122" title="All 2 branches missed.">        if (exception instanceof FlowableOptimisticLockingException) {</span>
+            // reduce log level, as normally we're not interested in logging this exception
+<span class="nc" id="L124">            LOGGER.debug(&quot;Optimistic locking exception : {}&quot;, exception.getMessage(), exception);</span>
+            
+<span class="nc bnc" id="L126" title="All 4 branches missed.">        } else if (exception instanceof FlowableException &amp;&amp; ((FlowableException) exception).isReduceLogLevel()) {</span>
+            // reduce log level, because this may have been caused because of job deletion due to cancelActiviti=&quot;true&quot;
+<span class="nc" id="L128">            LOGGER.info(&quot;Error while closing command context&quot;, exception);</span>
+            
+        } else {
+<span class="nc" id="L131">            LOGGER.error(&quot;Error while closing command context&quot;, exception);</span>
+            
+        }
+<span class="nc" id="L134">    }</span>
+
+    protected void rethrowExceptionIfNeeded() throws Error {
+<span class="nc bnc" id="L137" title="All 2 branches missed.">        if (exception instanceof Error) {</span>
+<span class="nc" id="L138">            throw (Error) exception;</span>
+<span class="nc bnc" id="L139" title="All 2 branches missed.">        } else if (exception instanceof RuntimeException) {</span>
+<span class="nc" id="L140">            throw (RuntimeException) exception;</span>
+        } else {
+<span class="nc" id="L142">            throw new FlowableException(&quot;exception while executing command &quot; + command, exception);</span>
+        }
+    }
+
+    public void addCloseListener(CommandContextCloseListener commandContextCloseListener) {
+<span class="nc bnc" id="L147" title="All 2 branches missed.">        if (closeListeners == null) {</span>
+<span class="nc" id="L148">            closeListeners = new ArrayList&lt;&gt;();</span>
+        }
+        
+<span class="nc bnc" id="L151" title="All 2 branches missed.">        if (!commandContextCloseListener.multipleAllowed()) {</span>
+<span class="nc bnc" id="L152" title="All 2 branches missed.">            for (CommandContextCloseListener closeListenerItem : closeListeners) {</span>
+<span class="nc bnc" id="L153" title="All 2 branches missed.">    			if (closeListenerItem.getClass().equals(commandContextCloseListener.getClass())) {</span>
+<span class="nc" id="L154">    				return;</span>
+    			}
+<span class="nc" id="L156">    		}</span>
+        }
+        
+<span class="nc" id="L159">        closeListeners.add(commandContextCloseListener);</span>
+        
+<span class="nc" id="L161">        closeListeners.sort(Comparator.comparing(CommandContextCloseListener::order));</span>
+<span class="nc" id="L162">    }</span>
+
+    public List&lt;CommandContextCloseListener&gt; getCloseListeners() {
+<span class="nc" id="L165">        return closeListeners;</span>
+    }
+
+    protected void executeCloseListenersClosing() {
+<span class="nc bnc" id="L169" title="All 2 branches missed.">        if (closeListeners != null) {</span>
+            try {
+<span class="nc bnc" id="L171" title="All 2 branches missed.">                for (int i = 0; i &lt; closeListeners.size(); i++) {</span>
+<span class="nc" id="L172">                    closeListeners.get(i).closing(this);</span>
+                }
+<span class="nc" id="L174">            } catch (Throwable exception) {</span>
+<span class="nc" id="L175">                exception(exception);</span>
+<span class="nc" id="L176">            }</span>
+        }
+<span class="nc" id="L178">    }</span>
+
+    protected void executeCloseListenersAfterSessionFlushed() {
+<span class="nc bnc" id="L181" title="All 2 branches missed.">        if (closeListeners != null) {</span>
+            try {
+<span class="nc bnc" id="L183" title="All 2 branches missed.">                for (int i = 0; i &lt; closeListeners.size(); i++) {</span>
+<span class="nc" id="L184">                    closeListeners.get(i).afterSessionsFlush(this);</span>
+                }
+<span class="nc" id="L186">            } catch (Throwable exception) {</span>
+<span class="nc" id="L187">                exception(exception);</span>
+<span class="nc" id="L188">            }</span>
+        }
+<span class="nc" id="L190">    }</span>
+
+    protected void executeCloseListenersClosed() {
+<span class="nc bnc" id="L193" title="All 2 branches missed.">        if (closeListeners != null) {</span>
+            try {
+<span class="nc bnc" id="L195" title="All 2 branches missed.">                for (int i = 0; i &lt; closeListeners.size(); i++) {</span>
+<span class="nc" id="L196">                    closeListeners.get(i).closed(this);</span>
+                }
+<span class="nc" id="L198">            } catch (Throwable exception) {</span>
+<span class="nc" id="L199">                exception(exception);</span>
+<span class="nc" id="L200">            }</span>
+        }
+<span class="nc" id="L202">    }</span>
+
+    protected void executeCloseListenersCloseFailure() {
+<span class="nc bnc" id="L205" title="All 2 branches missed.">        if (closeListeners != null) {</span>
+            try {
+<span class="nc bnc" id="L207" title="All 2 branches missed.">                for (int i = 0; i &lt; closeListeners.size(); i++) {</span>
+<span class="nc" id="L208">                    closeListeners.get(i).closeFailure(this);</span>
+                }
+<span class="nc" id="L210">            } catch (Throwable exception) {</span>
+<span class="nc" id="L211">                exception(exception);</span>
+<span class="nc" id="L212">            }</span>
+        }
+<span class="nc" id="L214">    }</span>
+
+    protected void flushSessions() {
+<span class="nc bnc" id="L217" title="All 2 branches missed.">        for (Session session : sessions.values()) {</span>
+<span class="nc" id="L218">            session.flush();</span>
+<span class="nc" id="L219">        }</span>
+<span class="nc" id="L220">    }</span>
+
+    protected void closeSessions() {
+<span class="nc bnc" id="L223" title="All 2 branches missed.">        for (Session session : sessions.values()) {</span>
+            try {
+<span class="nc" id="L225">                session.close();</span>
+<span class="nc" id="L226">            } catch (Throwable exception) {</span>
+<span class="nc" id="L227">                exception(exception);</span>
+<span class="nc" id="L228">            }</span>
+<span class="nc" id="L229">        }</span>
+<span class="nc" id="L230">    }</span>
+
+    /**
+     * Stores the provided exception on this {@link CommandContext} instance. That exception will be rethrown at the end of closing the {@link CommandContext} instance.
+     * 
+     * If there is already an exception being stored, a 'masked exception' message will be logged.
+     */
+    public void exception(Throwable exception) {
+<span class="nc bnc" id="L238" title="All 2 branches missed.">        if (this.exception == null) {</span>
+<span class="nc" id="L239">            this.exception = exception;</span>
+
+        } else {
+<span class="nc" id="L242">            LOGGER.error(&quot;masked exception in command context. for root cause, see below as it will be rethrown later.&quot;, exception);</span>
+        }
+<span class="nc" id="L244">    }</span>
+
+    public void resetException() {
+<span class="nc" id="L247">        this.exception = null;</span>
+<span class="nc" id="L248">    }</span>
+
+    public void addAttribute(String key, Object value) {
+<span class="nc bnc" id="L251" title="All 2 branches missed.">        if (attributes == null) {</span>
+<span class="nc" id="L252">            attributes = new HashMap&lt;&gt;(1);</span>
+        }
+<span class="nc" id="L254">        attributes.put(key, value);</span>
+<span class="nc" id="L255">    }</span>
+
+    public Object getAttribute(String key) {
+<span class="nc bnc" id="L258" title="All 2 branches missed.">        if (attributes != null) {</span>
+<span class="nc" id="L259">            return attributes.get(key);</span>
+        }
+<span class="nc" id="L261">        return null;</span>
+    }
+
+    public void removeAttribute(String key) {
+<span class="nc bnc" id="L265" title="All 2 branches missed.">        if (attributes != null) {</span>
+<span class="nc" id="L266">            attributes.remove(key);</span>
+
+<span class="nc bnc" id="L268" title="All 2 branches missed.">            if (attributes.isEmpty()) {</span>
+<span class="nc" id="L269">                attributes = null;</span>
+            }
+        }
+<span class="nc" id="L272">    }</span>
+    
+    @SuppressWarnings({ &quot;unchecked&quot; })
+    public &lt;T&gt; T getSession(Class&lt;T&gt; sessionClass) {
+<span class="nc" id="L276">        Session session = sessions.get(sessionClass);</span>
+<span class="nc bnc" id="L277" title="All 2 branches missed.">        if (session == null) {</span>
+<span class="nc" id="L278">            SessionFactory sessionFactory = sessionFactories.get(sessionClass);</span>
+<span class="nc bnc" id="L279" title="All 2 branches missed.">            if (sessionFactory == null) {</span>
+<span class="nc" id="L280">                throw new FlowableException(&quot;no session factory configured for &quot; + sessionClass.getName());</span>
+            }
+<span class="nc" id="L282">            session = sessionFactory.openSession(this);</span>
+<span class="nc" id="L283">            sessions.put(sessionClass, session);</span>
+        }
+
+<span class="nc" id="L286">        return (T) session;</span>
+    }
+
+    public Map&lt;Class&lt;?&gt;, SessionFactory&gt; getSessionFactories() {
+<span class="nc" id="L290">        return sessionFactories;</span>
+    }
+    
+    public void setSessionFactories(Map&lt;Class&lt;?&gt;, SessionFactory&gt; sessionFactories) {
+<span class="nc" id="L294">        this.sessionFactories = sessionFactories;</span>
+<span class="nc" id="L295">    }   </span>
+
+    public Map&lt;String, AbstractEngineConfiguration&gt; getEngineConfigurations() {
+<span class="nc" id="L298">        return engineConfigurations;</span>
+    }
+    
+    public void setEngineConfigurations(Map&lt;String, AbstractEngineConfiguration&gt; engineConfigurations) {
+<span class="nc" id="L302">        this.engineConfigurations = engineConfigurations;</span>
+<span class="nc" id="L303">    }</span>
+
+    public void pushEngineCfgToStack(String engineCfgKey) {
+<span class="nc" id="L306">        engineCfgStack.push(engineCfgKey);</span>
+<span class="nc" id="L307">    }</span>
+
+    public String popEngineCfgStack() {
+<span class="nc" id="L310">        return engineCfgStack.pop();</span>
+    }
+
+    /**
+     * @return Returns whether (at the time of calling this method) the current engine
+     * is being executed as the 'root engine'. Or said differently: this will return
+     * &lt;em&gt;false&lt;/em&gt; when the current engine is being used in a nested {@link Command} execution call
+     * and will return &lt;em&gt;true&lt;/em&gt; if it is the root usage of the current engine.
+     *
+     * For example:
+     * CMMN engine executes process task, that in its turn calls a CMMN task.
+     * The hierarchy of engine will be CMMN (a) - BPMN (b) - CMMN (c).
+     *
+     * If this method is called in the context of (c), false is returned.
+     * In the context of (a), true will be returned. For (b), there is but one
+     * usage and it will be true.
+     */
+    public boolean isRootUsageOfCurrentEngine() {
+<span class="nc" id="L328">        String currentEngineCfgKey = engineCfgStack.peek();</span>
+<span class="nc bnc" id="L329" title="All 2 branches missed.">        if (currentEngineCfgKey != null) {</span>
+<span class="nc bnc" id="L330" title="All 2 branches missed.">            for (int i = 1; i &lt; engineCfgStack.size(); i++) {</span>
+<span class="nc bnc" id="L331" title="All 2 branches missed.">                if (currentEngineCfgKey.equals(engineCfgStack.get(i))) {</span>
+<span class="nc" id="L332">                    return false;</span>
+                }
+            }
+        }
+<span class="nc" id="L336">        return true;</span>
+    }
+    
+    public void addEngineConfiguration(String engineKey, String scopeType, AbstractEngineConfiguration engineConfiguration) {
+<span class="nc bnc" id="L340" title="All 2 branches missed.">        if (engineConfigurations == null) {</span>
+<span class="nc" id="L341">            engineConfigurations = new HashMap&lt;&gt;();</span>
+        }
+<span class="nc" id="L343">        engineConfigurations.put(engineKey, engineConfiguration);</span>
+<span class="nc" id="L344">        engineConfigurations.put(scopeType, engineConfiguration);</span>
+<span class="nc" id="L345">    }</span>
+    
+    public CommandExecutor getCommandExecutor() {
+<span class="nc" id="L348">        return commandExecutor;</span>
+    }
+
+    public void setCommandExecutor(CommandExecutor commandExecutor) {
+<span class="nc" id="L352">        this.commandExecutor = commandExecutor;</span>
+<span class="nc" id="L353">    }</span>
+
+    public ClassLoader getClassLoader() {
+<span class="nc" id="L356">        return classLoader;</span>
+    }
+
+    public void setClassLoader(ClassLoader classLoader) {
+<span class="nc" id="L360">        this.classLoader = classLoader;</span>
+<span class="nc" id="L361">    }</span>
+
+    public boolean isUseClassForNameClassLoading() {
+<span class="nc" id="L364">        return useClassForNameClassLoading;</span>
+    }
+
+    public void setUseClassForNameClassLoading(boolean useClassForNameClassLoading) {
+<span class="nc" id="L368">        this.useClassForNameClassLoading = useClassForNameClassLoading;</span>
+<span class="nc" id="L369">    }</span>
+
+    public Clock getClock() {
+<span class="nc" id="L372">        return clock;</span>
+    }
+
+    public void setClock(Clock clock) {
+<span class="nc" id="L376">        this.clock = clock;</span>
+<span class="nc" id="L377">    }</span>
+    
+    public ObjectMapper getObjectMapper() {
+<span class="nc" id="L380">        return objectMapper;</span>
+    }
+
+    public void setObjectMapper(ObjectMapper objectMapper) {
+<span class="nc" id="L384">        this.objectMapper = objectMapper;</span>
+<span class="nc" id="L385">    }</span>
+    
+    // getters and setters
+    // //////////////////////////////////////////////////////
+
+    public Command&lt;?&gt; getCommand() {
+<span class="nc" id="L391">        return command;</span>
+    }
+
+    public Map&lt;Class&lt;?&gt;, Session&gt; getSessions() {
+<span class="nc" id="L395">        return sessions;</span>
+    }
+
+    public Throwable getException() {
+<span class="nc" id="L399">        return exception;</span>
+    }
+
+    public boolean isReused() {
+<span class="nc" id="L403">        return reused;</span>
+    }
+
+    public void setReused(boolean reused) {
+<span class="nc" id="L407">        this.reused = reused;</span>
+<span class="nc" id="L408">    }</span>
+    
+    public Object getResult() {
+<span class="nc" id="L411">        return resultStack.pollLast();</span>
+    }
+
+    public void setResult(Object result) {
+<span class="nc" id="L415">        resultStack.add(result);</span>
+<span class="nc" id="L416">    }</span>
+    
+    public long getStartTime() {
+<span class="nc" id="L419">        return startTime;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

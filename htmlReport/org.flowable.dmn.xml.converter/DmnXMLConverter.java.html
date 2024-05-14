@@ -1,0 +1,764 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DmnXMLConverter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.dmn.xml.converter</a> &gt; <span class="el_source">DmnXMLConverter.java</span></div><h1>DmnXMLConverter.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.dmn.xml.converter;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.io.UnsupportedEncodingException;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import javax.xml.XMLConstants;
+import javax.xml.stream.XMLInputFactory;
+import javax.xml.stream.XMLOutputFactory;
+import javax.xml.stream.XMLStreamException;
+import javax.xml.stream.XMLStreamReader;
+import javax.xml.stream.XMLStreamWriter;
+import javax.xml.transform.stax.StAXSource;
+import javax.xml.transform.stream.StreamSource;
+import javax.xml.validation.Schema;
+import javax.xml.validation.SchemaFactory;
+import javax.xml.validation.Validator;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.common.engine.api.io.InputStreamProvider;
+import org.flowable.dmn.converter.util.DmnXMLUtil;
+import org.flowable.dmn.model.AuthorityRequirement;
+import org.flowable.dmn.model.BuiltinAggregator;
+import org.flowable.dmn.model.Decision;
+import org.flowable.dmn.model.DecisionRule;
+import org.flowable.dmn.model.DecisionService;
+import org.flowable.dmn.model.DecisionTable;
+import org.flowable.dmn.model.DmnDefinition;
+import org.flowable.dmn.model.DmnElement;
+import org.flowable.dmn.model.DmnElementReference;
+import org.flowable.dmn.model.DmnExtensionAttribute;
+import org.flowable.dmn.model.DmnExtensionElement;
+import org.flowable.dmn.model.HitPolicy;
+import org.flowable.dmn.model.InformationItem;
+import org.flowable.dmn.model.InformationRequirement;
+import org.flowable.dmn.model.InputClause;
+import org.flowable.dmn.model.InputData;
+import org.flowable.dmn.model.ItemDefinition;
+import org.flowable.dmn.model.OutputClause;
+import org.flowable.dmn.model.RuleInputClauseContainer;
+import org.flowable.dmn.model.RuleOutputClauseContainer;
+import org.flowable.dmn.xml.constants.DmnXMLConstants;
+import org.flowable.dmn.xml.exception.DmnXMLException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.xml.sax.SAXException;
+
+/**
+ * @author Tijs Rademakers
+ * @author Yvo Swillens
+ * @author Bassam Al-Sarori
+ * @author Zheng Ji
+ */
+<span class="nc" id="L76">public class DmnXMLConverter implements DmnXMLConstants {</span>
+
+<span class="nc" id="L78">    protected static final Set&lt;String&gt; defaultNamespaces = new HashSet&lt;&gt;(</span>
+<span class="nc" id="L79">            Arrays.asList(XSI_PREFIX, DMNDI_PREFIX, OMGDC_PREFIX, OMGDI_PREFIX));</span>
+
+<span class="nc" id="L81">    protected static final Logger LOGGER = LoggerFactory.getLogger(DmnXMLConverter.class);</span>
+
+    protected static final String DMN_XSD = &quot;org/flowable/impl/dmn/parser/DMN13.xsd&quot;;
+    protected static final String DMN_11_XSD = &quot;org/flowable/impl/dmn/parser/dmn.xsd&quot;;
+    protected static final String DMN_12_XSD = &quot;org/flowable/impl/dmn/parser/DMN12.xsd&quot;;
+    protected static final String DMN_12_TARGET_NAMESPACE = &quot;http://www.omg.org/spec/DMN/20180521/MODEL/&quot;;
+    protected static final String DMN_13_TARGET_NAMESPACE = &quot;https://www.omg.org/spec/DMN/20191111/MODEL/&quot;;
+    protected static final String DEFAULT_ENCODING = &quot;UTF-8&quot;;
+
+<span class="nc" id="L90">    protected static final Collection&lt;DmnExtensionAttribute&gt; KNOWN_DEFINITION_ATTRIBUTES = Arrays.asList(</span>
+            new DmnExtensionAttribute(ATTRIBUTE_ID),
+            new DmnExtensionAttribute(ATTRIBUTE_NAME),
+            new DmnExtensionAttribute(ATTRIBUTE_EXPORTER),
+            new DmnExtensionAttribute(ATTRIBUTE_EXPORTER_VERSION),
+            new DmnExtensionAttribute(ATTRIBUTE_NAMESPACE)
+    );
+
+<span class="nc" id="L98">    protected static final Collection&lt;DmnExtensionAttribute&gt; KNOWN_DECISION_ATTRIBUTES = Arrays.asList(</span>
+            new DmnExtensionAttribute(FLOWABLE_EXTENSIONS_NAMESPACE, ATTRIBUTE_FORCE_DMN_11),
+            new DmnExtensionAttribute(ATTRIBUTE_ID),
+            new DmnExtensionAttribute(ATTRIBUTE_NAME)
+    );
+
+<span class="nc" id="L104">    protected static Map&lt;String, BaseDmnXMLConverter&gt; convertersToDmnMap = new HashMap&lt;&gt;();</span>
+
+    protected ClassLoader classloader;
+
+    static {
+<span class="nc" id="L109">        addConverter(new InputClauseXMLConverter());</span>
+<span class="nc" id="L110">        addConverter(new OutputClauseXMLConverter());</span>
+<span class="nc" id="L111">        addConverter(new DecisionRuleXMLConverter());</span>
+<span class="nc" id="L112">        addConverter(new InformationRequirementConverter());</span>
+<span class="nc" id="L113">        addConverter(new AuthorityRequirementConverter());</span>
+<span class="nc" id="L114">        addConverter(new ItemDefinitionXMLConverter());</span>
+<span class="nc" id="L115">        addConverter(new InputDataXMLConverter());</span>
+<span class="nc" id="L116">        addConverter(new VariableXMLConverter());</span>
+<span class="nc" id="L117">        addConverter(new DecisionServiceXMLConverter());</span>
+<span class="nc" id="L118">        addConverter(new DmnDiDiagramXmlConverter());</span>
+<span class="nc" id="L119">        addConverter(new DmnDiShapeXmlConverter());</span>
+<span class="nc" id="L120">        addConverter(new DmnDiBoundsXmlConverter());</span>
+<span class="nc" id="L121">        addConverter(new DmnDiEdgeXmlConverter());</span>
+<span class="nc" id="L122">        addConverter(new DmnDiWaypointXmlConverter());</span>
+<span class="nc" id="L123">        addConverter(new DmnDiSizeXmlConverter());</span>
+<span class="nc" id="L124">        addConverter(new DmnDiDecisionServiceDividerLineXmlConverter());</span>
+<span class="nc" id="L125">    }</span>
+
+    public static void addConverter(BaseDmnXMLConverter converter) {
+<span class="nc" id="L128">        convertersToDmnMap.put(converter.getXMLElementName(), converter);</span>
+<span class="nc" id="L129">    }</span>
+
+    public void setClassloader(ClassLoader classloader) {
+<span class="nc" id="L132">        this.classloader = classloader;</span>
+<span class="nc" id="L133">    }</span>
+
+    public void validateModel(InputStreamProvider inputStreamProvider) throws Exception {
+        Schema schema;
+<span class="nc" id="L137">        String targetNameSpace = getTargetNameSpace(inputStreamProvider.getInputStream());</span>
+<span class="nc bnc" id="L138" title="All 2 branches missed.">        if (DMN_13_TARGET_NAMESPACE.equals(targetNameSpace)) {</span>
+<span class="nc" id="L139">            schema = createSchema(DMN_XSD);</span>
+<span class="nc bnc" id="L140" title="All 2 branches missed.">        } else if (DMN_12_TARGET_NAMESPACE.equals(targetNameSpace)) {</span>
+<span class="nc" id="L141">            schema = createSchema(DMN_12_XSD);</span>
+        } else {
+<span class="nc" id="L143">            schema = createSchema(DMN_11_XSD);</span>
+        }
+
+<span class="nc" id="L146">        Validator validator = schema.newValidator();</span>
+<span class="nc" id="L147">        validator.validate(new StreamSource(inputStreamProvider.getInputStream()));</span>
+<span class="nc" id="L148">    }</span>
+
+    public void validateModel(XMLStreamReader xmlStreamReader) throws Exception {
+        Schema schema;
+<span class="nc" id="L152">        String targetNameSpace = getTargetNameSpace(xmlStreamReader);</span>
+<span class="nc bnc" id="L153" title="All 2 branches missed.">        if (DMN_13_TARGET_NAMESPACE.equals(targetNameSpace)) {</span>
+<span class="nc" id="L154">            schema = createSchema(DMN_XSD);</span>
+<span class="nc bnc" id="L155" title="All 2 branches missed.">        } else if (DMN_12_TARGET_NAMESPACE.equals(targetNameSpace)) {</span>
+<span class="nc" id="L156">            schema = createSchema(DMN_12_XSD);</span>
+        } else {
+<span class="nc" id="L158">            schema = createSchema(DMN_11_XSD);</span>
+        }
+<span class="nc" id="L160">        Validator validator = schema.newValidator();</span>
+<span class="nc" id="L161">        validator.validate(new StAXSource(xmlStreamReader));</span>
+<span class="nc" id="L162">    }</span>
+
+    protected String getTargetNameSpace(InputStream is) {
+        try {
+<span class="nc" id="L166">            XMLInputFactory xif = XMLInputFactory.newInstance();</span>
+<span class="nc" id="L167">            XMLStreamReader xtr = xif.createXMLStreamReader(is);</span>
+
+<span class="nc" id="L169">            return getTargetNameSpace(xtr);</span>
+<span class="nc" id="L170">        } catch (XMLStreamException e) {</span>
+<span class="nc" id="L171">            LOGGER.error(&quot;Error processing DMN document&quot;, e);</span>
+<span class="nc" id="L172">            throw new DmnXMLException(&quot;Error processing DMN document&quot;, e);</span>
+        }
+    }
+
+    protected String getTargetNameSpace(XMLStreamReader xmlStreamReader) {
+<span class="nc" id="L177">        String targetNameSpace = null;</span>
+        try {
+<span class="nc bnc" id="L179" title="All 2 branches missed.">            while (xmlStreamReader.hasNext()) {</span>
+                try {
+<span class="nc" id="L181">                    xmlStreamReader.next();</span>
+<span class="nc" id="L182">                } catch (Exception e) {</span>
+<span class="nc" id="L183">                    LOGGER.debug(&quot;Error reading XML document&quot;, e);</span>
+<span class="nc" id="L184">                    throw new DmnXMLException(&quot;Error reading XML&quot;, e);</span>
+<span class="nc" id="L185">                }</span>
+<span class="nc" id="L186">                targetNameSpace = xmlStreamReader.getNamespaceURI();</span>
+                break;
+            }
+<span class="nc" id="L189">        } catch (XMLStreamException e) {</span>
+<span class="nc" id="L190">            LOGGER.error(&quot;Error processing DMN document&quot;, e);</span>
+<span class="nc" id="L191">            throw new DmnXMLException(&quot;Error processing DMN document&quot;, e);</span>
+<span class="nc" id="L192">        }</span>
+
+<span class="nc" id="L194">        return targetNameSpace;</span>
+    }
+
+    protected Schema createSchema(String xsd) throws SAXException {
+<span class="nc" id="L198">        SchemaFactory factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);</span>
+<span class="nc" id="L199">        Schema schema = null;</span>
+<span class="nc bnc" id="L200" title="All 2 branches missed.">        if (classloader != null) {</span>
+<span class="nc" id="L201">            schema = factory.newSchema(classloader.getResource(xsd));</span>
+        }
+
+<span class="nc bnc" id="L204" title="All 2 branches missed.">        if (schema == null) {</span>
+<span class="nc" id="L205">            schema = factory.newSchema(this.getClass().getClassLoader().getResource(xsd));</span>
+        }
+
+<span class="nc bnc" id="L208" title="All 2 branches missed.">        if (schema == null) {</span>
+<span class="nc" id="L209">            throw new DmnXMLException(&quot;DMN XSD could not be found&quot;);</span>
+        }
+<span class="nc" id="L211">        return schema;</span>
+    }
+
+    public DmnDefinition convertToDmnModel(InputStreamProvider inputStreamProvider, boolean validateSchema, boolean enableSafeDmnXml) {
+<span class="nc" id="L215">        return convertToDmnModel(inputStreamProvider, validateSchema, enableSafeDmnXml, DEFAULT_ENCODING);</span>
+    }
+
+    public DmnDefinition convertToDmnModel(InputStreamProvider inputStreamProvider, boolean validateSchema, boolean enableSafeDmnXml, String encoding) {
+<span class="nc" id="L219">        XMLInputFactory xif = XMLInputFactory.newInstance();</span>
+
+<span class="nc bnc" id="L221" title="All 2 branches missed.">        if (xif.isPropertySupported(XMLInputFactory.IS_REPLACING_ENTITY_REFERENCES)) {</span>
+<span class="nc" id="L222">            xif.setProperty(XMLInputFactory.IS_REPLACING_ENTITY_REFERENCES, false);</span>
+        }
+
+<span class="nc bnc" id="L225" title="All 2 branches missed.">        if (xif.isPropertySupported(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES)) {</span>
+<span class="nc" id="L226">            xif.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false);</span>
+        }
+
+<span class="nc bnc" id="L229" title="All 2 branches missed.">        if (xif.isPropertySupported(XMLInputFactory.SUPPORT_DTD)) {</span>
+<span class="nc" id="L230">            xif.setProperty(XMLInputFactory.SUPPORT_DTD, false);</span>
+        }
+
+<span class="nc bnc" id="L233" title="All 2 branches missed.">        if (validateSchema) {</span>
+<span class="nc" id="L234">            try (InputStreamReader in = new InputStreamReader(inputStreamProvider.getInputStream(), encoding)) {</span>
+<span class="nc bnc" id="L235" title="All 2 branches missed.">                if (!enableSafeDmnXml) {</span>
+<span class="nc" id="L236">                    validateModel(inputStreamProvider);</span>
+                } else {
+<span class="nc" id="L238">                    validateModel(xif.createXMLStreamReader(in));</span>
+                }
+<span class="nc" id="L240">            } catch (UnsupportedEncodingException e) {</span>
+<span class="nc" id="L241">                throw new DmnXMLException(&quot;The dmn xml is not properly encoded&quot;, e);</span>
+<span class="nc" id="L242">            } catch (XMLStreamException e) {</span>
+<span class="nc" id="L243">                throw new DmnXMLException(&quot;Error while reading the dmn xml file&quot;, e);</span>
+<span class="nc" id="L244">            } catch (Exception e) {</span>
+<span class="nc" id="L245">                throw new DmnXMLException(e.getMessage(), e);</span>
+<span class="nc" id="L246">            }</span>
+        }
+        // The input stream is closed after schema validation
+<span class="nc" id="L249">        try (InputStreamReader in = new InputStreamReader(inputStreamProvider.getInputStream(), encoding)) {</span>
+            // XML conversion
+<span class="nc" id="L251">            return convertToDmnModel(xif.createXMLStreamReader(in));</span>
+<span class="nc" id="L252">        } catch (UnsupportedEncodingException e) {</span>
+<span class="nc" id="L253">            throw new DmnXMLException(&quot;The dmn xml is not properly encoded&quot;, e);</span>
+<span class="nc" id="L254">        } catch (XMLStreamException e) {</span>
+<span class="nc" id="L255">            throw new DmnXMLException(&quot;Error while reading the dmn xml file&quot;, e);</span>
+<span class="nc" id="L256">        } catch (IOException e) {</span>
+<span class="nc" id="L257">            throw new DmnXMLException(e.getMessage(), e);</span>
+        }
+    }
+
+    public DmnDefinition convertToDmnModel(XMLStreamReader xtr) {
+<span class="nc" id="L262">        DmnDefinition model = new DmnDefinition();</span>
+<span class="nc" id="L263">        DmnElement parentElement = null;</span>
+<span class="nc" id="L264">        Decision currentDecision = null;</span>
+<span class="nc" id="L265">        DecisionTable currentDecisionTable = null;</span>
+
+<span class="nc" id="L267">        ConversionHelper conversionHelper = new ConversionHelper();</span>
+<span class="nc" id="L268">        conversionHelper.setDmnDefinition(model);</span>
+
+        try {
+<span class="nc bnc" id="L271" title="All 2 branches missed.">            while (xtr.hasNext()) {</span>
+                try {
+<span class="nc" id="L273">                    xtr.next();</span>
+<span class="nc" id="L274">                } catch (Exception e) {</span>
+<span class="nc" id="L275">                    LOGGER.debug(&quot;Error reading XML document&quot;, e);</span>
+<span class="nc" id="L276">                    throw new DmnXMLException(&quot;Error reading XML&quot;, e);</span>
+<span class="nc" id="L277">                }</span>
+
+<span class="nc bnc" id="L279" title="All 2 branches missed.">                if (!xtr.isStartElement()) {</span>
+<span class="nc" id="L280">                    continue;</span>
+                }
+
+<span class="nc bnc" id="L283" title="All 2 branches missed.">                if (ELEMENT_DEFINITIONS.equals(xtr.getLocalName())) {</span>
+<span class="nc" id="L284">                    model.setId(xtr.getAttributeValue(null, ATTRIBUTE_ID));</span>
+<span class="nc" id="L285">                    model.setName(xtr.getAttributeValue(null, ATTRIBUTE_NAME));</span>
+<span class="nc" id="L286">                    model.setExporter(xtr.getAttributeValue(null, ATTRIBUTE_EXPORTER));</span>
+<span class="nc" id="L287">                    model.setExporterVersion(xtr.getAttributeValue(null, ATTRIBUTE_EXPORTER_VERSION));</span>
+<span class="nc" id="L288">                    model.setNamespace(MODEL_NAMESPACE);</span>
+<span class="nc bnc" id="L289" title="All 2 branches missed.">                    for (int i = 0; i &lt; xtr.getNamespaceCount(); i++) {</span>
+<span class="nc" id="L290">                        String prefix = xtr.getNamespacePrefix(i);</span>
+<span class="nc bnc" id="L291" title="All 2 branches missed.">                        if (StringUtils.isNotEmpty(prefix)) {</span>
+<span class="nc" id="L292">                            model.addNamespace(prefix, xtr.getNamespaceURI(i));</span>
+                        }
+                    }
+
+<span class="nc" id="L296">                    DmnXMLUtil.parseAttributes(model, xtr, KNOWN_DEFINITION_ATTRIBUTES);</span>
+<span class="nc" id="L297">                    parentElement = model;</span>
+<span class="nc bnc" id="L298" title="All 2 branches missed.">                } else if (ELEMENT_DECISION.equals(xtr.getLocalName())) {</span>
+
+                    // reset element counters
+<span class="nc" id="L301">                    convertersToDmnMap.get(ELEMENT_RULE).initializeElementCounter();</span>
+<span class="nc" id="L302">                    convertersToDmnMap.get(ELEMENT_INPUT_CLAUSE).initializeElementCounter();</span>
+<span class="nc" id="L303">                    convertersToDmnMap.get(ELEMENT_OUTPUT_CLAUSE).initializeElementCounter();</span>
+
+<span class="nc" id="L305">                    currentDecision = new Decision();</span>
+<span class="nc" id="L306">                    currentDecision.setDmnDefinition(model);</span>
+<span class="nc" id="L307">                    model.addDecision(currentDecision);</span>
+<span class="nc" id="L308">                    currentDecision.setId(xtr.getAttributeValue(null, ATTRIBUTE_ID));</span>
+<span class="nc" id="L309">                    currentDecision.setName(xtr.getAttributeValue(null, ATTRIBUTE_NAME));</span>
+
+<span class="nc bnc" id="L311" title="All 2 branches missed.">                    if (Boolean.parseBoolean(xtr.getAttributeValue(FLOWABLE_EXTENSIONS_NAMESPACE, ATTRIBUTE_FORCE_DMN_11))) {</span>
+<span class="nc" id="L312">                        currentDecision.setForceDMN11(true);</span>
+                    }
+<span class="nc" id="L314">                    DmnXMLUtil.parseAttributes(currentDecision, xtr, KNOWN_DECISION_ATTRIBUTES);</span>
+
+<span class="nc" id="L316">                    parentElement = currentDecision;</span>
+<span class="nc" id="L317">                    conversionHelper.setCurrentDecision(currentDecision);</span>
+<span class="nc bnc" id="L318" title="All 2 branches missed.">                } else if (ELEMENT_DECISION_TABLE.equals(xtr.getLocalName())) {</span>
+<span class="nc" id="L319">                    currentDecisionTable = new DecisionTable();</span>
+<span class="nc" id="L320">                    currentDecisionTable.setId(xtr.getAttributeValue(null, ATTRIBUTE_ID));</span>
+
+<span class="nc bnc" id="L322" title="All 2 branches missed.">                    if (xtr.getAttributeValue(null, ATTRIBUTE_HIT_POLICY) != null) {</span>
+<span class="nc" id="L323">                        currentDecisionTable.setHitPolicy(HitPolicy.get(xtr.getAttributeValue(null, ATTRIBUTE_HIT_POLICY)));</span>
+                    } else {
+<span class="nc" id="L325">                        currentDecisionTable.setHitPolicy(HitPolicy.FIRST);</span>
+                    }
+
+<span class="nc bnc" id="L328" title="All 2 branches missed.">                    if (xtr.getAttributeValue(null, ATTRIBUTE_AGGREGATION) != null) {</span>
+<span class="nc" id="L329">                        currentDecisionTable.setAggregation(BuiltinAggregator.get(xtr.getAttributeValue(null, ATTRIBUTE_AGGREGATION)));</span>
+                    }
+<span class="nc" id="L331">                    currentDecision.setExpression(currentDecisionTable);</span>
+<span class="nc" id="L332">                    parentElement = currentDecisionTable;</span>
+<span class="nc bnc" id="L333" title="All 2 branches missed.">                } else if (ELEMENT_DESCRIPTION.equals(xtr.getLocalName())) {</span>
+                    // limit description to 255 characters
+<span class="nc" id="L335">                    parentElement.setDescription(StringUtils.abbreviate(xtr.getElementText(), 255));</span>
+<span class="nc bnc" id="L336" title="All 2 branches missed.">                } else if (ELEMENT_EXTENSIONS.equals(xtr.getLocalName())) {</span>
+<span class="nc bnc" id="L337" title="All 2 branches missed.">                    while (xtr.hasNext()) {</span>
+<span class="nc" id="L338">                        xtr.next();</span>
+<span class="nc bnc" id="L339" title="All 2 branches missed.">                        if (xtr.isStartElement()) {</span>
+<span class="nc" id="L340">                            DmnExtensionElement extensionElement = DmnXMLUtil.parseExtensionElement(xtr);</span>
+<span class="nc" id="L341">                            parentElement.addExtensionElement(extensionElement);</span>
+<span class="nc bnc" id="L342" title="All 2 branches missed.">                        } else if (xtr.isEndElement()) {</span>
+<span class="nc bnc" id="L343" title="All 2 branches missed.">                            if (ELEMENT_EXTENSIONS.equals(xtr.getLocalName())) {</span>
+<span class="nc" id="L344">                                break;</span>
+                            }
+                        }
+                    }
+<span class="nc bnc" id="L348" title="All 2 branches missed.">                } else if (convertersToDmnMap.containsKey(xtr.getLocalName())) {</span>
+<span class="nc" id="L349">                    BaseDmnXMLConverter converter = convertersToDmnMap.get(xtr.getLocalName());</span>
+<span class="nc" id="L350">                    converter.convertToDmnModel(xtr, conversionHelper);</span>
+<span class="nc" id="L351">                }</span>
+            }
+<span class="nc" id="L353">        } catch (DmnXMLException e) {</span>
+<span class="nc" id="L354">            throw e;</span>
+<span class="nc" id="L355">        } catch (Exception e) {</span>
+<span class="nc" id="L356">            LOGGER.error(&quot;Error processing DMN document&quot;, e);</span>
+<span class="nc" id="L357">            throw new DmnXMLException(&quot;Error processing DMN document&quot;, e);</span>
+<span class="nc" id="L358">        }</span>
+
+<span class="nc" id="L360">        processDiElements(conversionHelper);</span>
+<span class="nc" id="L361">        return model;</span>
+    }
+
+    protected void processDiElements(ConversionHelper conversionHelper) {
+<span class="nc" id="L365">        DmnDefinition dmnDefinition = conversionHelper.getDmnDefinition();</span>
+
+<span class="nc" id="L367">        conversionHelper.getDiDiagrams()</span>
+<span class="nc" id="L368">            .forEach(diDiagram -&gt; {</span>
+<span class="nc" id="L369">                dmnDefinition.addDiDiagram(diDiagram);</span>
+<span class="nc bnc" id="L370" title="All 2 branches missed.">                if (conversionHelper.getDiShapes(diDiagram.getId()) != null) {</span>
+<span class="nc" id="L371">                    conversionHelper.getDiShapes(diDiagram.getId())</span>
+<span class="nc" id="L372">                        .forEach(dmnDiShape -&gt; {</span>
+<span class="nc" id="L373">                            dmnDefinition.addGraphicInfoByDiagramId(diDiagram.getId(), dmnDiShape.getDmnElementRef(), dmnDiShape.getGraphicInfo());</span>
+<span class="nc bnc" id="L374" title="All 2 branches missed.">                            if (dmnDiShape.getDecisionServiceDividerLine() != null) {</span>
+<span class="nc" id="L375">                                dmnDefinition.addDecisionServiceDividerGraphicInfoListByDiagramId(diDiagram.getId(), dmnDiShape.getDmnElementRef(),</span>
+<span class="nc" id="L376">                                    dmnDiShape.getDecisionServiceDividerLine().getWaypoints());</span>
+                            }
+<span class="nc" id="L378">                        });</span>
+                }
+<span class="nc bnc" id="L380" title="All 2 branches missed.">                if (conversionHelper.getDiEdges(diDiagram.getId()) != null) {</span>
+<span class="nc" id="L381">                    conversionHelper.getDiEdges(diDiagram.getId())</span>
+<span class="nc" id="L382">                        .forEach(dmnDiEdge -&gt; {</span>
+<span class="nc bnc" id="L383" title="All 2 branches missed.">                            if (dmnDiEdge.getId() != null) {</span>
+<span class="nc" id="L384">                                dmnDefinition.addFlowGraphicInfoListByDiagramId(diDiagram.getId(), dmnDiEdge.getDmnElementRef(), dmnDiEdge.getWaypoints());</span>
+                            }
+<span class="nc" id="L386">                        });</span>
+                }
+<span class="nc" id="L388">            });</span>
+<span class="nc" id="L389">    }</span>
+
+    public byte[] convertToXML(DmnDefinition model) {
+<span class="nc" id="L392">        return convertToXML(model, DEFAULT_ENCODING);</span>
+    }
+
+    public byte[] convertToXML(DmnDefinition model, String encoding) {
+        try {
+<span class="nc" id="L397">            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();</span>
+
+<span class="nc" id="L399">            XMLOutputFactory xof = XMLOutputFactory.newInstance();</span>
+<span class="nc" id="L400">            OutputStreamWriter out = new OutputStreamWriter(outputStream, encoding);</span>
+
+<span class="nc" id="L402">            XMLStreamWriter writer = xof.createXMLStreamWriter(out);</span>
+<span class="nc" id="L403">            XMLStreamWriter xtw = new IndentingXMLStreamWriter(writer);</span>
+
+<span class="nc" id="L405">            xtw.writeStartElement(ELEMENT_DEFINITIONS);</span>
+<span class="nc" id="L406">            xtw.writeDefaultNamespace(DMN_NAMESPACE);</span>
+<span class="nc" id="L407">            xtw.writeNamespace(DMNDI_PREFIX, DMNDI_NAMESPACE);</span>
+<span class="nc" id="L408">            xtw.writeNamespace(OMGDC_PREFIX, OMGDC_NAMESPACE);</span>
+<span class="nc" id="L409">            xtw.writeNamespace(OMGDI_PREFIX, OMGDI_NAMESPACE);</span>
+<span class="nc bnc" id="L410" title="All 2 branches missed.">            for (Map.Entry&lt;String, String&gt; entry : model.getNamespaces().entrySet()) {</span>
+<span class="nc bnc" id="L411" title="All 2 branches missed.">                if (!defaultNamespaces.contains(entry.getKey())) {</span>
+<span class="nc" id="L412">                    xtw.writeNamespace(entry.getKey(), entry.getValue());</span>
+                }
+<span class="nc" id="L414">            }</span>
+<span class="nc" id="L415">            xtw.writeAttribute(ATTRIBUTE_ID, model.getId());</span>
+<span class="nc bnc" id="L416" title="All 2 branches missed.">            if (StringUtils.isNotEmpty(model.getName())) {</span>
+<span class="nc" id="L417">                xtw.writeAttribute(ATTRIBUTE_NAME, model.getName());</span>
+            }
+<span class="nc" id="L419">            xtw.writeAttribute(ATTRIBUTE_NAMESPACE, MODEL_NAMESPACE);</span>
+<span class="nc bnc" id="L420" title="All 2 branches missed.">            if (StringUtils.isNotEmpty(model.getExporter())) {</span>
+<span class="nc" id="L421">                xtw.writeAttribute(DmnXMLConstants.ATTRIBUTE_EXPORTER, model.getExporter());</span>
+            }
+<span class="nc bnc" id="L423" title="All 2 branches missed.">            if (StringUtils.isNotEmpty(model.getExporterVersion())) {</span>
+<span class="nc" id="L424">                xtw.writeAttribute(DmnXMLConstants.ATTRIBUTE_EXPORTER_VERSION, model.getExporterVersion());</span>
+            }
+
+<span class="nc" id="L427">            DmnXMLUtil.writeAttributes(model, model.getNamespaces(), xtw);</span>
+<span class="nc" id="L428">            DmnXMLUtil.writeElementDescription(model, xtw);</span>
+<span class="nc" id="L429">            DmnXMLUtil.writeExtensionElements(model, model.getNamespaces(), xtw);</span>
+
+<span class="nc bnc" id="L431" title="All 2 branches missed.">            for (InputData inputData : model.getInputData()) {</span>
+<span class="nc" id="L432">                xtw.writeStartElement(ELEMENT_INPUT_DATA);</span>
+<span class="nc" id="L433">                xtw.writeAttribute(ATTRIBUTE_ID, inputData.getId());</span>
+<span class="nc bnc" id="L434" title="All 2 branches missed.">                if (StringUtils.isNotEmpty(inputData.getName())) {</span>
+<span class="nc" id="L435">                    xtw.writeAttribute(ATTRIBUTE_NAME, inputData.getName());</span>
+                }
+
+<span class="nc bnc" id="L438" title="All 2 branches missed.">                if (inputData.getVariable() != null) {</span>
+<span class="nc" id="L439">                    InformationItem variable = inputData.getVariable();</span>
+<span class="nc" id="L440">                    xtw.writeStartElement(ELEMENT_VARIABLE);</span>
+<span class="nc" id="L441">                    xtw.writeAttribute(ATTRIBUTE_ID, variable.getId());</span>
+<span class="nc" id="L442">                    xtw.writeAttribute(ATTRIBUTE_TYPE_REF, variable.getTypeRef());</span>
+<span class="nc bnc" id="L443" title="All 2 branches missed.">                    if (StringUtils.isNotEmpty(variable.getName())) {</span>
+<span class="nc" id="L444">                        xtw.writeAttribute(ATTRIBUTE_NAME, variable.getName());</span>
+                    }
+<span class="nc" id="L446">                    xtw.writeEndElement();</span>
+                }
+
+<span class="nc" id="L449">                DmnXMLUtil.writeElementDescription(inputData, xtw);</span>
+<span class="nc" id="L450">                DmnXMLUtil.writeExtensionElements(inputData, model.getNamespaces(), xtw);</span>
+
+<span class="nc" id="L452">                xtw.writeEndElement();</span>
+<span class="nc" id="L453">            }</span>
+
+<span class="nc" id="L455">            writeItemDefinition(model.getItemDefinitions(), model, xtw);</span>
+
+<span class="nc bnc" id="L457" title="All 2 branches missed.">            for (Decision decision : model.getDecisions()) {</span>
+<span class="nc" id="L458">                xtw.writeStartElement(ELEMENT_DECISION);</span>
+<span class="nc" id="L459">                xtw.writeAttribute(ATTRIBUTE_ID, decision.getId());</span>
+<span class="nc bnc" id="L460" title="All 2 branches missed.">                if (StringUtils.isNotEmpty(decision.getName())) {</span>
+<span class="nc" id="L461">                    xtw.writeAttribute(ATTRIBUTE_NAME, decision.getName());</span>
+                }
+
+<span class="nc bnc" id="L464" title="All 2 branches missed.">                if (decision.isForceDMN11()) {</span>
+<span class="nc bnc" id="L465" title="All 2 branches missed.">                    if (!model.getNamespaces().containsKey(FLOWABLE_EXTENSIONS_PREFIX)) {</span>
+<span class="nc" id="L466">                        xtw.writeNamespace(FLOWABLE_EXTENSIONS_PREFIX, FLOWABLE_EXTENSIONS_NAMESPACE);</span>
+                    }
+<span class="nc" id="L468">                    xtw.writeAttribute(FLOWABLE_EXTENSIONS_PREFIX, FLOWABLE_EXTENSIONS_NAMESPACE, ATTRIBUTE_FORCE_DMN_11, &quot;true&quot;);</span>
+                }
+
+<span class="nc" id="L471">                DmnXMLUtil.writeAttributes(decision, model.getNamespaces(), xtw);</span>
+<span class="nc" id="L472">                DmnXMLUtil.writeElementDescription(decision, xtw);</span>
+<span class="nc" id="L473">                DmnXMLUtil.writeExtensionElements(decision, model.getNamespaces(), xtw);</span>
+
+<span class="nc bnc" id="L475" title="All 2 branches missed.">                if (decision.getVariable() != null) {</span>
+<span class="nc" id="L476">                    xtw.writeStartElement(ELEMENT_VARIABLE);</span>
+<span class="nc bnc" id="L477" title="All 2 branches missed.">                    if (StringUtils.isNotEmpty(decision.getVariable().getId())) {</span>
+<span class="nc" id="L478">                        xtw.writeAttribute(ATTRIBUTE_ID, decision.getVariable().getId());</span>
+                    }
+<span class="nc bnc" id="L480" title="All 2 branches missed.">                    if (StringUtils.isNotEmpty(decision.getVariable().getName())) {</span>
+<span class="nc" id="L481">                        xtw.writeAttribute(ATTRIBUTE_NAME, decision.getVariable().getName());</span>
+                    }
+<span class="nc bnc" id="L483" title="All 2 branches missed.">                    if (StringUtils.isNotEmpty(decision.getVariable().getTypeRef())) {</span>
+<span class="nc" id="L484">                        xtw.writeAttribute(ATTRIBUTE_TYPE_REF, decision.getVariable().getTypeRef());</span>
+                    }
+<span class="nc" id="L486">                    xtw.writeEndElement();</span>
+                }
+
+<span class="nc bnc" id="L489" title="All 2 branches missed.">                for (InformationRequirement informationRequirement : decision.getRequiredDecisions()) {</span>
+<span class="nc" id="L490">                    xtw.writeStartElement(ELEMENT_INFORMATION_REQUIREMENT);</span>
+<span class="nc" id="L491">                    xtw.writeAttribute(ATTRIBUTE_ID, informationRequirement.getId());</span>
+
+<span class="nc bnc" id="L493" title="All 2 branches missed.">                    if (informationRequirement.getRequiredDecision() != null) {</span>
+<span class="nc" id="L494">                        xtw.writeStartElement(ELEMENT_REQUIRED_DECISION);</span>
+<span class="nc" id="L495">                        xtw.writeAttribute(ATTRIBUTE_HREF, informationRequirement.getRequiredDecision().getHref());</span>
+<span class="nc" id="L496">                        xtw.writeEndElement();</span>
+                    }
+
+<span class="nc" id="L499">                    xtw.writeEndElement();</span>
+<span class="nc" id="L500">                }</span>
+
+<span class="nc bnc" id="L502" title="All 2 branches missed.">                for (InformationRequirement informationRequirement : decision.getRequiredInputs()) {</span>
+<span class="nc" id="L503">                    xtw.writeStartElement(ELEMENT_INFORMATION_REQUIREMENT);</span>
+<span class="nc" id="L504">                    xtw.writeAttribute(ATTRIBUTE_ID, informationRequirement.getId());</span>
+
+<span class="nc bnc" id="L506" title="All 2 branches missed.">                    if (informationRequirement.getRequiredInput() != null) {</span>
+<span class="nc" id="L507">                        xtw.writeStartElement(ELEMENT_REQUIRED_INPUT);</span>
+<span class="nc" id="L508">                        xtw.writeAttribute(ATTRIBUTE_HREF, informationRequirement.getRequiredInput().getHref());</span>
+<span class="nc" id="L509">                        xtw.writeEndElement();</span>
+                    }
+
+<span class="nc" id="L512">                    xtw.writeEndElement();</span>
+<span class="nc" id="L513">                }</span>
+
+<span class="nc bnc" id="L515" title="All 2 branches missed.">                for (AuthorityRequirement authorityRequirement : decision.getAuthorityRequirements()) {</span>
+<span class="nc" id="L516">                    xtw.writeStartElement(ELEMENT_AUTHORITY_REQUIREMENT);</span>
+<span class="nc" id="L517">                    xtw.writeAttribute(ATTRIBUTE_ID, authorityRequirement.getId());</span>
+
+<span class="nc bnc" id="L519" title="All 2 branches missed.">                    if (authorityRequirement.getRequiredAuthority() != null) {</span>
+<span class="nc" id="L520">                        xtw.writeStartElement(ELEMENT_REQUIRED_AUTHORITY);</span>
+<span class="nc" id="L521">                        xtw.writeAttribute(ATTRIBUTE_HREF, authorityRequirement.getRequiredAuthority().getHref());</span>
+<span class="nc" id="L522">                        xtw.writeEndElement();</span>
+                    }
+
+<span class="nc" id="L525">                    xtw.writeEndElement();</span>
+<span class="nc" id="L526">                }</span>
+
+                // decision table
+<span class="nc bnc" id="L529" title="All 2 branches missed.">                if (decision.getExpression() != null) {</span>
+<span class="nc" id="L530">                    DecisionTable decisionTable = (DecisionTable) decision.getExpression();</span>
+
+<span class="nc" id="L532">                    xtw.writeStartElement(ELEMENT_DECISION_TABLE);</span>
+<span class="nc" id="L533">                    xtw.writeAttribute(ATTRIBUTE_ID, decisionTable.getId());</span>
+
+<span class="nc bnc" id="L535" title="All 2 branches missed.">                    if (decisionTable.getHitPolicy() != null) {</span>
+<span class="nc" id="L536">                        xtw.writeAttribute(ATTRIBUTE_HIT_POLICY, decisionTable.getHitPolicy().getValue());</span>
+                    }
+
+<span class="nc bnc" id="L539" title="All 2 branches missed.">                    if (decisionTable.getAggregation() != null) {</span>
+<span class="nc" id="L540">                        xtw.writeAttribute(ATTRIBUTE_AGGREGATION, decisionTable.getAggregation().toString());</span>
+                    }
+
+<span class="nc" id="L543">                    DmnXMLUtil.writeElementDescription(decisionTable, xtw);</span>
+<span class="nc" id="L544">                    DmnXMLUtil.writeExtensionElements(decisionTable, model.getNamespaces(), xtw);</span>
+
+<span class="nc bnc" id="L546" title="All 2 branches missed.">                    for (InputClause clause : decisionTable.getInputs()) {</span>
+<span class="nc" id="L547">                        xtw.writeStartElement(ELEMENT_INPUT_CLAUSE);</span>
+<span class="nc bnc" id="L548" title="All 2 branches missed.">                        if (StringUtils.isNotEmpty(clause.getId())) {</span>
+<span class="nc" id="L549">                            xtw.writeAttribute(ATTRIBUTE_ID, clause.getId());</span>
+                        }
+<span class="nc bnc" id="L551" title="All 2 branches missed.">                        if (StringUtils.isNotEmpty(clause.getLabel())) {</span>
+<span class="nc" id="L552">                            xtw.writeAttribute(ATTRIBUTE_LABEL, clause.getLabel());</span>
+                        }
+
+<span class="nc" id="L555">                        DmnXMLUtil.writeElementDescription(clause, xtw);</span>
+<span class="nc" id="L556">                        DmnXMLUtil.writeExtensionElements(clause, model.getNamespaces(), xtw);</span>
+
+<span class="nc bnc" id="L558" title="All 2 branches missed.">                        if (clause.getInputExpression() != null) {</span>
+<span class="nc" id="L559">                            xtw.writeStartElement(ELEMENT_INPUT_EXPRESSION);</span>
+
+<span class="nc bnc" id="L561" title="All 2 branches missed.">                            if (StringUtils.isNotEmpty(clause.getInputExpression().getId())) {</span>
+<span class="nc" id="L562">                                xtw.writeAttribute(ATTRIBUTE_ID, clause.getInputExpression().getId());</span>
+                            }
+
+<span class="nc bnc" id="L565" title="All 2 branches missed.">                            if (StringUtils.isNotEmpty(clause.getInputExpression().getTypeRef())) {</span>
+<span class="nc" id="L566">                                xtw.writeAttribute(ATTRIBUTE_TYPE_REF, clause.getInputExpression().getTypeRef());</span>
+                            }
+
+<span class="nc bnc" id="L569" title="All 2 branches missed.">                            if (StringUtils.isNotEmpty(clause.getInputExpression().getText())) {</span>
+<span class="nc" id="L570">                                xtw.writeStartElement(ELEMENT_TEXT);</span>
+<span class="nc" id="L571">                                xtw.writeCharacters(clause.getInputExpression().getText());</span>
+<span class="nc" id="L572">                                xtw.writeEndElement();</span>
+                            }
+
+<span class="nc" id="L575">                            xtw.writeEndElement();</span>
+                        }
+
+<span class="nc bnc" id="L578" title="All 4 branches missed.">                        if (clause.getInputValues() != null &amp;&amp; StringUtils.isNotEmpty(clause.getInputValues().getText())) {</span>
+<span class="nc" id="L579">                            xtw.writeStartElement(ELEMENT_INPUT_VALUES);</span>
+<span class="nc" id="L580">                            xtw.writeStartElement(ELEMENT_TEXT);</span>
+<span class="nc" id="L581">                            xtw.writeCharacters(clause.getInputValues().getText());</span>
+<span class="nc" id="L582">                            xtw.writeEndElement();</span>
+<span class="nc" id="L583">                            xtw.writeEndElement();</span>
+                        }
+
+<span class="nc" id="L586">                        xtw.writeEndElement();</span>
+<span class="nc" id="L587">                    }</span>
+
+<span class="nc bnc" id="L589" title="All 2 branches missed.">                    for (OutputClause clause : decisionTable.getOutputs()) {</span>
+<span class="nc" id="L590">                        xtw.writeStartElement(ELEMENT_OUTPUT_CLAUSE);</span>
+<span class="nc bnc" id="L591" title="All 2 branches missed.">                        if (StringUtils.isNotEmpty(clause.getId())) {</span>
+<span class="nc" id="L592">                            xtw.writeAttribute(ATTRIBUTE_ID, clause.getId());</span>
+                        }
+<span class="nc bnc" id="L594" title="All 2 branches missed.">                        if (StringUtils.isNotEmpty(clause.getLabel())) {</span>
+<span class="nc" id="L595">                            xtw.writeAttribute(ATTRIBUTE_LABEL, clause.getLabel());</span>
+                        }
+<span class="nc bnc" id="L597" title="All 2 branches missed.">                        if (StringUtils.isNotEmpty(clause.getName())) {</span>
+<span class="nc" id="L598">                            xtw.writeAttribute(ATTRIBUTE_NAME, clause.getName());</span>
+                        }
+<span class="nc bnc" id="L600" title="All 2 branches missed.">                        if (StringUtils.isNotEmpty(clause.getTypeRef())) {</span>
+<span class="nc" id="L601">                            xtw.writeAttribute(ATTRIBUTE_TYPE_REF, clause.getTypeRef());</span>
+                        }
+
+<span class="nc bnc" id="L604" title="All 4 branches missed.">                        if (clause.getOutputValues() != null &amp;&amp; StringUtils.isNotEmpty(clause.getOutputValues().getText())) {</span>
+<span class="nc" id="L605">                            xtw.writeStartElement(ELEMENT_OUTPUT_VALUES);</span>
+<span class="nc" id="L606">                            xtw.writeStartElement(ELEMENT_TEXT);</span>
+<span class="nc" id="L607">                            xtw.writeCharacters(clause.getOutputValues().getText());</span>
+<span class="nc" id="L608">                            xtw.writeEndElement();</span>
+<span class="nc" id="L609">                            xtw.writeEndElement();</span>
+                        }
+
+<span class="nc" id="L612">                        DmnXMLUtil.writeElementDescription(clause, xtw);</span>
+<span class="nc" id="L613">                        DmnXMLUtil.writeExtensionElements(clause, model.getNamespaces(), xtw);</span>
+
+<span class="nc" id="L615">                        xtw.writeEndElement();</span>
+<span class="nc" id="L616">                    }</span>
+
+<span class="nc bnc" id="L618" title="All 2 branches missed.">                    for (DecisionRule rule : decisionTable.getRules()) {</span>
+<span class="nc" id="L619">                        xtw.writeStartElement(ELEMENT_RULE);</span>
+<span class="nc bnc" id="L620" title="All 2 branches missed.">                        if (StringUtils.isNotEmpty(rule.getId())) {</span>
+<span class="nc" id="L621">                            xtw.writeAttribute(ATTRIBUTE_ID, rule.getId());</span>
+                        }
+
+<span class="nc" id="L624">                        DmnXMLUtil.writeElementDescription(rule, xtw);</span>
+<span class="nc" id="L625">                        DmnXMLUtil.writeExtensionElements(rule, model.getNamespaces(), xtw);</span>
+
+<span class="nc bnc" id="L627" title="All 2 branches missed.">                        for (RuleInputClauseContainer container : rule.getInputEntries()) {</span>
+<span class="nc" id="L628">                            xtw.writeStartElement(ELEMENT_INPUT_ENTRY);</span>
+<span class="nc" id="L629">                            xtw.writeAttribute(ATTRIBUTE_ID, container.getInputEntry().getId());</span>
+
+<span class="nc" id="L631">                            DmnXMLUtil.writeExtensionElements(container.getInputEntry(), model.getNamespaces(), xtw);</span>
+
+<span class="nc bnc" id="L633" title="All 2 branches missed.">                            if (StringUtils.isNotEmpty(container.getInputEntry().getText())) {</span>
+<span class="nc" id="L634">                                xtw.writeStartElement(ELEMENT_TEXT);</span>
+<span class="nc" id="L635">                                xtw.writeCData(container.getInputEntry().getText());</span>
+<span class="nc" id="L636">                                xtw.writeEndElement();</span>
+                            }
+
+<span class="nc" id="L639">                            xtw.writeEndElement();</span>
+<span class="nc" id="L640">                        }</span>
+
+<span class="nc bnc" id="L642" title="All 2 branches missed.">                        for (RuleOutputClauseContainer container : rule.getOutputEntries()) {</span>
+<span class="nc" id="L643">                            xtw.writeStartElement(ELEMENT_OUTPUT_ENTRY);</span>
+<span class="nc" id="L644">                            xtw.writeAttribute(ATTRIBUTE_ID, container.getOutputEntry().getId());</span>
+
+<span class="nc bnc" id="L646" title="All 2 branches missed.">                            if (StringUtils.isNotEmpty(container.getOutputEntry().getText())) {</span>
+<span class="nc" id="L647">                                xtw.writeStartElement(ELEMENT_TEXT);</span>
+<span class="nc" id="L648">                                xtw.writeCData(container.getOutputEntry().getText());</span>
+<span class="nc" id="L649">                                xtw.writeEndElement();</span>
+                            }
+
+<span class="nc" id="L652">                            xtw.writeEndElement();</span>
+<span class="nc" id="L653">                        }</span>
+
+<span class="nc" id="L655">                        xtw.writeEndElement();</span>
+<span class="nc" id="L656">                    }</span>
+<span class="nc" id="L657">                    xtw.writeEndElement();</span>
+                }
+<span class="nc" id="L659">                xtw.writeEndElement();</span>
+<span class="nc" id="L660">            }</span>
+
+<span class="nc bnc" id="L662" title="All 2 branches missed.">            for (DecisionService decisionService : model.getDecisionServices()) {</span>
+<span class="nc" id="L663">                xtw.writeStartElement(ELEMENT_DECISION_SERVICE);</span>
+<span class="nc" id="L664">                xtw.writeAttribute(ATTRIBUTE_ID, decisionService.getId());</span>
+<span class="nc bnc" id="L665" title="All 2 branches missed.">                if (StringUtils.isNotEmpty(decisionService.getName())) {</span>
+<span class="nc" id="L666">                    xtw.writeAttribute(ATTRIBUTE_NAME, decisionService.getName());</span>
+                }
+
+<span class="nc bnc" id="L669" title="All 2 branches missed.">                for (DmnElementReference reference : decisionService.getOutputDecisions()) {</span>
+<span class="nc" id="L670">                    xtw.writeStartElement(ELEMENT_OUTPUT_DECISION);</span>
+<span class="nc" id="L671">                    xtw.writeAttribute(ATTRIBUTE_HREF, reference.getHref());</span>
+<span class="nc" id="L672">                    xtw.writeEndElement();</span>
+<span class="nc" id="L673">                }</span>
+
+<span class="nc bnc" id="L675" title="All 2 branches missed.">                for (DmnElementReference reference : decisionService.getEncapsulatedDecisions()) {</span>
+<span class="nc" id="L676">                    xtw.writeStartElement(ELEMENT_ENCAPSULATED_DECISION);</span>
+<span class="nc" id="L677">                    xtw.writeAttribute(ATTRIBUTE_HREF, reference.getHref());</span>
+<span class="nc" id="L678">                    xtw.writeEndElement();</span>
+<span class="nc" id="L679">                }</span>
+
+<span class="nc bnc" id="L681" title="All 2 branches missed.">                for (DmnElementReference reference : decisionService.getInputData()) {</span>
+<span class="nc" id="L682">                    xtw.writeStartElement(ELEMENT_INPUT_DATA);</span>
+<span class="nc" id="L683">                    xtw.writeAttribute(ATTRIBUTE_HREF, reference.getHref());</span>
+<span class="nc" id="L684">                    xtw.writeEndElement();</span>
+<span class="nc" id="L685">                }</span>
+
+<span class="nc" id="L687">                xtw.writeEndElement();</span>
+<span class="nc" id="L688">            }</span>
+
+<span class="nc" id="L690">            DMNDIExport.writeDMNDI(model, xtw);</span>
+
+            // end definitions root element
+<span class="nc" id="L693">            xtw.writeEndElement();</span>
+<span class="nc" id="L694">            xtw.writeEndDocument();</span>
+
+<span class="nc" id="L696">            xtw.flush();</span>
+
+<span class="nc" id="L698">            outputStream.close();</span>
+
+<span class="nc" id="L700">            xtw.close();</span>
+
+<span class="nc" id="L702">            return outputStream.toByteArray();</span>
+
+<span class="nc" id="L704">        } catch (Exception e) {</span>
+<span class="nc" id="L705">            LOGGER.error(&quot;Error writing DMN XML&quot;, e);</span>
+<span class="nc" id="L706">            throw new DmnXMLException(&quot;Error writing DMN XML&quot;, e);</span>
+        }
+    }
+
+    protected void writeItemDefinition(List&lt;ItemDefinition&gt; itemDefinitions, DmnDefinition model, XMLStreamWriter xtw) throws Exception {
+<span class="nc" id="L711">        writeItemDefinition(itemDefinitions, false, model, xtw);</span>
+<span class="nc" id="L712">    }</span>
+
+    protected void writeItemDefinition(List&lt;ItemDefinition&gt; itemDefinitions, boolean isItemComponent, DmnDefinition model, XMLStreamWriter xtw) throws Exception {
+<span class="nc bnc" id="L715" title="All 2 branches missed.">        if (itemDefinitions == null) {</span>
+<span class="nc" id="L716">            return;</span>
+        }
+
+<span class="nc bnc" id="L719" title="All 2 branches missed.">        for (ItemDefinition itemDefinition : itemDefinitions) {</span>
+<span class="nc bnc" id="L720" title="All 2 branches missed.">            if (isItemComponent) {</span>
+<span class="nc" id="L721">                xtw.writeStartElement(ELEMENT_ITEM_COMPONENT);</span>
+            } else {
+<span class="nc" id="L723">                xtw.writeStartElement(ELEMENT_ITEM_DEFINITION);</span>
+            }
+<span class="nc bnc" id="L725" title="All 2 branches missed.">            if (StringUtils.isNotEmpty(itemDefinition.getId())) {</span>
+<span class="nc" id="L726">                xtw.writeAttribute(ATTRIBUTE_ID, itemDefinition.getId());</span>
+            }
+<span class="nc bnc" id="L728" title="All 2 branches missed.">            if (StringUtils.isNotEmpty(itemDefinition.getName())) {</span>
+<span class="nc" id="L729">                xtw.writeAttribute(ATTRIBUTE_NAME, itemDefinition.getName());</span>
+            }
+<span class="nc bnc" id="L731" title="All 2 branches missed.">            if (StringUtils.isNotEmpty(itemDefinition.getLabel())) {</span>
+<span class="nc" id="L732">                xtw.writeAttribute(ATTRIBUTE_LABEL, itemDefinition.getLabel());</span>
+            }
+<span class="nc bnc" id="L734" title="All 2 branches missed.">            if (itemDefinition.isCollection()) {</span>
+<span class="nc" id="L735">                xtw.writeAttribute(ATTRIBUTE_IS_COLLECTION, &quot;true&quot;);</span>
+            }
+
+<span class="nc" id="L738">            DmnXMLUtil.writeElementDescription(itemDefinition, xtw);</span>
+<span class="nc" id="L739">            DmnXMLUtil.writeExtensionElements(itemDefinition, model.getNamespaces(), xtw);</span>
+
+<span class="nc bnc" id="L741" title="All 2 branches missed.">            if (itemDefinition.getTypeRef() != null) {</span>
+<span class="nc" id="L742">                xtw.writeStartElement(ELEMENT_TYPE_REF);</span>
+<span class="nc" id="L743">                xtw.writeCharacters(itemDefinition.getTypeRef());</span>
+<span class="nc" id="L744">                xtw.writeEndElement();</span>
+            }
+
+<span class="nc bnc" id="L747" title="All 2 branches missed.">            if (itemDefinition.getAllowedValues() != null) {</span>
+<span class="nc" id="L748">                xtw.writeStartElement(ELEMENT_REQUIRED_AUTHORITY);</span>
+<span class="nc" id="L749">                xtw.writeStartElement(ELEMENT_TEXT);</span>
+<span class="nc" id="L750">                xtw.writeCharacters(itemDefinition.getAllowedValues().getText());</span>
+<span class="nc" id="L751">                xtw.writeEndElement();</span>
+<span class="nc" id="L752">                xtw.writeEndElement();</span>
+            }
+
+<span class="nc bnc" id="L755" title="All 2 branches missed.">            if (itemDefinition.getItemComponents().size() &gt; 0) {</span>
+<span class="nc" id="L756">                writeItemDefinition(itemDefinition.getItemComponents(), true, model, xtw);</span>
+            }
+
+<span class="nc" id="L759">            xtw.writeEndElement();</span>
+<span class="nc" id="L760">        }</span>
+
+<span class="nc" id="L762">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

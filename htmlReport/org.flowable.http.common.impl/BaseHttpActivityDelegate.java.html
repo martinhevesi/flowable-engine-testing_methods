@@ -1,0 +1,386 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BaseHttpActivityDelegate.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.http.common.impl</a> &gt; <span class="el_source">BaseHttpActivityDelegate.java</span></div><h1>BaseHttpActivityDelegate.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.http.common.impl;
+
+import java.io.IOException;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.FlowableIllegalArgumentException;
+import org.flowable.common.engine.api.async.AsyncTaskInvoker;
+import org.flowable.common.engine.api.delegate.Expression;
+import org.flowable.common.engine.api.variable.VariableContainer;
+import org.flowable.http.common.api.HttpHeaders;
+import org.flowable.http.common.api.HttpRequest;
+import org.flowable.http.common.api.HttpResponse;
+import org.flowable.http.common.api.client.AsyncExecutableHttpRequest;
+import org.flowable.http.common.api.client.ExecutableHttpRequest;
+import org.flowable.http.common.api.client.FlowableHttpClient;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.MissingNode;
+
+/**
+ * @author Filip Hrisafov
+ */
+public abstract class BaseHttpActivityDelegate {
+
+    // Validation constants
+    public static final String HTTP_TASK_REQUEST_METHOD_REQUIRED = &quot;requestMethod is required&quot;;
+    public static final String HTTP_TASK_REQUEST_METHOD_INVALID = &quot;requestMethod is invalid&quot;;
+    public static final String HTTP_TASK_REQUEST_URL_REQUIRED = &quot;requestUrl is required&quot;;
+    public static final String HTTP_TASK_REQUEST_HEADERS_INVALID = &quot;requestHeaders are invalid&quot;;
+    public static final String HTTP_TASK_REQUEST_FIELD_INVALID = &quot;request fields are invalid&quot;;
+
+    // HttpRequest method (GET,POST,PUT etc)
+    protected Expression requestMethod;
+    // HttpRequest URL (http://flowable.org)
+    protected Expression requestUrl;
+    // Line separated HTTP body headers(Optional)
+    protected Expression requestHeaders;
+    // HttpRequest body expression (Optional)
+    protected Expression requestBody;
+    // HttpRequest body encoding expression, for example UTF-8 (Optional)
+    protected Expression requestBodyEncoding;
+    // Timeout in seconds for the body (Optional)
+    protected Expression requestTimeout;
+    // HttpRequest retry disable HTTP redirects (Optional)
+    protected Expression disallowRedirects;
+    // Comma separated list of HTTP body status codes to fail, for example 400,5XX (Optional)
+    protected Expression failStatusCodes;
+    // Comma separated list of HTTP body status codes to handle, for example 404,3XX (Optional)
+    protected Expression handleStatusCodes;
+    // Flag to ignore exceptions (Optional)
+    protected Expression ignoreException;
+    // Flag to save request variables. Default is false (Optional)
+    protected Expression saveRequestVariables;
+    // Flag to save response variables. Default is false (Optional)
+    protected Expression saveResponseParameters;
+    // Variable name for response body
+    protected Expression responseVariableName;
+    // Flag to save the response variables as a transient variable. Default is false (Optional).
+    protected Expression saveResponseParametersTransient;
+    // Flag to save the response variable as an ObjectNode instead of a String
+    protected Expression saveResponseVariableAsJson;
+    // Prefix for the execution variable names (Optional)
+    protected Expression resultVariablePrefix;
+
+    protected FlowableHttpClient httpClient;
+
+    public BaseHttpActivityDelegate() {
+<span class="nc" id="L83">        this(null);</span>
+<span class="nc" id="L84">    }</span>
+
+<span class="nc" id="L86">    public BaseHttpActivityDelegate(FlowableHttpClient httpClient) {</span>
+<span class="nc bnc" id="L87" title="All 2 branches missed.">        this.httpClient = httpClient == null ? createHttpClient() : httpClient;</span>
+<span class="nc" id="L88">    }</span>
+
+    protected abstract FlowableHttpClient createHttpClient();
+
+    protected RequestData createRequest(VariableContainer variableContainer, String fallbackPrefix) {
+<span class="nc" id="L93">        HttpRequest request = new HttpRequest();</span>
+<span class="nc" id="L94">        RequestData requestData = new RequestData();</span>
+<span class="nc" id="L95">        requestData.setHttpRequest(request);</span>
+
+<span class="nc" id="L97">        request.setMethod(ExpressionUtils.getStringFromField(requestMethod, variableContainer));</span>
+<span class="nc" id="L98">        request.setUrl(ExpressionUtils.getStringFromField(requestUrl, variableContainer));</span>
+<span class="nc" id="L99">        request.setHttpHeaders(getRequestHeaders(variableContainer));</span>
+<span class="nc" id="L100">        request.setBody(ExpressionUtils.getStringFromField(requestBody, variableContainer));</span>
+<span class="nc" id="L101">        request.setBodyEncoding(ExpressionUtils.getStringFromField(requestBodyEncoding, variableContainer));</span>
+<span class="nc" id="L102">        request.setTimeout(ExpressionUtils.getIntFromField(requestTimeout, variableContainer));</span>
+<span class="nc" id="L103">        request.setNoRedirects(ExpressionUtils.getBooleanFromField(disallowRedirects, variableContainer));</span>
+<span class="nc" id="L104">        requestData.setIgnoreErrors(ExpressionUtils.getBooleanFromField(ignoreException, variableContainer));</span>
+<span class="nc" id="L105">        requestData.setSaveRequest(ExpressionUtils.getBooleanFromField(saveRequestVariables, variableContainer));</span>
+<span class="nc" id="L106">        requestData.setSaveResponse(ExpressionUtils.getBooleanFromField(saveResponseParameters, variableContainer));</span>
+<span class="nc" id="L107">        requestData.setSaveResponseTransient(ExpressionUtils.getBooleanFromField(saveResponseParametersTransient, variableContainer));</span>
+<span class="nc" id="L108">        requestData.setSaveResponseAsJson(ExpressionUtils.getBooleanFromField(saveResponseVariableAsJson, variableContainer));</span>
+<span class="nc" id="L109">        requestData.setPrefix(ExpressionUtils.getStringFromField(resultVariablePrefix, variableContainer));</span>
+
+<span class="nc" id="L111">        String failCodes = ExpressionUtils.getStringFromField(failStatusCodes, variableContainer);</span>
+<span class="nc" id="L112">        String handleCodes = ExpressionUtils.getStringFromField(handleStatusCodes, variableContainer);</span>
+
+<span class="nc bnc" id="L114" title="All 2 branches missed.">        if (failCodes != null) {</span>
+<span class="nc" id="L115">            requestData.setFailCodes(ExpressionUtils.getStringSetFromField(failCodes));</span>
+        }
+<span class="nc bnc" id="L117" title="All 2 branches missed.">        if (handleCodes != null) {</span>
+<span class="nc" id="L118">            requestData.setHandleCodes(ExpressionUtils.getStringSetFromField(handleCodes));</span>
+        }
+
+<span class="nc bnc" id="L121" title="All 2 branches missed.">        if (requestData.getPrefix() == null) {</span>
+<span class="nc" id="L122">            requestData.setPrefix(fallbackPrefix);</span>
+        }
+
+        // Save request fields
+<span class="nc bnc" id="L126" title="All 2 branches missed.">        if (requestData.isSaveRequest()) {</span>
+<span class="nc" id="L127">            String prefix = requestData.getPrefix();</span>
+<span class="nc" id="L128">            variableContainer.setVariable(prefix + &quot;RequestMethod&quot;, request.getMethod());</span>
+<span class="nc" id="L129">            variableContainer.setVariable(prefix + &quot;RequestUrl&quot;, request.getUrl());</span>
+<span class="nc" id="L130">            variableContainer.setVariable(prefix + &quot;RequestHeaders&quot;, request.getHttpHeadersAsString());</span>
+<span class="nc" id="L131">            variableContainer.setVariable(prefix + &quot;RequestBody&quot;, request.getBody());</span>
+<span class="nc" id="L132">            variableContainer.setVariable(prefix + &quot;RequestBodyEncoding&quot;, request.getBodyEncoding());</span>
+<span class="nc" id="L133">            variableContainer.setVariable(prefix + &quot;RequestTimeout&quot;, request.getTimeout());</span>
+<span class="nc" id="L134">            variableContainer.setVariable(prefix + &quot;DisallowRedirects&quot;, request.isNoRedirects());</span>
+<span class="nc" id="L135">            variableContainer.setVariable(prefix + &quot;FailStatusCodes&quot;, failCodes);</span>
+<span class="nc" id="L136">            variableContainer.setVariable(prefix + &quot;HandleStatusCodes&quot;, handleCodes);</span>
+<span class="nc" id="L137">            variableContainer.setVariable(prefix + &quot;IgnoreException&quot;, requestData.isIgnoreErrors());</span>
+<span class="nc" id="L138">            variableContainer.setVariable(prefix + &quot;SaveRequestVariables&quot;, requestData.isSaveRequest());</span>
+<span class="nc" id="L139">            variableContainer.setVariable(prefix + &quot;SaveResponseParameters&quot;, requestData.isSaveResponse());</span>
+        }
+<span class="nc" id="L141">        return requestData;</span>
+    }
+
+    protected void saveResponseFields(VariableContainer variableContainer, RequestData request, HttpResponse response, ObjectMapper objectMapper)
+            throws IOException {
+        // Save response fields
+<span class="nc bnc" id="L147" title="All 2 branches missed.">        if (response != null) {</span>
+            // Save response body only by default
+<span class="nc bnc" id="L149" title="All 2 branches missed.">            if (request.isSaveResponse()) {</span>
+<span class="nc bnc" id="L150" title="All 2 branches missed.">                if (request.isSaveResponseTransient()) {</span>
+<span class="nc" id="L151">                    variableContainer.setTransientVariable(request.getPrefix() + &quot;ResponseProtocol&quot;, response.getProtocol());</span>
+<span class="nc" id="L152">                    variableContainer.setTransientVariable(request.getPrefix() + &quot;ResponseStatusCode&quot;, response.getStatusCode());</span>
+<span class="nc" id="L153">                    variableContainer.setTransientVariable(request.getPrefix() + &quot;ResponseReason&quot;, response.getReason());</span>
+<span class="nc" id="L154">                    variableContainer.setTransientVariable(request.getPrefix() + &quot;ResponseHeaders&quot;, response.getHttpHeadersAsString());</span>
+                } else {
+<span class="nc" id="L156">                    variableContainer.setVariable(request.getPrefix() + &quot;ResponseProtocol&quot;, response.getProtocol());</span>
+<span class="nc" id="L157">                    variableContainer.setVariable(request.getPrefix() + &quot;ResponseStatusCode&quot;, response.getStatusCode());</span>
+<span class="nc" id="L158">                    variableContainer.setVariable(request.getPrefix() + &quot;ResponseReason&quot;, response.getReason());</span>
+<span class="nc" id="L159">                    variableContainer.setVariable(request.getPrefix() + &quot;ResponseHeaders&quot;, response.getHttpHeadersAsString());</span>
+                }
+            }
+
+<span class="nc bnc" id="L163" title="All 2 branches missed.">            if (!response.isBodyResponseHandled()) {</span>
+<span class="nc" id="L164">                String responseVariableName = ExpressionUtils.getStringFromField(this.responseVariableName, variableContainer);</span>
+<span class="nc bnc" id="L165" title="All 2 branches missed.">                String varName = StringUtils.isNotEmpty(responseVariableName) ? responseVariableName : request.getPrefix() + &quot;ResponseBody&quot;;</span>
+<span class="nc bnc" id="L166" title="All 4 branches missed.">                Object varValue = request.isSaveResponseAsJson() &amp;&amp; response.getBody() != null ? objectMapper.readTree(response.getBody()) : response.getBody();</span>
+<span class="nc bnc" id="L167" title="All 2 branches missed.">                if (varValue instanceof MissingNode) {</span>
+<span class="nc" id="L168">                    varValue = null;</span>
+                }
+<span class="nc bnc" id="L170" title="All 2 branches missed.">                if (request.isSaveResponseTransient()) {</span>
+<span class="nc" id="L171">                    variableContainer.setTransientVariable(varName, varValue);</span>
+                } else {
+<span class="nc" id="L173">                    variableContainer.setVariable(varName, varValue);</span>
+                }
+            }
+
+            // Handle http status codes
+<span class="nc bnc" id="L178" title="All 6 branches missed.">            if ((request.isNoRedirects() &amp;&amp; response.getStatusCode() &gt;= 300) || response.getStatusCode() &gt;= 400) {</span>
+
+<span class="nc" id="L180">                String code = Integer.toString(response.getStatusCode());</span>
+
+<span class="nc" id="L182">                Set&lt;String&gt; handleCodes = request.getHandleCodes();</span>
+<span class="nc bnc" id="L183" title="All 4 branches missed.">                if (handleCodes != null &amp;&amp; !handleCodes.isEmpty()) {</span>
+<span class="nc bnc" id="L184" title="All 2 branches missed.">                    if (handleCodes.contains(code)</span>
+<span class="nc bnc" id="L185" title="All 4 branches missed.">                            || (code.startsWith(&quot;5&quot;) &amp;&amp; handleCodes.contains(&quot;5XX&quot;))</span>
+<span class="nc bnc" id="L186" title="All 4 branches missed.">                            || (code.startsWith(&quot;4&quot;) &amp;&amp; handleCodes.contains(&quot;4XX&quot;))</span>
+<span class="nc bnc" id="L187" title="All 4 branches missed.">                            || (code.startsWith(&quot;3&quot;) &amp;&amp; handleCodes.contains(&quot;3XX&quot;))) {</span>
+
+<span class="nc" id="L189">                        propagateError(variableContainer, code);</span>
+<span class="nc" id="L190">                        return;</span>
+                    }
+                }
+
+<span class="nc" id="L194">                Set&lt;String&gt; failCodes = request.getFailCodes();</span>
+<span class="nc bnc" id="L195" title="All 4 branches missed.">                if (failCodes != null &amp;&amp; !failCodes.isEmpty()) {</span>
+<span class="nc bnc" id="L196" title="All 2 branches missed.">                    if (failCodes.contains(code)</span>
+<span class="nc bnc" id="L197" title="All 4 branches missed.">                            || (code.startsWith(&quot;5&quot;) &amp;&amp; failCodes.contains(&quot;5XX&quot;))</span>
+<span class="nc bnc" id="L198" title="All 4 branches missed.">                            || (code.startsWith(&quot;4&quot;) &amp;&amp; failCodes.contains(&quot;4XX&quot;))</span>
+<span class="nc bnc" id="L199" title="All 4 branches missed.">                            || (code.startsWith(&quot;3&quot;) &amp;&amp; failCodes.contains(&quot;3XX&quot;))) {</span>
+
+<span class="nc" id="L201">                        throw new FlowableException(&quot;HTTP&quot; + code);</span>
+                    }
+                }
+            }
+        }
+<span class="nc" id="L206">    }</span>
+
+    protected CompletableFuture&lt;ExecutionData&gt; prepareAndExecuteRequest(RequestData request, boolean parallelInSameTransaction, AsyncTaskInvoker taskInvoker) {
+<span class="nc" id="L209">        ExecutableHttpRequest httpRequest = httpClient.prepareRequest(request.getHttpRequest());</span>
+
+<span class="nc bnc" id="L211" title="All 2 branches missed.">        if (!parallelInSameTransaction) {</span>
+<span class="nc" id="L212">            CompletableFuture&lt;ExecutionData&gt; future = new CompletableFuture&lt;&gt;();</span>
+
+            try {
+<span class="nc" id="L215">                HttpResponse response = httpRequest.call();</span>
+<span class="nc" id="L216">                future.complete(new ExecutionData(request, response));</span>
+<span class="nc" id="L217">            } catch (Exception ex) {</span>
+<span class="nc" id="L218">                future.complete(new ExecutionData(request, null, ex));</span>
+<span class="nc" id="L219">            }</span>
+<span class="nc" id="L220">            return future;</span>
+<span class="nc bnc" id="L221" title="All 2 branches missed.">        } else if (httpRequest instanceof AsyncExecutableHttpRequest) {</span>
+
+<span class="nc" id="L223">            return ((AsyncExecutableHttpRequest) httpRequest).callAsync()</span>
+<span class="nc" id="L224">                    .handle((response, throwable) -&gt; new ExecutionData(request, response, throwable));</span>
+        }
+<span class="nc" id="L226">        return taskInvoker.submit(() -&gt; {</span>
+            try {
+<span class="nc" id="L228">                return new ExecutionData(request, httpRequest.call());</span>
+<span class="nc" id="L229">            } catch (Exception ex) {</span>
+<span class="nc" id="L230">                return new ExecutionData(request, null, ex);</span>
+            }
+        });
+    }
+
+    // HttpRequest validation
+
+    protected void validateRequest(HttpRequest request) throws FlowableException {
+<span class="nc bnc" id="L238" title="All 2 branches missed.">        if (request.getMethod() == null) {</span>
+<span class="nc" id="L239">            throw new FlowableException(HTTP_TASK_REQUEST_METHOD_REQUIRED);</span>
+        }
+
+<span class="nc bnc" id="L242" title="All 2 branches missed.">        switch (request.getMethod()) {</span>
+            case &quot;GET&quot;:
+            case &quot;POST&quot;:
+            case &quot;PUT&quot;:
+            case &quot;PATCH&quot;:
+            case &quot;DELETE&quot;:
+<span class="nc" id="L248">                break;</span>
+            default:
+<span class="nc" id="L250">                throw new FlowableException(HTTP_TASK_REQUEST_METHOD_INVALID);</span>
+        }
+
+<span class="nc bnc" id="L253" title="All 2 branches missed.">        if (request.getUrl() == null) {</span>
+<span class="nc" id="L254">            throw new FlowableException(HTTP_TASK_REQUEST_URL_REQUIRED);</span>
+        }
+<span class="nc" id="L256">    }</span>
+    protected HttpHeaders getRequestHeaders(VariableContainer variableContainer) {
+        try {
+<span class="nc" id="L259">            String headersString = ExpressionUtils.getStringFromField(requestHeaders, variableContainer);</span>
+<span class="nc" id="L260">            return HttpHeaders.parseFromString(headersString);</span>
+<span class="nc" id="L261">        } catch (FlowableIllegalArgumentException ex) {</span>
+<span class="nc" id="L262">            throw new FlowableException(HTTP_TASK_REQUEST_HEADERS_INVALID + &quot; for &quot; + variableContainer, ex);</span>
+        }
+    }
+
+    protected abstract void propagateError(VariableContainer container, String code);
+
+    public static class ExecutionData {
+
+        protected RequestData request;
+        protected HttpResponse response;
+        protected Throwable exception;
+
+        public ExecutionData(RequestData request, HttpResponse response) {
+<span class="nc" id="L275">            this(request, response, null);</span>
+<span class="nc" id="L276">        }</span>
+
+<span class="nc" id="L278">        public ExecutionData(RequestData request, HttpResponse response, Throwable exception) {</span>
+<span class="nc" id="L279">            this.request = request;</span>
+<span class="nc" id="L280">            this.response = response;</span>
+<span class="nc" id="L281">            this.exception = exception;</span>
+<span class="nc" id="L282">        }</span>
+
+        public RequestData getRequest() {
+<span class="nc" id="L285">            return request;</span>
+        }
+
+        public HttpResponse getResponse() {
+<span class="nc" id="L289">            return response;</span>
+        }
+
+        public Throwable getException() {
+<span class="nc" id="L293">            return exception;</span>
+        }
+    }
+
+<span class="nc" id="L297">    public static class RequestData {</span>
+
+        protected HttpRequest httpRequest;
+        protected Set&lt;String&gt; failCodes;
+        protected Set&lt;String&gt; handleCodes;
+        protected boolean ignoreErrors;
+        protected boolean saveRequest;
+        protected boolean saveResponse;
+        protected boolean saveResponseTransient;
+        protected boolean saveResponseAsJson;
+        protected String prefix;
+
+        public HttpRequest getHttpRequest() {
+<span class="nc" id="L310">            return httpRequest;</span>
+        }
+
+        public void setHttpRequest(HttpRequest httpRequest) {
+<span class="nc" id="L314">            this.httpRequest = httpRequest;</span>
+<span class="nc" id="L315">        }</span>
+
+        public Set&lt;String&gt; getFailCodes() {
+<span class="nc" id="L318">            return failCodes;</span>
+        }
+
+        public void setFailCodes(Set&lt;String&gt; failCodes) {
+<span class="nc" id="L322">            this.failCodes = failCodes;</span>
+<span class="nc" id="L323">        }</span>
+
+        public Set&lt;String&gt; getHandleCodes() {
+<span class="nc" id="L326">            return handleCodes;</span>
+        }
+
+        public void setHandleCodes(Set&lt;String&gt; handleCodes) {
+<span class="nc" id="L330">            this.handleCodes = handleCodes;</span>
+<span class="nc" id="L331">        }</span>
+
+        public boolean isIgnoreErrors() {
+<span class="nc" id="L334">            return ignoreErrors;</span>
+        }
+
+        public void setIgnoreErrors(boolean ignoreErrors) {
+<span class="nc" id="L338">            this.ignoreErrors = ignoreErrors;</span>
+<span class="nc" id="L339">        }</span>
+
+        public boolean isSaveRequest() {
+<span class="nc" id="L342">            return saveRequest;</span>
+        }
+
+        public void setSaveRequest(boolean saveRequest) {
+<span class="nc" id="L346">            this.saveRequest = saveRequest;</span>
+<span class="nc" id="L347">        }</span>
+
+        public boolean isSaveResponse() {
+<span class="nc" id="L350">            return saveResponse;</span>
+        }
+
+        public void setSaveResponse(boolean saveResponse) {
+<span class="nc" id="L354">            this.saveResponse = saveResponse;</span>
+<span class="nc" id="L355">        }</span>
+
+        public boolean isSaveResponseTransient() {
+<span class="nc" id="L358">            return saveResponseTransient;</span>
+        }
+
+        public void setSaveResponseTransient(boolean saveResponseTransient) {
+<span class="nc" id="L362">            this.saveResponseTransient = saveResponseTransient;</span>
+<span class="nc" id="L363">        }</span>
+
+        public boolean isSaveResponseAsJson() {
+<span class="nc" id="L366">            return saveResponseAsJson;</span>
+        }
+
+        public void setSaveResponseAsJson(boolean saveResponseAsJson) {
+<span class="nc" id="L370">            this.saveResponseAsJson = saveResponseAsJson;</span>
+<span class="nc" id="L371">        }</span>
+
+        public String getPrefix() {
+<span class="nc" id="L374">            return prefix;</span>
+        }
+
+        public void setPrefix(String prefix) {
+<span class="nc" id="L378">            this.prefix = prefix;</span>
+<span class="nc" id="L379">        }</span>
+
+        public boolean isNoRedirects() {
+<span class="nc" id="L382">            return httpRequest.isNoRedirects();</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

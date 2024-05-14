@@ -1,0 +1,619 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CaseInstanceMigrationManagerImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.cmmn.engine.impl.migration</a> &gt; <span class="el_source">CaseInstanceMigrationManagerImpl.java</span></div><h1>CaseInstanceMigrationManagerImpl.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.flowable.cmmn.engine.impl.migration;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+
+import org.flowable.batch.api.Batch;
+import org.flowable.batch.api.BatchPart;
+import org.flowable.batch.api.BatchService;
+import org.flowable.cmmn.api.history.HistoricCaseInstance;
+import org.flowable.cmmn.api.history.HistoricMilestoneInstance;
+import org.flowable.cmmn.api.history.HistoricPlanItemInstance;
+import org.flowable.cmmn.api.migration.ActivatePlanItemDefinitionMapping;
+import org.flowable.cmmn.api.migration.CaseInstanceBatchMigrationResult;
+import org.flowable.cmmn.api.migration.CaseInstanceMigrationCallback;
+import org.flowable.cmmn.api.migration.CaseInstanceMigrationDocument;
+import org.flowable.cmmn.api.migration.CaseInstanceMigrationValidationResult;
+import org.flowable.cmmn.api.migration.ChangePlanItemDefinitionWithNewTargetIdsMapping;
+import org.flowable.cmmn.api.migration.ChangePlanItemIdMapping;
+import org.flowable.cmmn.api.migration.ChangePlanItemIdWithDefinitionIdMapping;
+import org.flowable.cmmn.api.migration.HistoricCaseInstanceMigrationDocument;
+import org.flowable.cmmn.api.migration.MoveToAvailablePlanItemDefinitionMapping;
+import org.flowable.cmmn.api.migration.PlanItemDefinitionMapping;
+import org.flowable.cmmn.api.migration.RemoveWaitingForRepetitionPlanItemDefinitionMapping;
+import org.flowable.cmmn.api.migration.TerminatePlanItemDefinitionMapping;
+import org.flowable.cmmn.api.migration.WaitingForRepetitionPlanItemDefinitionMapping;
+import org.flowable.cmmn.api.repository.CaseDefinition;
+import org.flowable.cmmn.api.runtime.CaseInstance;
+import org.flowable.cmmn.api.runtime.CaseInstanceState;
+import org.flowable.cmmn.engine.CmmnEngineConfiguration;
+import org.flowable.cmmn.engine.impl.history.CmmnHistoryManager;
+import org.flowable.cmmn.engine.impl.history.HistoricCaseInstanceQueryImpl;
+import org.flowable.cmmn.engine.impl.history.HistoricMilestoneInstanceQueryImpl;
+import org.flowable.cmmn.engine.impl.history.HistoricPlanItemInstanceQueryImpl;
+import org.flowable.cmmn.engine.impl.job.CaseInstanceMigrationJobHandler;
+import org.flowable.cmmn.engine.impl.job.CaseInstanceMigrationStatusJobHandler;
+import org.flowable.cmmn.engine.impl.job.HistoricCaseInstanceMigrationJobHandler;
+import org.flowable.cmmn.engine.impl.persistence.entity.CaseDefinitionEntityManager;
+import org.flowable.cmmn.engine.impl.persistence.entity.CaseInstanceEntity;
+import org.flowable.cmmn.engine.impl.persistence.entity.CaseInstanceEntityManager;
+import org.flowable.cmmn.engine.impl.persistence.entity.HistoricCaseInstanceEntity;
+import org.flowable.cmmn.engine.impl.persistence.entity.HistoricCaseInstanceEntityManager;
+import org.flowable.cmmn.engine.impl.persistence.entity.HistoricMilestoneInstanceEntity;
+import org.flowable.cmmn.engine.impl.persistence.entity.HistoricMilestoneInstanceEntityManager;
+import org.flowable.cmmn.engine.impl.persistence.entity.HistoricPlanItemInstanceEntity;
+import org.flowable.cmmn.engine.impl.persistence.entity.HistoricPlanItemInstanceEntityManager;
+import org.flowable.cmmn.engine.impl.repository.CaseDefinitionUtil;
+import org.flowable.cmmn.engine.impl.runtime.AbstractCmmnDynamicStateManager;
+import org.flowable.cmmn.engine.impl.runtime.CaseInstanceChangeState;
+import org.flowable.cmmn.engine.impl.runtime.CaseInstanceQueryImpl;
+import org.flowable.cmmn.engine.impl.runtime.ChangePlanItemStateBuilderImpl;
+import org.flowable.cmmn.engine.impl.util.CommandContextUtil;
+import org.flowable.cmmn.model.CmmnModel;
+import org.flowable.cmmn.model.PlanItemDefinition;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.impl.calendar.BusinessCalendar;
+import org.flowable.common.engine.impl.calendar.CycleBusinessCalendar;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.job.service.JobService;
+import org.flowable.job.service.TimerJobService;
+import org.flowable.job.service.impl.persistence.entity.JobEntity;
+import org.flowable.job.service.impl.persistence.entity.TimerJobEntity;
+import org.flowable.task.api.history.HistoricTaskInstance;
+import org.flowable.task.service.HistoricTaskService;
+import org.flowable.task.service.impl.HistoricTaskInstanceQueryImpl;
+import org.flowable.task.service.impl.persistence.entity.HistoricTaskInstanceEntity;
+
+public class CaseInstanceMigrationManagerImpl extends AbstractCmmnDynamicStateManager implements CaseInstanceMigrationManager {
+    
+    public CaseInstanceMigrationManagerImpl(CmmnEngineConfiguration cmmnEngineConfiguration) {
+<span class="nc" id="L86">        super(cmmnEngineConfiguration);</span>
+<span class="nc" id="L87">    }</span>
+
+    @Override
+    public CaseInstanceMigrationValidationResult validateMigrateCaseInstancesOfCaseDefinition(String caseDefinitionKey, int caseDefinitionVersion, String caseDefinitionTenantId, CaseInstanceMigrationDocument document, CommandContext commandContext) {
+<span class="nc" id="L91">        CaseDefinition caseDefinition = resolveCaseDefinition(caseDefinitionKey, caseDefinitionVersion, caseDefinitionTenantId, commandContext);</span>
+<span class="nc" id="L92">        return validateMigrateCaseInstancesOfCaseDefinition(caseDefinition.getId(), document, commandContext);</span>
+    }
+
+    @Override
+    public CaseInstanceMigrationValidationResult validateMigrateCaseInstancesOfCaseDefinition(String caseDefinitionId, CaseInstanceMigrationDocument document, CommandContext commandContext) {
+<span class="nc" id="L97">        CaseInstanceMigrationValidationResult validationResult = new CaseInstanceMigrationValidationResult();</span>
+<span class="nc" id="L98">        CaseDefinition caseDefinition = resolveCaseDefinition(document, commandContext);</span>
+<span class="nc bnc" id="L99" title="All 2 branches missed.">        if (caseDefinition == null) {</span>
+<span class="nc" id="L100">            validationResult.addValidationMessage(&quot;Cannot find the case definition to migrate to &quot; + printCaseDefinitionIdentifierMessage(document));</span>
+        } else {
+<span class="nc" id="L102">            CmmnModel cmmnModel = CaseDefinitionUtil.getCmmnModel(caseDefinition.getId());</span>
+<span class="nc bnc" id="L103" title="All 2 branches missed.">            if (cmmnModel == null) {</span>
+<span class="nc" id="L104">                validationResult.addValidationMessage(&quot;Cannot find the CMMN model of the case definition to migrate to, with &quot; + printCaseDefinitionIdentifierMessage(document));</span>
+            } else {
+<span class="nc" id="L106">                CmmnModel newModel = CaseDefinitionUtil.getCmmnModel(caseDefinition.getId());</span>
+
+<span class="nc" id="L108">                CaseInstanceEntityManager caseInstanceEntityManager = cmmnEngineConfiguration.getCaseInstanceEntityManager();</span>
+<span class="nc" id="L109">                List&lt;CaseInstance&gt; caseInstances = caseInstanceEntityManager.findByCriteria(</span>
+<span class="nc" id="L110">                        new CaseInstanceQueryImpl(commandContext, cmmnEngineConfiguration).caseDefinitionId(caseDefinitionId));</span>
+
+<span class="nc bnc" id="L112" title="All 2 branches missed.">                for (CaseInstance caseInstance : caseInstances) {</span>
+<span class="nc" id="L113">                    doValidateCaseInstanceMigration(caseInstance.getId(), newModel, document, validationResult, commandContext);</span>
+<span class="nc" id="L114">                }</span>
+            }
+        }
+
+<span class="nc" id="L118">        return validationResult;</span>
+    }
+
+    @Override
+    public CaseInstanceMigrationValidationResult validateMigrateCaseInstance(String caseInstanceId, CaseInstanceMigrationDocument document, CommandContext commandContext) {
+<span class="nc" id="L123">        CaseInstanceMigrationValidationResult validationResult = new CaseInstanceMigrationValidationResult();</span>
+        // Check that the caseDefinition exists and get its associated CmmnModel
+<span class="nc" id="L125">        CaseDefinition caseDefinition = resolveCaseDefinition(document, commandContext);</span>
+<span class="nc bnc" id="L126" title="All 2 branches missed.">        if (caseDefinition == null) {</span>
+<span class="nc" id="L127">            validationResult.addValidationMessage((&quot;Cannot find the case definition to migrate to, with &quot; + printCaseDefinitionIdentifierMessage(document)));</span>
+        } else {
+<span class="nc" id="L129">            CmmnModel cmmnModel = CaseDefinitionUtil.getCmmnModel(caseDefinition.getId());</span>
+<span class="nc bnc" id="L130" title="All 2 branches missed.">            if (cmmnModel == null) {</span>
+<span class="nc" id="L131">                validationResult.addValidationMessage(&quot;Cannot find the Cmmn model of the case definition to migrate to, with &quot; + printCaseDefinitionIdentifierMessage(document));</span>
+            } else {
+<span class="nc" id="L133">                doValidateCaseInstanceMigration(caseInstanceId, cmmnModel, document, validationResult, commandContext);</span>
+            }
+        }
+
+<span class="nc" id="L137">        return validationResult;</span>
+    }
+
+    protected void doValidateCaseInstanceMigration(String caseInstanceId, CmmnModel newModel, CaseInstanceMigrationDocument document, 
+            CaseInstanceMigrationValidationResult validationResult, CommandContext commandContext) {
+        
+        // Check that the caseInstance exists
+<span class="nc" id="L144">        CaseInstanceEntityManager caseInstanceEntityManager = CommandContextUtil.getCaseInstanceEntityManager(commandContext);</span>
+<span class="nc" id="L145">        CaseInstanceEntity caseInstance = caseInstanceEntityManager.findById(caseInstanceId);</span>
+<span class="nc bnc" id="L146" title="All 2 branches missed.">        if (caseInstance == null) {</span>
+<span class="nc" id="L147">            validationResult.addValidationMessage(&quot;Cannot find case instance with id:'&quot; + caseInstanceId + &quot;'&quot;);</span>
+<span class="nc" id="L148">            return;</span>
+        }
+
+<span class="nc" id="L151">        doValidatePlanItemMappings(caseInstanceId, newModel, document, validationResult, commandContext);</span>
+<span class="nc" id="L152">    }</span>
+
+    protected void doValidatePlanItemMappings(String caseInstanceId, CmmnModel cmmnModel, 
+            CaseInstanceMigrationDocument document, CaseInstanceMigrationValidationResult validationResult, CommandContext commandContext) {
+        
+<span class="nc" id="L157">        Map&lt;String, PlanItemDefinitionMapping&gt; activeMappingLookupMap = groupByFromPlanItemId(document.getActivatePlanItemDefinitionMappings(), validationResult);</span>
+<span class="nc bnc" id="L158" title="All 2 branches missed.">        for (String planItemDefinitionId : activeMappingLookupMap.keySet()) {</span>
+<span class="nc bnc" id="L159" title="All 2 branches missed.">            if (!hasPlanItemDefinition(cmmnModel, planItemDefinitionId)) {</span>
+<span class="nc" id="L160">                validationResult.addValidationMessage(&quot;Invalid mapping for activate plan item definition '&quot; + planItemDefinitionId + &quot;' cannot be found in the case definition&quot;);</span>
+            }
+<span class="nc" id="L162">        }</span>
+        
+<span class="nc" id="L164">        Map&lt;String, PlanItemDefinitionMapping&gt; terminateMappingLookupMap = groupByFromPlanItemId(document.getTerminatePlanItemDefinitionMappings(), validationResult);</span>
+<span class="nc bnc" id="L165" title="All 2 branches missed.">        for (String planItemDefinitionId : terminateMappingLookupMap.keySet()) {</span>
+<span class="nc bnc" id="L166" title="All 2 branches missed.">            if (!hasPlanItemDefinition(cmmnModel, planItemDefinitionId)) {</span>
+<span class="nc" id="L167">                validationResult.addValidationMessage(&quot;Invalid mapping for terminate plan item definition '&quot; + planItemDefinitionId + &quot;' cannot be found in the case definition&quot;);</span>
+            }
+<span class="nc" id="L169">        }</span>
+        
+<span class="nc" id="L171">        Map&lt;String, PlanItemDefinitionMapping&gt; moveToAvailableMappingLookupMap = groupByFromPlanItemId(document.getMoveToAvailablePlanItemDefinitionMappings(), validationResult);</span>
+<span class="nc bnc" id="L172" title="All 2 branches missed.">        for (String planItemDefinitionId : moveToAvailableMappingLookupMap.keySet()) {</span>
+<span class="nc bnc" id="L173" title="All 2 branches missed.">            if (!hasPlanItemDefinition(cmmnModel, planItemDefinitionId)) {</span>
+<span class="nc" id="L174">                validationResult.addValidationMessage(&quot;Invalid mapping for move to available plan item definition '&quot; + planItemDefinitionId + &quot;' cannot be found in the case definition&quot;);</span>
+            }
+<span class="nc" id="L176">        }</span>
+        
+<span class="nc" id="L178">        Map&lt;String, PlanItemDefinitionMapping&gt; waitingForRepetitionMappingLookupMap = groupByFromPlanItemId(document.getWaitingForRepetitionPlanItemDefinitionMappings(), validationResult);</span>
+<span class="nc bnc" id="L179" title="All 2 branches missed.">        for (String planItemDefinitionId : waitingForRepetitionMappingLookupMap.keySet()) {</span>
+<span class="nc bnc" id="L180" title="All 2 branches missed.">            if (!hasPlanItemDefinition(cmmnModel, planItemDefinitionId)) {</span>
+<span class="nc" id="L181">                validationResult.addValidationMessage(&quot;Invalid mapping for add waiting for repetition plan item definition '&quot; + planItemDefinitionId + &quot;' cannot be found in the case definition&quot;);</span>
+            }
+<span class="nc" id="L183">        }</span>
+<span class="nc" id="L184">    }</span>
+
+    @Override
+    public void migrateCaseInstance(String caseInstanceId, CaseInstanceMigrationDocument document, CommandContext commandContext) {
+<span class="nc" id="L188">        CaseInstanceEntityManager caseInstanceEntityManager = CommandContextUtil.getCaseInstanceEntityManager(commandContext);</span>
+<span class="nc" id="L189">        CaseInstanceEntity caseInstance = caseInstanceEntityManager.findById(caseInstanceId);</span>
+<span class="nc bnc" id="L190" title="All 2 branches missed.">        if (caseInstance == null) {</span>
+<span class="nc" id="L191">            throw new FlowableException(&quot;Cannot find the case to migrate, with id&quot; + caseInstanceId);</span>
+        }
+
+<span class="nc" id="L194">        CaseDefinition caseDefinitionToMigrateTo = resolveCaseDefinition(document, commandContext);</span>
+<span class="nc" id="L195">        doMigrateCaseInstance(caseInstance, caseDefinitionToMigrateTo, document, commandContext);</span>
+<span class="nc" id="L196">    }</span>
+    
+    @Override
+    public void migrateHistoricCaseInstance(String caseInstanceId, HistoricCaseInstanceMigrationDocument document, CommandContext commandContext) {
+<span class="nc" id="L200">        HistoricCaseInstanceEntityManager historicCaseInstanceEntityManager = CommandContextUtil.getHistoricCaseInstanceEntityManager(commandContext);</span>
+<span class="nc" id="L201">        HistoricCaseInstanceEntity caseInstance = historicCaseInstanceEntityManager.findById(caseInstanceId);</span>
+<span class="nc bnc" id="L202" title="All 2 branches missed.">        if (caseInstance == null) {</span>
+<span class="nc" id="L203">            throw new FlowableException(&quot;Cannot find the historic case instance to migrate, with id&quot; + caseInstanceId);</span>
+        }
+        
+<span class="nc bnc" id="L206" title="All 2 branches missed.">        if (!CaseInstanceState.END_STATES.contains(caseInstance.getState())) {</span>
+<span class="nc" id="L207">            throw new FlowableException(&quot;Historic case instance has not ended and can only be migrated with the regular case instance migrate method (migrateCaseInstance) for id &quot; + caseInstanceId);</span>
+        }
+
+<span class="nc" id="L210">        CaseDefinition caseDefinitionToMigrateTo = resolveCaseDefinition(document, commandContext);</span>
+<span class="nc" id="L211">        doMigrateHistoricCaseInstance(caseInstance, caseDefinitionToMigrateTo, document, commandContext);</span>
+<span class="nc" id="L212">    }</span>
+
+    @Override
+    public void migrateCaseInstancesOfCaseDefinition(String caseDefinitionKey, int caseDefinitionVersion, String caseDefinitionTenantId, CaseInstanceMigrationDocument document, CommandContext commandContext) {
+<span class="nc" id="L216">        CaseDefinition caseDefinition = resolveCaseDefinition(caseDefinitionKey, caseDefinitionVersion, caseDefinitionTenantId, commandContext);</span>
+<span class="nc" id="L217">        migrateCaseInstancesOfCaseDefinition(caseDefinition.getId(), document, commandContext);</span>
+<span class="nc" id="L218">    }</span>
+    
+    @Override
+    public void migrateHistoricCaseInstancesOfCaseDefinition(String caseDefinitionKey, int caseDefinitionVersion, String caseDefinitionTenantId, HistoricCaseInstanceMigrationDocument document, CommandContext commandContext) {
+<span class="nc" id="L222">        CaseDefinition caseDefinition = resolveCaseDefinition(caseDefinitionKey, caseDefinitionVersion, caseDefinitionTenantId, commandContext);</span>
+<span class="nc" id="L223">        migrateHistoricCaseInstancesOfCaseDefinition(caseDefinition.getId(), document, commandContext);</span>
+<span class="nc" id="L224">    }</span>
+
+    @Override
+    public void migrateCaseInstancesOfCaseDefinition(String caseDefinitionId, CaseInstanceMigrationDocument document, CommandContext commandContext) {
+<span class="nc" id="L228">        CaseDefinition caseDefinitionToMigrateTo = resolveCaseDefinition(document, commandContext);</span>
+<span class="nc bnc" id="L229" title="All 2 branches missed.">        if (caseDefinitionToMigrateTo == null) {</span>
+<span class="nc" id="L230">            throw new FlowableException(&quot;Cannot find the case definition to migrate to, identified by &quot; + printCaseDefinitionIdentifierMessage(document));</span>
+        }
+
+<span class="nc" id="L233">        CaseInstanceQueryImpl caseInstanceQueryByCaseDefinitionId = new CaseInstanceQueryImpl(commandContext, cmmnEngineConfiguration).caseDefinitionId(caseDefinitionId);</span>
+<span class="nc" id="L234">        CaseInstanceEntityManager caseInstanceEntityManager = cmmnEngineConfiguration.getCaseInstanceEntityManager();</span>
+<span class="nc" id="L235">        List&lt;CaseInstance&gt; caseInstances = caseInstanceEntityManager.findByCriteria(caseInstanceQueryByCaseDefinitionId);</span>
+
+<span class="nc bnc" id="L237" title="All 2 branches missed.">        for (CaseInstance caseInstance : caseInstances) {</span>
+<span class="nc" id="L238">            doMigrateCaseInstance((CaseInstanceEntity) caseInstance, caseDefinitionToMigrateTo, document, commandContext);</span>
+<span class="nc" id="L239">        }</span>
+<span class="nc" id="L240">    }</span>
+    
+    @Override
+    public void migrateHistoricCaseInstancesOfCaseDefinition(String caseDefinitionId, HistoricCaseInstanceMigrationDocument document, CommandContext commandContext) {
+<span class="nc" id="L244">        CaseDefinition caseDefinitionToMigrateTo = resolveCaseDefinition(document, commandContext);</span>
+<span class="nc bnc" id="L245" title="All 2 branches missed.">        if (caseDefinitionToMigrateTo == null) {</span>
+<span class="nc" id="L246">            throw new FlowableException(&quot;Cannot find the case definition to migrate to, identified by &quot; + printCaseDefinitionIdentifierMessage(document));</span>
+        }
+
+<span class="nc" id="L249">        HistoricCaseInstanceQueryImpl historicCaseInstanceQuery = new HistoricCaseInstanceQueryImpl(commandContext, cmmnEngineConfiguration).caseDefinitionId(caseDefinitionId).finished();</span>
+<span class="nc" id="L250">        HistoricCaseInstanceEntityManager historicCaseInstanceEntityManager = cmmnEngineConfiguration.getHistoricCaseInstanceEntityManager();</span>
+<span class="nc" id="L251">        List&lt;HistoricCaseInstance&gt; historicCaseInstances = historicCaseInstanceEntityManager.findByCriteria(historicCaseInstanceQuery);</span>
+
+<span class="nc bnc" id="L253" title="All 2 branches missed.">        for (HistoricCaseInstance historicCaseInstance : historicCaseInstances) {</span>
+<span class="nc" id="L254">            doMigrateHistoricCaseInstance((HistoricCaseInstanceEntity) historicCaseInstance, caseDefinitionToMigrateTo, document, commandContext);</span>
+<span class="nc" id="L255">        }</span>
+<span class="nc" id="L256">    }</span>
+
+    protected void doMigrateCaseInstance(CaseInstanceEntity caseInstance, CaseDefinition caseDefinitionToMigrateTo, CaseInstanceMigrationDocument document, CommandContext commandContext) {
+<span class="nc" id="L259">        LOGGER.debug(&quot;Start migration of case instance with Id:'{}' to case definition identified by {}&quot;, caseInstance.getId(), printCaseDefinitionIdentifierMessage(document));</span>
+<span class="nc bnc" id="L260" title="All 4 branches missed.">        if (document.getPreUpgradeExpression() != null &amp;&amp; !document.getPreUpgradeExpression().isEmpty()) {</span>
+<span class="nc" id="L261">            cmmnEngineConfiguration.getExpressionManager().createExpression(document.getPreUpgradeExpression()).getValue(caseInstance);</span>
+        }
+
+<span class="nc" id="L264">        ChangePlanItemStateBuilderImpl changePlanItemStateBuilder = prepareChangeStateBuilder(caseInstance, caseDefinitionToMigrateTo, document, commandContext);</span>
+
+<span class="nc" id="L266">        LOGGER.debug(&quot;Updating case definition reference of case root execution with id:'{}' to '{}'&quot;, caseInstance.getId(), caseDefinitionToMigrateTo.getId());</span>
+<span class="nc" id="L267">        String originalCaseDefinitionId = caseInstance.getCaseDefinitionId();</span>
+<span class="nc" id="L268">        caseInstance.setCaseDefinitionId(caseDefinitionToMigrateTo.getId());</span>
+<span class="nc" id="L269">        caseInstance.setCaseDefinitionKey(caseDefinitionToMigrateTo.getKey());</span>
+<span class="nc" id="L270">        caseInstance.setCaseDefinitionName(caseDefinitionToMigrateTo.getName());</span>
+<span class="nc" id="L271">        caseInstance.setCaseDefinitionVersion(caseDefinitionToMigrateTo.getVersion());</span>
+<span class="nc" id="L272">        caseInstance.setCaseDefinitionDeploymentId(caseDefinitionToMigrateTo.getDeploymentId());</span>
+<span class="nc" id="L273">        CommandContextUtil.getCaseInstanceEntityManager(commandContext).update(caseInstance);</span>
+
+<span class="nc" id="L275">        CaseInstanceChangeState caseInstanceChangeState = new CaseInstanceChangeState()</span>
+<span class="nc" id="L276">                .setCaseInstanceId(caseInstance.getId())</span>
+<span class="nc" id="L277">                .setCaseDefinitionToMigrateTo(caseDefinitionToMigrateTo)</span>
+<span class="nc" id="L278">                .setActivatePlanItemDefinitions(changePlanItemStateBuilder.getActivatePlanItemDefinitions())</span>
+<span class="nc" id="L279">                .setTerminatePlanItemDefinitions(changePlanItemStateBuilder.getTerminatePlanItemDefinitions())</span>
+<span class="nc" id="L280">                .setChangePlanItemDefinitionsToAvailable(changePlanItemStateBuilder.getChangeToAvailableStatePlanItemDefinitions())</span>
+<span class="nc" id="L281">                .setWaitingForRepetitionPlanItemDefinitions(changePlanItemStateBuilder.getWaitingForRepetitionPlanItemDefinitions())</span>
+<span class="nc" id="L282">                .setRemoveWaitingForRepetitionPlanItemDefinitions(changePlanItemStateBuilder.getRemoveWaitingForRepetitionPlanItemDefinitions())</span>
+<span class="nc" id="L283">                .setChangePlanItemIds(changePlanItemStateBuilder.getChangePlanItemIds())</span>
+<span class="nc" id="L284">                .setChangePlanItemIdsWithDefinitionId(changePlanItemStateBuilder.getChangePlanItemIdsWithDefinitionId())</span>
+<span class="nc" id="L285">                .setChangePlanItemDefinitionWithNewTargetIds(changePlanItemStateBuilder.getChangePlanItemDefinitionWithNewTargetIds())</span>
+<span class="nc" id="L286">                .setCaseVariables(document.getCaseInstanceVariables())</span>
+<span class="nc" id="L287">                .setChildInstanceTaskVariables(document.getPlanItemLocalVariables());</span>
+<span class="nc" id="L288">        doMovePlanItemState(caseInstanceChangeState, originalCaseDefinitionId, commandContext);</span>
+
+<span class="nc" id="L290">        LOGGER.debug(&quot;Updating case definition reference in plan item instances&quot;);</span>
+<span class="nc" id="L291">        CommandContextUtil.getPlanItemInstanceEntityManager(commandContext).updatePlanItemInstancesCaseDefinitionId(caseInstance.getId(), caseDefinitionToMigrateTo.getId());</span>
+
+<span class="nc" id="L293">        LOGGER.debug(&quot;Updating case definition reference in history&quot;);</span>
+<span class="nc" id="L294">        changeCaseDefinitionReferenceOfHistory(caseInstance, caseDefinitionToMigrateTo, commandContext);</span>
+        
+<span class="nc" id="L296">        List&lt;CaseInstanceMigrationCallback&gt; migrationCallbacks = CommandContextUtil.getCmmnEngineConfiguration(commandContext).getCaseInstanceMigrationCallbacks();</span>
+<span class="nc bnc" id="L297" title="All 4 branches missed.">        if (migrationCallbacks != null &amp;&amp; !migrationCallbacks.isEmpty()) {</span>
+<span class="nc bnc" id="L298" title="All 2 branches missed.">            for (CaseInstanceMigrationCallback caseInstanceMigrationCallback : migrationCallbacks) {</span>
+<span class="nc" id="L299">                caseInstanceMigrationCallback.caseInstanceMigrated(caseInstance, caseDefinitionToMigrateTo, document);</span>
+<span class="nc" id="L300">            }</span>
+        }
+
+<span class="nc bnc" id="L303" title="All 4 branches missed.">        if (document.getPostUpgradeExpression() != null &amp;&amp; !document.getPostUpgradeExpression().isEmpty()) {</span>
+<span class="nc" id="L304">            cmmnEngineConfiguration.getExpressionManager().createExpression(document.getPostUpgradeExpression()).getValue(caseInstance);</span>
+        }
+<span class="nc" id="L306">    }</span>
+
+    protected void doMigrateHistoricCaseInstance(HistoricCaseInstanceEntity historicCaseInstance, CaseDefinition caseDefinitionToMigrateTo, HistoricCaseInstanceMigrationDocument document, CommandContext commandContext) {
+<span class="nc" id="L309">        LOGGER.debug(&quot;Start migration of historic case instance with Id:'{}' to case definition identified by {}&quot;, historicCaseInstance.getId(), printCaseDefinitionIdentifierMessage(document));</span>
+        
+<span class="nc" id="L311">        String destinationTenantId = caseDefinitionToMigrateTo.getTenantId();</span>
+<span class="nc bnc" id="L312" title="All 2 branches missed.">        if (!Objects.equals(historicCaseInstance.getTenantId(), destinationTenantId)) {</span>
+            
+<span class="nc" id="L314">            CmmnEngineConfiguration cmmnEngineConfiguration = CommandContextUtil.getCmmnEngineConfiguration(commandContext);</span>
+<span class="nc bnc" id="L315" title="All 4 branches missed.">            if (cmmnEngineConfiguration.isFallbackToDefaultTenant() &amp;&amp; cmmnEngineConfiguration.getDefaultTenantProvider() != null) {</span>
+                
+<span class="nc bnc" id="L317" title="All 2 branches missed.">                if (!Objects.equals(destinationTenantId, cmmnEngineConfiguration.getDefaultTenantProvider().getDefaultTenant(historicCaseInstance.getId(), ScopeTypes.CMMN, caseDefinitionToMigrateTo.getKey()))) {</span>
+<span class="nc" id="L318">                    throw new FlowableException(&quot;Tenant mismatch between Historic Case Instance ('&quot; + historicCaseInstance.getTenantId() + &quot;') and Case Definition ('&quot; + destinationTenantId + &quot;') to migrate to&quot;);</span>
+                }
+            
+            } else {
+<span class="nc" id="L322">                throw new FlowableException(&quot;Tenant mismatch between Historic Case Instance ('&quot; + historicCaseInstance.getTenantId() + &quot;') and Case Definition ('&quot; + destinationTenantId + &quot;') to migrate to&quot;);</span>
+            }
+        }
+        
+<span class="nc" id="L326">        LOGGER.debug(&quot;Updating case definition reference of case root execution with id:'{}' to '{}'&quot;, historicCaseInstance.getId(), caseDefinitionToMigrateTo.getId());</span>
+<span class="nc" id="L327">        historicCaseInstance.setCaseDefinitionId(caseDefinitionToMigrateTo.getId());</span>
+<span class="nc" id="L328">        historicCaseInstance.setCaseDefinitionKey(caseDefinitionToMigrateTo.getKey());</span>
+<span class="nc" id="L329">        historicCaseInstance.setCaseDefinitionName(caseDefinitionToMigrateTo.getName());</span>
+<span class="nc" id="L330">        historicCaseInstance.setCaseDefinitionVersion(caseDefinitionToMigrateTo.getVersion());</span>
+<span class="nc" id="L331">        historicCaseInstance.setCaseDefinitionDeploymentId(caseDefinitionToMigrateTo.getDeploymentId());</span>
+<span class="nc" id="L332">        CommandContextUtil.getHistoricCaseInstanceEntityManager(commandContext).update(historicCaseInstance);</span>
+
+<span class="nc" id="L334">        LOGGER.debug(&quot;Updating case definition reference in history&quot;);</span>
+<span class="nc" id="L335">        changeCaseDefinitionReferenceForHistoricCaseInstance(historicCaseInstance, caseDefinitionToMigrateTo, commandContext);</span>
+        
+<span class="nc" id="L337">        List&lt;CaseInstanceMigrationCallback&gt; migrationCallbacks = CommandContextUtil.getCmmnEngineConfiguration(commandContext).getCaseInstanceMigrationCallbacks();</span>
+<span class="nc bnc" id="L338" title="All 4 branches missed.">        if (migrationCallbacks != null &amp;&amp; !migrationCallbacks.isEmpty()) {</span>
+<span class="nc bnc" id="L339" title="All 2 branches missed.">            for (CaseInstanceMigrationCallback caseInstanceMigrationCallback : migrationCallbacks) {</span>
+<span class="nc" id="L340">                caseInstanceMigrationCallback.historicCaseInstanceMigrated(historicCaseInstance, caseDefinitionToMigrateTo, document);</span>
+<span class="nc" id="L341">            }</span>
+        }
+<span class="nc" id="L343">    }</span>
+
+    protected ChangePlanItemStateBuilderImpl prepareChangeStateBuilder(CaseInstance caseInstance, CaseDefinition caseDefinitionToMigrateTo, 
+            CaseInstanceMigrationDocument document, CommandContext commandContext) {
+        
+<span class="nc" id="L348">        String destinationTenantId = caseDefinitionToMigrateTo.getTenantId();</span>
+<span class="nc bnc" id="L349" title="All 2 branches missed.">        if (!Objects.equals(caseInstance.getTenantId(), destinationTenantId)) {</span>
+            
+<span class="nc" id="L351">            CmmnEngineConfiguration cmmnEngineConfiguration = CommandContextUtil.getCmmnEngineConfiguration(commandContext);</span>
+<span class="nc bnc" id="L352" title="All 4 branches missed.">            if (cmmnEngineConfiguration.isFallbackToDefaultTenant() &amp;&amp; cmmnEngineConfiguration.getDefaultTenantProvider() != null) {</span>
+                
+<span class="nc bnc" id="L354" title="All 2 branches missed.">                if (!Objects.equals(destinationTenantId, cmmnEngineConfiguration.getDefaultTenantProvider().getDefaultTenant(caseInstance.getTenantId(), ScopeTypes.CMMN, caseDefinitionToMigrateTo.getKey()))) {</span>
+<span class="nc" id="L355">                    throw new FlowableException(&quot;Tenant mismatch between Case Instance ('&quot; + caseInstance.getTenantId() + &quot;') and Case Definition ('&quot; + destinationTenantId + &quot;') to migrate to&quot;);</span>
+                }
+            
+            } else {
+<span class="nc" id="L359">                throw new FlowableException(&quot;Tenant mismatch between Case Instance ('&quot; + caseInstance.getTenantId() + &quot;') and Case Definition ('&quot; + destinationTenantId + &quot;') to migrate to&quot;);</span>
+            }
+        }
+
+<span class="nc" id="L363">        String caseInstanceId = caseInstance.getId();</span>
+<span class="nc" id="L364">        ChangePlanItemStateBuilderImpl changePlanItemStateBuilder = new ChangePlanItemStateBuilderImpl();</span>
+<span class="nc" id="L365">        changePlanItemStateBuilder.caseInstanceId(caseInstanceId);</span>
+
+<span class="nc bnc" id="L367" title="All 2 branches missed.">        for (ActivatePlanItemDefinitionMapping planItemDefinitionMapping : document.getActivatePlanItemDefinitionMappings()) {</span>
+<span class="nc" id="L368">            changePlanItemStateBuilder.activatePlanItemDefinition(planItemDefinitionMapping);</span>
+<span class="nc" id="L369">        }</span>
+        
+<span class="nc bnc" id="L371" title="All 2 branches missed.">        for (TerminatePlanItemDefinitionMapping planItemDefinitionMapping : document.getTerminatePlanItemDefinitionMappings()) {</span>
+<span class="nc" id="L372">            changePlanItemStateBuilder.terminatePlanItemDefinition(planItemDefinitionMapping);</span>
+<span class="nc" id="L373">        }</span>
+        
+<span class="nc bnc" id="L375" title="All 2 branches missed.">        for (MoveToAvailablePlanItemDefinitionMapping planItemDefinitionMapping : document.getMoveToAvailablePlanItemDefinitionMappings()) {</span>
+<span class="nc" id="L376">            changePlanItemStateBuilder.changeToAvailableStateByPlanItemDefinition(planItemDefinitionMapping);</span>
+<span class="nc" id="L377">        }</span>
+        
+<span class="nc bnc" id="L379" title="All 2 branches missed.">        for (WaitingForRepetitionPlanItemDefinitionMapping planItemDefinitionMapping : document.getWaitingForRepetitionPlanItemDefinitionMappings()) {</span>
+<span class="nc" id="L380">            changePlanItemStateBuilder.addWaitingForRepetitionPlanItemDefinition(planItemDefinitionMapping);</span>
+<span class="nc" id="L381">        }</span>
+        
+<span class="nc bnc" id="L383" title="All 2 branches missed.">        for (RemoveWaitingForRepetitionPlanItemDefinitionMapping planItemDefinitionMapping : document.getRemoveWaitingForRepetitionPlanItemDefinitionMappings()) {</span>
+<span class="nc" id="L384">            changePlanItemStateBuilder.removeWaitingForRepetitionPlanItemDefinition(planItemDefinitionMapping);</span>
+<span class="nc" id="L385">        }</span>
+        
+<span class="nc bnc" id="L387" title="All 2 branches missed.">        for (ChangePlanItemIdMapping changePlanItemIdMapping : document.getChangePlanItemIdMappings()) {</span>
+<span class="nc" id="L388">            changePlanItemStateBuilder.changePlanItemId(changePlanItemIdMapping.getExistingPlanItemId(), changePlanItemIdMapping.getNewPlanItemId());</span>
+<span class="nc" id="L389">        }</span>
+        
+<span class="nc bnc" id="L391" title="All 2 branches missed.">        for (ChangePlanItemIdWithDefinitionIdMapping changePlanItemIdWithDefinitionMapping : document.getChangePlanItemIdWithDefinitionIdMappings()) {</span>
+<span class="nc" id="L392">            changePlanItemStateBuilder.changePlanItemIdWithDefinitionId(changePlanItemIdWithDefinitionMapping.getExistingPlanItemDefinitionId(), changePlanItemIdWithDefinitionMapping.getNewPlanItemDefinitionId());</span>
+<span class="nc" id="L393">        }</span>
+        
+<span class="nc bnc" id="L395" title="All 2 branches missed.">        for (ChangePlanItemDefinitionWithNewTargetIdsMapping changePlanItemDefinitionWithNewTargetIdsMapping : document.getChangePlanItemDefinitionWithNewTargetIdsMappings()) {</span>
+<span class="nc" id="L396">            changePlanItemStateBuilder.changePlanItemDefinitionWithNewTargetIds(changePlanItemDefinitionWithNewTargetIdsMapping.getExistingPlanItemDefinitionId(), </span>
+<span class="nc" id="L397">                    changePlanItemDefinitionWithNewTargetIdsMapping.getNewPlanItemId(), changePlanItemDefinitionWithNewTargetIdsMapping.getNewPlanItemDefinitionId());</span>
+<span class="nc" id="L398">        }</span>
+
+<span class="nc" id="L400">        return changePlanItemStateBuilder;</span>
+    }
+
+    protected void changeCaseDefinitionReferenceOfHistory(CaseInstanceEntity caseInstance, CaseDefinition caseDefinitionToMigrateTo, CommandContext commandContext) {
+<span class="nc" id="L404">        CmmnHistoryManager historyManager = CommandContextUtil.getCmmnHistoryManager(commandContext);</span>
+<span class="nc" id="L405">        historyManager.updateCaseDefinitionIdInHistory(caseDefinitionToMigrateTo, caseInstance);</span>
+<span class="nc" id="L406">    }</span>
+    
+    protected void changeCaseDefinitionReferenceForHistoricCaseInstance(HistoricCaseInstanceEntity historicCaseInstance, CaseDefinition caseDefinitionToMigrateTo, CommandContext commandContext) {
+<span class="nc bnc" id="L409" title="All 2 branches missed.">        if (CommandContextUtil.getCmmnEngineConfiguration(commandContext).getCmmnHistoryConfigurationSettings().isHistoryEnabled(caseDefinitionToMigrateTo.getId())) {</span>
+<span class="nc" id="L410">            HistoricTaskService historicTaskService = cmmnEngineConfiguration.getTaskServiceConfiguration().getHistoricTaskService();</span>
+<span class="nc" id="L411">            HistoricTaskInstanceQueryImpl taskQuery = new HistoricTaskInstanceQueryImpl();</span>
+<span class="nc" id="L412">            taskQuery.caseInstanceId(historicCaseInstance.getId());</span>
+<span class="nc" id="L413">            List&lt;HistoricTaskInstance&gt; historicTasks = historicTaskService.findHistoricTaskInstancesByQueryCriteria(taskQuery);</span>
+<span class="nc bnc" id="L414" title="All 2 branches missed.">            if (historicTasks != null) {</span>
+<span class="nc bnc" id="L415" title="All 2 branches missed.">                for (HistoricTaskInstance historicTaskInstance : historicTasks) {</span>
+<span class="nc" id="L416">                    HistoricTaskInstanceEntity taskEntity = (HistoricTaskInstanceEntity) historicTaskInstance;</span>
+<span class="nc" id="L417">                    taskEntity.setScopeDefinitionId(caseDefinitionToMigrateTo.getId());</span>
+<span class="nc" id="L418">                    historicTaskService.updateHistoricTask(taskEntity, true);</span>
+<span class="nc" id="L419">                }</span>
+            }
+
+            // because of upgrade runtimeActivity instances can be only subset of historicActivity instances
+<span class="nc" id="L423">            HistoricPlanItemInstanceQueryImpl historicPlanItemQuery = new HistoricPlanItemInstanceQueryImpl();</span>
+<span class="nc" id="L424">            historicPlanItemQuery.planItemInstanceCaseInstanceId(historicCaseInstance.getId());</span>
+<span class="nc" id="L425">            HistoricPlanItemInstanceEntityManager historicPlanItemInstanceEntityManager = cmmnEngineConfiguration.getHistoricPlanItemInstanceEntityManager();</span>
+<span class="nc" id="L426">            List&lt;HistoricPlanItemInstance&gt; historicPlanItems = historicPlanItemInstanceEntityManager.findByCriteria(historicPlanItemQuery);</span>
+<span class="nc bnc" id="L427" title="All 2 branches missed.">            if (historicPlanItems != null) {</span>
+<span class="nc bnc" id="L428" title="All 2 branches missed.">                for (HistoricPlanItemInstance historicPlanItemInstance : historicPlanItems) {</span>
+<span class="nc" id="L429">                    HistoricPlanItemInstanceEntity planItemEntity = (HistoricPlanItemInstanceEntity) historicPlanItemInstance;</span>
+<span class="nc" id="L430">                    planItemEntity.setCaseDefinitionId(caseDefinitionToMigrateTo.getId());</span>
+<span class="nc" id="L431">                    historicPlanItemInstanceEntityManager.update(planItemEntity);</span>
+<span class="nc" id="L432">                }</span>
+            }
+            
+<span class="nc" id="L435">            HistoricMilestoneInstanceQueryImpl historicMilestoneInstanceQuery = new HistoricMilestoneInstanceQueryImpl();</span>
+<span class="nc" id="L436">            historicMilestoneInstanceQuery.milestoneInstanceCaseInstanceId(historicCaseInstance.getId());</span>
+<span class="nc" id="L437">            HistoricMilestoneInstanceEntityManager historicMilestoneInstanceEntityManager = cmmnEngineConfiguration.getHistoricMilestoneInstanceEntityManager();</span>
+<span class="nc" id="L438">            List&lt;HistoricMilestoneInstance&gt; historicMilestoneInstances = historicMilestoneInstanceEntityManager.findHistoricMilestoneInstancesByQueryCriteria(historicMilestoneInstanceQuery);</span>
+<span class="nc bnc" id="L439" title="All 2 branches missed.">            if (historicMilestoneInstances != null) {</span>
+<span class="nc bnc" id="L440" title="All 2 branches missed.">                for (HistoricMilestoneInstance historicMilestoneInstance : historicMilestoneInstances) {</span>
+<span class="nc" id="L441">                    HistoricMilestoneInstanceEntity milestoneEntity = (HistoricMilestoneInstanceEntity) historicMilestoneInstance;</span>
+<span class="nc" id="L442">                    milestoneEntity.setCaseDefinitionId(caseDefinitionToMigrateTo.getId());</span>
+<span class="nc" id="L443">                    historicMilestoneInstanceEntityManager.update(milestoneEntity);</span>
+<span class="nc" id="L444">                }</span>
+            }
+        }
+<span class="nc" id="L447">    }</span>
+
+    @Override
+    public Batch batchMigrateCaseInstancesOfCaseDefinition(String caseDefinitionKey, int caseDefinitionVersion, String caseDefinitionTenantId, CaseInstanceMigrationDocument document, CommandContext commandContext) {
+<span class="nc" id="L451">        CaseDefinition caseDefinition = resolveCaseDefinition(caseDefinitionKey, caseDefinitionVersion, caseDefinitionTenantId, commandContext);</span>
+<span class="nc" id="L452">        return batchMigrateCaseInstancesOfCaseDefinition(caseDefinition.getId(), document, commandContext);</span>
+    }
+    
+    @Override
+    public Batch batchMigrateHistoricCaseInstancesOfCaseDefinition(String caseDefinitionKey, int caseDefinitionVersion, String caseDefinitionTenantId, HistoricCaseInstanceMigrationDocument document, CommandContext commandContext) {
+<span class="nc" id="L457">        CaseDefinition caseDefinition = resolveCaseDefinition(caseDefinitionKey, caseDefinitionVersion, caseDefinitionTenantId, commandContext);</span>
+<span class="nc" id="L458">        return batchMigrateHistoricCaseInstancesOfCaseDefinition(caseDefinition.getId(), document, commandContext);</span>
+    }
+
+    @Override
+    public Batch batchMigrateCaseInstancesOfCaseDefinition(String caseDefinitionId, CaseInstanceMigrationDocument document, CommandContext commandContext) {
+<span class="nc" id="L463">        CaseDefinition caseDefinition = resolveCaseDefinition(document, commandContext);</span>
+
+<span class="nc" id="L465">        CmmnEngineConfiguration engineConfiguration = CommandContextUtil.getCmmnEngineConfiguration();</span>
+<span class="nc" id="L466">        List&lt;CaseInstanceEntity&gt; caseInstances = engineConfiguration.getCaseInstanceEntityManager()</span>
+<span class="nc" id="L467">                .findCaseInstancesByCaseDefinitionId(caseDefinitionId);</span>
+
+<span class="nc" id="L469">        BatchService batchService = engineConfiguration.getBatchServiceConfiguration().getBatchService();</span>
+<span class="nc" id="L470">        Batch batch = batchService.createBatchBuilder().batchType(Batch.CASE_MIGRATION_TYPE)</span>
+<span class="nc" id="L471">                .searchKey(caseDefinitionId)</span>
+<span class="nc" id="L472">                .searchKey2(caseDefinition.getId())</span>
+<span class="nc" id="L473">                .status(CaseInstanceBatchMigrationResult.STATUS_IN_PROGRESS)</span>
+<span class="nc" id="L474">                .batchDocumentJson(document.asJsonString())</span>
+<span class="nc" id="L475">                .create();</span>
+
+<span class="nc" id="L477">        JobService jobService = engineConfiguration.getJobServiceConfiguration().getJobService();</span>
+<span class="nc bnc" id="L478" title="All 2 branches missed.">        for (CaseInstance caseInstance : caseInstances) {</span>
+<span class="nc" id="L479">            BatchPart batchPart = batchService.createBatchPart(batch, CaseInstanceBatchMigrationResult.STATUS_WAITING,</span>
+<span class="nc" id="L480">                    caseInstance.getId(), null, ScopeTypes.CMMN);</span>
+
+<span class="nc" id="L482">            JobEntity job = jobService.createJob();</span>
+<span class="nc" id="L483">            job.setJobHandlerType(CaseInstanceMigrationJobHandler.TYPE);</span>
+<span class="nc" id="L484">            job.setScopeId(caseInstance.getId());</span>
+<span class="nc" id="L485">            job.setScopeType(ScopeTypes.CMMN);</span>
+<span class="nc" id="L486">            job.setJobHandlerConfiguration(CaseInstanceMigrationJobHandler.getHandlerCfgForBatchPartId(batchPart.getId()));</span>
+<span class="nc" id="L487">            jobService.createAsyncJob(job, false);</span>
+<span class="nc" id="L488">            job.setRetries(0);</span>
+<span class="nc" id="L489">            jobService.scheduleAsyncJob(job);</span>
+<span class="nc" id="L490">        }</span>
+
+<span class="nc bnc" id="L492" title="All 2 branches missed.">        if (!caseInstances.isEmpty()) {</span>
+<span class="nc" id="L493">            TimerJobService timerJobService = engineConfiguration.getJobServiceConfiguration().getTimerJobService();</span>
+<span class="nc" id="L494">            TimerJobEntity timerJob = timerJobService.createTimerJob();</span>
+<span class="nc" id="L495">            timerJob.setJobType(JobEntity.JOB_TYPE_TIMER);</span>
+<span class="nc" id="L496">            timerJob.setRevision(1);</span>
+<span class="nc" id="L497">            timerJob.setRetries(0);</span>
+<span class="nc" id="L498">            timerJob.setJobHandlerType(CaseInstanceMigrationStatusJobHandler.TYPE);</span>
+<span class="nc" id="L499">            timerJob.setJobHandlerConfiguration(CaseInstanceMigrationJobHandler.getHandlerCfgForBatchId(batch.getId()));</span>
+<span class="nc" id="L500">            timerJob.setScopeType(ScopeTypes.CMMN);</span>
+
+<span class="nc" id="L502">            BusinessCalendar businessCalendar = engineConfiguration.getBusinessCalendarManager().getBusinessCalendar(CycleBusinessCalendar.NAME);</span>
+<span class="nc" id="L503">            timerJob.setDuedate(businessCalendar.resolveDuedate(engineConfiguration.getBatchStatusTimeCycleConfig()));</span>
+<span class="nc" id="L504">            timerJob.setRepeat(engineConfiguration.getBatchStatusTimeCycleConfig());</span>
+
+<span class="nc" id="L506">            timerJobService.scheduleTimerJob(timerJob);</span>
+        }
+
+<span class="nc" id="L509">        return batch;</span>
+    }
+    
+    @Override
+    public Batch batchMigrateHistoricCaseInstancesOfCaseDefinition(String caseDefinitionId, HistoricCaseInstanceMigrationDocument document, CommandContext commandContext) {
+<span class="nc" id="L514">        CaseDefinition caseDefinition = resolveCaseDefinition(document, commandContext);</span>
+
+<span class="nc" id="L516">        CmmnEngineConfiguration engineConfiguration = CommandContextUtil.getCmmnEngineConfiguration();</span>
+<span class="nc" id="L517">        HistoricCaseInstanceQueryImpl historicCaseInstanceQuery = new HistoricCaseInstanceQueryImpl(commandContext, cmmnEngineConfiguration).caseDefinitionId(caseDefinitionId).finished();</span>
+<span class="nc" id="L518">        List&lt;HistoricCaseInstance&gt; historicCaseInstances = engineConfiguration.getHistoricCaseInstanceEntityManager()</span>
+<span class="nc" id="L519">                .findByCriteria(historicCaseInstanceQuery);</span>
+
+<span class="nc" id="L521">        BatchService batchService = engineConfiguration.getBatchServiceConfiguration().getBatchService();</span>
+<span class="nc" id="L522">        Batch batch = batchService.createBatchBuilder().batchType(Batch.CASE_MIGRATION_TYPE)</span>
+<span class="nc" id="L523">                .searchKey(caseDefinitionId)</span>
+<span class="nc" id="L524">                .searchKey2(caseDefinition.getId())</span>
+<span class="nc" id="L525">                .status(CaseInstanceBatchMigrationResult.STATUS_IN_PROGRESS)</span>
+<span class="nc" id="L526">                .batchDocumentJson(document.asJsonString())</span>
+<span class="nc" id="L527">                .create();</span>
+
+<span class="nc" id="L529">        JobService jobService = engineConfiguration.getJobServiceConfiguration().getJobService();</span>
+<span class="nc bnc" id="L530" title="All 2 branches missed.">        for (HistoricCaseInstance historicCaseInstance : historicCaseInstances) {</span>
+<span class="nc" id="L531">            BatchPart batchPart = batchService.createBatchPart(batch, CaseInstanceBatchMigrationResult.STATUS_WAITING,</span>
+<span class="nc" id="L532">                    historicCaseInstance.getId(), null, ScopeTypes.CMMN);</span>
+
+<span class="nc" id="L534">            JobEntity job = jobService.createJob();</span>
+<span class="nc" id="L535">            job.setJobHandlerType(HistoricCaseInstanceMigrationJobHandler.TYPE);</span>
+<span class="nc" id="L536">            job.setScopeId(historicCaseInstance.getId());</span>
+<span class="nc" id="L537">            job.setScopeType(ScopeTypes.CMMN);</span>
+<span class="nc" id="L538">            job.setJobHandlerConfiguration(HistoricCaseInstanceMigrationJobHandler.getHandlerCfgForBatchPartId(batchPart.getId()));</span>
+<span class="nc" id="L539">            jobService.createAsyncJob(job, false);</span>
+<span class="nc" id="L540">            jobService.scheduleAsyncJob(job);</span>
+<span class="nc" id="L541">        }</span>
+
+<span class="nc bnc" id="L543" title="All 2 branches missed.">        if (!historicCaseInstances.isEmpty()) {</span>
+<span class="nc" id="L544">            TimerJobService timerJobService = engineConfiguration.getJobServiceConfiguration().getTimerJobService();</span>
+<span class="nc" id="L545">            TimerJobEntity timerJob = timerJobService.createTimerJob();</span>
+<span class="nc" id="L546">            timerJob.setJobType(JobEntity.JOB_TYPE_TIMER);</span>
+<span class="nc" id="L547">            timerJob.setRevision(1);</span>
+<span class="nc" id="L548">            timerJob.setJobHandlerType(CaseInstanceMigrationStatusJobHandler.TYPE);</span>
+<span class="nc" id="L549">            timerJob.setJobHandlerConfiguration(HistoricCaseInstanceMigrationJobHandler.getHandlerCfgForBatchId(batch.getId()));</span>
+<span class="nc" id="L550">            timerJob.setScopeType(ScopeTypes.CMMN);</span>
+
+<span class="nc" id="L552">            BusinessCalendar businessCalendar = engineConfiguration.getBusinessCalendarManager().getBusinessCalendar(CycleBusinessCalendar.NAME);</span>
+<span class="nc" id="L553">            timerJob.setDuedate(businessCalendar.resolveDuedate(engineConfiguration.getBatchStatusTimeCycleConfig()));</span>
+<span class="nc" id="L554">            timerJob.setRepeat(engineConfiguration.getBatchStatusTimeCycleConfig());</span>
+
+<span class="nc" id="L556">            timerJobService.scheduleTimerJob(timerJob);</span>
+        }
+
+<span class="nc" id="L559">        return batch;</span>
+    }
+
+    @Override
+    protected boolean isDirectPlanItemDefinitionMigration(PlanItemDefinition currentPlanItemDefinition, PlanItemDefinition newPlanItemDefinition) {
+<span class="nc" id="L564">        return false;</span>
+    }
+
+    protected Map&lt;String, PlanItemDefinitionMapping&gt; groupByFromPlanItemId(List&lt;? extends PlanItemDefinitionMapping&gt; planItemDefinitionMappings, CaseInstanceMigrationValidationResult validationResult) {
+<span class="nc" id="L568">        Map&lt;String, PlanItemDefinitionMapping&gt; lookupMap = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L569" title="All 2 branches missed.">        for (PlanItemDefinitionMapping planItemDefinitionMapping : planItemDefinitionMappings) {</span>
+<span class="nc bnc" id="L570" title="All 4 branches missed.">            if (lookupMap.containsKey(planItemDefinitionMapping.getPlanItemDefinitionId()) &amp;&amp; validationResult != null) {</span>
+<span class="nc" id="L571">                validationResult.addValidationMessage(&quot;Duplicate mapping for '&quot; + planItemDefinitionMapping.getPlanItemDefinitionId() + </span>
+                        &quot;', the latest mapping is going to be used&quot;);
+            }
+<span class="nc" id="L574">            lookupMap.put(planItemDefinitionMapping.getPlanItemDefinitionId(), planItemDefinitionMapping);</span>
+<span class="nc" id="L575">        }</span>
+<span class="nc" id="L576">        return lookupMap;</span>
+    }
+
+    protected boolean hasPlanItemDefinition(CmmnModel model, String elementId) {
+<span class="nc" id="L580">        return model.getPrimaryCase().getAllCaseElements().containsKey(elementId);</span>
+    }
+
+    protected CaseDefinition resolveCaseDefinition(CaseInstanceMigrationDocument document, CommandContext commandContext) {
+<span class="nc bnc" id="L584" title="All 2 branches missed.">        if (document.getMigrateToCaseDefinitionId() != null) {</span>
+<span class="nc" id="L585">            CaseDefinitionEntityManager caseDefinitionEntityManager = CommandContextUtil.getCaseDefinitionEntityManager(commandContext);</span>
+<span class="nc" id="L586">            return caseDefinitionEntityManager.findById(document.getMigrateToCaseDefinitionId());</span>
+
+        } else {
+<span class="nc" id="L589">            return resolveCaseDefinition(document.getMigrateToCaseDefinitionKey(), document.getMigrateToCaseDefinitionVersion(), document.getMigrateToCaseDefinitionTenantId(), commandContext);</span>
+        }
+    }
+    
+    protected CaseDefinition resolveCaseDefinition(HistoricCaseInstanceMigrationDocument document, CommandContext commandContext) {
+<span class="nc bnc" id="L594" title="All 2 branches missed.">        if (document.getMigrateToCaseDefinitionId() != null) {</span>
+<span class="nc" id="L595">            CaseDefinitionEntityManager caseDefinitionEntityManager = CommandContextUtil.getCaseDefinitionEntityManager(commandContext);</span>
+<span class="nc" id="L596">            return caseDefinitionEntityManager.findById(document.getMigrateToCaseDefinitionId());</span>
+
+        } else {
+<span class="nc" id="L599">            return resolveCaseDefinition(document.getMigrateToCaseDefinitionKey(), document.getMigrateToCaseDefinitionVersion(), document.getMigrateToCaseDefinitionTenantId(), commandContext);</span>
+        }
+    }
+
+    protected String printCaseDefinitionIdentifierMessage(CaseInstanceMigrationDocument document) {
+<span class="nc" id="L604">        String id = document.getMigrateToCaseDefinitionId();</span>
+<span class="nc" id="L605">        String key = document.getMigrateToCaseDefinitionKey();</span>
+<span class="nc" id="L606">        Integer version = document.getMigrateToCaseDefinitionVersion();</span>
+<span class="nc" id="L607">        String tenantId = document.getMigrateToCaseDefinitionTenantId();</span>
+<span class="nc bnc" id="L608" title="All 2 branches missed.">        return id != null ? &quot;[id:'&quot; + id + &quot;']&quot; : &quot;[key:'&quot; + key + &quot;', version:'&quot; + version + &quot;', tenantId:'&quot; + tenantId + &quot;']&quot;;</span>
+    }
+
+    protected String printCaseDefinitionIdentifierMessage(HistoricCaseInstanceMigrationDocument document) {
+<span class="nc" id="L612">        String id = document.getMigrateToCaseDefinitionId();</span>
+<span class="nc" id="L613">        String key = document.getMigrateToCaseDefinitionKey();</span>
+<span class="nc" id="L614">        Integer version = document.getMigrateToCaseDefinitionVersion();</span>
+<span class="nc" id="L615">        String tenantId = document.getMigrateToCaseDefinitionTenantId();</span>
+<span class="nc bnc" id="L616" title="All 2 branches missed.">        return id != null ? &quot;[id:'&quot; + id + &quot;']&quot; : &quot;[key:'&quot; + key + &quot;', version:'&quot; + version + &quot;', tenantId:'&quot; + tenantId + &quot;']&quot;;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

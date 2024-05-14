@@ -1,0 +1,870 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BpmnEventRegistryConsumerTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.eventregistry</a> &gt; <span class="el_source">BpmnEventRegistryConsumerTest.java</span></div><h1>BpmnEventRegistryConsumerTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.test.eventregistry;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.entry;
+import static org.assertj.core.api.Assertions.tuple;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.flowable.common.engine.api.constant.ReferenceTypes;
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.impl.history.HistoryLevel;
+import org.flowable.engine.impl.test.HistoryTestHelper;
+import org.flowable.engine.repository.ProcessDefinition;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.test.Deployment;
+import org.flowable.eventregistry.api.model.EventPayloadTypes;
+import org.flowable.eventsubscription.api.EventSubscription;
+import org.flowable.task.api.Task;
+import org.junit.jupiter.api.Test;
+
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+<span class="nc" id="L37">public class BpmnEventRegistryConsumerTest extends AbstractBpmnEventRegistryConsumerTest {</span>
+
+    @Test
+    @Deployment
+    public void testBoundaryEventListenerNoCorrelation() {
+<span class="nc" id="L42">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;process&quot;);</span>
+<span class="nc" id="L43">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L44">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;task&quot;);</span>
+        
+<span class="nc" id="L46">        EventSubscription eventSubscription = runtimeService.createEventSubscriptionQuery().activityId(&quot;eventBoundary&quot;).singleResult();</span>
+<span class="nc" id="L47">        assertThat(eventSubscription).isNotNull();</span>
+<span class="nc" id="L48">        assertThat(eventSubscription.getProcessInstanceId()).isEqualTo(processInstance.getId());</span>
+<span class="nc" id="L49">        assertThat(eventSubscription.getEventType()).isEqualTo(&quot;myEvent&quot;);</span>
+
+<span class="nc" id="L51">        inboundEventChannelAdapter.triggerTestEvent();</span>
+<span class="nc" id="L52">        Task afterTask = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L53">        assertThat(afterTask.getTaskDefinitionKey()).isEqualTo(&quot;taskAfterBoundary&quot;);</span>
+        
+<span class="nc" id="L55">        eventSubscription = runtimeService.createEventSubscriptionQuery().activityId(&quot;eventBoundary&quot;).singleResult();</span>
+<span class="nc" id="L56">        assertThat(eventSubscription).isNull();</span>
+<span class="nc" id="L57">    }</span>
+    
+    @Test
+    @Deployment
+    public void testBoundaryEventListenerNoCorrelationNoTrigger() {
+<span class="nc" id="L62">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;process&quot;);</span>
+<span class="nc" id="L63">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L64">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;task&quot;);</span>
+
+<span class="nc" id="L66">        taskService.complete(task.getId());</span>
+        
+<span class="nc" id="L68">        Task afterTask = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L69">        assertThat(afterTask.getTaskDefinitionKey()).isEqualTo(&quot;taskAfterTask&quot;);</span>
+        
+<span class="nc" id="L71">        EventSubscription eventSubscription = runtimeService.createEventSubscriptionQuery().activityId(&quot;eventBoundary&quot;).singleResult();</span>
+<span class="nc" id="L72">        assertThat(eventSubscription).isNull();</span>
+<span class="nc" id="L73">    }</span>
+
+    @Test
+    @Deployment
+    public void testBoundaryEventListenerWithCorrelation() {
+<span class="nc" id="L78">        Map&lt;String, Object&gt; variableMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L79">        variableMap.put(&quot;customerIdVar&quot;, &quot;kermit&quot;);</span>
+<span class="nc" id="L80">        ProcessInstance kermitProcessInstance = runtimeService.startProcessInstanceByKey(&quot;process&quot;, variableMap);</span>
+        
+<span class="nc" id="L82">        variableMap.clear();</span>
+<span class="nc" id="L83">        variableMap.put(&quot;customerIdVar&quot;, &quot;gonzo&quot;);</span>
+<span class="nc" id="L84">        ProcessInstance gonzoProcessInstance = runtimeService.startProcessInstanceByKey(&quot;process&quot;, variableMap);</span>
+ 
+<span class="nc" id="L86">        assertThat(taskService.createTaskQuery().processInstanceId(kermitProcessInstance.getId()).singleResult().getTaskDefinitionKey()).isEqualTo(&quot;task&quot;);</span>
+<span class="nc" id="L87">        assertThat(taskService.createTaskQuery().processInstanceId(gonzoProcessInstance.getId()).singleResult().getTaskDefinitionKey()).isEqualTo(&quot;task&quot;);</span>
+
+<span class="nc" id="L89">        inboundEventChannelAdapter.triggerTestEvent(&quot;kermit&quot;);</span>
+<span class="nc" id="L90">        assertThat(taskService.createTaskQuery().processInstanceId(kermitProcessInstance.getId()).singleResult().getTaskDefinitionKey()).isEqualTo(&quot;taskAfterBoundary&quot;);</span>
+<span class="nc" id="L91">        assertThat(taskService.createTaskQuery().processInstanceId(gonzoProcessInstance.getId()).singleResult().getTaskDefinitionKey()).isEqualTo(&quot;task&quot;);</span>
+
+<span class="nc" id="L93">        inboundEventChannelAdapter.triggerTestEvent(&quot;fozzie&quot;);</span>
+<span class="nc" id="L94">        assertThat(taskService.createTaskQuery().processInstanceId(kermitProcessInstance.getId()).singleResult().getTaskDefinitionKey()).isEqualTo(&quot;taskAfterBoundary&quot;);</span>
+<span class="nc" id="L95">        assertThat(taskService.createTaskQuery().processInstanceId(gonzoProcessInstance.getId()).singleResult().getTaskDefinitionKey()).isEqualTo(&quot;task&quot;);</span>
+
+<span class="nc" id="L97">        inboundEventChannelAdapter.triggerTestEvent(&quot;gonzo&quot;);</span>
+<span class="nc" id="L98">        assertThat(taskService.createTaskQuery().processInstanceId(kermitProcessInstance.getId()).singleResult().getTaskDefinitionKey()).isEqualTo(&quot;taskAfterBoundary&quot;);</span>
+<span class="nc" id="L99">        assertThat(taskService.createTaskQuery().processInstanceId(gonzoProcessInstance.getId()).singleResult().getTaskDefinitionKey()).isEqualTo(&quot;taskAfterBoundary&quot;);</span>
+<span class="nc" id="L100">    }</span>
+    
+    @Test
+    @Deployment
+    public void testBoundaryEventListenerWithPayload() {
+<span class="nc" id="L105">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;process&quot;);</span>
+<span class="nc" id="L106">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L107">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;task&quot;);</span>
+        
+<span class="nc" id="L109">        EventSubscription eventSubscription = runtimeService.createEventSubscriptionQuery().activityId(&quot;eventBoundary&quot;).singleResult();</span>
+<span class="nc" id="L110">        assertThat(eventSubscription).isNotNull();</span>
+<span class="nc" id="L111">        assertThat(eventSubscription.getProcessInstanceId()).isEqualTo(processInstance.getId());</span>
+<span class="nc" id="L112">        assertThat(eventSubscription.getEventType()).isEqualTo(&quot;myEvent&quot;);</span>
+
+<span class="nc" id="L114">        inboundEventChannelAdapter.triggerTestEvent(&quot;payloadStartCustomer&quot;);</span>
+<span class="nc" id="L115">        Task afterTask = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L116">        assertThat(afterTask.getTaskDefinitionKey()).isEqualTo(&quot;taskAfterBoundary&quot;);</span>
+        
+<span class="nc" id="L118">        assertThat(runtimeService.getVariables(processInstance.getId()))</span>
+<span class="nc" id="L119">            .containsOnly(</span>
+<span class="nc" id="L120">                entry(&quot;customerIdVar&quot;, &quot;payloadStartCustomer&quot;),</span>
+<span class="nc" id="L121">                entry(&quot;payload1&quot;, &quot;Hello World&quot;)</span>
+            );
+        
+<span class="nc" id="L124">        eventSubscription = runtimeService.createEventSubscriptionQuery().activityId(&quot;eventBoundary&quot;).singleResult();</span>
+<span class="nc" id="L125">        assertThat(eventSubscription).isNull();</span>
+<span class="nc" id="L126">    }</span>
+
+    @Test
+    @Deployment
+    public void testBoundaryEventWith3CorrelationsAllCombinations() {
+        // The BPMN has boundary events for each combination, the correlation matches a new task will be created
+<span class="nc" id="L132">        getEventRepositoryService().createEventModelBuilder()</span>
+<span class="nc" id="L133">                .key(&quot;customer&quot;)</span>
+<span class="nc" id="L134">                .resourceName(&quot;customer.event&quot;)</span>
+<span class="nc" id="L135">                .correlationParameter(&quot;id&quot;, EventPayloadTypes.STRING)</span>
+<span class="nc" id="L136">                .correlationParameter(&quot;first&quot;, EventPayloadTypes.STRING)</span>
+<span class="nc" id="L137">                .correlationParameter(&quot;last&quot;, EventPayloadTypes.STRING)</span>
+<span class="nc" id="L138">                .deploy();</span>
+
+<span class="nc" id="L140">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L141">                .processDefinitionKey(&quot;multiCorrelationProcess&quot;)</span>
+<span class="nc" id="L142">                .variable(&quot;customerId&quot;, &quot;1234&quot;)</span>
+<span class="nc" id="L143">                .variable(&quot;customerFirstName&quot;, &quot;John&quot;)</span>
+<span class="nc" id="L144">                .variable(&quot;customerLastName&quot;, &quot;Doe&quot;)</span>
+<span class="nc" id="L145">                .start();</span>
+
+<span class="nc" id="L147">        assertThat(taskService.createTaskQuery().processInstanceId(processInstance.getId()).list())</span>
+<span class="nc" id="L148">                .extracting(Task::getName)</span>
+<span class="nc" id="L149">                .containsExactlyInAnyOrder(&quot;User task&quot;);</span>
+
+<span class="nc" id="L151">        ObjectNode event = processEngineConfiguration.getObjectMapper().createObjectNode()</span>
+<span class="nc" id="L152">                .put(&quot;type&quot;, &quot;customer&quot;)</span>
+<span class="nc" id="L153">                .put(&quot;id&quot;, &quot;1235&quot;)</span>
+<span class="nc" id="L154">                .put(&quot;first&quot;, &quot;Jane&quot;)</span>
+<span class="nc" id="L155">                .put(&quot;last&quot;, &quot;Doele&quot;);</span>
+<span class="nc" id="L156">        inboundEventChannelAdapter.triggerTestEvent(event);</span>
+
+<span class="nc" id="L158">        assertThat(taskService.createTaskQuery().processInstanceId(processInstance.getId()).list())</span>
+<span class="nc" id="L159">                .extracting(Task::getName)</span>
+<span class="nc" id="L160">                .containsExactlyInAnyOrder(&quot;User task&quot;);</span>
+
+<span class="nc" id="L162">        event = processEngineConfiguration.getObjectMapper().createObjectNode()</span>
+<span class="nc" id="L163">                .put(&quot;type&quot;, &quot;customer&quot;)</span>
+<span class="nc" id="L164">                .put(&quot;id&quot;, &quot;1234&quot;)</span>
+<span class="nc" id="L165">                .put(&quot;first&quot;, &quot;John&quot;)</span>
+<span class="nc" id="L166">                .put(&quot;last&quot;, &quot;Doe&quot;);</span>
+<span class="nc" id="L167">        inboundEventChannelAdapter.triggerTestEvent(event);</span>
+
+<span class="nc" id="L169">        assertThat(taskService.createTaskQuery().processInstanceId(processInstance.getId()).list())</span>
+<span class="nc" id="L170">                .extracting(Task::getName)</span>
+<span class="nc" id="L171">                .containsExactlyInAnyOrder(</span>
+                        &quot;User task&quot;,
+                        &quot;Customer ID Task&quot;,
+                        &quot;Customer ID and First Name Task&quot;,
+                        &quot;Customer ID and Last Name Task&quot;,
+                        &quot;Customer ID, First Name and Last Name Task&quot;,
+                        &quot;First Name Task&quot;,
+                        &quot;First Name and Last Name Task&quot;,
+                        &quot;Last Name Task&quot;
+                );
+<span class="nc" id="L181">    }</span>
+
+    @Test
+    @Deployment
+    public void testBoundaryEventWith4CorrelationsAllCombinations() {
+        // The BPMN has boundary events for each combination, the correlation matches a new task will be created
+<span class="nc" id="L187">        getEventRepositoryService().createEventModelBuilder()</span>
+<span class="nc" id="L188">                .key(&quot;testEvent&quot;)</span>
+<span class="nc" id="L189">                .resourceName(&quot;test.event&quot;)</span>
+<span class="nc" id="L190">                .correlationParameter(&quot;id&quot;, EventPayloadTypes.STRING)</span>
+<span class="nc" id="L191">                .correlationParameter(&quot;orderId&quot;, EventPayloadTypes.STRING)</span>
+<span class="nc" id="L192">                .correlationParameter(&quot;firstName&quot;, EventPayloadTypes.STRING)</span>
+<span class="nc" id="L193">                .correlationParameter(&quot;lastName&quot;, EventPayloadTypes.STRING)</span>
+<span class="nc" id="L194">                .deploy();</span>
+
+<span class="nc" id="L196">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L197">                .processDefinitionKey(&quot;multiCorrelationProcess&quot;)</span>
+<span class="nc" id="L198">                .variable(&quot;customerId&quot;, &quot;customer-1&quot;)</span>
+<span class="nc" id="L199">                .variable(&quot;orderId&quot;, &quot;order-1&quot;)</span>
+<span class="nc" id="L200">                .variable(&quot;firstName&quot;, &quot;John&quot;)</span>
+<span class="nc" id="L201">                .variable(&quot;lastName&quot;, &quot;Doe&quot;)</span>
+<span class="nc" id="L202">                .start();</span>
+
+<span class="nc" id="L204">        assertThat(taskService.createTaskQuery().processInstanceId(processInstance.getId()).list())</span>
+<span class="nc" id="L205">                .extracting(Task::getName)</span>
+<span class="nc" id="L206">                .containsExactlyInAnyOrder(&quot;User task&quot;);</span>
+
+<span class="nc" id="L208">        ObjectNode event = processEngineConfiguration.getObjectMapper().createObjectNode()</span>
+<span class="nc" id="L209">                .put(&quot;type&quot;, &quot;testEvent&quot;)</span>
+<span class="nc" id="L210">                .put(&quot;id&quot;, &quot;customer-2&quot;)</span>
+<span class="nc" id="L211">                .put(&quot;orderId&quot;, &quot;order-2&quot;)</span>
+<span class="nc" id="L212">                .put(&quot;firstName&quot;, &quot;Jane&quot;)</span>
+<span class="nc" id="L213">                .put(&quot;lastName&quot;, &quot;Doele&quot;);</span>
+<span class="nc" id="L214">        inboundEventChannelAdapter.triggerTestEvent(event);</span>
+
+<span class="nc" id="L216">        assertThat(taskService.createTaskQuery().processInstanceId(processInstance.getId()).list())</span>
+<span class="nc" id="L217">                .extracting(Task::getName)</span>
+<span class="nc" id="L218">                .containsExactlyInAnyOrder(&quot;User task&quot;);</span>
+
+<span class="nc" id="L220">        event = processEngineConfiguration.getObjectMapper().createObjectNode()</span>
+<span class="nc" id="L221">                .put(&quot;type&quot;, &quot;testEvent&quot;)</span>
+<span class="nc" id="L222">                .put(&quot;id&quot;, &quot;customer-1&quot;)</span>
+<span class="nc" id="L223">                .put(&quot;orderId&quot;, &quot;order-1&quot;)</span>
+<span class="nc" id="L224">                .put(&quot;firstName&quot;, &quot;John&quot;)</span>
+<span class="nc" id="L225">                .put(&quot;lastName&quot;, &quot;Doe&quot;);</span>
+<span class="nc" id="L226">        inboundEventChannelAdapter.triggerTestEvent(event);</span>
+
+<span class="nc" id="L228">        assertThat(taskService.createTaskQuery().processInstanceId(processInstance.getId()).list())</span>
+<span class="nc" id="L229">                .extracting(Task::getName)</span>
+<span class="nc" id="L230">                .containsExactlyInAnyOrder(</span>
+                        &quot;User task&quot;,
+                        &quot;ID&quot;,
+                        &quot;Order ID&quot;,
+                        &quot;First Name&quot;,
+                        &quot;Last Name&quot;,
+                        &quot;ID and Order ID&quot;,
+                        &quot;ID and First Name&quot;,
+                        &quot;ID and Last Name&quot;,
+                        &quot;Order ID and First Name&quot;,
+                        &quot;Order ID and Last Name&quot;,
+                        &quot;First Name and Last Name&quot;,
+                        &quot;ID, Order ID and First Name&quot;,
+                        &quot;ID, Order ID and Last Name&quot;,
+                        &quot;ID, First Name and Last Name&quot;,
+                        &quot;Order ID, First Name and Last Name&quot;,
+                        &quot;ID, Order ID, First Name and Last Name&quot;
+                );
+<span class="nc" id="L248">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/eventregistry/BpmnEventRegistryConsumerTest.testBoundaryEventWith4CorrelationsAllCombinations.bpmn20.xml&quot;)
+    public void testBoundaryEventWith4CorrelationsSubsetOfCombinations() {
+        // The BPMN has boundary events for each combination, the correlation matches a new task will be created
+        // In this test we are going to match a subset of the tasks
+<span class="nc" id="L255">        getEventRepositoryService().createEventModelBuilder()</span>
+<span class="nc" id="L256">                .key(&quot;testEvent&quot;)</span>
+<span class="nc" id="L257">                .resourceName(&quot;test.event&quot;)</span>
+<span class="nc" id="L258">                .correlationParameter(&quot;id&quot;, EventPayloadTypes.STRING)</span>
+<span class="nc" id="L259">                .correlationParameter(&quot;orderId&quot;, EventPayloadTypes.STRING)</span>
+<span class="nc" id="L260">                .correlationParameter(&quot;firstName&quot;, EventPayloadTypes.STRING)</span>
+<span class="nc" id="L261">                .correlationParameter(&quot;lastName&quot;, EventPayloadTypes.STRING)</span>
+<span class="nc" id="L262">                .deploy();</span>
+
+<span class="nc" id="L264">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L265">                .processDefinitionKey(&quot;multiCorrelationProcess&quot;)</span>
+<span class="nc" id="L266">                .variable(&quot;customerId&quot;, &quot;customer-1&quot;)</span>
+<span class="nc" id="L267">                .variable(&quot;orderId&quot;, &quot;order-1&quot;)</span>
+<span class="nc" id="L268">                .variable(&quot;firstName&quot;, &quot;John&quot;)</span>
+<span class="nc" id="L269">                .variable(&quot;lastName&quot;, &quot;Doe&quot;)</span>
+<span class="nc" id="L270">                .start();</span>
+
+<span class="nc" id="L272">        assertThat(taskService.createTaskQuery().processInstanceId(processInstance.getId()).list())</span>
+<span class="nc" id="L273">                .extracting(Task::getName)</span>
+<span class="nc" id="L274">                .containsExactlyInAnyOrder(&quot;User task&quot;);</span>
+
+<span class="nc" id="L276">        ObjectNode event = processEngineConfiguration.getObjectMapper().createObjectNode()</span>
+<span class="nc" id="L277">                .put(&quot;type&quot;, &quot;testEvent&quot;)</span>
+<span class="nc" id="L278">                .put(&quot;id&quot;, &quot;customer-2&quot;)</span>
+<span class="nc" id="L279">                .put(&quot;orderId&quot;, &quot;order-1&quot;)</span>
+<span class="nc" id="L280">                .put(&quot;firstName&quot;, &quot;Jane&quot;)</span>
+<span class="nc" id="L281">                .put(&quot;lastName&quot;, &quot;Doe&quot;);</span>
+<span class="nc" id="L282">        inboundEventChannelAdapter.triggerTestEvent(event);</span>
+
+<span class="nc" id="L284">        assertThat(taskService.createTaskQuery().processInstanceId(processInstance.getId()).list())</span>
+<span class="nc" id="L285">                .extracting(Task::getName)</span>
+<span class="nc" id="L286">                .containsExactlyInAnyOrder(</span>
+                        &quot;User task&quot;,
+                        &quot;Order ID&quot;,
+                        &quot;Last Name&quot;,
+                        &quot;Order ID and Last Name&quot;
+                );
+
+<span class="nc" id="L293">        event = processEngineConfiguration.getObjectMapper().createObjectNode()</span>
+<span class="nc" id="L294">                .put(&quot;type&quot;, &quot;testEvent&quot;)</span>
+<span class="nc" id="L295">                .put(&quot;id&quot;, &quot;customer-2&quot;)</span>
+<span class="nc" id="L296">                .put(&quot;orderId&quot;, &quot;order-2&quot;)</span>
+<span class="nc" id="L297">                .put(&quot;firstName&quot;, &quot;John&quot;)</span>
+<span class="nc" id="L298">                .put(&quot;lastName&quot;, &quot;Smith&quot;);</span>
+<span class="nc" id="L299">        inboundEventChannelAdapter.triggerTestEvent(event);</span>
+
+<span class="nc" id="L301">        assertThat(taskService.createTaskQuery().processInstanceId(processInstance.getId()).list())</span>
+<span class="nc" id="L302">                .extracting(Task::getName)</span>
+<span class="nc" id="L303">                .containsExactlyInAnyOrder(</span>
+                        &quot;User task&quot;,
+                        &quot;Order ID&quot;,
+                        &quot;Last Name&quot;,
+                        &quot;Order ID and Last Name&quot;,
+                        // The first name is from the John Smith trigger
+                        &quot;First Name&quot;
+                );
+<span class="nc" id="L311">    }</span>
+
+    @Test
+    @Deployment
+    public void testReceiveEventTaskNoCorrelation() {
+<span class="nc" id="L316">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;process&quot;);</span>
+
+<span class="nc" id="L318">        EventSubscription eventSubscription = runtimeService.createEventSubscriptionQuery().activityId(&quot;task&quot;).singleResult();</span>
+<span class="nc" id="L319">        assertThat(eventSubscription).isNotNull();</span>
+<span class="nc" id="L320">        assertThat(eventSubscription.getProcessInstanceId()).isEqualTo(processInstance.getId());</span>
+<span class="nc" id="L321">        assertThat(eventSubscription.getEventType()).isEqualTo(&quot;myEvent&quot;);</span>
+
+<span class="nc" id="L323">        inboundEventChannelAdapter.triggerTestEvent();</span>
+<span class="nc" id="L324">        Task afterTask = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L325">        assertThat(afterTask.getTaskDefinitionKey()).isEqualTo(&quot;taskAfterTask&quot;);</span>
+
+<span class="nc" id="L327">        assertThat(runtimeService.createEventSubscriptionQuery().activityId(&quot;task&quot;).singleResult()).isNull();</span>
+<span class="nc" id="L328">    }</span>
+
+    @Test
+    @Deployment
+    public void testReceiveEventTaskWithCorrelationAndPayload() {
+<span class="nc" id="L333">        Map&lt;String, Object&gt; variableMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L334">        variableMap.put(&quot;customerIdVar&quot;, &quot;kermit&quot;);</span>
+<span class="nc" id="L335">        ProcessInstance kermitProcessInstance = runtimeService.startProcessInstanceByKey(&quot;process&quot;, variableMap);</span>
+
+<span class="nc" id="L337">        variableMap.clear();</span>
+<span class="nc" id="L338">        variableMap.put(&quot;customerIdVar&quot;, &quot;gonzo&quot;);</span>
+<span class="nc" id="L339">        ProcessInstance gonzoProcessInstance = runtimeService.startProcessInstanceByKey(&quot;process&quot;, variableMap);</span>
+
+<span class="nc" id="L341">        inboundEventChannelAdapter.triggerTestEvent(&quot;kermit&quot;);</span>
+<span class="nc" id="L342">        assertThat(taskService.createTaskQuery().processInstanceId(kermitProcessInstance.getId()).count()).isEqualTo(1);</span>
+<span class="nc" id="L343">        assertThat(taskService.createTaskQuery().processInstanceId(gonzoProcessInstance.getId()).count()).isZero();</span>
+
+<span class="nc" id="L345">        inboundEventChannelAdapter.triggerTestEvent(&quot;kermit&quot;);</span>
+<span class="nc" id="L346">        Task afterTask = taskService.createTaskQuery().processInstanceId(kermitProcessInstance.getId()).singleResult();</span>
+<span class="nc" id="L347">        assertThat(afterTask.getTaskDefinitionKey()).isEqualTo(&quot;taskAfterTask&quot;);</span>
+
+<span class="nc" id="L349">        assertThat(runtimeService.getVariables(kermitProcessInstance.getId()))</span>
+<span class="nc" id="L350">            .containsOnly(</span>
+<span class="nc" id="L351">                entry(&quot;customerIdVar&quot;, &quot;kermit&quot;),</span>
+<span class="nc" id="L352">                entry(&quot;payload1&quot;, &quot;Hello World&quot;)</span>
+            );
+
+<span class="nc" id="L355">        inboundEventChannelAdapter.triggerTestEvent(&quot;fozzie&quot;);</span>
+<span class="nc" id="L356">        assertThat(taskService.createTaskQuery().processInstanceId(kermitProcessInstance.getId()).count()).isEqualTo(1);</span>
+<span class="nc" id="L357">        assertThat(taskService.createTaskQuery().processInstanceId(gonzoProcessInstance.getId()).count()).isZero();</span>
+
+<span class="nc" id="L359">        inboundEventChannelAdapter.triggerTestEvent(&quot;gonzo&quot;);</span>
+<span class="nc" id="L360">        assertThat(taskService.createTaskQuery().processInstanceId(kermitProcessInstance.getId()).count()).isEqualTo(1);</span>
+<span class="nc" id="L361">        assertThat(taskService.createTaskQuery().processInstanceId(gonzoProcessInstance.getId()).count()).isEqualTo(1);</span>
+
+<span class="nc" id="L363">        inboundEventChannelAdapter.triggerTestEvent(&quot;kermit&quot;);</span>
+<span class="nc" id="L364">        assertThat(taskService.createTaskQuery().processInstanceId(kermitProcessInstance.getId()).count()).isEqualTo(1);</span>
+<span class="nc" id="L365">        assertThat(taskService.createTaskQuery().processInstanceId(gonzoProcessInstance.getId()).count()).isEqualTo(1);</span>
+
+<span class="nc" id="L367">    }</span>
+
+    @Test
+    @Deployment
+    public void testIntermediateCatchEventNoCorrelation() {
+<span class="nc" id="L372">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;process&quot;);</span>
+
+<span class="nc" id="L374">        EventSubscription eventSubscription = runtimeService.createEventSubscriptionQuery().activityId(&quot;catchEvent&quot;).singleResult();</span>
+<span class="nc" id="L375">        assertThat(eventSubscription).isNotNull();</span>
+<span class="nc" id="L376">        assertThat(eventSubscription.getProcessInstanceId()).isEqualTo(processInstance.getId());</span>
+<span class="nc" id="L377">        assertThat(eventSubscription.getEventType()).isEqualTo(&quot;myEvent&quot;);</span>
+
+<span class="nc" id="L379">        inboundEventChannelAdapter.triggerTestEvent();</span>
+<span class="nc" id="L380">        Task afterTask = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L381">        assertThat(afterTask.getTaskDefinitionKey()).isEqualTo(&quot;taskAfterTask&quot;);</span>
+
+<span class="nc" id="L383">        assertThat(runtimeService.createEventSubscriptionQuery().activityId(&quot;task&quot;).singleResult()).isNull();</span>
+<span class="nc" id="L384">    }</span>
+
+    @Test
+    @Deployment
+    public void testIntermediateCatchEventWithCorrelationAndPayload() {
+<span class="nc" id="L389">        Map&lt;String, Object&gt; variableMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L390">        variableMap.put(&quot;customerIdVar&quot;, &quot;kermit&quot;);</span>
+<span class="nc" id="L391">        ProcessInstance kermitProcessInstance = runtimeService.startProcessInstanceByKey(&quot;process&quot;, variableMap);</span>
+
+<span class="nc" id="L393">        variableMap.clear();</span>
+<span class="nc" id="L394">        variableMap.put(&quot;customerIdVar&quot;, &quot;gonzo&quot;);</span>
+<span class="nc" id="L395">        ProcessInstance gonzoProcessInstance = runtimeService.startProcessInstanceByKey(&quot;process&quot;, variableMap);</span>
+
+<span class="nc" id="L397">        inboundEventChannelAdapter.triggerTestEvent(&quot;kermit&quot;);</span>
+<span class="nc" id="L398">        assertThat(taskService.createTaskQuery().processInstanceId(kermitProcessInstance.getId()).count()).isEqualTo(1);</span>
+<span class="nc" id="L399">        assertThat(taskService.createTaskQuery().processInstanceId(gonzoProcessInstance.getId()).count()).isZero();</span>
+
+<span class="nc" id="L401">        inboundEventChannelAdapter.triggerTestEvent(&quot;kermit&quot;);</span>
+<span class="nc" id="L402">        Task afterTask = taskService.createTaskQuery().processInstanceId(kermitProcessInstance.getId()).singleResult();</span>
+<span class="nc" id="L403">        assertThat(afterTask.getTaskDefinitionKey()).isEqualTo(&quot;taskAfterTask&quot;);</span>
+
+<span class="nc" id="L405">        assertThat(runtimeService.getVariables(kermitProcessInstance.getId()))</span>
+<span class="nc" id="L406">            .containsOnly(</span>
+<span class="nc" id="L407">                entry(&quot;customerIdVar&quot;, &quot;kermit&quot;),</span>
+<span class="nc" id="L408">                entry(&quot;payload1&quot;, &quot;Hello World&quot;)</span>
+            );
+
+<span class="nc" id="L411">        inboundEventChannelAdapter.triggerTestEvent(&quot;fozzie&quot;);</span>
+<span class="nc" id="L412">        assertThat(taskService.createTaskQuery().processInstanceId(kermitProcessInstance.getId()).count()).isEqualTo(1);</span>
+<span class="nc" id="L413">        assertThat(taskService.createTaskQuery().processInstanceId(gonzoProcessInstance.getId()).count()).isZero();</span>
+
+<span class="nc" id="L415">        inboundEventChannelAdapter.triggerTestEvent(&quot;gonzo&quot;);</span>
+<span class="nc" id="L416">        assertThat(taskService.createTaskQuery().processInstanceId(kermitProcessInstance.getId()).count()).isEqualTo(1);</span>
+<span class="nc" id="L417">        assertThat(taskService.createTaskQuery().processInstanceId(gonzoProcessInstance.getId()).count()).isEqualTo(1);</span>
+
+<span class="nc" id="L419">        inboundEventChannelAdapter.triggerTestEvent(&quot;kermit&quot;);</span>
+<span class="nc" id="L420">        assertThat(taskService.createTaskQuery().processInstanceId(kermitProcessInstance.getId()).count()).isEqualTo(1);</span>
+<span class="nc" id="L421">        assertThat(taskService.createTaskQuery().processInstanceId(gonzoProcessInstance.getId()).count()).isEqualTo(1);</span>
+
+<span class="nc" id="L423">    }</span>
+
+
+    @Test
+    @Deployment
+    public void testProcessStartNoCorrelationParameter() {
+<span class="nc" id="L429">        ProcessDefinition processDefinition = repositoryService.createProcessDefinitionQuery().processDefinitionKey(&quot;process&quot;).singleResult();</span>
+<span class="nc" id="L430">        assertThat(processDefinition).isNotNull();</span>
+
+<span class="nc" id="L432">        EventSubscription eventSubscription = runtimeService.createEventSubscriptionQuery()</span>
+<span class="nc" id="L433">            .processDefinitionId(processDefinition.getId())</span>
+<span class="nc" id="L434">            .scopeType(ScopeTypes.BPMN)</span>
+<span class="nc" id="L435">            .singleResult();</span>
+<span class="nc" id="L436">        assertThat(eventSubscription).isNotNull();</span>
+<span class="nc" id="L437">        assertThat(eventSubscription.getEventType()).isEqualTo(&quot;myEvent&quot;);</span>
+
+<span class="nc" id="L439">        assertThat(runtimeService.createProcessInstanceQuery().list()).isEmpty();</span>
+
+<span class="nc bnc" id="L441" title="All 2 branches missed.">        for (int i = 1; i &lt;= 5; i++) {</span>
+<span class="nc" id="L442">            inboundEventChannelAdapter.triggerTestEvent();</span>
+<span class="nc" id="L443">            assertThat(runtimeService.createProcessInstanceQuery().list()).hasSize(i);</span>
+        }
+<span class="nc" id="L445">    }</span>
+    
+    @Test
+    @Deployment
+    public void testProcessStartSimpleCorrelationParameter() {
+<span class="nc" id="L450">        ProcessDefinition processDefinition = repositoryService.createProcessDefinitionQuery().processDefinitionKey(&quot;process&quot;).singleResult();</span>
+<span class="nc" id="L451">        assertThat(processDefinition).isNotNull();</span>
+
+<span class="nc" id="L453">        EventSubscription eventSubscription = runtimeService.createEventSubscriptionQuery()</span>
+<span class="nc" id="L454">            .processDefinitionId(processDefinition.getId())</span>
+<span class="nc" id="L455">            .scopeType(ScopeTypes.BPMN)</span>
+<span class="nc" id="L456">            .singleResult();</span>
+<span class="nc" id="L457">        assertThat(eventSubscription).isNotNull();</span>
+<span class="nc" id="L458">        assertThat(eventSubscription.getEventType()).isEqualTo(&quot;myEvent&quot;);</span>
+
+<span class="nc" id="L460">        assertThat(runtimeService.createProcessInstanceQuery().list()).isEmpty();</span>
+        
+<span class="nc" id="L462">        inboundEventChannelAdapter.triggerTestEvent(&quot;anotherCustomer&quot;);</span>
+<span class="nc" id="L463">        assertThat(runtimeService.createProcessInstanceQuery().list()).isEmpty();</span>
+
+<span class="nc bnc" id="L465" title="All 2 branches missed.">        for (int i = 1; i &lt;= 5; i++) {</span>
+<span class="nc" id="L466">            inboundEventChannelAdapter.triggerTestEvent(&quot;testCustomer&quot;);</span>
+<span class="nc" id="L467">            assertThat(runtimeService.createProcessInstanceQuery().list()).hasSize(i);</span>
+        }
+<span class="nc" id="L469">    }</span>
+    
+    @Test
+    @Deployment
+    public void testProcessStartWithPayload() {
+<span class="nc" id="L474">        ProcessDefinition processDefinition = repositoryService.createProcessDefinitionQuery().processDefinitionKey(&quot;process&quot;).singleResult();</span>
+<span class="nc" id="L475">        assertThat(processDefinition).isNotNull();</span>
+
+<span class="nc" id="L477">        EventSubscription eventSubscription = runtimeService.createEventSubscriptionQuery()</span>
+<span class="nc" id="L478">            .processDefinitionId(processDefinition.getId())</span>
+<span class="nc" id="L479">            .scopeType(ScopeTypes.BPMN)</span>
+<span class="nc" id="L480">            .singleResult();</span>
+<span class="nc" id="L481">        assertThat(eventSubscription).isNotNull();</span>
+<span class="nc" id="L482">        assertThat(eventSubscription.getEventType()).isEqualTo(&quot;myEvent&quot;);</span>
+
+<span class="nc" id="L484">        assertThat(runtimeService.createProcessInstanceQuery().list()).isEmpty();</span>
+        
+<span class="nc" id="L486">        inboundEventChannelAdapter.triggerTestEvent(&quot;payloadStartCustomer&quot;);</span>
+<span class="nc" id="L487">        ProcessInstance processInstance = runtimeService.createProcessInstanceQuery().processDefinitionKey(&quot;process&quot;).singleResult();</span>
+<span class="nc" id="L488">        assertThat(runtimeService.getVariables(processInstance.getId()))</span>
+<span class="nc" id="L489">            .containsOnly(</span>
+<span class="nc" id="L490">                entry(&quot;customerIdVar&quot;, &quot;payloadStartCustomer&quot;),</span>
+<span class="nc" id="L491">                entry(&quot;payload1&quot;, &quot;Hello World&quot;)</span>
+            );
+<span class="nc" id="L493">    }</span>
+    
+    @Test
+    @Deployment
+    public void testProcessStartWithEventSubProcess() {
+<span class="nc" id="L498">        ProcessDefinition processDefinition = repositoryService.createProcessDefinitionQuery().processDefinitionKey(&quot;process&quot;).singleResult();</span>
+<span class="nc" id="L499">        assertThat(processDefinition).isNotNull();</span>
+
+<span class="nc" id="L501">        EventSubscription eventSubscription = runtimeService.createEventSubscriptionQuery()</span>
+<span class="nc" id="L502">            .processDefinitionId(processDefinition.getId())</span>
+<span class="nc" id="L503">            .scopeType(ScopeTypes.BPMN)</span>
+<span class="nc" id="L504">            .singleResult();</span>
+<span class="nc" id="L505">        assertThat(eventSubscription).isNotNull();</span>
+<span class="nc" id="L506">        assertThat(eventSubscription.getEventType()).isEqualTo(&quot;myEvent&quot;);</span>
+
+<span class="nc" id="L508">        assertThat(runtimeService.createProcessInstanceQuery().list()).isEmpty();</span>
+
+<span class="nc" id="L510">        inboundEventChannelAdapter.triggerTestEvent(&quot;myVar1&quot;);</span>
+        
+<span class="nc" id="L512">        assertThat(runtimeService.createProcessInstanceQuery().list()).hasSize(1);</span>
+<span class="nc" id="L513">        String processInstanceId = runtimeService.createProcessInstanceQuery().singleResult().getId();</span>
+        
+<span class="nc" id="L515">        assertThat(taskService.createTaskQuery().processInstanceId(processInstanceId).taskDefinitionKey(&quot;task&quot;).count()).isEqualTo(1);</span>
+        
+<span class="nc" id="L517">        List&lt;EventSubscription&gt; eventSubProcessEventSubscriptions = runtimeService.createEventSubscriptionQuery()</span>
+<span class="nc" id="L518">            .processInstanceId(processInstanceId)</span>
+<span class="nc" id="L519">            .scopeType(ScopeTypes.BPMN)</span>
+<span class="nc" id="L520">            .list();</span>
+        
+<span class="nc" id="L522">        assertThat(eventSubProcessEventSubscriptions.size()).isEqualTo(2);</span>
+        
+<span class="nc bnc" id="L524" title="All 2 branches missed.">        for (EventSubscription subProcessEventSubscription : eventSubProcessEventSubscriptions) {</span>
+<span class="nc" id="L525">            assertThat(subProcessEventSubscription.getEventType()).isEqualTo(&quot;myEvent&quot;);</span>
+<span class="nc" id="L526">        }</span>
+        
+<span class="nc" id="L528">        inboundEventChannelAdapter.triggerTestEvent(&quot;myVar2&quot;);</span>
+        
+<span class="nc" id="L530">        assertThat(taskService.createTaskQuery().processInstanceId(processInstanceId).taskDefinitionKey(&quot;subProcessTask1&quot;).count()).isZero();</span>
+        
+<span class="nc" id="L532">        inboundEventChannelAdapter.triggerTestEvent(&quot;myVar1&quot;);</span>
+        
+<span class="nc" id="L534">        Task task = taskService.createTaskQuery().processInstanceId(processInstanceId).taskDefinitionKey(&quot;subProcessTask1&quot;).singleResult();</span>
+<span class="nc" id="L535">        assertThat(task).isNotNull();</span>
+        
+<span class="nc" id="L537">        assertThat(taskService.createTaskQuery().processInstanceId(processInstanceId).taskDefinitionKey(&quot;task&quot;).count()).isEqualTo(1);</span>
+        
+<span class="nc" id="L539">        inboundEventChannelAdapter.triggerTestEvent(&quot;myVar1Interrupting&quot;);</span>
+<span class="nc" id="L540">        assertThat(taskService.createTaskQuery().processInstanceId(processInstanceId).taskDefinitionKey(&quot;task&quot;).count()).isZero();</span>
+<span class="nc" id="L541">        assertThat(taskService.createTaskQuery().processInstanceId(processInstanceId).taskDefinitionKey(&quot;subProcessTask1&quot;).count()).isZero();</span>
+        
+<span class="nc" id="L543">        task = taskService.createTaskQuery().processInstanceId(processInstanceId).taskDefinitionKey(&quot;subProcessTask1Interrupting&quot;).singleResult();</span>
+<span class="nc" id="L544">        assertThat(task).isNotNull();</span>
+        
+<span class="nc" id="L546">        taskService.complete(task.getId());</span>
+        
+<span class="nc" id="L548">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceId(processInstanceId).count()).isZero();</span>
+<span class="nc" id="L549">    }</span>
+
+    @Test
+    @Deployment
+    public void testStartOnlyOneInstance() {
+<span class="nc bnc" id="L554" title="All 2 branches missed.">        for (int i = 1; i &lt;= 9; i++) {</span>
+<span class="nc" id="L555">            inboundEventChannelAdapter.triggerTestEvent(&quot;testCustomer&quot;);</span>
+<span class="nc" id="L556">            assertThat(runtimeService.createProcessInstanceQuery().list()).hasSize(1);</span>
+        }
+<span class="nc" id="L558">        assertThat(runtimeService.createProcessInstanceQuery().singleResult().getReferenceId()).isNotNull();</span>
+<span class="nc" id="L559">        assertThat(runtimeService.createProcessInstanceQuery().singleResult().getReferenceType()).isEqualTo(ReferenceTypes.EVENT_PROCESS);</span>
+
+<span class="nc bnc" id="L561" title="All 2 branches missed.">        for (int i = 1; i &lt;= 3; i++) {</span>
+<span class="nc" id="L562">            inboundEventChannelAdapter.triggerTestEvent(&quot;anotherTestCustomer&quot;);</span>
+<span class="nc" id="L563">            assertThat(runtimeService.createProcessInstanceQuery().list()).hasSize(2);</span>
+        }
+<span class="nc" id="L565">    }</span>
+    
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/eventregistry/BpmnEventRegistryConsumerTest.testStartOnlyOneInstance.bpmn20.xml&quot;)
+    public void testStartOneInstanceWithMultipleProcessDefinitionVersions() {
+<span class="nc" id="L570">        inboundEventChannelAdapter.triggerTestEvent(&quot;testCustomer&quot;);</span>
+<span class="nc" id="L571">        assertThat(runtimeService.createProcessInstanceQuery().processDefinitionKey(&quot;correlation&quot;).count()).isEqualTo(1);</span>
+
+<span class="nc bnc" id="L573" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L574">            assertThat(historyService.createHistoricProcessInstanceQuery().processDefinitionKey(&quot;correlation&quot;).count()).isEqualTo(1);</span>
+        }
+        
+<span class="nc" id="L577">        org.flowable.engine.repository.Deployment deployment = repositoryService.createDeployment()</span>
+<span class="nc" id="L578">            .addClasspathResource(&quot;org/flowable/engine/test/eventregistry/BpmnEventRegistryConsumerTest.testStartOnlyOneInstance.bpmn20.xml&quot;)</span>
+<span class="nc" id="L579">            .deploy();</span>
+<span class="nc" id="L580">        deploymentIdsForAutoCleanup.add(deployment.getId());</span>
+
+<span class="nc" id="L582">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionKey(&quot;correlation&quot;).latestVersion().singleResult().getVersion()).isEqualTo(2);</span>
+
+<span class="nc" id="L584">        inboundEventChannelAdapter.triggerTestEvent(&quot;testCustomer&quot;);</span>
+<span class="nc" id="L585">        assertThat(runtimeService.createProcessInstanceQuery().processDefinitionKey(&quot;correlation&quot;).count()).isEqualTo(1);</span>
+
+<span class="nc bnc" id="L587" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L588">            assertThat(historyService.createHistoricProcessInstanceQuery().processDefinitionKey(&quot;correlation&quot;).count()).isEqualTo(1);</span>
+        }
+
+<span class="nc" id="L591">        inboundEventChannelAdapter.triggerTestEvent(&quot;anotherTestCustomer&quot;);</span>
+<span class="nc" id="L592">        assertThat(runtimeService.createProcessInstanceQuery().processDefinitionKey(&quot;correlation&quot;).count()).isEqualTo(2);</span>
+<span class="nc bnc" id="L593" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L594">            assertThat(historyService.createHistoricProcessInstanceQuery().processDefinitionKey(&quot;correlation&quot;).count()).isEqualTo(2);</span>
+        }
+<span class="nc" id="L596">        inboundEventChannelAdapter.triggerTestEvent(&quot;anotherTestCustomer&quot;);</span>
+<span class="nc" id="L597">        assertThat(runtimeService.createProcessInstanceQuery().processDefinitionKey(&quot;correlation&quot;).count()).isEqualTo(2);</span>
+
+<span class="nc bnc" id="L599" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L600">            assertThat(historyService.createHistoricProcessInstanceQuery().processDefinitionKey(&quot;correlation&quot;).count()).isEqualTo(2);</span>
+        }
+
+<span class="nc" id="L603">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/eventregistry/BpmnEventRegistryConsumerTest.testStartOnlyOneInstance.bpmn20.xml&quot;)
+    public void testStartOneInstanceWithSingleDefinition() {
+
+<span class="nc" id="L609">        inboundEventChannelAdapter.triggerTestEvent(&quot;testCustomer&quot;);</span>
+<span class="nc" id="L610">        assertThat(runtimeService.createProcessInstanceQuery().processDefinitionKey(&quot;correlation&quot;).count()).isEqualTo(1);</span>
+<span class="nc" id="L611">        assertThat(taskService.createTaskQuery().singleResult()).isNotNull();</span>
+
+<span class="nc" id="L613">        inboundEventChannelAdapter.triggerTestEvent(&quot;testCustomer&quot;);</span>
+<span class="nc" id="L614">        assertThat(runtimeService.createProcessInstanceQuery().processDefinitionKey(&quot;correlation&quot;).count()).isEqualTo(1);</span>
+<span class="nc" id="L615">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/eventregistry/BpmnEventRegistryConsumerTest.testStartOnlyOneInstance.bpmn20.xml&quot;)
+    public void testStartOneInstanceWithAsyncStartInConfiguration() {
+
+<span class="nc" id="L621">        boolean originalEventRegistryStartProcessInstanceAsync = processEngineConfiguration.isEventRegistryStartProcessInstanceAsync();</span>
+        try {
+<span class="nc" id="L623">            processEngineConfiguration.setEventRegistryStartProcessInstanceAsync(true);</span>
+<span class="nc" id="L624">            inboundEventChannelAdapter.triggerTestEvent(&quot;testCustomer&quot;);</span>
+<span class="nc" id="L625">            assertThat(runtimeService.createProcessInstanceQuery().processDefinitionKey(&quot;correlation&quot;).count()).isEqualTo(1);</span>
+<span class="nc" id="L626">            assertThat(taskService.createTaskQuery().singleResult()).isNull();</span>
+<span class="nc" id="L627">            waitForJobExecutorToProcessAllJobs(10000, 200);</span>
+<span class="nc" id="L628">            assertThat(taskService.createTaskQuery().singleResult()).isNotNull();</span>
+
+<span class="nc" id="L630">            inboundEventChannelAdapter.triggerTestEvent(&quot;testCustomer&quot;);</span>
+<span class="nc" id="L631">            assertThat(runtimeService.createProcessInstanceQuery().processDefinitionKey(&quot;correlation&quot;).count()).isEqualTo(1);</span>
+
+        } finally {
+<span class="nc" id="L634">            processEngineConfiguration.setEventRegistryStartProcessInstanceAsync(originalEventRegistryStartProcessInstanceAsync);</span>
+        }
+<span class="nc" id="L636">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/eventregistry/BpmnEventRegistryConsumerTest.testStartOnlyOneInstanceAsync.bpmn20.xml&quot;)
+    public void testStartOneInstanceWithAsyncStartInProcessModel() {
+<span class="nc" id="L641">        inboundEventChannelAdapter.triggerTestEvent(&quot;testCustomer&quot;);</span>
+<span class="nc" id="L642">        assertThat(runtimeService.createProcessInstanceQuery().processDefinitionKey(&quot;correlation&quot;).count()).isEqualTo(1);</span>
+<span class="nc" id="L643">        assertThat(taskService.createTaskQuery().singleResult()).isNull();</span>
+<span class="nc" id="L644">        waitForJobExecutorToProcessAllJobs(10000, 200);</span>
+<span class="nc" id="L645">        assertThat(taskService.createTaskQuery().singleResult()).isNotNull();</span>
+
+<span class="nc" id="L647">        inboundEventChannelAdapter.triggerTestEvent(&quot;testCustomer&quot;);</span>
+<span class="nc" id="L648">        assertThat(runtimeService.createProcessInstanceQuery().processDefinitionKey(&quot;correlation&quot;).count()).isEqualTo(1);</span>
+<span class="nc" id="L649">    }</span>
+
+    @Test
+    public void testRedeployDefinitionWithRuntimeEventSubscriptions() {
+<span class="nc" id="L653">        org.flowable.engine.repository.Deployment deployment1 = repositoryService.createDeployment()</span>
+<span class="nc" id="L654">            .addClasspathResource(&quot;org/flowable/engine/test/eventregistry/BpmnEventRegistryConsumerTest.testRedeploy.bpmn20.xml&quot;)</span>
+<span class="nc" id="L655">            .deploy();</span>
+<span class="nc" id="L656">        deploymentIdsForAutoCleanup.add(deployment1.getId());</span>
+<span class="nc" id="L657">        ProcessDefinition processDefinition1 = repositoryService.createProcessDefinitionQuery().deploymentId(deployment1.getId()).singleResult();</span>
+
+        // After deploying, there should be one eventsubscription: to start the instance
+<span class="nc" id="L660">        assertThat( runtimeService.createEventSubscriptionQuery().list())</span>
+<span class="nc" id="L661">            .extracting(EventSubscription::getEventType, EventSubscription::getProcessDefinitionId, EventSubscription::getProcessInstanceId)</span>
+<span class="nc" id="L662">            .containsOnly(tuple(&quot;myEvent&quot;, processDefinition1.getId(), null));</span>
+
+        // After the instance is started, there should be one additional eventsubscription
+<span class="nc" id="L665">        inboundEventChannelAdapter.triggerTestEvent();</span>
+<span class="nc" id="L666">        ProcessInstance processInstance = runtimeService.createProcessInstanceQuery().singleResult();</span>
+<span class="nc" id="L667">        assertThat(processInstance.getProcessDefinitionId()).isEqualTo(processDefinition1.getId());</span>
+
+<span class="nc" id="L669">        assertThat( runtimeService.createEventSubscriptionQuery().list())</span>
+<span class="nc" id="L670">            .extracting(EventSubscription::getEventType, EventSubscription::getProcessDefinitionId, EventSubscription::getProcessInstanceId)</span>
+<span class="nc" id="L671">            .containsOnly(</span>
+<span class="nc" id="L672">                tuple(&quot;myEvent&quot;, processDefinition1.getId(), null),</span>
+<span class="nc" id="L673">                tuple(&quot;myEvent&quot;, processDefinition1.getId(), processInstance.getId())</span>
+            );
+
+        // Redeploying the same definition:
+        // Event subscription to start should reflect new definition id
+        // Existing subscription for boundary event should remain
+<span class="nc" id="L679">        org.flowable.engine.repository.Deployment deployment2 = repositoryService.createDeployment()</span>
+<span class="nc" id="L680">            .addClasspathResource(&quot;org/flowable/engine/test/eventregistry/BpmnEventRegistryConsumerTest.testRedeploy.bpmn20.xml&quot;)</span>
+<span class="nc" id="L681">            .deploy();</span>
+<span class="nc" id="L682">        deploymentIdsForAutoCleanup.add(deployment2.getId());</span>
+<span class="nc" id="L683">        ProcessDefinition processDefinition2 = repositoryService.createProcessDefinitionQuery().deploymentId(deployment2.getId()).singleResult();</span>
+
+<span class="nc" id="L685">        assertThat( runtimeService.createEventSubscriptionQuery().list())</span>
+<span class="nc" id="L686">            .extracting(EventSubscription::getEventType, EventSubscription::getProcessDefinitionId, EventSubscription::getProcessInstanceId)</span>
+<span class="nc" id="L687">            .containsOnly(</span>
+<span class="nc" id="L688">                tuple(&quot;myEvent&quot;, processDefinition2.getId(), null), // note the new definition id</span>
+<span class="nc" id="L689">                tuple(&quot;myEvent&quot;, processDefinition1.getId(), processInstance.getId()) // note the original id</span>
+            );
+
+        // Triggering the instance event subscription should continue the case instance like before
+<span class="nc" id="L693">        assertThat(taskService.createTaskQuery().processInstanceId(processInstance.getId()).list())</span>
+<span class="nc" id="L694">            .extracting(Task::getName)</span>
+<span class="nc" id="L695">            .containsOnly(&quot;My task&quot;);</span>
+
+<span class="nc" id="L697">        inboundEventChannelAdapter.triggerTestEvent();</span>
+
+        // Ended thanks to boundary event
+<span class="nc" id="L700">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L701">        processInstance = runtimeService.createProcessInstanceQuery().singleResult();</span>
+<span class="nc" id="L702">        assertThat(processInstance).isNotNull();</span>
+<span class="nc" id="L703">        assertThat(processInstance.getProcessDefinitionId()).isEqualTo(processDefinition2.getId());</span>
+
+<span class="nc" id="L705">        assertThat(runtimeService.createEventSubscriptionQuery().list())</span>
+<span class="nc" id="L706">            .extracting(EventSubscription::getEventType, EventSubscription::getProcessDefinitionId, EventSubscription::getProcessInstanceId)</span>
+<span class="nc" id="L707">            .containsOnly(</span>
+<span class="nc" id="L708">                    tuple(&quot;myEvent&quot;, processDefinition2.getId(), null),</span>
+<span class="nc" id="L709">                    tuple(&quot;myEvent&quot;, processDefinition2.getId(), processInstance.getId()) // triggering the test event started a new process</span>
+            );
+<span class="nc" id="L711">    }</span>
+
+    @Test
+    public void testEventRegistrySubscriptionsRecreatedOnDeploymentDelete() {
+<span class="nc" id="L715">        org.flowable.engine.repository.Deployment deployment1 = repositoryService.createDeployment()</span>
+<span class="nc" id="L716">            .addClasspathResource(&quot;org/flowable/engine/test/eventregistry/BpmnEventRegistryConsumerTest.testRedeploy.bpmn20.xml&quot;)</span>
+<span class="nc" id="L717">            .deploy();</span>
+<span class="nc" id="L718">        deploymentIdsForAutoCleanup.add(deployment1.getId());</span>
+<span class="nc" id="L719">        ProcessDefinition processDefinition1 = repositoryService.createProcessDefinitionQuery().deploymentId(deployment1.getId()).singleResult();</span>
+
+        // After deploying, there should be one eventsubscription: to start the instance
+<span class="nc" id="L722">        assertThat( runtimeService.createEventSubscriptionQuery().list())</span>
+<span class="nc" id="L723">            .extracting(EventSubscription::getEventType, EventSubscription::getProcessDefinitionId, EventSubscription::getProcessInstanceId)</span>
+<span class="nc" id="L724">            .containsOnly(tuple(&quot;myEvent&quot;, processDefinition1.getId(), null));</span>
+
+        // After the instance is started, there should be one additional eventsubscription
+<span class="nc" id="L727">        inboundEventChannelAdapter.triggerTestEvent();</span>
+<span class="nc" id="L728">        ProcessInstance processInstance = runtimeService.createProcessInstanceQuery().singleResult();</span>
+<span class="nc" id="L729">        assertThat(processInstance.getProcessDefinitionId()).isEqualTo(processDefinition1.getId());</span>
+
+<span class="nc" id="L731">        assertThat( runtimeService.createEventSubscriptionQuery().list())</span>
+<span class="nc" id="L732">            .extracting(EventSubscription::getEventType, EventSubscription::getProcessDefinitionId, EventSubscription::getProcessInstanceId)</span>
+<span class="nc" id="L733">            .containsOnly(</span>
+<span class="nc" id="L734">                tuple(&quot;myEvent&quot;, processDefinition1.getId(), null),</span>
+<span class="nc" id="L735">                tuple(&quot;myEvent&quot;, processDefinition1.getId(), processInstance.getId())</span>
+            );
+
+        // Redeploying the same definition:
+        // Event subscription to start should reflect new definition id
+        // Existing subscription for boundary event should remain
+<span class="nc" id="L741">        org.flowable.engine.repository.Deployment deployment2 = repositoryService.createDeployment()</span>
+<span class="nc" id="L742">            .addClasspathResource(&quot;org/flowable/engine/test/eventregistry/BpmnEventRegistryConsumerTest.testRedeploy.bpmn20.xml&quot;)</span>
+<span class="nc" id="L743">            .deploy();</span>
+<span class="nc" id="L744">        deploymentIdsForAutoCleanup.add(deployment2.getId());</span>
+<span class="nc" id="L745">        ProcessDefinition processDefinition2 = repositoryService.createProcessDefinitionQuery().deploymentId(deployment2.getId()).singleResult();</span>
+
+<span class="nc" id="L747">        assertThat( runtimeService.createEventSubscriptionQuery().list())</span>
+<span class="nc" id="L748">            .extracting(EventSubscription::getEventType, EventSubscription::getProcessDefinitionId, EventSubscription::getProcessInstanceId)</span>
+<span class="nc" id="L749">            .containsOnly(</span>
+<span class="nc" id="L750">                tuple(&quot;myEvent&quot;, processDefinition2.getId(), null), // note the new definition id</span>
+<span class="nc" id="L751">                tuple(&quot;myEvent&quot;, processDefinition1.getId(), processInstance.getId()) // note the original id</span>
+            );
+
+        // Triggering the instance event subscription should continue the case instance like before
+<span class="nc" id="L755">        assertThat(taskService.createTaskQuery().processInstanceId(processInstance.getId()).list())</span>
+<span class="nc" id="L756">            .extracting(Task::getName)</span>
+<span class="nc" id="L757">            .containsOnly(&quot;My task&quot;);</span>
+
+<span class="nc" id="L759">        inboundEventChannelAdapter.triggerTestEvent();</span>
+
+        // Ended thanks to boundary event
+<span class="nc" id="L762">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L763">        processInstance = runtimeService.createProcessInstanceQuery().singleResult();</span>
+<span class="nc" id="L764">        assertThat(processInstance).isNotNull();</span>
+<span class="nc" id="L765">        assertThat(processInstance.getProcessDefinitionId()).isEqualTo(processDefinition2.getId());</span>
+
+<span class="nc" id="L767">        assertThat(runtimeService.createEventSubscriptionQuery().list())</span>
+<span class="nc" id="L768">            .extracting(EventSubscription::getEventType, EventSubscription::getProcessDefinitionId, EventSubscription::getProcessInstanceId)</span>
+<span class="nc" id="L769">            .containsOnly(</span>
+<span class="nc" id="L770">                    tuple(&quot;myEvent&quot;, processDefinition2.getId(), null),</span>
+<span class="nc" id="L771">                    tuple(&quot;myEvent&quot;, processDefinition2.getId(), processInstance.getId()) // triggering the test event started a new process</span>
+            );
+
+<span class="nc" id="L774">        deploymentIdsForAutoCleanup.remove(deployment2.getId());</span>
+
+        // Removing the second definition should recreate the one from the first one
+        // There won't be a process instance since we will do cascaded delete of the deployment
+<span class="nc" id="L778">        repositoryService.deleteDeployment(deployment2.getId(), true);</span>
+<span class="nc bnc" id="L779" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+            // nothing to do, isHistoryLevelAtLeast will execute the jobs
+        }
+
+<span class="nc" id="L783">        assertThat( runtimeService.createEventSubscriptionQuery().list())</span>
+<span class="nc" id="L784">                .extracting(EventSubscription::getEventType, EventSubscription::getProcessDefinitionId, EventSubscription::getProcessInstanceId)</span>
+<span class="nc" id="L785">                .containsOnly(</span>
+<span class="nc" id="L786">                        tuple(&quot;myEvent&quot;, processDefinition1.getId(), null)</span>
+                );
+<span class="nc" id="L788">    }</span>
+
+    @Test
+    public void testEventRegistrySubscriptionsShouldNotBeRecreatedOnNonLatestDeploymentDelete() {
+<span class="nc" id="L792">        org.flowable.engine.repository.Deployment deployment1 = repositoryService.createDeployment()</span>
+<span class="nc" id="L793">            .addClasspathResource(&quot;org/flowable/engine/test/eventregistry/BpmnEventRegistryConsumerTest.testRedeploy.bpmn20.xml&quot;)</span>
+<span class="nc" id="L794">            .deploy();</span>
+<span class="nc" id="L795">        deploymentIdsForAutoCleanup.add(deployment1.getId());</span>
+<span class="nc" id="L796">        ProcessDefinition processDefinition1 = repositoryService.createProcessDefinitionQuery().deploymentId(deployment1.getId()).singleResult();</span>
+
+        // After deploying, there should be one eventsubscription: to start the instance
+<span class="nc" id="L799">        assertThat( runtimeService.createEventSubscriptionQuery().list())</span>
+<span class="nc" id="L800">            .extracting(EventSubscription::getEventType, EventSubscription::getProcessDefinitionId, EventSubscription::getProcessInstanceId)</span>
+<span class="nc" id="L801">            .containsOnly(tuple(&quot;myEvent&quot;, processDefinition1.getId(), null));</span>
+
+        // After the instance is started, there should be one additional eventsubscription
+<span class="nc" id="L804">        inboundEventChannelAdapter.triggerTestEvent();</span>
+<span class="nc" id="L805">        ProcessInstance processInstance = runtimeService.createProcessInstanceQuery().singleResult();</span>
+<span class="nc" id="L806">        assertThat(processInstance.getProcessDefinitionId()).isEqualTo(processDefinition1.getId());</span>
+
+<span class="nc" id="L808">        assertThat( runtimeService.createEventSubscriptionQuery().list())</span>
+<span class="nc" id="L809">            .extracting(EventSubscription::getEventType, EventSubscription::getProcessDefinitionId, EventSubscription::getProcessInstanceId)</span>
+<span class="nc" id="L810">            .containsOnly(</span>
+<span class="nc" id="L811">                tuple(&quot;myEvent&quot;, processDefinition1.getId(), null),</span>
+<span class="nc" id="L812">                tuple(&quot;myEvent&quot;, processDefinition1.getId(), processInstance.getId())</span>
+            );
+
+        // Redeploying the same definition:
+        // Event subscription to start should reflect new definition id
+        // Existing subscription for boundary event should remain
+<span class="nc" id="L818">        org.flowable.engine.repository.Deployment deployment2 = repositoryService.createDeployment()</span>
+<span class="nc" id="L819">            .addClasspathResource(&quot;org/flowable/engine/test/eventregistry/BpmnEventRegistryConsumerTest.testRedeploy.bpmn20.xml&quot;)</span>
+<span class="nc" id="L820">            .deploy();</span>
+<span class="nc" id="L821">        deploymentIdsForAutoCleanup.add(deployment2.getId());</span>
+<span class="nc" id="L822">        ProcessDefinition processDefinition2 = repositoryService.createProcessDefinitionQuery().deploymentId(deployment2.getId()).singleResult();</span>
+
+<span class="nc" id="L824">        assertThat( runtimeService.createEventSubscriptionQuery().list())</span>
+<span class="nc" id="L825">            .extracting(EventSubscription::getEventType, EventSubscription::getProcessDefinitionId, EventSubscription::getProcessInstanceId)</span>
+<span class="nc" id="L826">            .containsOnly(</span>
+<span class="nc" id="L827">                tuple(&quot;myEvent&quot;, processDefinition2.getId(), null), // note the new definition id</span>
+<span class="nc" id="L828">                tuple(&quot;myEvent&quot;, processDefinition1.getId(), processInstance.getId()) // note the original id</span>
+            );
+
+        // Triggering the instance event subscription should continue the case instance like before
+<span class="nc" id="L832">        assertThat(taskService.createTaskQuery().processInstanceId(processInstance.getId()).list())</span>
+<span class="nc" id="L833">            .extracting(Task::getName)</span>
+<span class="nc" id="L834">            .containsOnly(&quot;My task&quot;);</span>
+
+<span class="nc" id="L836">        inboundEventChannelAdapter.triggerTestEvent();</span>
+
+        // Ended thanks to boundary event
+<span class="nc" id="L839">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L840">        processInstance = runtimeService.createProcessInstanceQuery().singleResult();</span>
+<span class="nc" id="L841">        assertThat(processInstance).isNotNull();</span>
+<span class="nc" id="L842">        assertThat(processInstance.getProcessDefinitionId()).isEqualTo(processDefinition2.getId());</span>
+
+<span class="nc" id="L844">        assertThat(runtimeService.createEventSubscriptionQuery().list())</span>
+<span class="nc" id="L845">            .extracting(EventSubscription::getEventType, EventSubscription::getProcessDefinitionId, EventSubscription::getProcessInstanceId)</span>
+<span class="nc" id="L846">            .containsOnly(</span>
+<span class="nc" id="L847">                    tuple(&quot;myEvent&quot;, processDefinition2.getId(), null),</span>
+<span class="nc" id="L848">                    tuple(&quot;myEvent&quot;, processDefinition2.getId(), processInstance.getId()) // triggering the test event started a new process</span>
+            );
+
+<span class="nc" id="L851">        deploymentIdsForAutoCleanup.remove(deployment1.getId());</span>
+
+        // Removing the second definition should recreate the one from the first one
+        // There won't be a process instance since we will do cascaded delete of the deployment
+<span class="nc" id="L855">        repositoryService.deleteDeployment(deployment1.getId(), true);</span>
+
+<span class="nc bnc" id="L857" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+            // nothing to do, isHistoryLevelAtLeast will execute the jobs
+        }
+
+<span class="nc" id="L861">        assertThat( runtimeService.createEventSubscriptionQuery().list())</span>
+<span class="nc" id="L862">                .extracting(EventSubscription::getEventType, EventSubscription::getProcessDefinitionId, EventSubscription::getProcessInstanceId)</span>
+<span class="nc" id="L863">                .containsOnly(</span>
+<span class="nc" id="L864">                        tuple(&quot;myEvent&quot;, processDefinition2.getId(), null),</span>
+<span class="nc" id="L865">                        tuple(&quot;myEvent&quot;, processDefinition2.getId(), processInstance.getId())</span>
+                );
+<span class="nc" id="L867">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

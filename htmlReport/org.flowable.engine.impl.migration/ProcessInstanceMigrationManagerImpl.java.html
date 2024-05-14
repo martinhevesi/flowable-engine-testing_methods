@@ -1,0 +1,986 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ProcessInstanceMigrationManagerImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.migration</a> &gt; <span class="el_source">ProcessInstanceMigrationManagerImpl.java</span></div><h1>ProcessInstanceMigrationManagerImpl.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.impl.migration;
+
+import static org.flowable.engine.impl.bpmn.helper.AbstractClassDelegate.defaultInstantiateDelegate;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.Predicate;
+import java.util.stream.Collectors;
+
+import org.apache.commons.lang3.builder.EqualsBuilder;
+import org.flowable.batch.api.Batch;
+import org.flowable.batch.api.BatchPart;
+import org.flowable.batch.api.BatchService;
+import org.flowable.bpmn.model.Activity;
+import org.flowable.bpmn.model.BoundaryEvent;
+import org.flowable.bpmn.model.BpmnModel;
+import org.flowable.bpmn.model.CallActivity;
+import org.flowable.bpmn.model.ExternalWorkerServiceTask;
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.MultiInstanceLoopCharacteristics;
+import org.flowable.bpmn.model.ReceiveTask;
+import org.flowable.bpmn.model.ServiceTask;
+import org.flowable.bpmn.model.SubProcess;
+import org.flowable.bpmn.model.Task;
+import org.flowable.bpmn.model.UserTask;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.FlowableIllegalArgumentException;
+import org.flowable.common.engine.api.delegate.Expression;
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.api.variable.VariableContainer;
+import org.flowable.common.engine.impl.calendar.BusinessCalendar;
+import org.flowable.common.engine.impl.calendar.CycleBusinessCalendar;
+import org.flowable.common.engine.impl.el.ExpressionManager;
+import org.flowable.common.engine.impl.history.HistoryLevel;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.common.engine.impl.scripting.ScriptEngineRequest;
+import org.flowable.common.engine.impl.scripting.ScriptingEngines;
+import org.flowable.engine.delegate.JavaDelegate;
+import org.flowable.engine.impl.ProcessInstanceQueryImpl;
+import org.flowable.engine.impl.bpmn.helper.DelegateExpressionUtil;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.delegate.ActivityBehavior;
+import org.flowable.engine.impl.delegate.ActivityBehaviorInvocation;
+import org.flowable.engine.impl.delegate.invocation.JavaDelegateInvocation;
+import org.flowable.engine.impl.dynamic.AbstractDynamicStateManager;
+import org.flowable.engine.impl.dynamic.EnableActivityContainer;
+import org.flowable.engine.impl.dynamic.MoveExecutionEntityContainer;
+import org.flowable.engine.impl.dynamic.ProcessInstanceChangeState;
+import org.flowable.engine.impl.history.HistoryManager;
+import org.flowable.engine.impl.jobexecutor.ProcessInstanceMigrationJobHandler;
+import org.flowable.engine.impl.jobexecutor.ProcessInstanceMigrationStatusJobHandler;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntity;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntityImpl;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntityManager;
+import org.flowable.engine.impl.persistence.entity.ProcessDefinitionEntity;
+import org.flowable.engine.impl.persistence.entity.ProcessDefinitionEntityManager;
+import org.flowable.engine.impl.runtime.ChangeActivityStateBuilderImpl;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.engine.impl.util.ProcessDefinitionUtil;
+import org.flowable.engine.migration.ActivityMigrationMapping;
+import org.flowable.engine.migration.EnableActivityMapping;
+import org.flowable.engine.migration.ProcessInstanceBatchMigrationResult;
+import org.flowable.engine.migration.ProcessInstanceMigrationCallback;
+import org.flowable.engine.migration.ProcessInstanceMigrationDocument;
+import org.flowable.engine.migration.ProcessInstanceMigrationManager;
+import org.flowable.engine.migration.ProcessInstanceMigrationValidationResult;
+import org.flowable.engine.migration.Script;
+import org.flowable.engine.repository.ProcessDefinition;
+import org.flowable.engine.runtime.Execution;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.job.service.JobService;
+import org.flowable.job.service.TimerJobService;
+import org.flowable.job.service.impl.persistence.entity.JobEntity;
+import org.flowable.job.service.impl.persistence.entity.TimerJobEntity;
+
+<span class="nc" id="L94">public class ProcessInstanceMigrationManagerImpl extends AbstractDynamicStateManager implements ProcessInstanceMigrationManager {</span>
+
+<span class="nc" id="L96">    Predicate&lt;ExecutionEntity&gt; isSubProcessExecution = executionEntity -&gt; executionEntity.getCurrentFlowElement() instanceof SubProcess;</span>
+<span class="nc" id="L97">    Predicate&lt;ExecutionEntity&gt; isBoundaryEventExecution = executionEntity -&gt; executionEntity.getCurrentFlowElement() instanceof BoundaryEvent;</span>
+<span class="nc" id="L98">    Predicate&lt;ExecutionEntity&gt; isCallActivityExecution = executionEntity -&gt; executionEntity.getCurrentFlowElement() instanceof CallActivity;</span>
+<span class="nc" id="L99">    Predicate&lt;ExecutionEntity&gt; isActiveExecution = ExecutionEntity::isActive;</span>
+<span class="nc bnc" id="L100" title="All 2 branches missed.">    Predicate&lt;ExecutionEntity&gt; executionHasCurrentActivityId = executionEntity -&gt; executionEntity.getCurrentActivityId() != null;</span>
+
+    @Override
+    public ProcessInstanceMigrationValidationResult validateMigrateProcessInstancesOfProcessDefinition(String procDefKey, int procDefVer, String procDefTenantId, ProcessInstanceMigrationDocument document, CommandContext commandContext) {
+<span class="nc" id="L104">        ProcessDefinition processDefinition = resolveProcessDefinition(procDefKey, procDefVer, procDefTenantId, commandContext);</span>
+<span class="nc" id="L105">        return validateMigrateProcessInstancesOfProcessDefinition(processDefinition.getId(), document, commandContext);</span>
+    }
+
+    @Override
+    public ProcessInstanceMigrationValidationResult validateMigrateProcessInstancesOfProcessDefinition(String processDefinitionId, ProcessInstanceMigrationDocument document, CommandContext commandContext) {
+<span class="nc" id="L110">        ProcessInstanceMigrationValidationResult validationResult = new ProcessInstanceMigrationValidationResult();</span>
+<span class="nc" id="L111">        ProcessDefinition processDefinition = resolveProcessDefinition(document, commandContext);</span>
+<span class="nc bnc" id="L112" title="All 2 branches missed.">        if (processDefinition == null) {</span>
+<span class="nc" id="L113">            validationResult.addValidationMessage(&quot;Cannot find the process definition to migrate to &quot; + printProcessDefinitionIdentifierMessage(document));</span>
+        } else {
+<span class="nc" id="L115">            BpmnModel bpmnModel = ProcessDefinitionUtil.getBpmnModel(processDefinition.getId());</span>
+<span class="nc bnc" id="L116" title="All 2 branches missed.">            if (bpmnModel == null) {</span>
+<span class="nc" id="L117">                validationResult.addValidationMessage(&quot;Cannot find the Bpmn model of the process definition to migrate to, with &quot; + printProcessDefinitionIdentifierMessage(document));</span>
+            } else {
+<span class="nc" id="L119">                BpmnModel newModel = ProcessDefinitionUtil.getBpmnModel(processDefinition.getId());</span>
+        
+<span class="nc" id="L121">                ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc" id="L122">                ExecutionEntityManager executionEntityManager = processEngineConfiguration.getExecutionEntityManager();</span>
+<span class="nc" id="L123">                List&lt;ProcessInstance&gt; processInstances = executionEntityManager.findProcessInstanceByQueryCriteria(</span>
+<span class="nc" id="L124">                        new ProcessInstanceQueryImpl(commandContext, processEngineConfiguration).processDefinitionId(processDefinitionId));</span>
+        
+<span class="nc bnc" id="L126" title="All 2 branches missed.">                for (ProcessInstance processInstance : processInstances) {</span>
+<span class="nc" id="L127">                    doValidateProcessInstanceMigration(processInstance.getId(), processDefinition.getTenantId(), newModel, document, validationResult, commandContext);</span>
+<span class="nc" id="L128">                }</span>
+            }
+        }
+        
+<span class="nc" id="L132">        return validationResult;</span>
+    }
+
+    @Override
+    public ProcessInstanceMigrationValidationResult validateMigrateProcessInstance(String processInstanceId, ProcessInstanceMigrationDocument document, CommandContext commandContext) {
+<span class="nc" id="L137">        ProcessInstanceMigrationValidationResult validationResult = new ProcessInstanceMigrationValidationResult();</span>
+        // Check that the processDefinition exists and get its associated BpmnModel
+<span class="nc" id="L139">        ProcessDefinition processDefinition = resolveProcessDefinition(document, commandContext);</span>
+<span class="nc bnc" id="L140" title="All 2 branches missed.">        if (processDefinition == null) {</span>
+<span class="nc" id="L141">            validationResult.addValidationMessage((&quot;Cannot find the process definition to migrate to, with &quot; + printProcessDefinitionIdentifierMessage(document)));</span>
+        } else {
+<span class="nc" id="L143">            BpmnModel bpmnModel = ProcessDefinitionUtil.getBpmnModel(processDefinition.getId());</span>
+<span class="nc bnc" id="L144" title="All 2 branches missed.">            if (bpmnModel == null) {</span>
+<span class="nc" id="L145">                validationResult.addValidationMessage(&quot;Cannot find the Bpmn model of the process definition to migrate to, with &quot; + printProcessDefinitionIdentifierMessage(document));</span>
+            } else {
+<span class="nc" id="L147">                doValidateProcessInstanceMigration(processInstanceId, processDefinition.getTenantId(), bpmnModel, document, validationResult, commandContext);</span>
+            }
+        }
+        
+<span class="nc" id="L151">        return validationResult;</span>
+    }
+
+    protected void doValidateProcessInstanceMigration(String processInstanceId, String tenantId, BpmnModel newModel, 
+                    ProcessInstanceMigrationDocument document, ProcessInstanceMigrationValidationResult validationResult, CommandContext commandContext) {
+        
+        // Check that the processInstance exists
+<span class="nc" id="L158">        ExecutionEntityManager executionEntityManager = CommandContextUtil.getExecutionEntityManager(commandContext);</span>
+<span class="nc" id="L159">        ExecutionEntity processInstanceExecution = executionEntityManager.findById(processInstanceId);</span>
+<span class="nc bnc" id="L160" title="All 2 branches missed.">        if (processInstanceExecution == null) {</span>
+<span class="nc" id="L161">            validationResult.addValidationMessage(&quot;Cannot find process instance with id:'&quot; + processInstanceId + &quot;'&quot;);</span>
+<span class="nc" id="L162">            return;</span>
+        }
+
+<span class="nc" id="L165">        doValidateActivityMappings(processInstanceId, document.getActivityMigrationMappings(), newModel, document, validationResult, commandContext);</span>
+<span class="nc" id="L166">    }</span>
+
+    protected void doValidateActivityMappings(String processInstanceId, List&lt;ActivityMigrationMapping&gt; activityMappings, BpmnModel newModel, 
+                    ProcessInstanceMigrationDocument document, ProcessInstanceMigrationValidationResult validationResult, CommandContext commandContext) {
+        
+<span class="nc" id="L171">        ExpressionManager expressionManager = CommandContextUtil.getProcessEngineConfiguration(commandContext).getExpressionManager();</span>
+<span class="nc" id="L172">        ExecutionEntityManager executionEntityManager = CommandContextUtil.getExecutionEntityManager(commandContext);</span>
+<span class="nc" id="L173">        ExecutionEntity processInstanceExecution = executionEntityManager.findById(processInstanceId);</span>
+<span class="nc" id="L174">        BpmnModel currentModel = ProcessDefinitionUtil.getBpmnModel(processInstanceExecution.getProcessDefinitionId());</span>
+
+<span class="nc" id="L176">        HashMap&lt;String, ActivityMigrationMapping&gt; mainProcessActivityMappingByFromActivityId = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L177">        HashMap&lt;String, HashMap&lt;String, ActivityMigrationMapping&gt;&gt; subProcessActivityMappingsByCallActivityIdAndFromActivityId = new HashMap&lt;&gt;();</span>
+
+<span class="nc bnc" id="L179" title="All 2 branches missed.">        for (ActivityMigrationMapping activityMigrationMapping : activityMappings) {</span>
+<span class="nc" id="L180">            splitMigrationMappingByCallActivitySubProcessScope(activityMigrationMapping, mainProcessActivityMappingByFromActivityId, subProcessActivityMappingsByCallActivityIdAndFromActivityId);</span>
+<span class="nc" id="L181">        }</span>
+
+<span class="nc" id="L183">        List&lt;ExecutionEntity&gt; activeMainProcessExecutions = executionEntityManager.findChildExecutionsByProcessInstanceId(processInstanceId);</span>
+
+        //For each &quot;running&quot; active activity of the processInstance, check that there's a mapping defined or if it can be found in the new definition (auto-mapped by activity id)
+<span class="nc" id="L186">        List&lt;ExecutionEntity&gt; mappableMainProcessExecutions = activeMainProcessExecutions.stream()</span>
+<span class="nc" id="L187">            .filter(executionHasCurrentActivityId)</span>
+<span class="nc" id="L188">            .filter(isActiveExecution)</span>
+<span class="nc" id="L189">            .filter(isSubProcessExecution.negate())</span>
+<span class="nc" id="L190">            .filter(isBoundaryEventExecution.negate())</span>
+<span class="nc" id="L191">            .collect(Collectors.toList());</span>
+
+<span class="nc bnc" id="L193" title="All 2 branches missed.">        for (ExecutionEntity execution : mappableMainProcessExecutions) {</span>
+<span class="nc" id="L194">            String executionActivityId = execution.getCurrentActivityId();</span>
+<span class="nc" id="L195">            FlowElement executionFlowElement = execution.getCurrentFlowElement();</span>
+
+            //Not mapped executions
+<span class="nc bnc" id="L198" title="All 2 branches missed.">            if (!mainProcessActivityMappingByFromActivityId.containsKey(executionActivityId)) {</span>
+
+<span class="nc bnc" id="L200" title="All 2 branches missed.">                if (executionFlowElement instanceof CallActivity) {</span>
+                    //CallActivity... when not mapped explicitly and none of its children activities are mapped (toParentProcess), then the call activity should exist in the new model with the same callElement
+                    //If the call activity is only partially mapped (not all its executing activity children are mapped toParentProcess), then call activity should still exists in the new model with the same callElement
+<span class="nc bnc" id="L203" title="All 2 branches missed.">                    if (subProcessActivityMappingsByCallActivityIdAndFromActivityId.containsKey(executionActivityId)) {</span>
+                        //Check if all the call activity executing children are mapped, if there's any unMapped execution, the call activity must exists in the new model with the same callElement
+<span class="nc" id="L205">                        List&lt;ExecutionEntity&gt; subProcessChildExecutions = executionEntityManager.findChildExecutionsByProcessInstanceId(execution.getSubProcessInstance().getId());</span>
+<span class="nc" id="L206">                        Set&lt;String&gt; childSubProcessExecutionActivityIds = subProcessChildExecutions.stream().map(Execution::getActivityId).collect(Collectors.toSet());</span>
+<span class="nc" id="L207">                        Set&lt;String&gt; mappedSubProcessActivityIds = subProcessActivityMappingsByCallActivityIdAndFromActivityId.get(executionActivityId).keySet();</span>
+<span class="nc" id="L208">                        childSubProcessExecutionActivityIds.removeAll(mappedSubProcessActivityIds);</span>
+<span class="nc" id="L209">                        boolean childrenFullyMapped = childSubProcessExecutionActivityIds.isEmpty();</span>
+
+<span class="nc bnc" id="L211" title="All 2 branches missed.">                        if (!childrenFullyMapped) {</span>
+<span class="nc" id="L212">                            FlowElement newModelFlowElement = newModel.getFlowElement(executionActivityId);</span>
+<span class="nc bnc" id="L213" title="All 2 branches missed.">                            if (newModelFlowElement == null) {</span>
+<span class="nc" id="L214">                                validationResult.addValidationMessage(String.format(&quot;Incomplete migration mapping for call activity. The call activity '%s' does not exist in the new model. &quot;</span>
+                                    + &quot;Running subProcess activities '%s' should also be mapped for migration (or the call activity itself)&quot;, executionActivityId, childSubProcessExecutionActivityIds));
+<span class="nc bnc" id="L216" title="All 2 branches missed.">                            } else if (newModelFlowElement instanceof CallActivity) {</span>
+<span class="nc bnc" id="L217" title="All 2 branches missed.">                                if (!referToSameCalledElement((CallActivity) executionFlowElement, (CallActivity) newModelFlowElement)) {</span>
+<span class="nc" id="L218">                                    validationResult.addValidationMessage(String.format(&quot;Incomplete migration mapping for call activity. The call activity '%s' called element is different in the new model. &quot;</span>
+                                        + &quot;Running subProcess activities '%s' should also be mapped for migration (or the call activity itself)&quot;, executionActivityId, childSubProcessExecutionActivityIds));
+                                }
+<span class="nc bnc" id="L221" title="All 2 branches missed.">                                if (((CallActivity) executionFlowElement).hasMultiInstanceLoopCharacteristics() ^ ((CallActivity) newModelFlowElement).hasMultiInstanceLoopCharacteristics()) {</span>
+<span class="nc" id="L222">                                    validationResult.addValidationMessage(String.format(&quot;Incomplete migration mapping for call activity. The Call activity '%s' loop characteristics is different in new model. &quot;</span>
+                                        + &quot;Running subProcess activities '%s' should also be mapped for migration (or the call activity itself)&quot;, executionActivityId, childSubProcessExecutionActivityIds));
+                                }
+                            } else {
+<span class="nc" id="L226">                                validationResult.addValidationMessage(String.format(&quot;Incomplete migration mapping for call activity. Activity '%s' is not a Call Activity in the new model. &quot;</span>
+                                                + &quot;Running subProcess activities '%s' should also be mapped for migration (or the call activity itself)&quot;, 
+                                                executionActivityId, childSubProcessExecutionActivityIds));
+                            }
+                        }
+<span class="nc" id="L231">                    } else {</span>
+<span class="nc" id="L232">                        FlowElement newModelFlowElement = newModel.getFlowElement(executionActivityId);</span>
+<span class="nc bnc" id="L233" title="All 2 branches missed.">                        if (newModelFlowElement == null) {</span>
+<span class="nc" id="L234">                            validationResult.addValidationMessage(&quot;Call activity '&quot; + executionActivityId + &quot;' does not exist in the new model. It must be mapped explicitly for migration (or all its child activities)&quot;);</span>
+<span class="nc bnc" id="L235" title="All 2 branches missed.">                        } else if (newModelFlowElement instanceof CallActivity) {</span>
+<span class="nc bnc" id="L236" title="All 2 branches missed.">                            if (!referToSameCalledElement((CallActivity) executionFlowElement, (CallActivity) newModelFlowElement)) {</span>
+<span class="nc" id="L237">                                validationResult.addValidationMessage(&quot;Call activity '&quot; + executionActivityId + &quot;' has a different called element in the new model. It must be mapped explicitly for migration (or all its child activities)&quot;);</span>
+                            }
+<span class="nc bnc" id="L239" title="All 2 branches missed.">                            if (((CallActivity) executionFlowElement).hasMultiInstanceLoopCharacteristics() ^ ((CallActivity) newModelFlowElement).hasMultiInstanceLoopCharacteristics()) {</span>
+<span class="nc" id="L240">                                validationResult.addValidationMessage(&quot;Call activity '&quot; + executionActivityId + &quot;' has a different loop characteristics is different in new model. It must be mapped explicitly for migration (or all its child activities)&quot;);</span>
+                            }
+                        } else {
+<span class="nc" id="L243">                            validationResult.addValidationMessage(&quot;Call activity '&quot; + executionActivityId + &quot;' is not a Call Activity in the new model. It must be mapped explicitly for migration (or all its child activities)&quot;);</span>
+                        }
+                    }
+<span class="nc" id="L246">                    continue;</span>
+                }
+
+                //auto-mapping -&gt; fail if the unMapped activityId not found in the new Model ... unless its a child of a &quot;mapped&quot; multiInstance activity
+<span class="nc bnc" id="L250" title="All 2 branches missed.">                if (!isActivityIdInProcessDefinitionModel(executionActivityId, newModel)) {</span>
+                    //Check if the execution is inside a MultiInstance parent and if so, check that its mapped
+<span class="nc" id="L252">                    FlowElement currentModelFlowElement = currentModel.getFlowElement(executionActivityId);</span>
+<span class="nc" id="L253">                    String flowElementMultiInstanceParentId = getFlowElementMultiInstanceParentId(currentModelFlowElement);</span>
+<span class="nc bnc" id="L254" title="All 4 branches missed.">                    if (flowElementMultiInstanceParentId == null || !mainProcessActivityMappingByFromActivityId.containsKey(flowElementMultiInstanceParentId)) {</span>
+<span class="nc" id="L255">                        validationResult.addValidationMessage(&quot;Process instance (id:'&quot; + processInstanceId + &quot;') has a running Activity (id:'&quot; + executionActivityId + </span>
+                        		&quot;') that is not mapped for migration (Or its Multi-Instance parent)&quot;);
+<span class="nc" id="L257">                        continue;</span>
+                    }
+                }
+            }
+
+            //Check in explicit mappings
+<span class="nc bnc" id="L263" title="All 2 branches missed.">            if (mainProcessActivityMappingByFromActivityId.containsKey(executionActivityId)) {</span>
+<span class="nc" id="L264">                ActivityMigrationMapping mapping = mainProcessActivityMappingByFromActivityId.get(executionActivityId);</span>
+<span class="nc" id="L265">                BpmnModel mappingModel = newModel;</span>
+<span class="nc bnc" id="L266" title="All 2 branches missed.">                if (mapping.isToCallActivity()) {</span>
+<span class="nc" id="L267">                    FlowElement callActivityFlowElement = newModel.getFlowElement(mapping.getToCallActivityId());</span>
+<span class="nc bnc" id="L268" title="All 2 branches missed.">                    if (callActivityFlowElement instanceof CallActivity) {</span>
+<span class="nc" id="L269">                        CallActivity callActivity = (CallActivity) callActivityFlowElement;</span>
+<span class="nc" id="L270">                        String procDefKey = callActivity.getCalledElement();</span>
+<span class="nc bnc" id="L271" title="All 2 branches missed.">                        if (isExpression(procDefKey)) {</span>
+<span class="nc" id="L272">                            Expression expression = expressionManager.createExpression(procDefKey);</span>
+                            try {
+<span class="nc" id="L274">                                procDefKey = expression.getValue(processInstanceExecution).toString();</span>
+<span class="nc" id="L275">                            } catch (FlowableException e) {</span>
+<span class="nc" id="L276">                                procDefKey = document.getProcessInstanceVariables().getOrDefault(procDefKey.substring(2, procDefKey.length() - 1), procDefKey).toString();</span>
+<span class="nc" id="L277">                            }</span>
+                        }
+                        try {
+<span class="nc" id="L280">                            ProcessDefinition mappingProcDef = resolveProcessDefinition(procDefKey, mapping.getCallActivityProcessDefinitionVersion(), document.getMigrateToProcessDefinitionTenantId(), commandContext);</span>
+<span class="nc" id="L281">                            mappingModel = ProcessDefinitionUtil.getBpmnModel(mappingProcDef.getId());</span>
+<span class="nc" id="L282">                        } catch (FlowableException e) {</span>
+<span class="nc" id="L283">                            validationResult.addValidationMessage(e.getMessage() + &quot; for call activity element with id '&quot; + mapping.getToCallActivityId() + &quot;' in the process definition with id '&quot; + mappingModel.getMainProcess().getId() + &quot;'&quot;);</span>
+<span class="nc" id="L284">                            continue;</span>
+<span class="nc" id="L285">                        }</span>
+<span class="nc" id="L286">                    } else {</span>
+<span class="nc" id="L287">                        validationResult.addValidationMessage(&quot;There's no call activity element with id '&quot; + mapping.getToCallActivityId() + &quot;' in the process definition with id '&quot; + mappingModel.getMainProcess().getId() + &quot;'&quot;);</span>
+<span class="nc" id="L288">                        continue;</span>
+                    }
+                }
+
+<span class="nc bnc" id="L292" title="All 2 branches missed.">                if (mapping.isToParentProcess()) {</span>
+<span class="nc" id="L293">                    FlowElement callActivityFlowElement = newModel.getFlowElement(mapping.getToCallActivityId());</span>
+<span class="nc" id="L294">                    throw new UnsupportedOperationException(&quot;Not implemented yet!!!&quot;);</span>
+                }
+
+                //Check the target flow element
+<span class="nc" id="L298">                List&lt;String&gt; toActivityIds = mapping.getToActivityIds();</span>
+<span class="nc bnc" id="L299" title="All 2 branches missed.">                for (String targetActivityId : toActivityIds) {</span>
+<span class="nc bnc" id="L300" title="All 2 branches missed.">                    if (!isActivityIdInProcessDefinitionModel(targetActivityId, mappingModel)) {</span>
+<span class="nc" id="L301">                        validationResult.addValidationMessage(&quot;Invalid mapping for '&quot; + execution.getCurrentActivityId() + &quot;' to '&quot; + </span>
+<span class="nc" id="L302">                        		targetActivityId + &quot;', cannot be found in the process definition with id '&quot; + mappingModel.getMainProcess().getId() + &quot;'&quot;);</span>
+<span class="nc" id="L303">                        continue;</span>
+                    }
+                    //We cannot move an activity inside a MultiInstance container
+<span class="nc" id="L306">                    FlowElement targetFlowElement = mappingModel.getFlowElement(targetActivityId);</span>
+<span class="nc" id="L307">                    String targetFlowElementMultiInstanceParentId = getFlowElementMultiInstanceParentId(targetFlowElement);</span>
+<span class="nc bnc" id="L308" title="All 2 branches missed.">                    if (targetFlowElementMultiInstanceParentId != null) {</span>
+<span class="nc" id="L309">                        validationResult.addValidationMessage(&quot;Invalid mapping for '&quot; + execution.getCurrentActivityId() + &quot;' to '&quot; + targetActivityId + &quot;', cannot migrate arbitrarily inside a Multi Instance container '&quot; + </span>
+<span class="nc" id="L310">                        		targetFlowElementMultiInstanceParentId + &quot;' inside process definition with id '&quot; + mappingModel.getMainProcess().getId() + &quot;'&quot;);</span>
+<span class="nc" id="L311">                        continue;</span>
+                    }
+<span class="nc" id="L313">                }</span>
+            }
+<span class="nc" id="L315">        }</span>
+<span class="nc" id="L316">    }</span>
+
+    @Override
+    public Batch batchMigrateProcessInstancesOfProcessDefinition(String procDefKey, int procDefVer, String procDefTenantId, ProcessInstanceMigrationDocument document, CommandContext commandContext) {
+<span class="nc" id="L320">        ProcessDefinition processDefinition = resolveProcessDefinition(procDefKey, procDefVer, procDefTenantId, commandContext);</span>
+<span class="nc" id="L321">        return batchMigrateProcessInstancesOfProcessDefinition(processDefinition.getId(), document, commandContext);</span>
+    }
+
+    @Override
+    public Batch batchMigrateProcessInstancesOfProcessDefinition(String sourceProcDefId, ProcessInstanceMigrationDocument document, CommandContext commandContext) {
+        // Check of the target definition exists before submitting the batch
+<span class="nc" id="L327">        ProcessDefinition targetProcessDefinition = resolveProcessDefinition(document, commandContext);</span>
+
+<span class="nc" id="L329">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc" id="L330">        ExecutionEntityManager executionEntityManager = processEngineConfiguration.getExecutionEntityManager();</span>
+<span class="nc" id="L331">        List&lt;ProcessInstance&gt; processInstances = executionEntityManager.findProcessInstanceByQueryCriteria(</span>
+<span class="nc" id="L332">                new ProcessInstanceQueryImpl(commandContext, processEngineConfiguration).processDefinitionId(sourceProcDefId));</span>
+
+<span class="nc" id="L334">        BatchService batchService = processEngineConfiguration.getBatchServiceConfiguration().getBatchService();</span>
+<span class="nc" id="L335">        Batch batch = batchService.createBatchBuilder().batchType(Batch.PROCESS_MIGRATION_TYPE)</span>
+<span class="nc" id="L336">            .searchKey(sourceProcDefId)</span>
+<span class="nc" id="L337">            .searchKey2(targetProcessDefinition.getId())</span>
+<span class="nc" id="L338">            .status(ProcessInstanceBatchMigrationResult.STATUS_IN_PROGRESS)</span>
+<span class="nc" id="L339">            .batchDocumentJson(document.asJsonString())</span>
+<span class="nc" id="L340">            .create();</span>
+        
+<span class="nc" id="L342">        JobService jobService = processEngineConfiguration.getJobServiceConfiguration().getJobService();</span>
+<span class="nc bnc" id="L343" title="All 2 branches missed.">        for (ProcessInstance processInstance : processInstances) {</span>
+<span class="nc" id="L344">            BatchPart batchPart = batchService.createBatchPart(batch, ProcessInstanceBatchMigrationResult.STATUS_WAITING, </span>
+<span class="nc" id="L345">                            processInstance.getId(), null, ScopeTypes.BPMN);</span>
+            
+<span class="nc" id="L347">            JobEntity job = jobService.createJob();</span>
+<span class="nc" id="L348">            job.setJobHandlerType(ProcessInstanceMigrationJobHandler.TYPE);</span>
+<span class="nc" id="L349">            job.setProcessInstanceId(processInstance.getId());</span>
+<span class="nc" id="L350">            job.setJobHandlerConfiguration(ProcessInstanceMigrationJobHandler.getHandlerCfgForBatchPartId(batchPart.getId()));</span>
+<span class="nc" id="L351">            jobService.createAsyncJob(job, false);</span>
+<span class="nc" id="L352">            job.setRetries(0);</span>
+<span class="nc" id="L353">            jobService.scheduleAsyncJob(job);</span>
+<span class="nc" id="L354">        }</span>
+        
+<span class="nc bnc" id="L356" title="All 2 branches missed.">        if (!processInstances.isEmpty()) {</span>
+<span class="nc" id="L357">            TimerJobService timerJobService = processEngineConfiguration.getJobServiceConfiguration().getTimerJobService();</span>
+<span class="nc" id="L358">            TimerJobEntity timerJob = timerJobService.createTimerJob();</span>
+<span class="nc" id="L359">            timerJob.setJobType(JobEntity.JOB_TYPE_TIMER);</span>
+<span class="nc" id="L360">            timerJob.setRevision(1);</span>
+<span class="nc" id="L361">            timerJob.setRetries(0);</span>
+<span class="nc" id="L362">            timerJob.setJobHandlerType(ProcessInstanceMigrationStatusJobHandler.TYPE);</span>
+<span class="nc" id="L363">            timerJob.setJobHandlerConfiguration(ProcessInstanceMigrationJobHandler.getHandlerCfgForBatchId(batch.getId()));</span>
+            
+<span class="nc" id="L365">            BusinessCalendar businessCalendar = processEngineConfiguration.getBusinessCalendarManager().getBusinessCalendar(CycleBusinessCalendar.NAME);</span>
+<span class="nc" id="L366">            timerJob.setDuedate(businessCalendar.resolveDuedate(processEngineConfiguration.getBatchStatusTimeCycleConfig()));</span>
+<span class="nc" id="L367">            timerJob.setRepeat(processEngineConfiguration.getBatchStatusTimeCycleConfig());</span>
+            
+<span class="nc" id="L369">            timerJobService.scheduleTimerJob(timerJob);</span>
+        }
+
+<span class="nc" id="L372">        return batch;</span>
+    }
+
+    @Override
+    public void migrateProcessInstancesOfProcessDefinition(String procDefKey, int procDefVer, String procDefTenantId, ProcessInstanceMigrationDocument document, CommandContext commandContext) {
+<span class="nc" id="L377">        ProcessDefinition processDefinition = resolveProcessDefinition(procDefKey, procDefVer, procDefTenantId, commandContext);</span>
+<span class="nc" id="L378">        migrateProcessInstancesOfProcessDefinition(processDefinition.getId(), document, commandContext);</span>
+<span class="nc" id="L379">    }</span>
+
+    @Override
+    public void migrateProcessInstancesOfProcessDefinition(String processDefinitionId, ProcessInstanceMigrationDocument document, CommandContext commandContext) {
+<span class="nc" id="L383">        ProcessDefinition processDefinition = resolveProcessDefinition(document, commandContext);</span>
+<span class="nc bnc" id="L384" title="All 2 branches missed.">        if (processDefinition == null) {</span>
+<span class="nc" id="L385">            throw new FlowableException(&quot;Cannot find the process definition to migrate to, identified by &quot; + printProcessDefinitionIdentifierMessage(document));</span>
+        }
+
+<span class="nc" id="L388">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc" id="L389">        ProcessInstanceQueryImpl processInstanceQueryByProcessDefinitionId = new ProcessInstanceQueryImpl(commandContext, processEngineConfiguration).processDefinitionId(processDefinitionId);</span>
+<span class="nc" id="L390">        ExecutionEntityManager executionEntityManager = processEngineConfiguration.getExecutionEntityManager();</span>
+<span class="nc" id="L391">        List&lt;ProcessInstance&gt; processInstances = executionEntityManager.findProcessInstanceByQueryCriteria(processInstanceQueryByProcessDefinitionId);</span>
+
+<span class="nc bnc" id="L393" title="All 2 branches missed.">        for (ProcessInstance processInstance : processInstances) {</span>
+<span class="nc" id="L394">            doMigrateProcessInstance(processInstance, processDefinition, document, commandContext);</span>
+<span class="nc" id="L395">        }</span>
+<span class="nc" id="L396">    }</span>
+
+    @Override
+    public void migrateProcessInstance(String processInstanceId, ProcessInstanceMigrationDocument document, CommandContext commandContext) {
+<span class="nc" id="L400">        ExecutionEntityManager executionEntityManager = CommandContextUtil.getExecutionEntityManager(commandContext);</span>
+<span class="nc" id="L401">        ExecutionEntity processExecution = executionEntityManager.findById(processInstanceId);</span>
+<span class="nc bnc" id="L402" title="All 2 branches missed.">        if (processExecution == null) {</span>
+<span class="nc" id="L403">            throw new FlowableException(&quot;Cannot find the process to migrate, with id&quot; + processInstanceId);</span>
+        }
+
+<span class="nc" id="L406">        ProcessDefinition procDefToMigrateTo = resolveProcessDefinition(document, commandContext);</span>
+<span class="nc" id="L407">        doMigrateProcessInstance(processExecution, procDefToMigrateTo, document, commandContext);</span>
+<span class="nc" id="L408">    }</span>
+
+    protected void doMigrateProcessInstance(ProcessInstance processInstance, ProcessDefinition procDefToMigrateTo, ProcessInstanceMigrationDocument document, CommandContext commandContext) {
+<span class="nc" id="L411">        LOGGER.debug(&quot;Start migration of process instance with Id:'{}' to process definition identified by {}&quot;, processInstance.getId(),</span>
+<span class="nc" id="L412">            printProcessDefinitionIdentifierMessage(document));</span>
+
+<span class="nc bnc" id="L414" title="All 2 branches missed.">        if (document.getPreUpgradeScript() != null) {</span>
+<span class="nc" id="L415">            LOGGER.debug(&quot;Execute pre upgrade process instance script&quot;);</span>
+<span class="nc" id="L416">            executeScript(processInstance, procDefToMigrateTo, document.getPreUpgradeScript(), commandContext);</span>
+        }
+
+<span class="nc bnc" id="L419" title="All 2 branches missed.">        if (document.getPreUpgradeJavaDelegate() != null) {</span>
+<span class="nc" id="L420">            LOGGER.debug(&quot;Execute pre upgrade process instance script&quot;);</span>
+<span class="nc" id="L421">            executeJavaDelegate(processInstance, procDefToMigrateTo, document.getPreUpgradeJavaDelegate(), commandContext);</span>
+        }
+
+<span class="nc bnc" id="L424" title="All 2 branches missed.">        if (document.getPreUpgradeJavaDelegateExpression() != null) {</span>
+<span class="nc" id="L425">            LOGGER.debug(&quot;Execute pre upgrade process instance script&quot;);</span>
+<span class="nc" id="L426">            executeExpression(processInstance, procDefToMigrateTo, document.getPreUpgradeJavaDelegateExpression(), commandContext);</span>
+        }
+
+<span class="nc" id="L429">        ExecutionEntity processInstanceEntity = (ExecutionEntity) processInstance;</span>
+<span class="nc" id="L430">        List&lt;ChangeActivityStateBuilderImpl&gt; changeActivityStateBuilders = prepareChangeStateBuilders(processInstanceEntity, </span>
+        		procDefToMigrateTo, document, commandContext);
+
+<span class="nc" id="L433">        LOGGER.debug(&quot;Updating Process definition reference of process root execution with id:'{}' to '{}'&quot;, processInstance.getId(), procDefToMigrateTo.getId());</span>
+<span class="nc" id="L434">        processInstanceEntity.setProcessDefinitionId(procDefToMigrateTo.getId());</span>
+
+<span class="nc" id="L436">        LOGGER.debug(&quot;Resolve activity executions to migrate&quot;);</span>
+<span class="nc" id="L437">        List&lt;MoveExecutionEntityContainer&gt; moveExecutionEntityContainerList = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L438" title="All 2 branches missed.">        for (ChangeActivityStateBuilderImpl builder : changeActivityStateBuilders) {</span>
+<span class="nc" id="L439">        	List&lt;MoveExecutionEntityContainer&gt; moveExecutionEntityContainers = resolveMoveExecutionEntityContainers(</span>
+<span class="nc" id="L440">        			builder, document.getProcessInstanceVariables(), commandContext);</span>
+<span class="nc" id="L441">            moveExecutionEntityContainerList.addAll(moveExecutionEntityContainers);</span>
+<span class="nc" id="L442">        }</span>
+        
+<span class="nc" id="L444">        List&lt;EnableActivityContainer&gt; enableActivityContainerList = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L445" title="All 2 branches missed.">        if (!document.getEnableActivityMappings().isEmpty()) {</span>
+<span class="nc bnc" id="L446" title="All 2 branches missed.">            for (EnableActivityMapping enableActivityMapping : document.getEnableActivityMappings()) {</span>
+<span class="nc" id="L447">                EnableActivityContainer enableActivityContainer = new EnableActivityContainer(Collections.singletonList(enableActivityMapping.getActivityId()));</span>
+<span class="nc" id="L448">                enableActivityContainerList.add(enableActivityContainer);</span>
+<span class="nc" id="L449">            }</span>
+        }
+
+<span class="nc" id="L452">        ProcessInstanceChangeState processInstanceChangeState = new ProcessInstanceChangeState()</span>
+<span class="nc" id="L453">            .setProcessInstanceId(processInstance.getId())</span>
+<span class="nc" id="L454">            .setProcessDefinitionToMigrateTo(procDefToMigrateTo)</span>
+<span class="nc" id="L455">            .setMoveExecutionEntityContainers(moveExecutionEntityContainerList)</span>
+<span class="nc" id="L456">            .setEnableActivityContainers(enableActivityContainerList)</span>
+<span class="nc" id="L457">            .setProcessInstanceVariables(document.getProcessInstanceVariables())</span>
+<span class="nc" id="L458">            .setLocalVariables(document.getActivitiesLocalVariables());</span>
+
+<span class="nc" id="L460">        doMoveExecutionState(processInstanceChangeState, commandContext);</span>
+
+<span class="nc" id="L462">        LOGGER.debug(&quot;Updating process definition reference in activity instances&quot;);</span>
+<span class="nc" id="L463">        CommandContextUtil.getActivityInstanceEntityManager().updateActivityInstancesProcessDefinitionId(procDefToMigrateTo.getId(), processInstance.getId());</span>
+
+<span class="nc" id="L465">        LOGGER.debug(&quot;Updating Process definition reference in history&quot;);</span>
+<span class="nc" id="L466">        changeProcessDefinitionReferenceOfHistory(processInstance, procDefToMigrateTo, commandContext);</span>
+
+<span class="nc bnc" id="L468" title="All 2 branches missed.">        if (document.getPostUpgradeScript() != null) {</span>
+<span class="nc" id="L469">            LOGGER.debug(&quot;Execute post upgrade process instance script&quot;);</span>
+<span class="nc" id="L470">            executeScript(processInstance, procDefToMigrateTo, document.getPostUpgradeScript(), commandContext);</span>
+        }
+
+<span class="nc bnc" id="L473" title="All 2 branches missed.">        if (document.getPostUpgradeJavaDelegate() != null) {</span>
+<span class="nc" id="L474">            LOGGER.debug(&quot;Execute post upgrade process instance script&quot;);</span>
+<span class="nc" id="L475">            executeJavaDelegate(processInstance, procDefToMigrateTo, document.getPostUpgradeJavaDelegate(), commandContext);</span>
+        }
+
+<span class="nc bnc" id="L478" title="All 2 branches missed.">        if (document.getPostUpgradeJavaDelegateExpression() != null) {</span>
+<span class="nc" id="L479">            LOGGER.debug(&quot;Execute post upgrade process instance script&quot;);</span>
+<span class="nc" id="L480">            executeExpression(processInstance, procDefToMigrateTo, document.getPostUpgradeJavaDelegateExpression(), commandContext);</span>
+        }
+        
+<span class="nc" id="L483">        List&lt;ProcessInstanceMigrationCallback&gt; migrationCallbacks = CommandContextUtil.getProcessEngineConfiguration(commandContext).getProcessInstanceMigrationCallbacks();</span>
+<span class="nc bnc" id="L484" title="All 4 branches missed.">        if (migrationCallbacks != null &amp;&amp; !migrationCallbacks.isEmpty()) {</span>
+<span class="nc bnc" id="L485" title="All 2 branches missed.">            for (ProcessInstanceMigrationCallback processInstanceMigrationCallback : migrationCallbacks) {</span>
+<span class="nc" id="L486">                processInstanceMigrationCallback.processInstanceMigrated(processInstance, procDefToMigrateTo, document, commandContext);</span>
+<span class="nc" id="L487">            }</span>
+        }
+
+<span class="nc" id="L490">        LOGGER.debug(&quot;Process migration ended for process instance with Id:'{}'&quot;, processInstance.getId());</span>
+<span class="nc" id="L491">    }</span>
+
+    @Override
+    protected Map&lt;String, List&lt;ExecutionEntity&gt;&gt; resolveActiveEmbeddedSubProcesses(String processInstanceId, CommandContext commandContext) {
+<span class="nc" id="L495">        ExecutionEntityManager executionEntityManager = CommandContextUtil.getExecutionEntityManager(commandContext);</span>
+<span class="nc" id="L496">        List&lt;ExecutionEntity&gt; childExecutions = executionEntityManager.findChildExecutionsByProcessInstanceId(processInstanceId);</span>
+
+<span class="nc" id="L498">        Map&lt;String, List&lt;ExecutionEntity&gt;&gt; activeSubProcessesByActivityId = childExecutions.stream()</span>
+<span class="nc" id="L499">            .filter(ExecutionEntity::isActive)</span>
+<span class="nc" id="L500">            .filter(executionEntity -&gt; executionEntity.getCurrentFlowElement() instanceof SubProcess)</span>
+<span class="nc" id="L501">            .filter(executionEntity -&gt; ((SubProcess) executionEntity.getCurrentFlowElement()).hasMultiInstanceLoopCharacteristics())</span>
+<span class="nc" id="L502">            .collect(Collectors.groupingBy(ExecutionEntity::getActivityId));</span>
+<span class="nc" id="L503">        return activeSubProcessesByActivityId;</span>
+    }
+
+    @Override
+    protected boolean isDirectFlowElementExecutionMigration(FlowElement currentFlowElement, FlowElement newFlowElement) {
+        //Activities inside or that are MultiInstance cannot be migrated directly, as it is better to trigger the MultiInstanceBehavior using the agenda, directMigration skips the agenda
+
+<span class="nc bnc" id="L510" title="All 2 branches missed.">        return (isDirectCallActivityExecutionMigration(currentFlowElement, newFlowElement) ||</span>
+<span class="nc bnc" id="L511" title="All 2 branches missed.">                isDirectUserTaskExecutionMigration(currentFlowElement, newFlowElement) ||</span>
+<span class="nc bnc" id="L512" title="All 2 branches missed.">                isDirectAsyncServiceTaskExecutionMigration(currentFlowElement, newFlowElement) ||</span>
+<span class="nc bnc" id="L513" title="All 2 branches missed.">                isDirectReceiveTaskExecutionMigration(currentFlowElement, newFlowElement) ||</span>
+<span class="nc bnc" id="L514" title="All 2 branches missed.">                isDirectExternalWorkerServiceTaskExecutionMigration(currentFlowElement, newFlowElement)) &amp;&amp;</span>
+<span class="nc bnc" id="L515" title="All 4 branches missed.">                (getFlowElementMultiInstanceParentId(currentFlowElement) == null &amp;&amp; getFlowElementMultiInstanceParentId(newFlowElement) == null);</span>
+    }
+
+    protected boolean isDirectCallActivityExecutionMigration(FlowElement currentFlowElement, FlowElement newFlowElement) {
+<span class="nc bnc" id="L519" title="All 4 branches missed.">        return currentFlowElement instanceof CallActivity &amp;&amp;</span>
+                newFlowElement instanceof CallActivity &amp;&amp;
+<span class="nc bnc" id="L521" title="All 2 branches missed.">                ((CallActivity) currentFlowElement).getLoopCharacteristics() == null &amp;&amp;</span>
+<span class="nc bnc" id="L522" title="All 2 branches missed.">                ((CallActivity) newFlowElement).getLoopCharacteristics() == null;</span>
+    }
+
+    protected boolean isDirectUserTaskExecutionMigration(FlowElement currentFlowElement, FlowElement newFlowElement) {
+<span class="nc bnc" id="L526" title="All 4 branches missed.">        return currentFlowElement instanceof UserTask &amp;&amp;</span>
+                newFlowElement instanceof UserTask &amp;&amp;
+<span class="nc bnc" id="L528" title="All 2 branches missed.">                ((Task) currentFlowElement).getLoopCharacteristics() == null &amp;&amp;</span>
+<span class="nc bnc" id="L529" title="All 2 branches missed.">                ((Task) newFlowElement).getLoopCharacteristics() == null;</span>
+    }
+    
+    protected boolean isDirectAsyncServiceTaskExecutionMigration(FlowElement currentFlowElement, FlowElement newFlowElement) {
+<span class="nc bnc" id="L533" title="All 4 branches missed.">        return currentFlowElement instanceof ServiceTask &amp;&amp;</span>
+                newFlowElement instanceof ServiceTask &amp;&amp;
+<span class="nc bnc" id="L535" title="All 2 branches missed.">                ((Task) currentFlowElement).getLoopCharacteristics() == null &amp;&amp;</span>
+<span class="nc bnc" id="L536" title="All 2 branches missed.">                ((Task) newFlowElement).getLoopCharacteristics() == null &amp;&amp;</span>
+<span class="nc bnc" id="L537" title="All 2 branches missed.">                ((((ServiceTask) currentFlowElement).isAsynchronous() &amp;&amp;</span>
+<span class="nc bnc" id="L538" title="All 2 branches missed.">                ((ServiceTask) newFlowElement).isAsynchronous()) ||</span>
+<span class="nc bnc" id="L539" title="All 2 branches missed.">                (((ServiceTask) currentFlowElement).isAsynchronousLeave() &amp;&amp;</span>
+<span class="nc bnc" id="L540" title="All 2 branches missed.">                ((ServiceTask) newFlowElement).isAsynchronousLeave()));</span>
+    }
+
+    protected boolean isDirectReceiveTaskExecutionMigration(FlowElement currentFlowElement, FlowElement newFlowElement) {
+<span class="nc bnc" id="L544" title="All 4 branches missed.">        return currentFlowElement instanceof ReceiveTask &amp;&amp;</span>
+                newFlowElement instanceof ReceiveTask &amp;&amp;
+<span class="nc bnc" id="L546" title="All 2 branches missed.">                ((Task) currentFlowElement).getLoopCharacteristics() == null &amp;&amp;</span>
+<span class="nc bnc" id="L547" title="All 2 branches missed.">                ((Task) newFlowElement).getLoopCharacteristics() == null;</span>
+    }
+
+    protected boolean isDirectExternalWorkerServiceTaskExecutionMigration(FlowElement currentFlowElement, FlowElement newFlowElement) {
+        //The current and new external worker service task must be equal to support direct execution migration
+<span class="nc bnc" id="L552" title="All 4 branches missed.">        if (currentFlowElement instanceof ExternalWorkerServiceTask &amp;&amp; newFlowElement instanceof ExternalWorkerServiceTask) {</span>
+<span class="nc" id="L553">            ExternalWorkerServiceTask currentExternalWorkerServiceTask = (ExternalWorkerServiceTask) currentFlowElement;</span>
+<span class="nc" id="L554">            ExternalWorkerServiceTask newExternalWorkerServiceTask = (ExternalWorkerServiceTask) newFlowElement;</span>
+<span class="nc bnc" id="L555" title="All 2 branches missed.">            return currentExternalWorkerServiceTask.getLoopCharacteristics() == null &amp;&amp;</span>
+<span class="nc bnc" id="L556" title="All 2 branches missed.">                    newExternalWorkerServiceTask.getLoopCharacteristics() == null &amp;&amp;</span>
+                    new EqualsBuilder()
+<span class="nc" id="L558">                            .append(currentExternalWorkerServiceTask.getId(), newExternalWorkerServiceTask.getId())</span>
+<span class="nc" id="L559">                            .append(currentExternalWorkerServiceTask.getName(), newExternalWorkerServiceTask.getName())</span>
+<span class="nc" id="L560">                            .append(currentExternalWorkerServiceTask.getTopic(), newExternalWorkerServiceTask.getTopic())</span>
+<span class="nc" id="L561">                            .append(currentExternalWorkerServiceTask.isExclusive(), newExternalWorkerServiceTask.isExclusive())</span>
+<span class="nc" id="L562">                            .append(currentExternalWorkerServiceTask.isAsynchronous(), newExternalWorkerServiceTask.isAsynchronous())</span>
+<span class="nc bnc" id="L563" title="All 2 branches missed.">                            .isEquals();</span>
+        }
+<span class="nc" id="L565">        return false;</span>
+    }
+
+    protected void executeScript(ProcessInstance processInstance, ProcessDefinition procDefToMigrateTo, Script script, CommandContext commandContext) {
+<span class="nc" id="L569">        ScriptingEngines scriptingEngines = CommandContextUtil.getProcessEngineConfiguration(commandContext).getScriptingEngines();</span>
+
+        try {
+<span class="nc" id="L572">            ScriptEngineRequest.Builder builder = ScriptEngineRequest.builder()</span>
+<span class="nc" id="L573">                    .script(script.getScript())</span>
+<span class="nc" id="L574">                    .language(script.getLanguage())</span>
+<span class="nc" id="L575">                    .variableContainer((ExecutionEntityImpl) processInstance);</span>
+<span class="nc" id="L576">            scriptingEngines.evaluate(builder.build());</span>
+<span class="nc" id="L577">        } catch (FlowableException e) {</span>
+<span class="nc" id="L578">            LOGGER.warn(&quot;Exception while executing upgrade of process instance {} : {}&quot;, processInstance.getId(), e.getMessage());</span>
+<span class="nc" id="L579">            throw e;</span>
+<span class="nc" id="L580">        }</span>
+<span class="nc" id="L581">    }</span>
+
+    protected void executeJavaDelegate(ProcessInstance processInstance, ProcessDefinition procDefToMigrateTo, 
+            String preUpgradeJavaDelegate, CommandContext commandContext) {
+        
+<span class="nc" id="L586">        CommandContextUtil.getProcessEngineConfiguration(commandContext).getDelegateInterceptor()</span>
+<span class="nc" id="L587">            .handleInvocation(new JavaDelegateInvocation((JavaDelegate) defaultInstantiateDelegate(preUpgradeJavaDelegate, Collections.emptyList()),</span>
+                (ExecutionEntityImpl) processInstance));
+<span class="nc" id="L589">    }</span>
+
+    protected void executeExpression(ProcessInstance processInstance, ProcessDefinition procDefToMigrateTo, 
+            String preUpgradeJavaDelegateExpression, CommandContext commandContext) {
+        
+<span class="nc" id="L594">        Expression expression = CommandContextUtil.getProcessEngineConfiguration(commandContext).getExpressionManager().createExpression(preUpgradeJavaDelegateExpression);</span>
+
+<span class="nc" id="L596">        Object delegate = DelegateExpressionUtil.resolveDelegateExpression(expression, (VariableContainer) processInstance, Collections.emptyList());</span>
+<span class="nc bnc" id="L597" title="All 2 branches missed.">        if (delegate instanceof ActivityBehavior) {</span>
+<span class="nc" id="L598">            CommandContextUtil.getProcessEngineConfiguration(commandContext).getDelegateInterceptor().handleInvocation(new ActivityBehaviorInvocation((ActivityBehavior) delegate, (ExecutionEntityImpl) processInstance));</span>
+<span class="nc bnc" id="L599" title="All 2 branches missed.">        } else if (delegate instanceof JavaDelegate) {</span>
+<span class="nc" id="L600">            CommandContextUtil.getProcessEngineConfiguration(commandContext).getDelegateInterceptor().handleInvocation(new JavaDelegateInvocation((JavaDelegate) delegate, (ExecutionEntityImpl) processInstance));</span>
+        } else {
+<span class="nc" id="L602">            throw new FlowableIllegalArgumentException(&quot;Delegate expression &quot; + expression + &quot; did neither resolve to an implementation of &quot; + ActivityBehavior.class + &quot; nor &quot; + JavaDelegate.class);</span>
+        }
+<span class="nc" id="L604">    }</span>
+
+    protected List&lt;ChangeActivityStateBuilderImpl&gt; prepareChangeStateBuilders(ExecutionEntity processInstanceExecution, ProcessDefinition procDefToMigrateTo, ProcessInstanceMigrationDocument document, CommandContext commandContext) {
+<span class="nc" id="L607">        ExecutionEntityManager executionEntityManager = CommandContextUtil.getExecutionEntityManager(commandContext);</span>
+
+        // Check processDefinition tenant
+<span class="nc" id="L610">        String procDefTenantId = procDefToMigrateTo.getTenantId();</span>
+<span class="nc bnc" id="L611" title="All 2 branches missed.">        if (!isSameOrDefaultTenant(processInstanceExecution.getTenantId(), procDefToMigrateTo.getKey(), </span>
+<span class="nc" id="L612">                procDefTenantId, CommandContextUtil.getProcessEngineConfiguration(commandContext))) {</span>
+            
+<span class="nc" id="L614">            throw new FlowableException(&quot;Tenant mismatch between Process Instance ('&quot; + processInstanceExecution.getTenantId() + &quot;') and Process Definition ('&quot; + procDefTenantId + &quot;') to migrate to&quot;);</span>
+        }
+
+<span class="nc" id="L617">        List&lt;ChangeActivityStateBuilderImpl&gt; changeActivityStateBuilders = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L618">        ChangeActivityStateBuilderImpl mainProcessChangeActivityStateBuilder = new ChangeActivityStateBuilderImpl();</span>
+<span class="nc" id="L619">        mainProcessChangeActivityStateBuilder.processInstanceId(processInstanceExecution.getId());</span>
+<span class="nc" id="L620">        changeActivityStateBuilders.add(mainProcessChangeActivityStateBuilder);</span>
+
+        // Current executions to migrate...
+<span class="nc" id="L623">        Map&lt;String, List&lt;ExecutionEntity&gt;&gt; filteredExecutionsByActivityId = executionEntityManager.findChildExecutionsByProcessInstanceId(processInstanceExecution.getId())</span>
+<span class="nc" id="L624">            .stream()</span>
+<span class="nc bnc" id="L625" title="All 2 branches missed.">            .filter(executionEntity -&gt; executionEntity.getCurrentActivityId() != null)</span>
+<span class="nc bnc" id="L626" title="All 2 branches missed.">            .filter(executionEntity -&gt; !(executionEntity.getCurrentFlowElement() instanceof SubProcess))</span>
+<span class="nc bnc" id="L627" title="All 2 branches missed.">            .filter(executionEntity -&gt; !(executionEntity.getCurrentFlowElement() instanceof BoundaryEvent))</span>
+<span class="nc" id="L628">            .collect(Collectors.groupingBy(ExecutionEntity::getCurrentActivityId));</span>
+
+<span class="nc" id="L630">        LOGGER.debug(&quot;Preparing ActivityChangeState builder for '{}' distinct activities&quot;, filteredExecutionsByActivityId.size());</span>
+
+<span class="nc" id="L632">        HashMap&lt;String, ActivityMigrationMapping&gt; mainProcessActivityMappingByFromActivityId = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L633">        HashMap&lt;String, HashMap&lt;String, ActivityMigrationMapping&gt;&gt; subProcessActivityMappingsByCallActivityIdAndFromActivityId = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L634" title="All 2 branches missed.">        for (ActivityMigrationMapping activityMigrationMapping : document.getActivityMigrationMappings()) {</span>
+<span class="nc" id="L635">            splitMigrationMappingByCallActivitySubProcessScope(activityMigrationMapping, mainProcessActivityMappingByFromActivityId, subProcessActivityMappingsByCallActivityIdAndFromActivityId);</span>
+<span class="nc" id="L636">        }</span>
+
+<span class="nc" id="L638">        Set&lt;String&gt; mappedFromActivities = mainProcessActivityMappingByFromActivityId.keySet();</span>
+
+        // Partition the executions by Explicitly mapped or not
+<span class="nc" id="L641">        Map&lt;Boolean, List&lt;String&gt;&gt; partitionedExecutionActivityIds = filteredExecutionsByActivityId.keySet()</span>
+<span class="nc" id="L642">            .stream()</span>
+<span class="nc" id="L643">            .collect(Collectors.partitioningBy(mappedFromActivities::contains));</span>
+<span class="nc" id="L644">        List&lt;String&gt; executionActivityIdsToAutoMap = partitionedExecutionActivityIds.get(false);</span>
+<span class="nc" id="L645">        List&lt;String&gt; executionActivityIdsToMapExplicitly = partitionedExecutionActivityIds.get(true);</span>
+
+<span class="nc" id="L647">        BpmnModel newModel = ProcessDefinitionUtil.getBpmnModel(procDefToMigrateTo.getId());</span>
+<span class="nc" id="L648">        BpmnModel currentModel = ProcessDefinitionUtil.getBpmnModel(processInstanceExecution.getProcessDefinitionId());</span>
+
+        // Auto Mapping
+<span class="nc" id="L651">        LOGGER.debug(&quot;Process AutoMapping for '{}' activity executions&quot;, executionActivityIdsToAutoMap.size());</span>
+<span class="nc bnc" id="L652" title="All 2 branches missed.">        for (String executionActivityId : executionActivityIdsToAutoMap) {</span>
+<span class="nc" id="L653">            FlowElement currentModelFlowElement = currentModel.getFlowElement(executionActivityId);</span>
+
+<span class="nc bnc" id="L655" title="All 2 branches missed.">            if (currentModelFlowElement instanceof CallActivity) {</span>
+                // Check that all or none of the call activity child activities executions are explicitly mapped
+<span class="nc" id="L657">                boolean runningChildrenNotFullyMapped = false;</span>
+<span class="nc bnc" id="L658" title="All 2 branches missed.">                if (subProcessActivityMappingsByCallActivityIdAndFromActivityId.containsKey(executionActivityId)) {</span>
+<span class="nc" id="L659">                    Set&lt;String&gt; mappedSubProcessActivityIds = subProcessActivityMappingsByCallActivityIdAndFromActivityId.get(executionActivityId).keySet();</span>
+<span class="nc" id="L660">                    List&lt;ExecutionEntity&gt; callActivityExecutions = filteredExecutionsByActivityId.get(executionActivityId).stream().filter(ExecutionEntity::isActive).collect(Collectors.toList());</span>
+<span class="nc bnc" id="L661" title="All 2 branches missed.">                    for (ExecutionEntity callActivityExecution : callActivityExecutions) { //parallel MultiInstance call activities</span>
+<span class="nc" id="L662">                        List&lt;ExecutionEntity&gt; subProcessChildExecutions = executionEntityManager.findChildExecutionsByProcessInstanceId(callActivityExecution.getSubProcessInstance().getId());</span>
+<span class="nc" id="L663">                        Set&lt;String&gt; childSubProcessExecutionActivityIds = subProcessChildExecutions.stream().map(Execution::getActivityId).collect(Collectors.toSet());</span>
+<span class="nc" id="L664">                        childSubProcessExecutionActivityIds.removeAll(mappedSubProcessActivityIds);</span>
+<span class="nc bnc" id="L665" title="All 2 branches missed.">                        if (!childSubProcessExecutionActivityIds.isEmpty()) {</span>
+<span class="nc" id="L666">                            runningChildrenNotFullyMapped = true;</span>
+<span class="nc" id="L667">                            break;</span>
+                        }
+<span class="nc" id="L669">                    }</span>
+                }
+
+<span class="nc bnc" id="L672" title="All 4 branches missed.">                if (!subProcessActivityMappingsByCallActivityIdAndFromActivityId.containsKey(executionActivityId) || runningChildrenNotFullyMapped) {</span>
+                    //If there are running child activities not mapped, the call activity must be equally valid in the new model, the activityId in the new model must refer also to a callActivity with matching callElement
+<span class="nc" id="L674">                    FlowElement newModelFlowElement = newModel.getFlowElement(executionActivityId);</span>
+<span class="nc bnc" id="L675" title="All 2 branches missed.">                    if (newModelFlowElement == null) {</span>
+<span class="nc" id="L676">                        throw new FlowableException(&quot;Call activity '&quot; + executionActivityId + &quot;' does not exist in the new model. It must be mapped explicitly for migration (or all its child activities)&quot;);</span>
+                    }
+<span class="nc bnc" id="L678" title="All 2 branches missed.">                    if (newModelFlowElement instanceof CallActivity) {</span>
+<span class="nc bnc" id="L679" title="All 2 branches missed.">                        if (!referToSameCalledElement((CallActivity) currentModelFlowElement, (CallActivity) newModelFlowElement)) {</span>
+<span class="nc" id="L680">                            throw new FlowableException(&quot;Call activity '&quot; + executionActivityId + &quot;' has a different called element in the new model. It must be mapped explicitly for migration (or all its child activities)&quot;);</span>
+                        }
+<span class="nc bnc" id="L682" title="All 2 branches missed.">                        if (((CallActivity) currentModelFlowElement).hasMultiInstanceLoopCharacteristics() ^ ((CallActivity) newModelFlowElement).hasMultiInstanceLoopCharacteristics()) {</span>
+<span class="nc" id="L683">                            throw new FlowableException(&quot;Call activity '&quot; + executionActivityId + &quot;' loop characteristics differs in new model. It must be mapped explicitly for migration (or all its child activities)&quot;);</span>
+                        }
+                    } else {
+<span class="nc" id="L686">                        throw new FlowableException(&quot;Call activity '&quot; + executionActivityId + &quot;' is not a Call Activity in the new model. It must be mapped explicitly for migration (or all its child activities)&quot;);</span>
+                    }
+                }
+            }
+
+<span class="nc" id="L691">            String flowElementMultiInstanceParentId = getFlowElementMultiInstanceParentId(currentModelFlowElement);</span>
+<span class="nc bnc" id="L692" title="All 4 branches missed.">            if (flowElementMultiInstanceParentId != null &amp;&amp; mappedFromActivities.contains(flowElementMultiInstanceParentId)) {</span>
+                // Add the parent MI execution activity Id to be explicitly mapped...
+<span class="nc bnc" id="L694" title="All 2 branches missed.">                if (!executionActivityIdsToMapExplicitly.contains(flowElementMultiInstanceParentId)) {</span>
+<span class="nc" id="L695">                    executionActivityIdsToMapExplicitly.add(flowElementMultiInstanceParentId);</span>
+                }
+                // The root executions are the ones to migrate and are explicitly mapped
+<span class="nc" id="L698">                List&lt;ExecutionEntity&gt; miRootExecutions = (List&lt;ExecutionEntity&gt;) executionEntityManager.findInactiveExecutionsByActivityIdAndProcessInstanceId(flowElementMultiInstanceParentId, processInstanceExecution.getId());</span>
+<span class="nc" id="L699">                filteredExecutionsByActivityId.put(flowElementMultiInstanceParentId, miRootExecutions);</span>
+                
+<span class="nc" id="L701">            } else {</span>
+<span class="nc" id="L702">                LOGGER.debug(&quot;Checking execution(s) - activityId:'{}&quot;, executionActivityId);</span>
+<span class="nc bnc" id="L703" title="All 2 branches missed.">                if (isActivityIdInProcessDefinitionModel(executionActivityId, newModel)) {</span>
+                    // Cannot auto-map inside a MultiInstance container
+<span class="nc" id="L705">                    FlowElement newModelFlowElement = newModel.getFlowElement(executionActivityId);</span>
+<span class="nc" id="L706">                    String newFlowElementMIParentId = getFlowElementMultiInstanceParentId(newModelFlowElement);</span>
+
+<span class="nc bnc" id="L708" title="All 2 branches missed.">                    if (newFlowElementMIParentId != null) {</span>
+<span class="nc" id="L709">                    	boolean noChangesInMI = false;</span>
+<span class="nc" id="L710">                    	Activity currentMIElement = (Activity) currentModel.getFlowElement(newFlowElementMIParentId);</span>
+<span class="nc" id="L711">                    	Activity newMIElement = (Activity) newModel.getFlowElement(newFlowElementMIParentId);</span>
+<span class="nc bnc" id="L712" title="All 2 branches missed.">                    	if (currentMIElement.getClass().getName().equals(newMIElement.getClass().getName()) &amp;&amp;</span>
+<span class="nc bnc" id="L713" title="All 2 branches missed.">                    			hasSameLoopCharacteristics(currentMIElement, newMIElement)) {</span>
+                    		
+<span class="nc bnc" id="L715" title="All 2 branches missed.">                    		if (!(currentMIElement instanceof SubProcess)) {</span>
+<span class="nc" id="L716">                    			noChangesInMI = true;</span>
+<span class="nc bnc" id="L717" title="All 2 branches missed.">                    		} else if (hasSameSubProcessContent((SubProcess) currentMIElement, (SubProcess) newMIElement)) {</span>
+<span class="nc" id="L718">                    			noChangesInMI = true;</span>
+                    		}
+                    	}
+                    	
+<span class="nc bnc" id="L722" title="All 2 branches missed.">                    	if (!noChangesInMI) {</span>
+<span class="nc" id="L723">                    		throw new FlowableException(&quot;Cannot autoMap activity migration for '&quot; + executionActivityId + &quot;'. Cannot migrate arbitrarily inside a Multi Instance container '&quot; + newFlowElementMIParentId);</span>
+                    	}
+                    }
+
+<span class="nc" id="L727">                    LOGGER.debug(&quot;Auto mapping activity '{}'&quot;, executionActivityId);</span>
+<span class="nc" id="L728">                    List&lt;ExecutionEntity&gt; executionEntities = filteredExecutionsByActivityId.get(executionActivityId);</span>
+<span class="nc bnc" id="L729" title="All 2 branches missed.">                    if (executionEntities.size() &gt; 1) {</span>
+<span class="nc" id="L730">                        List&lt;String&gt; executionIds = executionEntities.stream().map(ExecutionEntity::getId).collect(Collectors.toList());</span>
+<span class="nc" id="L731">                        mainProcessChangeActivityStateBuilder.moveExecutionsToSingleActivityId(executionIds, executionActivityId);</span>
+<span class="nc" id="L732">                    } else {</span>
+<span class="nc" id="L733">                        mainProcessChangeActivityStateBuilder.moveExecutionToActivityId(executionEntities.get(0).getId(), executionActivityId);</span>
+                    }
+                    
+<span class="nc" id="L736">                } else {</span>
+<span class="nc bnc" id="L737" title="All 2 branches missed.">                    if (!(currentModelFlowElement instanceof CallActivity)) {</span>
+<span class="nc" id="L738">                        throw new FlowableException(&quot;Migration Activity mapping missing for activity definition Id:'&quot; + </span>
+                        		executionActivityId + &quot;' or its MI Parent&quot;);
+                    }
+                }
+            }
+<span class="nc" id="L743">        }</span>
+
+        //Explicit Mapping - Iterates over the provided mappings instead, to keep the explicit migration order
+<span class="nc" id="L746">        List&lt;ActivityMigrationMapping&gt; activityMigrationMappings = document.getActivityMigrationMappings();</span>
+
+<span class="nc" id="L748">        LOGGER.debug(&quot;Process explicit mapping for '{}' activity executions&quot;, executionActivityIdsToMapExplicitly.size());</span>
+        for (
+<span class="nc bnc" id="L750" title="All 2 branches missed.">            ActivityMigrationMapping activityMapping : activityMigrationMappings) {</span>
+
+<span class="nc bnc" id="L752" title="All 2 branches missed.">            if (activityMapping instanceof ActivityMigrationMapping.OneToOneMapping) {</span>
+<span class="nc" id="L753">                String fromActivityId = ((ActivityMigrationMapping.OneToOneMapping) activityMapping).getFromActivityId();</span>
+<span class="nc" id="L754">                String toActivityId = ((ActivityMigrationMapping.OneToOneMapping) activityMapping).getToActivityId();</span>
+<span class="nc" id="L755">                String newAssignee = ((ActivityMigrationMapping.OneToOneMapping) activityMapping).getWithNewAssignee();</span>
+<span class="nc" id="L756">                String newOwner = ((ActivityMigrationMapping.OneToOneMapping) activityMapping).getWithNewOwner();</span>
+<span class="nc" id="L757">                String fromCallActivityId = activityMapping.getFromCallActivityId();</span>
+
+<span class="nc bnc" id="L759" title="All 4 branches missed.">                if (activityMapping.isToParentProcess() &amp;&amp; !executionActivityIdsToMapExplicitly.contains(fromCallActivityId)) {</span>
+<span class="nc" id="L760">                    List&lt;ExecutionEntity&gt; callActivityExecutions = filteredExecutionsByActivityId.get(fromCallActivityId).stream().filter(ExecutionEntity::isActive).collect(Collectors.toList());</span>
+<span class="nc bnc" id="L761" title="All 2 branches missed.">                    for (ExecutionEntity callActivityExecution : callActivityExecutions) {</span>
+<span class="nc" id="L762">                        ExecutionEntity subProcessInstanceExecution = executionEntityManager.findSubProcessInstanceBySuperExecutionId(callActivityExecution.getId());</span>
+<span class="nc" id="L763">                        ChangeActivityStateBuilderImpl subProcessChangeActivityStateBuilder = new ChangeActivityStateBuilderImpl();</span>
+<span class="nc" id="L764">                        subProcessChangeActivityStateBuilder.processInstanceId(subProcessInstanceExecution.getId());</span>
+<span class="nc" id="L765">                        subProcessChangeActivityStateBuilder.moveActivityIdToParentActivityId(fromActivityId, toActivityId, newAssignee, newOwner);</span>
+<span class="nc" id="L766">                        changeActivityStateBuilders.add(subProcessChangeActivityStateBuilder);</span>
+<span class="nc" id="L767">                    }</span>
+                    
+<span class="nc bnc" id="L769" title="All 2 branches missed.">                } else if (executionActivityIdsToMapExplicitly.contains(fromActivityId)) {</span>
+<span class="nc bnc" id="L770" title="All 2 branches missed.">                    if (activityMapping.isToCallActivity()) {</span>
+<span class="nc" id="L771">                        mainProcessChangeActivityStateBuilder.moveActivityIdToSubProcessInstanceActivityId(fromActivityId, toActivityId,</span>
+<span class="nc" id="L772">                                activityMapping.getToCallActivityId(),</span>
+<span class="nc" id="L773">                                activityMapping.getCallActivityProcessDefinitionVersion(),</span>
+                                newAssignee,
+                                newOwner);
+                        
+                    } else {
+<span class="nc" id="L778">                        mainProcessChangeActivityStateBuilder.moveActivityIdTo(fromActivityId, toActivityId, newAssignee, newOwner);</span>
+                    }
+<span class="nc" id="L780">                    executionActivityIdsToMapExplicitly.remove(fromActivityId);</span>
+                }
+                
+<span class="nc bnc" id="L783" title="All 2 branches missed.">            } else if (activityMapping instanceof ActivityMigrationMapping.OneToManyMapping) {</span>
+<span class="nc" id="L784">                String fromActivityId = ((ActivityMigrationMapping.OneToManyMapping) activityMapping).getFromActivityId();</span>
+<span class="nc" id="L785">                List&lt;String&gt; toActivityIds = activityMapping.getToActivityIds();</span>
+<span class="nc" id="L786">                String fromCallActivityId = activityMapping.getFromCallActivityId();</span>
+<span class="nc bnc" id="L787" title="All 4 branches missed.">                if (activityMapping.isToParentProcess() &amp;&amp; !executionActivityIdsToMapExplicitly.contains(fromCallActivityId)) {</span>
+<span class="nc" id="L788">                    List&lt;ExecutionEntity&gt; callActivityExecutions = filteredExecutionsByActivityId.get(fromCallActivityId).stream().filter(ExecutionEntity::isActive).collect(Collectors.toList());</span>
+<span class="nc bnc" id="L789" title="All 2 branches missed.">                    for (ExecutionEntity callActivityExecution : callActivityExecutions) {</span>
+<span class="nc" id="L790">                        ExecutionEntity subProcessInstanceExecution = executionEntityManager.findSubProcessInstanceBySuperExecutionId(callActivityExecution.getId());</span>
+<span class="nc" id="L791">                        ChangeActivityStateBuilderImpl subProcessChangeActivityStateBuilder = new ChangeActivityStateBuilderImpl();</span>
+<span class="nc" id="L792">                        subProcessChangeActivityStateBuilder.processInstanceId(subProcessInstanceExecution.getId());</span>
+<span class="nc" id="L793">                        subProcessChangeActivityStateBuilder.moveSingleActivityIdToParentActivityIds(fromActivityId, toActivityIds);</span>
+<span class="nc" id="L794">                        changeActivityStateBuilders.add(subProcessChangeActivityStateBuilder);</span>
+<span class="nc" id="L795">                    }</span>
+                    
+<span class="nc bnc" id="L797" title="All 2 branches missed.">                } else if (executionActivityIdsToMapExplicitly.contains(fromActivityId)) {</span>
+<span class="nc bnc" id="L798" title="All 2 branches missed.">                    if (activityMapping.isToCallActivity()) {</span>
+<span class="nc" id="L799">                        mainProcessChangeActivityStateBuilder.moveSingleActivityIdToSubProcessInstanceActivityIds(fromActivityId, toActivityIds, activityMapping.getToCallActivityId(), activityMapping.getCallActivityProcessDefinitionVersion());</span>
+                    } else {
+<span class="nc" id="L801">                        mainProcessChangeActivityStateBuilder.moveSingleActivityIdToActivityIds(fromActivityId, toActivityIds);</span>
+                    }
+<span class="nc" id="L803">                    executionActivityIdsToMapExplicitly.remove(fromActivityId);</span>
+                }
+                
+<span class="nc bnc" id="L806" title="All 2 branches missed.">            } else if (activityMapping instanceof ActivityMigrationMapping.ManyToOneMapping) {</span>
+<span class="nc" id="L807">                List&lt;String&gt; fromActivityIds = activityMapping.getFromActivityIds();</span>
+<span class="nc" id="L808">                String toActivityId = ((ActivityMigrationMapping.ManyToOneMapping) activityMapping).getToActivityId();</span>
+<span class="nc" id="L809">                String fromCallActivityId = activityMapping.getFromCallActivityId();</span>
+<span class="nc" id="L810">                String newAssignee = ((ActivityMigrationMapping.ManyToOneMapping) activityMapping).getWithNewAssignee();</span>
+<span class="nc" id="L811">                String newOwner = ((ActivityMigrationMapping.ManyToOneMapping) activityMapping).getWithNewOwner();</span>
+<span class="nc bnc" id="L812" title="All 4 branches missed.">                if (activityMapping.isToParentProcess() &amp;&amp; !executionActivityIdsToMapExplicitly.contains(fromCallActivityId)) {</span>
+<span class="nc" id="L813">                    List&lt;ExecutionEntity&gt; callActivityExecutions = filteredExecutionsByActivityId.get(fromCallActivityId).stream().filter(ExecutionEntity::isActive).collect(Collectors.toList());</span>
+<span class="nc bnc" id="L814" title="All 2 branches missed.">                    for (ExecutionEntity callActivityExecution : callActivityExecutions) {</span>
+<span class="nc" id="L815">                        ExecutionEntity subProcessInstanceExecution = executionEntityManager.findSubProcessInstanceBySuperExecutionId(callActivityExecution.getId());</span>
+<span class="nc" id="L816">                        ChangeActivityStateBuilderImpl subProcessChangeActivityStateBuilder = new ChangeActivityStateBuilderImpl();</span>
+<span class="nc" id="L817">                        subProcessChangeActivityStateBuilder.processInstanceId(subProcessInstanceExecution.getId());</span>
+<span class="nc" id="L818">                        subProcessChangeActivityStateBuilder.moveActivityIdsToParentActivityId(fromActivityIds, toActivityId, newAssignee, newOwner);</span>
+<span class="nc" id="L819">                        changeActivityStateBuilders.add(subProcessChangeActivityStateBuilder);</span>
+<span class="nc" id="L820">                    }</span>
+                    
+<span class="nc" id="L822">                } else {</span>
+<span class="nc" id="L823">                    List&lt;String&gt; executionIds = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L824" title="All 2 branches missed.">                    for (String activityId : fromActivityIds) {</span>
+<span class="nc bnc" id="L825" title="All 2 branches missed.">                        if (executionActivityIdsToMapExplicitly.contains(activityId)) {</span>
+<span class="nc" id="L826">                            List&lt;ExecutionEntity&gt; executionEntities = filteredExecutionsByActivityId.get(activityId);</span>
+<span class="nc" id="L827">                            executionIds.addAll(executionEntities.stream().map(ExecutionEntity::getId).collect(Collectors.toList()));</span>
+<span class="nc" id="L828">                            executionActivityIdsToMapExplicitly.remove(activityId);</span>
+                        }
+<span class="nc" id="L830">                    }</span>
+<span class="nc bnc" id="L831" title="All 2 branches missed.">                    if (activityMapping.isToCallActivity()) {</span>
+<span class="nc" id="L832">                        mainProcessChangeActivityStateBuilder.moveActivityIdsToSubProcessInstanceActivityId(fromActivityIds, toActivityId,</span>
+<span class="nc" id="L833">                                activityMapping.getToCallActivityId(),</span>
+<span class="nc" id="L834">                                activityMapping.getCallActivityProcessDefinitionVersion(),</span>
+                                newAssignee,
+                                newOwner);
+                    } else {
+<span class="nc" id="L838">                        mainProcessChangeActivityStateBuilder.moveExecutionsToSingleActivityId(executionIds, toActivityId, newAssignee, newOwner);</span>
+                    }
+                }
+                
+<span class="nc" id="L842">            } else {</span>
+<span class="nc" id="L843">                throw new FlowableException(&quot;Unknown Activity Mapping or not implemented yet!!!&quot;);</span>
+            }
+<span class="nc" id="L845">        }</span>
+
+<span class="nc bnc" id="L847" title="All 2 branches missed.">        if (!executionActivityIdsToMapExplicitly.isEmpty()) {</span>
+<span class="nc" id="L848">            throw new FlowableException(&quot;Migration Activity mapping missing for activity definition Ids:'&quot; + Arrays.toString(executionActivityIdsToMapExplicitly.toArray()) + &quot;'&quot;);</span>
+        }
+
+<span class="nc" id="L851">        return changeActivityStateBuilders;</span>
+    }
+
+    protected boolean isSameOrDefaultTenant(String processInstanceTenantId, String processDefinitionKey, 
+            String processDefinitionTenantId, ProcessEngineConfigurationImpl processEngineConfiguration) {
+        
+<span class="nc bnc" id="L857" title="All 4 branches missed.">        if (processInstanceTenantId != null &amp;&amp; processDefinitionTenantId != null) {</span>
+<span class="nc" id="L858">            boolean tenantIdsEqual = processInstanceTenantId.equals(processDefinitionTenantId);</span>
+<span class="nc bnc" id="L859" title="All 6 branches missed.">            if (!tenantIdsEqual &amp;&amp; processEngineConfiguration.isFallbackToDefaultTenant() &amp;&amp; processEngineConfiguration.getDefaultTenantProvider() != null) {</span>
+<span class="nc" id="L860">                return processDefinitionTenantId.equals(processEngineConfiguration.getDefaultTenantProvider().getDefaultTenant(processInstanceTenantId, ScopeTypes.BPMN, processDefinitionKey));</span>
+            }
+            
+<span class="nc" id="L863">            return tenantIdsEqual;</span>
+            
+<span class="nc bnc" id="L865" title="All 4 branches missed.">        } else if (processInstanceTenantId == null &amp;&amp; processDefinitionTenantId == null) {</span>
+<span class="nc" id="L866">            return true;</span>
+        }
+<span class="nc" id="L868">        return false;</span>
+    }
+
+    protected void changeProcessDefinitionReferenceOfHistory(ProcessInstance processInstance, ProcessDefinition processDefinition, CommandContext commandContext) {
+<span class="nc" id="L872">        HistoryLevel currentHistoryLevel = CommandContextUtil.getProcessEngineConfiguration(commandContext).getHistoryLevel();</span>
+<span class="nc bnc" id="L873" title="All 2 branches missed.">        if (currentHistoryLevel.isAtLeast(HistoryLevel.ACTIVITY)) {</span>
+<span class="nc" id="L874">            HistoryManager historyManager = CommandContextUtil.getHistoryManager(commandContext);</span>
+<span class="nc" id="L875">            historyManager.updateProcessDefinitionIdInHistory((ProcessDefinitionEntity) processDefinition, (ExecutionEntity) processInstance);</span>
+        }
+<span class="nc" id="L877">    }</span>
+
+    protected ProcessDefinition resolveProcessDefinition(ProcessInstanceMigrationDocument document, CommandContext commandContext) {
+<span class="nc bnc" id="L880" title="All 2 branches missed.">        if (document.getMigrateToProcessDefinitionId() != null) {</span>
+<span class="nc" id="L881">            ProcessDefinitionEntityManager processDefinitionEntityManager = CommandContextUtil.getProcessDefinitionEntityManager(commandContext);</span>
+<span class="nc" id="L882">            return processDefinitionEntityManager.findById(document.getMigrateToProcessDefinitionId());</span>
+
+        } else {
+<span class="nc" id="L885">            return resolveProcessDefinition(document.getMigrateToProcessDefinitionKey(), document.getMigrateToProcessDefinitionVersion(), </span>
+<span class="nc" id="L886">                            document.getMigrateToProcessDefinitionTenantId(), commandContext);</span>
+        }
+    }
+
+    protected boolean isActivityIdInProcessDefinitionModel(String activityId, BpmnModel bpmnModel) {
+<span class="nc bnc" id="L891" title="All 2 branches missed.">        return bpmnModel.getFlowElement(activityId) != null;</span>
+    }
+
+    protected String printProcessDefinitionIdentifierMessage(ProcessInstanceMigrationDocument document) {
+<span class="nc" id="L895">        String id = document.getMigrateToProcessDefinitionId();</span>
+<span class="nc" id="L896">        String key = document.getMigrateToProcessDefinitionKey();</span>
+<span class="nc" id="L897">        Integer version = document.getMigrateToProcessDefinitionVersion();</span>
+<span class="nc" id="L898">        String tenantId = document.getMigrateToProcessDefinitionTenantId();</span>
+<span class="nc bnc" id="L899" title="All 2 branches missed.">        return id != null ? &quot;[id:'&quot; + id + &quot;']&quot; : &quot;[key:'&quot; + key + &quot;', version:'&quot; + version + &quot;', tenantId:'&quot; + tenantId + &quot;']&quot;;</span>
+    }
+
+    @Override
+    protected boolean isSubProcessAncestorOfAnyExecution(String subProcessId, List&lt;ExecutionEntity&gt; currentExecutions) {
+        //recreates all subProcesses
+<span class="nc" id="L905">        return false;</span>
+    }
+
+    @Override
+    protected boolean isSubProcessContainerOfAnyFlowElement(String subProcessId, Collection&lt;MoveExecutionEntityContainer.FlowElementMoveEntry&gt; moveToFlowElements) {
+        //recreates all subProcesses
+<span class="nc" id="L911">        return false;</span>
+    }
+
+    protected boolean referToSameCalledElement(CallActivity callActivity1, CallActivity callActivity2) {
+<span class="nc" id="L915">        String calledElement1 = callActivity1.getCalledElement();</span>
+<span class="nc" id="L916">        String calledElement2 = callActivity2.getCalledElement();</span>
+
+<span class="nc bnc" id="L918" title="All 4 branches missed.">        return calledElement1.equals(calledElement2) &amp;&amp; !isExpression(calledElement1);</span>
+    }
+    
+    protected boolean hasSameLoopCharacteristics(Activity currentActivity, Activity newActivity) {
+<span class="nc" id="L922">    	boolean hasSameMI = false;</span>
+<span class="nc" id="L923">    	MultiInstanceLoopCharacteristics currentMIConfig = currentActivity.getLoopCharacteristics();</span>
+<span class="nc" id="L924">    	MultiInstanceLoopCharacteristics newMIConfig = newActivity.getLoopCharacteristics();</span>
+<span class="nc bnc" id="L925" title="All 2 branches missed.">    	if (currentMIConfig.isSequential() == newMIConfig.isSequential() &amp;&amp;</span>
+<span class="nc bnc" id="L926" title="All 2 branches missed.">    			hasSameStringValue(currentMIConfig.getCollectionString(), newMIConfig.getCollectionString()) &amp;&amp;</span>
+<span class="nc bnc" id="L927" title="All 2 branches missed.">    			hasSameStringValue(currentMIConfig.getLoopCardinality(), newMIConfig.getLoopCardinality()) &amp;&amp;</span>
+<span class="nc bnc" id="L928" title="All 2 branches missed.">    			hasSameStringValue(currentMIConfig.getCompletionCondition(), newMIConfig.getCompletionCondition()) &amp;&amp;</span>
+<span class="nc bnc" id="L929" title="All 2 branches missed.">    			hasSameStringValue(currentMIConfig.getElementIndexVariable(), newMIConfig.getElementIndexVariable()) &amp;&amp;</span>
+<span class="nc bnc" id="L930" title="All 2 branches missed.">    			hasSameStringValue(currentMIConfig.getElementVariable(), newMIConfig.getElementVariable()) &amp;&amp; </span>
+<span class="nc bnc" id="L931" title="All 2 branches missed.">    			hasSameStringValue(currentMIConfig.getInputDataItem(), newMIConfig.getInputDataItem()) &amp;&amp;</span>
+<span class="nc bnc" id="L932" title="All 2 branches missed.">    			hasSameStringValue(currentMIConfig.getLoopCardinality(), newMIConfig.getLoopCardinality())) {</span>
+    			
+<span class="nc" id="L934">    		hasSameMI = true;</span>
+    	}
+    	
+<span class="nc" id="L937">    	return hasSameMI;</span>
+    }
+    
+    protected boolean hasSameSubProcessContent(SubProcess currentSubProcess, SubProcess newSubProcess) {
+<span class="nc bnc" id="L941" title="All 2 branches missed.">    	if (currentSubProcess.getFlowElements().size() != newSubProcess.getFlowElements().size()) {</span>
+<span class="nc" id="L942">    		return false;</span>
+    	}
+    	
+<span class="nc" id="L945">    	boolean hasSameContent = true;</span>
+<span class="nc bnc" id="L946" title="All 2 branches missed.">    	for (FlowElement subElement : currentSubProcess.getFlowElements()) {</span>
+<span class="nc" id="L947">			FlowElement newSubElement = newSubProcess.getFlowElement(subElement.getId());</span>
+<span class="nc bnc" id="L948" title="All 2 branches missed.">			if (newSubElement == null) {</span>
+<span class="nc" id="L949">				hasSameContent = false;</span>
+<span class="nc" id="L950">				break;</span>
+			}
+			
+<span class="nc bnc" id="L953" title="All 2 branches missed.">			if (!(subElement.getClass().getName().equals(newSubElement.getClass().getName()))) {</span>
+<span class="nc" id="L954">				hasSameContent = false;</span>
+<span class="nc" id="L955">				break;</span>
+			}
+<span class="nc" id="L957">		}</span>
+    	
+<span class="nc" id="L959">    	return hasSameContent;</span>
+    }
+
+    protected void splitMigrationMappingByCallActivitySubProcessScope(ActivityMigrationMapping activityMigrationMapping, HashMap&lt;String, ActivityMigrationMapping&gt; mainProcessActivityMappingByFromActivityId, HashMap&lt;String, HashMap&lt;String, ActivityMigrationMapping&gt;&gt; subProcessActivityMappingsByCallActivityIdAndFromActivityId) {
+        HashMap&lt;String, ActivityMigrationMapping&gt; mapToFill;
+<span class="nc bnc" id="L964" title="All 2 branches missed.">        if (activityMigrationMapping.isToParentProcess()) {</span>
+<span class="nc" id="L965">            mapToFill = subProcessActivityMappingsByCallActivityIdAndFromActivityId.computeIfAbsent(activityMigrationMapping.getFromCallActivityId(), k -&gt; new HashMap&lt;&gt;());</span>
+        } else {
+<span class="nc" id="L967">            mapToFill = mainProcessActivityMappingByFromActivityId;</span>
+        }
+<span class="nc bnc" id="L969" title="All 2 branches missed.">        for (String fromActivityId : activityMigrationMapping.getFromActivityIds()) {</span>
+<span class="nc" id="L970">            mapToFill.put(fromActivityId, activityMigrationMapping);</span>
+<span class="nc" id="L971">        }</span>
+<span class="nc" id="L972">    }</span>
+
+    protected boolean hasSameStringValue(String currentValue, String newValue) {
+<span class="nc" id="L975">    	boolean sameValue = false;</span>
+<span class="nc bnc" id="L976" title="All 6 branches missed.">    	if ((currentValue == null &amp;&amp; newValue == null) ||</span>
+<span class="nc bnc" id="L977" title="All 2 branches missed.">    			(currentValue != null &amp;&amp; currentValue.equals(newValue))) {</span>
+    		
+<span class="nc" id="L979">    		sameValue = true;</span>
+    	}
+    	
+<span class="nc" id="L982">    	return sameValue;</span>
+    }
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

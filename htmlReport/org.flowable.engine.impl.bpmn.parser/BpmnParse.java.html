@@ -1,0 +1,525 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BpmnParse.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.bpmn.parser</a> &gt; <span class="el_source">BpmnParse.java</span></div><h1>BpmnParse.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.impl.bpmn.parser;
+
+import java.io.InputStream;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+
+import org.flowable.bpmn.constants.BpmnXMLConstants;
+import org.flowable.bpmn.converter.BpmnXMLConverter;
+import org.flowable.bpmn.exceptions.XMLException;
+import org.flowable.bpmn.model.BoundaryEvent;
+import org.flowable.bpmn.model.BpmnModel;
+import org.flowable.bpmn.model.Event;
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.FlowNode;
+import org.flowable.bpmn.model.GraphicInfo;
+import org.flowable.bpmn.model.Process;
+import org.flowable.bpmn.model.SequenceFlow;
+import org.flowable.bpmn.model.SubProcess;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.FlowableIllegalArgumentException;
+import org.flowable.common.engine.api.repository.EngineDeployment;
+import org.flowable.common.engine.impl.event.FlowableEventSupport;
+import org.flowable.common.engine.impl.util.io.InputStreamSource;
+import org.flowable.common.engine.impl.util.io.StreamSource;
+import org.flowable.common.engine.impl.util.io.StringStreamSource;
+import org.flowable.common.engine.impl.util.io.UrlStreamSource;
+import org.flowable.engine.impl.bpmn.parser.factory.ActivityBehaviorFactory;
+import org.flowable.engine.impl.bpmn.parser.factory.ListenerFactory;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.persistence.entity.ProcessDefinitionEntity;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.engine.impl.util.io.ResourceStreamSource;
+import org.flowable.validation.ProcessValidator;
+import org.flowable.validation.ValidationError;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Specific parsing of one BPMN 2.0 XML file, created by the {@link BpmnParser}.
+ * 
+ * @author Tijs Rademakers
+ * @author Joram Barrez
+ */
+public class BpmnParse implements BpmnXMLConstants {
+
+<span class="nc" id="L64">    protected static final Logger LOGGER = LoggerFactory.getLogger(BpmnParse.class);</span>
+
+    public static final String PROPERTYNAME_INITIAL = &quot;initial&quot;;
+    public static final String PROPERTYNAME_INITIATOR_VARIABLE_NAME = &quot;initiatorVariableName&quot;;
+    public static final String PROPERTYNAME_CONDITION = &quot;condition&quot;;
+    public static final String PROPERTYNAME_CONDITION_TEXT = &quot;conditionText&quot;;
+    public static final String PROPERTYNAME_TIMER_DECLARATION = &quot;timerDeclarations&quot;;
+    public static final String PROPERTYNAME_ISEXPANDED = &quot;isExpanded&quot;;
+    public static final String PROPERTYNAME_START_TIMER = &quot;timerStart&quot;;
+    public static final String PROPERTYNAME_COMPENSATION_HANDLER_ID = &quot;compensationHandler&quot;;
+    public static final String PROPERTYNAME_IS_FOR_COMPENSATION = &quot;isForCompensation&quot;;
+    public static final String PROPERTYNAME_ERROR_EVENT_DEFINITIONS = &quot;errorEventDefinitions&quot;;
+    public static final String PROPERTYNAME_EVENT_SUBSCRIPTION_DECLARATION = &quot;eventDefinitions&quot;;
+
+    protected String name;
+
+<span class="nc" id="L80">    protected boolean validateSchema = true;</span>
+<span class="nc" id="L81">    protected boolean validateProcess = true;</span>
+
+    protected StreamSource streamSource;
+    protected String sourceSystemId;
+
+    protected BpmnModel bpmnModel;
+
+    protected String targetNamespace;
+
+    /** The deployment to which the parsed process definitions will be added. */
+    protected EngineDeployment deployment;
+
+    /** The end result of the parsing: a list of process definition. */
+<span class="nc" id="L94">    protected List&lt;ProcessDefinitionEntity&gt; processDefinitions = new ArrayList&lt;&gt;();</span>
+
+    /** A map for storing sequence flow based on their id during parsing. */
+    protected Map&lt;String, SequenceFlow&gt; sequenceFlows;
+
+    protected BpmnParseHandlers bpmnParserHandlers;
+
+    protected ProcessDefinitionEntity currentProcessDefinition;
+
+    protected Process currentProcess;
+
+    protected FlowElement currentFlowElement;
+
+<span class="nc" id="L107">    protected LinkedList&lt;SubProcess&gt; currentSubprocessStack = new LinkedList&lt;&gt;();</span>
+
+    /**
+     * Mapping containing values stored during the first phase of parsing since other elements can reference these messages.
+     * 
+     * All the map's elements are defined outside the process definition(s), which means that this map doesn't need to be re-initialized for each new process definition.
+     */
+<span class="nc" id="L114">    protected Map&lt;String, String&gt; prefixs = new HashMap&lt;&gt;();</span>
+
+    // Factories
+    protected ActivityBehaviorFactory activityBehaviorFactory;
+    protected ListenerFactory listenerFactory;
+
+    /**
+     * Constructor to be called by the {@link BpmnParser}.
+     */
+<span class="nc" id="L123">    public BpmnParse(BpmnParser parser) {</span>
+<span class="nc" id="L124">        this.activityBehaviorFactory = parser.getActivityBehaviorFactory();</span>
+<span class="nc" id="L125">        this.listenerFactory = parser.getListenerFactory();</span>
+<span class="nc" id="L126">        this.bpmnParserHandlers = parser.getBpmnParserHandlers();</span>
+<span class="nc" id="L127">    }</span>
+
+    public BpmnParse deployment(EngineDeployment deployment) {
+<span class="nc" id="L130">        this.deployment = deployment;</span>
+<span class="nc" id="L131">        return this;</span>
+    }
+
+    public BpmnParse execute() {
+        try {
+
+<span class="nc" id="L137">            ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration();</span>
+<span class="nc" id="L138">            BpmnXMLConverter converter = new BpmnXMLConverter();</span>
+
+<span class="nc" id="L140">            boolean enableSafeBpmnXml = false;</span>
+<span class="nc" id="L141">            String encoding = null;</span>
+<span class="nc bnc" id="L142" title="All 2 branches missed.">            if (processEngineConfiguration != null) {</span>
+<span class="nc" id="L143">                enableSafeBpmnXml = processEngineConfiguration.isEnableSafeBpmnXml();</span>
+<span class="nc" id="L144">                encoding = processEngineConfiguration.getXmlEncoding();</span>
+            }
+
+<span class="nc bnc" id="L147" title="All 2 branches missed.">            if (encoding != null) {</span>
+<span class="nc" id="L148">                bpmnModel = converter.convertToBpmnModel(streamSource, validateSchema, enableSafeBpmnXml, encoding);</span>
+            } else {
+<span class="nc" id="L150">                bpmnModel = converter.convertToBpmnModel(streamSource, validateSchema, enableSafeBpmnXml);</span>
+            }
+
+            // XSD validation goes first, then process/semantic validation
+<span class="nc bnc" id="L154" title="All 2 branches missed.">            if (validateProcess) {</span>
+<span class="nc" id="L155">                ProcessValidator processValidator = processEngineConfiguration.getProcessValidator();</span>
+<span class="nc bnc" id="L156" title="All 2 branches missed.">                if (processValidator == null) {</span>
+<span class="nc" id="L157">                    LOGGER.warn(&quot;Process should be validated, but no process validator is configured on the process engine configuration!&quot;);</span>
+                } else {
+<span class="nc" id="L159">                    List&lt;ValidationError&gt; validationErrors = processValidator.validate(bpmnModel);</span>
+<span class="nc bnc" id="L160" title="All 4 branches missed.">                    if (validationErrors != null &amp;&amp; !validationErrors.isEmpty()) {</span>
+
+<span class="nc" id="L162">                        StringBuilder warningBuilder = new StringBuilder();</span>
+<span class="nc" id="L163">                        StringBuilder errorBuilder = new StringBuilder();</span>
+
+<span class="nc bnc" id="L165" title="All 2 branches missed.">                        for (ValidationError error : validationErrors) {</span>
+<span class="nc bnc" id="L166" title="All 2 branches missed.">                            if (error.isWarning()) {</span>
+<span class="nc" id="L167">                                warningBuilder.append(error);</span>
+<span class="nc" id="L168">                                warningBuilder.append(&quot;\n&quot;);</span>
+                            } else {
+<span class="nc" id="L170">                                errorBuilder.append(error);</span>
+<span class="nc" id="L171">                                errorBuilder.append(&quot;\n&quot;);</span>
+                            }
+<span class="nc" id="L173">                        }</span>
+
+                        // Throw exception if there is any error
+<span class="nc bnc" id="L176" title="All 2 branches missed.">                        if (errorBuilder.length() &gt; 0) {</span>
+<span class="nc" id="L177">                            throw new FlowableException(&quot;Errors while parsing:\n&quot; + errorBuilder);</span>
+                        }
+
+                        // Write out warnings (if any)
+<span class="nc bnc" id="L181" title="All 2 branches missed.">                        if (warningBuilder.length() &gt; 0) {</span>
+<span class="nc" id="L182">                            LOGGER.warn(&quot;Following warnings encountered during process validation: {}&quot;, warningBuilder);</span>
+                        }
+
+                    }
+                }
+            }
+
+<span class="nc" id="L189">            bpmnModel.setSourceSystemId(sourceSystemId);</span>
+<span class="nc" id="L190">            bpmnModel.setEventSupport(new FlowableEventSupport());</span>
+
+            // Validation successful (or no validation)
+
+            // Attach logic to the processes (eg. map ActivityBehaviors to bpmn model elements)
+<span class="nc" id="L195">            applyParseHandlers();</span>
+
+            // Finally, process the diagram interchange info
+<span class="nc" id="L198">            processDI();</span>
+
+<span class="nc" id="L200">        } catch (Exception e) {</span>
+<span class="nc bnc" id="L201" title="All 2 branches missed.">            if (e instanceof FlowableException) {</span>
+<span class="nc" id="L202">                throw (FlowableException) e;</span>
+<span class="nc bnc" id="L203" title="All 2 branches missed.">            } else if (e instanceof XMLException) {</span>
+<span class="nc" id="L204">                throw (XMLException) e;</span>
+            } else {
+<span class="nc" id="L206">                throw new FlowableException(&quot;Error parsing XML&quot;, e);</span>
+            }
+<span class="nc" id="L208">        }</span>
+
+<span class="nc" id="L210">        return this;</span>
+    }
+
+    public BpmnParse name(String name) {
+<span class="nc" id="L214">        this.name = name;</span>
+<span class="nc" id="L215">        return this;</span>
+    }
+
+    public BpmnParse sourceInputStream(InputStream inputStream) {
+<span class="nc bnc" id="L219" title="All 2 branches missed.">        if (name == null) {</span>
+<span class="nc" id="L220">            name(&quot;inputStream&quot;);</span>
+        }
+<span class="nc" id="L222">        setStreamSource(new InputStreamSource(inputStream));</span>
+<span class="nc" id="L223">        return this;</span>
+    }
+
+    public BpmnParse sourceResource(String resource) {
+<span class="nc" id="L227">        return sourceResource(resource, null);</span>
+    }
+
+    public BpmnParse sourceUrl(URL url) {
+<span class="nc bnc" id="L231" title="All 2 branches missed.">        if (name == null) {</span>
+<span class="nc" id="L232">            name(url.toString());</span>
+        }
+<span class="nc" id="L234">        setStreamSource(new UrlStreamSource(url));</span>
+<span class="nc" id="L235">        return this;</span>
+    }
+
+    public BpmnParse sourceUrl(String url) {
+        try {
+<span class="nc" id="L240">            return sourceUrl(new URL(url));</span>
+<span class="nc" id="L241">        } catch (MalformedURLException e) {</span>
+<span class="nc" id="L242">            throw new FlowableIllegalArgumentException(&quot;malformed url: &quot; + url, e);</span>
+        }
+    }
+
+    public BpmnParse sourceResource(String resource, ClassLoader classLoader) {
+<span class="nc bnc" id="L247" title="All 2 branches missed.">        if (name == null) {</span>
+<span class="nc" id="L248">            name(resource);</span>
+        }
+<span class="nc" id="L250">        setStreamSource(new ResourceStreamSource(resource, classLoader));</span>
+<span class="nc" id="L251">        return this;</span>
+    }
+
+    public BpmnParse sourceString(String string) {
+<span class="nc bnc" id="L255" title="All 2 branches missed.">        if (name == null) {</span>
+<span class="nc" id="L256">            name(&quot;string&quot;);</span>
+        }
+<span class="nc" id="L258">        setStreamSource(new StringStreamSource(string));</span>
+<span class="nc" id="L259">        return this;</span>
+    }
+
+    protected void setStreamSource(StreamSource streamSource) {
+<span class="nc bnc" id="L263" title="All 2 branches missed.">        if (this.streamSource != null) {</span>
+<span class="nc" id="L264">            throw new FlowableIllegalArgumentException(&quot;invalid: multiple sources &quot; + this.streamSource + &quot; and &quot; + streamSource);</span>
+        }
+<span class="nc" id="L266">        this.streamSource = streamSource;</span>
+<span class="nc" id="L267">    }</span>
+
+    public BpmnParse setSourceSystemId(String sourceSystemId) {
+<span class="nc" id="L270">        this.sourceSystemId = sourceSystemId;</span>
+<span class="nc" id="L271">        return this;</span>
+    }
+
+    /**
+     * Parses the 'definitions' root element
+     */
+    protected void applyParseHandlers() {
+<span class="nc" id="L278">        sequenceFlows = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L279" title="All 2 branches missed.">        for (Process process : bpmnModel.getProcesses()) {</span>
+<span class="nc" id="L280">            currentProcess = process;</span>
+<span class="nc bnc" id="L281" title="All 2 branches missed.">            if (process.isExecutable()) {</span>
+<span class="nc" id="L282">                bpmnParserHandlers.parseElement(this, process);</span>
+            }
+<span class="nc" id="L284">        }</span>
+<span class="nc" id="L285">    }</span>
+
+    public void processFlowElements(Collection&lt;FlowElement&gt; flowElements) {
+
+        // Parsing the elements is done in a strict order of types,
+        // as otherwise certain information might not be available when parsing
+        // a certain type.
+
+        // Using lists as we want to keep the order in which they are defined
+<span class="nc" id="L294">        List&lt;SequenceFlow&gt; sequenceFlowToParse = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L295">        List&lt;BoundaryEvent&gt; boundaryEventsToParse = new ArrayList&lt;&gt;();</span>
+
+        // Flow elements that depend on other elements are parse after the first run-through
+<span class="nc" id="L298">        List&lt;FlowElement&gt; defferedFlowElementsToParse = new ArrayList&lt;&gt;();</span>
+
+        // Activities are parsed first
+<span class="nc bnc" id="L301" title="All 2 branches missed.">        for (FlowElement flowElement : flowElements) {</span>
+
+            // Sequence flow are also flow elements, but are only parsed once every activity is found
+<span class="nc bnc" id="L304" title="All 2 branches missed.">            if (flowElement instanceof SequenceFlow) {</span>
+<span class="nc" id="L305">                sequenceFlowToParse.add((SequenceFlow) flowElement);</span>
+<span class="nc bnc" id="L306" title="All 2 branches missed.">            } else if (flowElement instanceof BoundaryEvent) {</span>
+<span class="nc" id="L307">                boundaryEventsToParse.add((BoundaryEvent) flowElement);</span>
+<span class="nc bnc" id="L308" title="All 2 branches missed.">            } else if (flowElement instanceof Event) {</span>
+<span class="nc" id="L309">                defferedFlowElementsToParse.add(flowElement);</span>
+            } else {
+<span class="nc" id="L311">                bpmnParserHandlers.parseElement(this, flowElement);</span>
+            }
+
+<span class="nc" id="L314">        }</span>
+
+        // Deferred elements
+<span class="nc bnc" id="L317" title="All 2 branches missed.">        for (FlowElement flowElement : defferedFlowElementsToParse) {</span>
+<span class="nc" id="L318">            bpmnParserHandlers.parseElement(this, flowElement);</span>
+<span class="nc" id="L319">        }</span>
+
+        // Boundary events are parsed after all the regular activities are parsed
+<span class="nc bnc" id="L322" title="All 2 branches missed.">        for (BoundaryEvent boundaryEvent : boundaryEventsToParse) {</span>
+<span class="nc" id="L323">            bpmnParserHandlers.parseElement(this, boundaryEvent);</span>
+<span class="nc" id="L324">        }</span>
+
+        // sequence flows
+<span class="nc bnc" id="L327" title="All 2 branches missed.">        for (SequenceFlow sequenceFlow : sequenceFlowToParse) {</span>
+<span class="nc" id="L328">            bpmnParserHandlers.parseElement(this, sequenceFlow);</span>
+<span class="nc" id="L329">        }</span>
+
+<span class="nc" id="L331">    }</span>
+
+    // Diagram interchange
+    // /////////////////////////////////////////////////////////////////
+
+    public void processDI() {
+
+<span class="nc bnc" id="L338" title="All 2 branches missed.">        if (processDefinitions.isEmpty()) {</span>
+<span class="nc" id="L339">            return;</span>
+        }
+
+<span class="nc bnc" id="L342" title="All 2 branches missed.">        if (!bpmnModel.getLocationMap().isEmpty()) {</span>
+
+            // Verify if all referenced elements exist
+<span class="nc bnc" id="L345" title="All 2 branches missed.">            for (String bpmnReference : bpmnModel.getLocationMap().keySet()) {</span>
+<span class="nc bnc" id="L346" title="All 2 branches missed.">                if (bpmnModel.getFlowElement(bpmnReference) == null) {</span>
+                    // ACT-1625: don't warn when artifacts are referenced from DI
+<span class="nc bnc" id="L348" title="All 2 branches missed.">                    if (bpmnModel.getArtifact(bpmnReference) == null) {</span>
+                        // Check if it's a Pool or Lane, then DI is ok
+<span class="nc bnc" id="L350" title="All 4 branches missed.">                        if (bpmnModel.getPool(bpmnReference) == null &amp;&amp; bpmnModel.getLane(bpmnReference) == null) {</span>
+<span class="nc" id="L351">                            LOGGER.warn(&quot;Invalid reference in diagram interchange definition: could not find {}&quot;, bpmnReference);</span>
+                        }
+                    }
+<span class="nc bnc" id="L354" title="All 2 branches missed.">                } else if (!(bpmnModel.getFlowElement(bpmnReference) instanceof FlowNode)) {</span>
+<span class="nc" id="L355">                    LOGGER.warn(&quot;Invalid reference in diagram interchange definition: {} does not reference a flow node&quot;, bpmnReference);</span>
+                }
+<span class="nc" id="L357">            }</span>
+
+<span class="nc bnc" id="L359" title="All 2 branches missed.">            for (String bpmnReference : bpmnModel.getFlowLocationMap().keySet()) {</span>
+<span class="nc bnc" id="L360" title="All 2 branches missed.">                if (bpmnModel.getFlowElement(bpmnReference) == null) {</span>
+                    // ACT-1625: don't warn when artifacts are referenced from DI
+<span class="nc bnc" id="L362" title="All 2 branches missed.">                    if (bpmnModel.getArtifact(bpmnReference) == null) {</span>
+<span class="nc" id="L363">                        LOGGER.warn(&quot;Invalid reference in diagram interchange definition: could not find {}&quot;, bpmnReference);</span>
+                    }
+<span class="nc bnc" id="L365" title="All 2 branches missed.">                } else if (!(bpmnModel.getFlowElement(bpmnReference) instanceof SequenceFlow)) {</span>
+<span class="nc" id="L366">                    LOGGER.warn(&quot;Invalid reference in diagram interchange definition: {} does not reference a sequence flow&quot;, bpmnReference);</span>
+                }
+<span class="nc" id="L368">            }</span>
+
+<span class="nc bnc" id="L370" title="All 2 branches missed.">            for (Process process : bpmnModel.getProcesses()) {</span>
+<span class="nc bnc" id="L371" title="All 2 branches missed.">                if (!process.isExecutable()) {</span>
+<span class="nc" id="L372">                    continue;</span>
+                }
+
+                // Parse diagram interchange information
+<span class="nc" id="L376">                ProcessDefinitionEntity processDefinition = getProcessDefinition(process.getId());</span>
+<span class="nc bnc" id="L377" title="All 2 branches missed.">                if (processDefinition != null) {</span>
+<span class="nc" id="L378">                    processDefinition.setGraphicalNotationDefined(true);</span>
+
+<span class="nc bnc" id="L380" title="All 2 branches missed.">                    for (String edgeId : bpmnModel.getFlowLocationMap().keySet()) {</span>
+<span class="nc bnc" id="L381" title="All 2 branches missed.">                        if (bpmnModel.getFlowElement(edgeId) != null) {</span>
+<span class="nc" id="L382">                            createBPMNEdge(edgeId, bpmnModel.getFlowLocationGraphicInfo(edgeId));</span>
+                        }
+<span class="nc" id="L384">                    }</span>
+                }
+<span class="nc" id="L386">            }</span>
+        }
+<span class="nc" id="L388">    }</span>
+
+    public void createBPMNEdge(String key, List&lt;GraphicInfo&gt; graphicList) {
+<span class="nc" id="L391">        FlowElement flowElement = bpmnModel.getFlowElement(key);</span>
+<span class="nc bnc" id="L392" title="All 2 branches missed.">        if (flowElement instanceof SequenceFlow) {</span>
+<span class="nc" id="L393">            SequenceFlow sequenceFlow = (SequenceFlow) flowElement;</span>
+<span class="nc" id="L394">            List&lt;Integer&gt; waypoints = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L395" title="All 2 branches missed.">            for (GraphicInfo waypointInfo : graphicList) {</span>
+<span class="nc" id="L396">                waypoints.add((int) waypointInfo.getX());</span>
+<span class="nc" id="L397">                waypoints.add((int) waypointInfo.getY());</span>
+<span class="nc" id="L398">            }</span>
+<span class="nc" id="L399">            sequenceFlow.setWaypoints(waypoints);</span>
+
+<span class="nc bnc" id="L401" title="All 2 branches missed.">        } else if (bpmnModel.getArtifact(key) != null) {</span>
+            // it's an association, so nothing to do
+        } else {
+<span class="nc" id="L404">            LOGGER.warn(&quot;Invalid reference in 'bpmnElement' attribute, sequenceFlow {} not found&quot;, key);</span>
+        }
+<span class="nc" id="L406">    }</span>
+
+    public ProcessDefinitionEntity getProcessDefinition(String processDefinitionKey) {
+<span class="nc bnc" id="L409" title="All 2 branches missed.">        for (ProcessDefinitionEntity processDefinition : processDefinitions) {</span>
+<span class="nc bnc" id="L410" title="All 2 branches missed.">            if (processDefinition.getKey().equals(processDefinitionKey)) {</span>
+<span class="nc" id="L411">                return processDefinition;</span>
+            }
+<span class="nc" id="L413">        }</span>
+<span class="nc" id="L414">        return null;</span>
+    }
+
+    /*
+     * ------------------- GETTERS AND SETTERS -------------------
+     */
+
+    public boolean isValidateSchema() {
+<span class="nc" id="L422">        return validateSchema;</span>
+    }
+
+    public void setValidateSchema(boolean validateSchema) {
+<span class="nc" id="L426">        this.validateSchema = validateSchema;</span>
+<span class="nc" id="L427">    }</span>
+
+    public boolean isValidateProcess() {
+<span class="nc" id="L430">        return validateProcess;</span>
+    }
+
+    public void setValidateProcess(boolean validateProcess) {
+<span class="nc" id="L434">        this.validateProcess = validateProcess;</span>
+<span class="nc" id="L435">    }</span>
+
+    public List&lt;ProcessDefinitionEntity&gt; getProcessDefinitions() {
+<span class="nc" id="L438">        return processDefinitions;</span>
+    }
+
+    public String getTargetNamespace() {
+<span class="nc" id="L442">        return targetNamespace;</span>
+    }
+
+    public BpmnParseHandlers getBpmnParserHandlers() {
+<span class="nc" id="L446">        return bpmnParserHandlers;</span>
+    }
+
+    public void setBpmnParserHandlers(BpmnParseHandlers bpmnParserHandlers) {
+<span class="nc" id="L450">        this.bpmnParserHandlers = bpmnParserHandlers;</span>
+<span class="nc" id="L451">    }</span>
+
+    public EngineDeployment getDeployment() {
+<span class="nc" id="L454">        return deployment;</span>
+    }
+
+    public void setDeployment(EngineDeployment deployment) {
+<span class="nc" id="L458">        this.deployment = deployment;</span>
+<span class="nc" id="L459">    }</span>
+
+    public BpmnModel getBpmnModel() {
+<span class="nc" id="L462">        return bpmnModel;</span>
+    }
+
+    public void setBpmnModel(BpmnModel bpmnModel) {
+<span class="nc" id="L466">        this.bpmnModel = bpmnModel;</span>
+<span class="nc" id="L467">    }</span>
+
+    public ActivityBehaviorFactory getActivityBehaviorFactory() {
+<span class="nc" id="L470">        return activityBehaviorFactory;</span>
+    }
+
+    public void setActivityBehaviorFactory(ActivityBehaviorFactory activityBehaviorFactory) {
+<span class="nc" id="L474">        this.activityBehaviorFactory = activityBehaviorFactory;</span>
+<span class="nc" id="L475">    }</span>
+
+    public ListenerFactory getListenerFactory() {
+<span class="nc" id="L478">        return listenerFactory;</span>
+    }
+
+    public void setListenerFactory(ListenerFactory listenerFactory) {
+<span class="nc" id="L482">        this.listenerFactory = listenerFactory;</span>
+<span class="nc" id="L483">    }</span>
+
+    public Map&lt;String, SequenceFlow&gt; getSequenceFlows() {
+<span class="nc" id="L486">        return sequenceFlows;</span>
+    }
+
+    public ProcessDefinitionEntity getCurrentProcessDefinition() {
+<span class="nc" id="L490">        return currentProcessDefinition;</span>
+    }
+
+    public void setCurrentProcessDefinition(ProcessDefinitionEntity currentProcessDefinition) {
+<span class="nc" id="L494">        this.currentProcessDefinition = currentProcessDefinition;</span>
+<span class="nc" id="L495">    }</span>
+
+    public FlowElement getCurrentFlowElement() {
+<span class="nc" id="L498">        return currentFlowElement;</span>
+    }
+
+    public void setCurrentFlowElement(FlowElement currentFlowElement) {
+<span class="nc" id="L502">        this.currentFlowElement = currentFlowElement;</span>
+<span class="nc" id="L503">    }</span>
+
+    public Process getCurrentProcess() {
+<span class="nc" id="L506">        return currentProcess;</span>
+    }
+
+    public void setCurrentProcess(Process currentProcess) {
+<span class="nc" id="L510">        this.currentProcess = currentProcess;</span>
+<span class="nc" id="L511">    }</span>
+
+    public void setCurrentSubProcess(SubProcess subProcess) {
+<span class="nc" id="L514">        currentSubprocessStack.push(subProcess);</span>
+<span class="nc" id="L515">    }</span>
+
+    public SubProcess getCurrentSubProcess() {
+<span class="nc" id="L518">        return currentSubprocessStack.peek();</span>
+    }
+
+    public void removeCurrentSubProcess() {
+<span class="nc" id="L522">        currentSubprocessStack.pop();</span>
+<span class="nc" id="L523">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

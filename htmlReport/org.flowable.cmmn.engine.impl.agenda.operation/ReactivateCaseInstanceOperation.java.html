@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ReactivateCaseInstanceOperation.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.cmmn.engine.impl.agenda.operation</a> &gt; <span class="el_source">ReactivateCaseInstanceOperation.java</span></div><h1>ReactivateCaseInstanceOperation.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.cmmn.engine.impl.agenda.operation;
+
+import java.util.List;
+
+import org.flowable.cmmn.api.runtime.PlanItemInstance;
+import org.flowable.cmmn.engine.impl.persistence.entity.CaseInstanceEntity;
+import org.flowable.cmmn.engine.impl.persistence.entity.PlanItemInstanceEntity;
+import org.flowable.cmmn.engine.impl.persistence.entity.PlanItemInstanceEntityManager;
+import org.flowable.cmmn.engine.impl.repository.CaseDefinitionUtil;
+import org.flowable.cmmn.engine.impl.util.CommandContextUtil;
+import org.flowable.cmmn.model.PlanItem;
+import org.flowable.cmmn.model.ReactivateEventListener;
+import org.flowable.common.engine.api.FlowableIllegalArgumentException;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+
+/**
+ * This operation reactivates a case model by first setting its reactivation event listener to active and triggering it, then in a second phase step through
+ * all plan items having a reactivation sentry and reactivate them before the model is completely re-evaluated again for reactivation of the case.
+ *
+ * @author Micha Kiener
+ */
+public class ReactivateCaseInstanceOperation extends AbstractCaseInstanceOperation {
+
+    public ReactivateCaseInstanceOperation(CommandContext commandContext, CaseInstanceEntity caseInstanceEntity) {
+<span class="nc" id="L37">        super(commandContext, null, caseInstanceEntity);</span>
+<span class="nc" id="L38">    }</span>
+
+    @Override
+    public void run() {
+<span class="nc" id="L42">        super.run();</span>
+
+        // PHASE 1:
+        // execute phase 1 of the reactivation: reactivate the listener plan item and all of its depending plan items, then trigger it
+<span class="nc" id="L46">        List&lt;PlanItemInstanceEntity&gt; planItemInstances = caseInstanceEntity.getChildPlanItemInstances();</span>
+
+        // we first search for the reactivation event, set it to available and then actually trigger it
+<span class="nc" id="L49">        ReactivateEventListener reactivateEventListener = CaseDefinitionUtil.getCase(caseInstanceEntity.getCaseDefinitionId()).getReactivateEventListener();</span>
+<span class="nc" id="L50">        PlanItemInstanceEntity reactivationListenerPlanItemInstance = searchPlanItemInstance(reactivateEventListener.getId(), planItemInstances);</span>
+<span class="nc bnc" id="L51" title="All 2 branches missed.">        if (reactivationListenerPlanItemInstance == null) {</span>
+<span class="nc" id="L52">            throw new FlowableIllegalArgumentException(&quot;Could not find reactivation listener plan item instance in case &quot; + caseInstanceEntity.getId());</span>
+        }
+
+        // reactivate the listener and direct dependencies of it so they can be triggered later
+        // we don't reuse the existing plan item instance but rather create a new one so we don't lose its history and data
+<span class="nc" id="L57">        PlanItemInstanceEntity reactivationListener = reactivatePlanItem(reactivationListenerPlanItemInstance);</span>
+
+        // all directly depending plan items need to be reactivated as well to be in the correct state before the listener is triggered
+<span class="nc" id="L60">        List&lt;PlanItem&gt; directlyReactivatedPlanItems = reactivateDependingPlanItems(reactivationListener, planItemInstances);</span>
+
+        // now as all depending plan items have been reactivated, trigger the reactivation event listener to start the reactivation of the case
+<span class="nc" id="L63">        CommandContextUtil.getAgenda(commandContext).planTriggerPlanItemInstanceOperation(reactivationListener);</span>
+
+        // PHASE 2:
+        // execute phase 2 of the reactivation: step through all root plan items and reactivate them according the cae model
+<span class="nc" id="L67">        CommandContextUtil.getAgenda(commandContext).planReactivatePlanModelOperation(caseInstanceEntity, directlyReactivatedPlanItems);</span>
+<span class="nc" id="L68">    }</span>
+
+    /**
+     * Reactivates all plan items having a dependency on the given plan item instance (e.g. the reactivation listener or any other plan item being reactivated)
+     * in order to become active once it is triggered or completed.
+     * This is necessary as we don't want to force modelers to use repetition just for reactivation to work, but reactivate depending plan items automatically,
+     * even though they might have been active before.
+     *
+     * @param planItemInstance the plan item instance to activate depending plan items for
+     * @param planItemInstances the list of plan items of the case to search for depending ones
+     * @return the list of reactivated, directly depending plan items
+     */
+    protected List&lt;PlanItem&gt; reactivateDependingPlanItems(PlanItemInstanceEntity planItemInstance, List&lt;PlanItemInstanceEntity&gt; planItemInstances) {
+        // search for all the direct dependencies the reactivation listener has as we need to (re-)activate them as well in order to be triggered
+        // by the listener, which is what we call first phase of reactivation
+<span class="nc" id="L83">        List&lt;PlanItem&gt; entryDependentPlanItems = planItemInstance.getPlanItem().getEntryDependentPlanItems();</span>
+<span class="nc bnc" id="L84" title="All 2 branches missed.">        if (entryDependentPlanItems != null) {</span>
+<span class="nc bnc" id="L85" title="All 2 branches missed.">            for (PlanItem entryDependentPlanItem : entryDependentPlanItems) {</span>
+<span class="nc" id="L86">                reactivatePlanItem(searchPlanItemInstance(entryDependentPlanItem.getPlanItemDefinition().getId(), planItemInstances));</span>
+<span class="nc" id="L87">            }</span>
+        }
+<span class="nc" id="L89">        return entryDependentPlanItems;</span>
+    }
+
+    /**
+     * Reactivates the given plan item by creating a new instance with the same data, but of course no timestamps yet set so we keep the original one in place
+     * with all its information. After this reactivation make sure to plan its reactivation using the agenda for further processing of the reactivation.
+     *
+     * @param planItemInstance the plan item to be reactivated
+     * @return the newly reactivated plan item instance
+     */
+    protected PlanItemInstanceEntity reactivatePlanItem(PlanItemInstanceEntity planItemInstance) {
+<span class="nc" id="L100">        PlanItemInstanceEntityManager planItemInstanceEntityManager = CommandContextUtil.getPlanItemInstanceEntityManager(commandContext);</span>
+<span class="nc" id="L101">        PlanItemInstance stagePlanItem = planItemInstance.getStagePlanItemInstanceEntity();</span>
+<span class="nc bnc" id="L102" title="All 4 branches missed.">        if (stagePlanItem == null &amp;&amp; planItemInstance.getStageInstanceId() != null) {</span>
+<span class="nc" id="L103">            stagePlanItem = planItemInstanceEntityManager.findById(planItemInstance.getStageInstanceId());</span>
+        }
+
+<span class="nc" id="L106">        PlanItemInstanceEntity reactivatedPlanItemInstance = planItemInstanceEntityManager</span>
+<span class="nc" id="L107">            .createPlanItemInstanceEntityBuilder()</span>
+<span class="nc" id="L108">            .planItem(planItemInstance.getPlanItem())</span>
+<span class="nc" id="L109">            .caseDefinitionId(planItemInstance.getCaseDefinitionId())</span>
+<span class="nc" id="L110">            .caseInstanceId(planItemInstance.getCaseInstanceId())</span>
+<span class="nc" id="L111">            .stagePlanItemInstance(stagePlanItem)</span>
+<span class="nc" id="L112">            .tenantId(planItemInstance.getTenantId())</span>
+<span class="nc" id="L113">            .addToParent(true)</span>
+<span class="nc" id="L114">            .silentNameExpressionEvaluation(false)</span>
+<span class="nc" id="L115">            .create();</span>
+
+<span class="nc" id="L117">        CommandContextUtil.getAgenda(commandContext).planReactivatePlanItemInstanceOperation(reactivatedPlanItemInstance);</span>
+<span class="nc" id="L118">        return reactivatedPlanItemInstance;</span>
+    }
+
+    protected PlanItemInstanceEntity searchPlanItemInstance(String planItemDefinitionId, List&lt;PlanItemInstanceEntity&gt; planItemInstances) {
+<span class="nc bnc" id="L122" title="All 2 branches missed.">        for (PlanItemInstanceEntity planItemInstance : planItemInstances) {</span>
+<span class="nc bnc" id="L123" title="All 2 branches missed.">            if (planItemInstance.getPlanItemDefinitionId().equals(planItemDefinitionId)) {</span>
+<span class="nc" id="L124">                return planItemInstance;</span>
+            }
+<span class="nc" id="L126">        }</span>
+<span class="nc" id="L127">        throw new FlowableIllegalArgumentException(&quot;Could not find plan item instance for plan item with definition id &quot; + planItemDefinitionId);</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L132">        return &quot;[Init Plan Model] initializing plan model for case instance &quot; + caseInstanceEntity.getId();</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

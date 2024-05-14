@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AcquireTimerJobsMultiNodeTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.jobexecutor</a> &gt; <span class="el_source">AcquireTimerJobsMultiNodeTest.java</span></div><h1>AcquireTimerJobsMultiNodeTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.test.jobexecutor;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.time.Instant;
+import java.util.Date;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
+import org.flowable.common.engine.impl.interceptor.Command;
+import org.flowable.common.engine.impl.interceptor.CommandConfig;
+import org.flowable.common.engine.impl.interceptor.CommandExecutor;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.interceptor.CommandInvoker;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.job.api.Job;
+import org.flowable.job.service.JobServiceConfiguration;
+import org.flowable.job.service.TimerJobService;
+import org.flowable.job.service.impl.asyncexecutor.AcquireTimerJobsRunnable;
+import org.flowable.job.service.impl.asyncexecutor.AsyncExecutor;
+import org.flowable.job.service.impl.persistence.entity.JobEntity;
+import org.flowable.job.service.impl.persistence.entity.TimerJobEntity;
+import org.junit.jupiter.api.Test;
+
+/**
+ * @author Filip Hrisafov
+ */
+<span class="nc" id="L43">class AcquireTimerJobsMultiNodeTest extends JobExecutorTestCase {</span>
+
+    protected CustomWaitCommandInvoker waitCommandInvoker;
+
+    @Override
+    protected void configureConfiguration(ProcessEngineConfigurationImpl processEngineConfiguration) {
+<span class="nc" id="L49">        super.configureConfiguration(processEngineConfiguration);</span>
+<span class="nc" id="L50">        waitCommandInvoker = new CustomWaitCommandInvoker();</span>
+<span class="nc" id="L51">        processEngineConfiguration.setCommandInvoker(waitCommandInvoker);</span>
+<span class="nc" id="L52">    }</span>
+
+    @Test
+    void testAcquireJobsInTheSameTime() {
+
+<span class="nc" id="L57">        Instant now = Instant.now();</span>
+<span class="nc" id="L58">        processEngineConfiguration.getClock().setCurrentTime(Date.from(now));</span>
+
+<span class="nc" id="L60">        AsyncExecutor asyncExecutor = processEngineConfiguration.getAsyncExecutor();</span>
+<span class="nc" id="L61">        CommandExecutor commandExecutor = processEngineConfiguration.getCommandExecutor();</span>
+
+<span class="nc" id="L63">        String correlationId = commandExecutor.execute(commandContext -&gt; {</span>
+<span class="nc" id="L64">            TimerJobEntity timer = createTweetTimer(&quot;i'm coding a test&quot;, Date.from(now.plusSeconds(10)));</span>
+<span class="nc" id="L65">            TimerJobService timerJobService = CommandContextUtil.getProcessEngineConfiguration(commandContext).getJobServiceConfiguration().getTimerJobService();</span>
+<span class="nc" id="L66">            timerJobService.scheduleTimerJob(timer);</span>
+<span class="nc" id="L67">            return timer.getCorrelationId();</span>
+        });
+
+<span class="nc" id="L70">        processEngineConfiguration.getClock().setCurrentTime(Date.from(now.plusSeconds(30)));</span>
+
+<span class="nc" id="L72">        waitCommandInvoker.waitLatch = new CountDownLatch(1);</span>
+<span class="nc" id="L73">        waitCommandInvoker.workLatch = new CountDownLatch(2);</span>
+
+<span class="nc" id="L75">        ExecutorService executorService = Executors.newFixedThreadPool(2);</span>
+
+<span class="nc" id="L77">        JobServiceConfiguration jobServiceConfiguration = processEngineConfiguration.getJobServiceConfiguration();</span>
+
+<span class="nc" id="L79">        AcquireTimerJobsRunnable runnable1 = new AcquireTimerJobsRunnable(asyncExecutor, jobServiceConfiguration.getJobManager(), 1);</span>
+<span class="nc" id="L80">        CompletableFuture.runAsync(runnable1, executorService);</span>
+
+<span class="nc" id="L82">        AcquireTimerJobsRunnable runnable2 = new AcquireTimerJobsRunnable(asyncExecutor, jobServiceConfiguration.getJobManager(), 1);</span>
+<span class="nc" id="L83">        CompletableFuture.runAsync(runnable2, executorService);</span>
+
+        try {
+<span class="nc" id="L86">            waitCommandInvoker.workLatch.await(5, TimeUnit.SECONDS);</span>
+<span class="nc" id="L87">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L88">            Thread.currentThread().interrupt();</span>
+<span class="nc" id="L89">        }</span>
+
+<span class="nc" id="L91">        waitCommandInvoker.waitLatch.countDown();</span>
+
+<span class="nc" id="L93">        waitCommandInvoker.waitLatch = null;</span>
+<span class="nc" id="L94">        waitCommandInvoker.workLatch = null;</span>
+
+<span class="nc" id="L96">        runnable1.stop();</span>
+<span class="nc" id="L97">        runnable2.stop();</span>
+        try {
+<span class="nc" id="L99">            executorService.awaitTermination(5, TimeUnit.SECONDS);</span>
+<span class="nc" id="L100">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L101">            Thread.currentThread().interrupt();</span>
+<span class="nc" id="L102">        }</span>
+
+<span class="nc" id="L104">        assertThat(managementService.createTimerJobQuery().singleResult()).isNull();</span>
+
+<span class="nc" id="L106">        Job job = managementService.createJobQuery().singleResult();</span>
+<span class="nc" id="L107">        assertThat(job).isNotNull();</span>
+<span class="nc" id="L108">        assertThat(job.getCorrelationId()).isEqualTo(correlationId);</span>
+<span class="nc" id="L109">        assertThat(job).isInstanceOf(JobEntity.class);</span>
+
+<span class="nc" id="L111">        managementService.deleteJob(job.getId());</span>
+<span class="nc" id="L112">    }</span>
+
+    private static class CustomWaitCommandInvoker extends CommandInvoker {
+
+        protected CountDownLatch workLatch;
+        protected CountDownLatch waitLatch;
+
+        public CustomWaitCommandInvoker() {
+<span class="nc" id="L120">            super((commandContext, runnable) -&gt; runnable.run(), null);</span>
+<span class="nc" id="L121">        }</span>
+
+        @Override
+        public &lt;T&gt; T execute(CommandConfig config, Command&lt;T&gt; command, CommandExecutor commandExecutor) {
+
+<span class="nc bnc" id="L126" title="All 2 branches missed.">            if (workLatch != null) {</span>
+<span class="nc" id="L127">                workLatch.countDown();</span>
+            }
+
+<span class="nc" id="L130">            T result = super.execute(config, command, commandExecutor);</span>
+
+<span class="nc bnc" id="L132" title="All 2 branches missed.">            if (waitLatch != null) {</span>
+                try {
+<span class="nc" id="L134">                    waitLatch.await(5, TimeUnit.SECONDS);</span>
+<span class="nc" id="L135">                } catch (InterruptedException e) {</span>
+<span class="nc" id="L136">                    Thread.currentThread().interrupt();</span>
+<span class="nc" id="L137">                }</span>
+            }
+<span class="nc" id="L139">            return result;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

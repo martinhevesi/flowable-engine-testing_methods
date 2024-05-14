@@ -1,0 +1,448 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ProcessInstanceDirectExecutionMigrationExternalWorkerTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.api.runtime.migration</a> &gt; <span class="el_source">ProcessInstanceDirectExecutionMigrationExternalWorkerTest.java</span></div><h1>ProcessInstanceDirectExecutionMigrationExternalWorkerTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.flowable.engine.test.api.runtime.migration;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
+
+import java.time.Duration;
+import java.util.List;
+
+import org.flowable.engine.impl.persistence.entity.ExecutionEntity;
+import org.flowable.engine.impl.test.JobTestHelper;
+import org.flowable.engine.migration.ProcessInstanceMigrationBuilder;
+import org.flowable.engine.migration.ProcessInstanceMigrationValidationResult;
+import org.flowable.engine.repository.ProcessDefinition;
+import org.flowable.engine.runtime.Execution;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.test.api.runtime.changestate.ChangeStateEventListener;
+import org.flowable.job.api.AcquiredExternalWorkerJob;
+import org.flowable.job.api.ExternalWorkerJob;
+import org.flowable.job.api.Job;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+/**
+ * @author Bas Claessen
+ */
+<span class="nc" id="L40">public class ProcessInstanceDirectExecutionMigrationExternalWorkerTest extends AbstractProcessInstanceMigrationTest {</span>
+
+<span class="nc" id="L42">    private final ChangeStateEventListener changeStateEventListener = new ChangeStateEventListener();</span>
+
+    @BeforeEach
+    protected void setUp() {
+<span class="nc" id="L46">        processEngine.getRuntimeService().addEventListener(changeStateEventListener);</span>
+<span class="nc" id="L47">    }</span>
+
+    @AfterEach
+    protected void tearDown() {
+<span class="nc" id="L51">        processEngine.getRuntimeService().removeEventListener(changeStateEventListener);</span>
+<span class="nc" id="L52">        deleteDeployments();</span>
+<span class="nc" id="L53">    }</span>
+
+    @Test
+    public void testSimpleMigrationWithActivityAutoMapping() {
+        //Deploy first version of the process
+<span class="nc" id="L58">        ProcessDefinition version1ProcessDef = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-external-worker-simple-process.bpmn20.xml&quot;);
+
+        //Start an instance of the first version of the process for migration
+<span class="nc" id="L62">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;MP&quot;);</span>
+
+        //Deploy second version of the same process
+<span class="nc" id="L65">        ProcessDefinition version2ProcessDef = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-external-worker-simple-process.bpmn20.xml&quot;);
+<span class="nc" id="L67">        assertThat(version1ProcessDef.getId()).isNotEqualTo(version2ProcessDef.getId());</span>
+
+<span class="nc" id="L69">        List&lt;ProcessDefinition&gt; processDefinitions = repositoryService.createProcessDefinitionQuery()</span>
+<span class="nc" id="L70">                .processDefinitionKey(&quot;MP&quot;)</span>
+<span class="nc" id="L71">                .list();</span>
+<span class="nc" id="L72">        assertThat(processDefinitions)</span>
+<span class="nc" id="L73">                .extracting(ProcessDefinition::getId)</span>
+<span class="nc" id="L74">                .containsExactlyInAnyOrder(version1ProcessDef.getId(), version2ProcessDef.getId());</span>
+
+<span class="nc" id="L76">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L77">        assertThat(executions).hasSize(2); //includes root execution</span>
+<span class="nc" id="L78">        executions.stream()</span>
+<span class="nc" id="L79">                .map(e -&gt; (ExecutionEntity) e)</span>
+<span class="nc" id="L80">                .forEach(e -&gt; assertThat(e.getProcessDefinitionId()).isEqualTo(version1ProcessDef.getId()));</span>
+
+<span class="nc" id="L82">        List&lt;ExternalWorkerJob&gt; externalWorkerJobs = managementService.createExternalWorkerJobQuery()</span>
+<span class="nc" id="L83">                .list();</span>
+<span class="nc" id="L84">        assertThat(externalWorkerJobs)</span>
+<span class="nc" id="L85">                .extracting(ExternalWorkerJob::getProcessDefinitionId, ExternalWorkerJob::getElementId, ExternalWorkerJob::getJobHandlerConfiguration)</span>
+<span class="nc" id="L86">                .containsExactly(tuple(version1ProcessDef.getId(), &quot;externalWorker1Id&quot;, &quot;topic1&quot;));</span>
+
+<span class="nc" id="L88">        ProcessInstanceMigrationValidationResult validationResult = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L89">                .migrateToProcessDefinition(version2ProcessDef.getId())</span>
+<span class="nc" id="L90">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L91">        assertThat(validationResult.isMigrationValid()).isTrue();</span>
+
+        // Migrate process
+<span class="nc" id="L94">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L95">                .migrateToProcessDefinition(version2ProcessDef.getId());</span>
+<span class="nc" id="L96">        ProcessInstanceMigrationValidationResult processInstanceMigrationResult = processInstanceMigrationBuilder.validateMigration(processInstance.getId());</span>
+<span class="nc" id="L97">        assertThat(processInstanceMigrationResult.isMigrationValid()).isTrue();</span>
+
+<span class="nc" id="L99">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+<span class="nc" id="L101">        executions = runtimeService.createExecutionQuery().list();</span>
+<span class="nc" id="L102">        assertThat(executions).hasSize(2); //includes root execution</span>
+<span class="nc" id="L103">        executions.stream()</span>
+<span class="nc" id="L104">                .map(e -&gt; (ExecutionEntity) e)</span>
+<span class="nc" id="L105">                .forEach(e -&gt; assertThat(e.getProcessDefinitionId()).isEqualTo(version2ProcessDef.getId()));</span>
+
+<span class="nc" id="L107">        List&lt;ExternalWorkerJob&gt; migratedExternalWorkerJobs = managementService.createExternalWorkerJobQuery()</span>
+<span class="nc" id="L108">                .list();</span>
+<span class="nc" id="L109">        assertThat(migratedExternalWorkerJobs)</span>
+<span class="nc" id="L110">                .extracting(ExternalWorkerJob::getProcessDefinitionId, ExternalWorkerJob::getElementId)</span>
+<span class="nc" id="L111">                .containsExactly(tuple(version2ProcessDef.getId(), &quot;externalWorker1Id&quot;));</span>
+
+        //Acquire the external worker job
+<span class="nc" id="L114">        List&lt;AcquiredExternalWorkerJob&gt; acquiredExternalWorkerJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L115">                .topic(&quot;topic1&quot;, Duration.ofHours(1))</span>
+<span class="nc" id="L116">                .acquireAndLock(1, &quot;workerId&quot;);</span>
+<span class="nc" id="L117">        assertThat(acquiredExternalWorkerJobs)</span>
+<span class="nc" id="L118">                .extracting(ExternalWorkerJob::getProcessDefinitionId, ExternalWorkerJob::getElementId)</span>
+<span class="nc" id="L119">                .containsExactly(tuple(version2ProcessDef.getId(), &quot;externalWorker1Id&quot;));</span>
+
+        //Complete the external worker job
+<span class="nc" id="L122">        managementService.createExternalWorkerCompletionBuilder(acquiredExternalWorkerJobs.get(0).getId(), &quot;workerId&quot;)</span>
+<span class="nc" id="L123">                .complete();</span>
+
+        // Start the async executor to process the completion of the external worker job
+<span class="nc" id="L126">        JobTestHelper.waitForJobExecutorToProcessAllJobs(processEngineConfiguration, managementService, 1000L, 500L, true);</span>
+<span class="nc" id="L127">        assertThat(JobTestHelper.areJobsAvailable(managementService)).isFalse();</span>
+
+<span class="nc" id="L129">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L130">    }</span>
+
+    @Test
+    public void testAcquiredBeforeMigration() {
+        //Deploy first version of the process
+<span class="nc" id="L135">        ProcessDefinition version1ProcessDef = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-external-worker-simple-process.bpmn20.xml&quot;);
+
+        //Start an instance of the first version of the process for migration
+<span class="nc" id="L139">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;MP&quot;);</span>
+
+        //Deploy second version of the same process
+<span class="nc" id="L142">        ProcessDefinition version2ProcessDef = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-external-worker-simple-process.bpmn20.xml&quot;);
+<span class="nc" id="L144">        assertThat(version1ProcessDef.getId()).isNotEqualTo(version2ProcessDef.getId());</span>
+
+<span class="nc" id="L146">        List&lt;ProcessDefinition&gt; processDefinitions = repositoryService.createProcessDefinitionQuery()</span>
+<span class="nc" id="L147">                .processDefinitionKey(&quot;MP&quot;)</span>
+<span class="nc" id="L148">                .list();</span>
+<span class="nc" id="L149">        assertThat(processDefinitions)</span>
+<span class="nc" id="L150">                .extracting(ProcessDefinition::getId)</span>
+<span class="nc" id="L151">                .containsExactlyInAnyOrder(version1ProcessDef.getId(), version2ProcessDef.getId());</span>
+
+<span class="nc" id="L153">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L154">        assertThat(executions).hasSize(2); //includes root execution</span>
+<span class="nc" id="L155">        executions.stream()</span>
+<span class="nc" id="L156">                .map(e -&gt; (ExecutionEntity) e)</span>
+<span class="nc" id="L157">                .forEach(e -&gt; assertThat(e.getProcessDefinitionId()).isEqualTo(version1ProcessDef.getId()));</span>
+
+<span class="nc" id="L159">        List&lt;ExternalWorkerJob&gt; externalWorkerJobs = managementService.createExternalWorkerJobQuery()</span>
+<span class="nc" id="L160">                .list();</span>
+<span class="nc" id="L161">        assertThat(externalWorkerJobs)</span>
+<span class="nc" id="L162">                .extracting(ExternalWorkerJob::getProcessDefinitionId, ExternalWorkerJob::getElementId, ExternalWorkerJob::getJobHandlerConfiguration)</span>
+<span class="nc" id="L163">                .containsExactly(tuple(version1ProcessDef.getId(), &quot;externalWorker1Id&quot;, &quot;topic1&quot;));</span>
+
+<span class="nc" id="L165">        ProcessInstanceMigrationValidationResult validationResult = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L166">                .migrateToProcessDefinition(version2ProcessDef.getId())</span>
+<span class="nc" id="L167">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L168">        assertThat(validationResult.isMigrationValid()).isTrue();</span>
+
+        //Acquire the external worker job
+<span class="nc" id="L171">        List&lt;AcquiredExternalWorkerJob&gt; acquiredExternalWorkerJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L172">                .topic(&quot;topic1&quot;, Duration.ofHours(1))</span>
+<span class="nc" id="L173">                .acquireAndLock(1, &quot;workerId&quot;);</span>
+<span class="nc" id="L174">        assertThat(acquiredExternalWorkerJobs)</span>
+<span class="nc" id="L175">                .extracting(ExternalWorkerJob::getProcessDefinitionId, ExternalWorkerJob::getElementId)</span>
+<span class="nc" id="L176">                .containsExactly(tuple(version1ProcessDef.getId(), &quot;externalWorker1Id&quot;));</span>
+
+        // Migrate process
+<span class="nc" id="L179">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L180">                .migrateToProcessDefinition(version2ProcessDef.getId());</span>
+<span class="nc" id="L181">        ProcessInstanceMigrationValidationResult processInstanceMigrationResult = processInstanceMigrationBuilder.validateMigration(processInstance.getId());</span>
+<span class="nc" id="L182">        assertThat(processInstanceMigrationResult.isMigrationValid()).isTrue();</span>
+
+<span class="nc" id="L184">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+<span class="nc" id="L186">        executions = runtimeService.createExecutionQuery().list();</span>
+<span class="nc" id="L187">        assertThat(executions).hasSize(2); //includes root execution</span>
+<span class="nc" id="L188">        executions.stream()</span>
+<span class="nc" id="L189">                .map(e -&gt; (ExecutionEntity) e)</span>
+<span class="nc" id="L190">                .forEach(e -&gt; assertThat(e.getProcessDefinitionId()).isEqualTo(version2ProcessDef.getId()));</span>
+
+<span class="nc" id="L192">        List&lt;ExternalWorkerJob&gt; migratedExternalWorkerJobs = managementService.createExternalWorkerJobQuery()</span>
+<span class="nc" id="L193">                .list();</span>
+<span class="nc" id="L194">        assertThat(migratedExternalWorkerJobs)</span>
+<span class="nc" id="L195">                .extracting(ExternalWorkerJob::getProcessDefinitionId, ExternalWorkerJob::getElementId, ExternalWorkerJob::getJobHandlerConfiguration)</span>
+<span class="nc" id="L196">                .containsExactly(tuple(version2ProcessDef.getId(), &quot;externalWorker1Id&quot;, &quot;topic1&quot;));</span>
+
+        //Complete the external worker job
+<span class="nc" id="L199">        managementService.createExternalWorkerCompletionBuilder(acquiredExternalWorkerJobs.get(0).getId(), &quot;workerId&quot;)</span>
+<span class="nc" id="L200">                .complete();</span>
+
+        // Start the async executor to process the completion of the external worker job
+<span class="nc" id="L203">        JobTestHelper.waitForJobExecutorToProcessAllJobs(processEngineConfiguration, managementService, 1000L, 500L, true);</span>
+<span class="nc" id="L204">        assertThat(JobTestHelper.areJobsAvailable(managementService)).isFalse();</span>
+
+<span class="nc" id="L206">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L207">    }</span>
+
+    @Test
+    public void testSuspendedBeforeMigration() {
+        //Deploy first version of the process
+<span class="nc" id="L212">        ProcessDefinition version1ProcessDef = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-external-worker-simple-process.bpmn20.xml&quot;);
+
+        //Start an instance of the first version of the process for migration
+<span class="nc" id="L216">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;MP&quot;);</span>
+
+        //Deploy second version of the same process
+<span class="nc" id="L219">        ProcessDefinition version2ProcessDef = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-external-worker-simple-process.bpmn20.xml&quot;);
+<span class="nc" id="L221">        assertThat(version1ProcessDef.getId()).isNotEqualTo(version2ProcessDef.getId());</span>
+
+<span class="nc" id="L223">        List&lt;ProcessDefinition&gt; processDefinitions = repositoryService.createProcessDefinitionQuery()</span>
+<span class="nc" id="L224">                .processDefinitionKey(&quot;MP&quot;)</span>
+<span class="nc" id="L225">                .list();</span>
+<span class="nc" id="L226">        assertThat(processDefinitions)</span>
+<span class="nc" id="L227">                .extracting(ProcessDefinition::getId)</span>
+<span class="nc" id="L228">                .containsExactlyInAnyOrder(version1ProcessDef.getId(), version2ProcessDef.getId());</span>
+
+<span class="nc" id="L230">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L231">        assertThat(executions).hasSize(2); //includes root execution</span>
+<span class="nc" id="L232">        executions.stream()</span>
+<span class="nc" id="L233">                .map(e -&gt; (ExecutionEntity) e)</span>
+<span class="nc" id="L234">                .forEach(e -&gt; assertThat(e.getProcessDefinitionId()).isEqualTo(version1ProcessDef.getId()));</span>
+
+<span class="nc" id="L236">        List&lt;ExternalWorkerJob&gt; externalWorkerJobs = managementService.createExternalWorkerJobQuery()</span>
+<span class="nc" id="L237">                .list();</span>
+<span class="nc" id="L238">        assertThat(externalWorkerJobs)</span>
+<span class="nc" id="L239">                .extracting(ExternalWorkerJob::getProcessDefinitionId, ExternalWorkerJob::getElementId, ExternalWorkerJob::getJobHandlerConfiguration)</span>
+<span class="nc" id="L240">                .containsExactly(tuple(version1ProcessDef.getId(), &quot;externalWorker1Id&quot;, &quot;topic1&quot;));</span>
+
+<span class="nc" id="L242">        ProcessInstanceMigrationValidationResult validationResult = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L243">                .migrateToProcessDefinition(version2ProcessDef.getId())</span>
+<span class="nc" id="L244">                .validateMigration(processInstance.getId());</span>
+<span class="nc" id="L245">        assertThat(validationResult.isMigrationValid()).isTrue();</span>
+
+        //Suspend the process instance
+<span class="nc" id="L248">        runtimeService.suspendProcessInstanceById(processInstance.getId());</span>
+
+        // Migrate process
+<span class="nc" id="L251">        ProcessInstanceMigrationBuilder processInstanceMigrationBuilder = processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L252">                .migrateToProcessDefinition(version2ProcessDef.getId());</span>
+<span class="nc" id="L253">        ProcessInstanceMigrationValidationResult processInstanceMigrationResult = processInstanceMigrationBuilder.validateMigration(processInstance.getId());</span>
+<span class="nc" id="L254">        assertThat(processInstanceMigrationResult.isMigrationValid()).isTrue();</span>
+
+<span class="nc" id="L256">        processInstanceMigrationBuilder.migrate(processInstance.getId());</span>
+
+<span class="nc" id="L258">        executions = runtimeService.createExecutionQuery().list();</span>
+<span class="nc" id="L259">        assertThat(executions).hasSize(2); //includes root execution</span>
+<span class="nc" id="L260">        executions.stream()</span>
+<span class="nc" id="L261">                .map(e -&gt; (ExecutionEntity) e)</span>
+<span class="nc" id="L262">                .forEach(e -&gt; assertThat(e.getProcessDefinitionId()).isEqualTo(version2ProcessDef.getId()));</span>
+
+<span class="nc" id="L264">        List&lt;Job&gt; migratedSuspendedJobs = managementService.createSuspendedJobQuery()</span>
+<span class="nc" id="L265">                .list();</span>
+<span class="nc" id="L266">        assertThat(migratedSuspendedJobs)</span>
+<span class="nc" id="L267">                .extracting(Job::getProcessDefinitionId, Job::getElementId, Job::getJobHandlerConfiguration)</span>
+<span class="nc" id="L268">                .containsExactly(tuple(version2ProcessDef.getId(), &quot;externalWorker1Id&quot;, &quot;topic1&quot;));</span>
+
+        //Activate the process instance
+<span class="nc" id="L271">        runtimeService.activateProcessInstanceById(processInstance.getId());</span>
+
+        //Acquire the external worker job
+<span class="nc" id="L274">        List&lt;AcquiredExternalWorkerJob&gt; acquiredExternalWorkerJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L275">                .topic(&quot;topic1&quot;, Duration.ofHours(1))</span>
+<span class="nc" id="L276">                .acquireAndLock(1, &quot;workerId&quot;);</span>
+<span class="nc" id="L277">        assertThat(acquiredExternalWorkerJobs)</span>
+<span class="nc" id="L278">                .extracting(ExternalWorkerJob::getProcessDefinitionId, ExternalWorkerJob::getElementId)</span>
+<span class="nc" id="L279">                .containsExactly(tuple(version2ProcessDef.getId(), &quot;externalWorker1Id&quot;));</span>
+
+        //Complete the external worker job
+<span class="nc" id="L282">        managementService.createExternalWorkerCompletionBuilder(acquiredExternalWorkerJobs.get(0).getId(), &quot;workerId&quot;)</span>
+<span class="nc" id="L283">                .complete();</span>
+
+        // Start the async executor to process the completion of the external worker job
+<span class="nc" id="L286">        JobTestHelper.waitForJobExecutorToProcessAllJobs(processEngineConfiguration, managementService, 1000L, 500L, true);</span>
+<span class="nc" id="L287">        assertThat(JobTestHelper.areJobsAvailable(managementService)).isFalse();</span>
+
+<span class="nc" id="L289">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L290">    }</span>
+
+    @Test
+    public void testDeadLetterBeforeMigration() {
+        //Deploy first version of the process
+<span class="nc" id="L295">        ProcessDefinition version1ProcessDef = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-external-worker-simple-process.bpmn20.xml&quot;);
+
+        //Start an instance of the first version of the process for migration
+<span class="nc" id="L299">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;MP&quot;);</span>
+
+        //Deploy second version of the same process
+<span class="nc" id="L302">        ProcessDefinition version2ProcessDef = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-external-worker-simple-process.bpmn20.xml&quot;);
+<span class="nc" id="L304">        assertThat(version1ProcessDef.getId()).isNotEqualTo(version2ProcessDef.getId());</span>
+
+<span class="nc" id="L306">        List&lt;ExternalWorkerJob&gt; externalWorkerJobs = managementService.createExternalWorkerJobQuery()</span>
+<span class="nc" id="L307">                .list();</span>
+<span class="nc" id="L308">        assertThat(externalWorkerJobs)</span>
+<span class="nc" id="L309">                .extracting(ExternalWorkerJob::getProcessDefinitionId, ExternalWorkerJob::getElementId)</span>
+<span class="nc" id="L310">                .containsExactly(tuple(version1ProcessDef.getId(), &quot;externalWorker1Id&quot;));</span>
+
+        //Acquire the external worker job
+<span class="nc" id="L313">        List&lt;AcquiredExternalWorkerJob&gt; acquiredExternalWorkerJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L314">                .topic(&quot;topic1&quot;, Duration.ofHours(1))</span>
+<span class="nc" id="L315">                .acquireAndLock(1, &quot;workerId&quot;);</span>
+<span class="nc" id="L316">        assertThat(acquiredExternalWorkerJobs)</span>
+<span class="nc" id="L317">                .extracting(ExternalWorkerJob::getProcessDefinitionId, ExternalWorkerJob::getElementId)</span>
+<span class="nc" id="L318">                .containsExactly(tuple(version1ProcessDef.getId(), &quot;externalWorker1Id&quot;));</span>
+
+        //Fail the external worker job
+<span class="nc" id="L321">        managementService.createExternalWorkerJobFailureBuilder(acquiredExternalWorkerJobs.get(0).getId(), &quot;workerId&quot;)</span>
+<span class="nc" id="L322">                .errorDetails(&quot;errorDetails&quot;)</span>
+<span class="nc" id="L323">                .retries(0)</span>
+<span class="nc" id="L324">                .fail();</span>
+
+<span class="nc" id="L326">        List&lt;Job&gt; deadLetterJobs = managementService.createDeadLetterJobQuery()</span>
+<span class="nc" id="L327">                .jobId(acquiredExternalWorkerJobs.get(0).getId())</span>
+<span class="nc" id="L328">                .list();</span>
+<span class="nc" id="L329">        assertThat(deadLetterJobs)</span>
+<span class="nc" id="L330">                .extracting(Job::getProcessDefinitionId, Job::getElementId)</span>
+<span class="nc" id="L331">                .containsExactly(tuple(version1ProcessDef.getId(), &quot;externalWorker1Id&quot;));</span>
+
+        // Migrate process
+<span class="nc" id="L334">        processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L335">                .migrateToProcessDefinition(version2ProcessDef.getId())</span>
+<span class="nc" id="L336">                .migrate(processInstance.getId());</span>
+
+<span class="nc" id="L338">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().list();</span>
+<span class="nc" id="L339">        assertThat(executions).hasSize(2); //includes root execution</span>
+<span class="nc" id="L340">        executions.stream()</span>
+<span class="nc" id="L341">                .map(e -&gt; (ExecutionEntity) e)</span>
+<span class="nc" id="L342">                .forEach(e -&gt; assertThat(e.getProcessDefinitionId()).isEqualTo(version2ProcessDef.getId()));</span>
+
+<span class="nc" id="L344">        List&lt;Job&gt; migratedDeadLetterJobs = managementService.createDeadLetterJobQuery()</span>
+<span class="nc" id="L345">                .list();</span>
+<span class="nc" id="L346">        assertThat(migratedDeadLetterJobs)</span>
+<span class="nc" id="L347">                .extracting(Job::getProcessDefinitionId, Job::getElementId)</span>
+<span class="nc" id="L348">                .containsExactly(tuple(version2ProcessDef.getId(), &quot;externalWorker1Id&quot;));</span>
+
+<span class="nc" id="L350">        managementService.moveDeadLetterJobToExecutableJob(migratedDeadLetterJobs.get(0).getId(), 0);</span>
+
+        //Acquire the external worker job again
+<span class="nc" id="L353">        acquiredExternalWorkerJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L354">                .topic(&quot;topic1&quot;, Duration.ofHours(1))</span>
+<span class="nc" id="L355">                .acquireAndLock(1, &quot;workerId&quot;);</span>
+<span class="nc" id="L356">        assertThat(acquiredExternalWorkerJobs)</span>
+<span class="nc" id="L357">                .extracting(ExternalWorkerJob::getProcessDefinitionId, ExternalWorkerJob::getElementId)</span>
+<span class="nc" id="L358">                .containsExactly(tuple(version2ProcessDef.getId(), &quot;externalWorker1Id&quot;));</span>
+
+        //Complete the external worker job
+<span class="nc" id="L361">        managementService.createExternalWorkerCompletionBuilder(acquiredExternalWorkerJobs.get(0).getId(), &quot;workerId&quot;)</span>
+<span class="nc" id="L362">                .complete();</span>
+
+        // Start the async executor to process the completion of the external worker job
+<span class="nc" id="L365">        JobTestHelper.waitForJobExecutorToProcessAllJobs(processEngineConfiguration, managementService, 1000L, 500L, true);</span>
+<span class="nc" id="L366">        assertThat(JobTestHelper.areJobsAvailable(managementService)).isFalse();</span>
+
+<span class="nc" id="L368">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L369">    }</span>
+
+    @Test
+    public void testRetryBeforeMigration() {
+        //Deploy first version of the process
+<span class="nc" id="L374">        ProcessDefinition version1ProcessDef = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-external-worker-simple-process.bpmn20.xml&quot;);
+
+        //Start an instance of the first version of the process for migration
+<span class="nc" id="L378">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;MP&quot;);</span>
+
+        //Deploy second version of the same process
+<span class="nc" id="L381">        ProcessDefinition version2ProcessDef = deployProcessDefinition(&quot;my deploy&quot;,</span>
+                &quot;org/flowable/engine/test/api/runtime/migration/one-external-worker-simple-process.bpmn20.xml&quot;);
+<span class="nc" id="L383">        assertThat(version1ProcessDef.getId()).isNotEqualTo(version2ProcessDef.getId());</span>
+
+<span class="nc" id="L385">        List&lt;ExternalWorkerJob&gt; externalWorkerJobs = managementService.createExternalWorkerJobQuery()</span>
+<span class="nc" id="L386">                .list();</span>
+<span class="nc" id="L387">        assertThat(externalWorkerJobs)</span>
+<span class="nc" id="L388">                .extracting(ExternalWorkerJob::getProcessDefinitionId, ExternalWorkerJob::getElementId)</span>
+<span class="nc" id="L389">                .containsExactly(tuple(version1ProcessDef.getId(), &quot;externalWorker1Id&quot;));</span>
+
+        //Acquire the external worker job
+<span class="nc" id="L392">        List&lt;AcquiredExternalWorkerJob&gt; acquiredExternalWorkerJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L393">                .topic(&quot;topic1&quot;, Duration.ofHours(1))</span>
+<span class="nc" id="L394">                .acquireAndLock(1, &quot;workerId&quot;);</span>
+<span class="nc" id="L395">        assertThat(acquiredExternalWorkerJobs)</span>
+<span class="nc" id="L396">                .extracting(ExternalWorkerJob::getProcessDefinitionId, ExternalWorkerJob::getElementId)</span>
+<span class="nc" id="L397">                .containsExactly(tuple(version1ProcessDef.getId(), &quot;externalWorker1Id&quot;));</span>
+
+        //Fail the external worker job with a retry
+<span class="nc" id="L400">        managementService.createExternalWorkerJobFailureBuilder(acquiredExternalWorkerJobs.get(0).getId(), &quot;workerId&quot;)</span>
+<span class="nc" id="L401">                .errorDetails(&quot;errorDetails&quot;)</span>
+<span class="nc" id="L402">                .retries(1)</span>
+<span class="nc" id="L403">                .fail();</span>
+
+<span class="nc" id="L405">        externalWorkerJobs = managementService.createExternalWorkerJobQuery()</span>
+<span class="nc" id="L406">                .list();</span>
+<span class="nc" id="L407">        assertThat(externalWorkerJobs)</span>
+<span class="nc" id="L408">                .extracting(ExternalWorkerJob::getProcessDefinitionId, ExternalWorkerJob::getElementId, ExternalWorkerJob::getRetries)</span>
+<span class="nc" id="L409">                .containsExactly(tuple(version1ProcessDef.getId(), &quot;externalWorker1Id&quot;, 1));</span>
+
+        // Migrate process
+<span class="nc" id="L412">        processMigrationService.createProcessInstanceMigrationBuilder()</span>
+<span class="nc" id="L413">                .migrateToProcessDefinition(version2ProcessDef.getId())</span>
+<span class="nc" id="L414">                .migrate(processInstance.getId());</span>
+
+<span class="nc" id="L416">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().list();</span>
+<span class="nc" id="L417">        assertThat(executions).hasSize(2); //includes root execution</span>
+<span class="nc" id="L418">        executions.stream()</span>
+<span class="nc" id="L419">                .map(e -&gt; (ExecutionEntity) e)</span>
+<span class="nc" id="L420">                .forEach(e -&gt; assertThat(e.getProcessDefinitionId()).isEqualTo(version2ProcessDef.getId()));</span>
+
+<span class="nc" id="L422">        List&lt;ExternalWorkerJob&gt; migratedExternalWorkerJobs = managementService.createExternalWorkerJobQuery()</span>
+<span class="nc" id="L423">                .list();</span>
+<span class="nc" id="L424">        assertThat(migratedExternalWorkerJobs)</span>
+<span class="nc" id="L425">                .extracting(Job::getProcessDefinitionId, Job::getElementId)</span>
+<span class="nc" id="L426">                .containsExactly(tuple(version2ProcessDef.getId(), &quot;externalWorker1Id&quot;));</span>
+
+        //Acquire the external worker job again
+<span class="nc" id="L429">        acquiredExternalWorkerJobs = managementService.createExternalWorkerJobAcquireBuilder()</span>
+<span class="nc" id="L430">                .topic(&quot;topic1&quot;, Duration.ofHours(1))</span>
+<span class="nc" id="L431">                .acquireAndLock(1, &quot;workerId&quot;);</span>
+<span class="nc" id="L432">        assertThat(acquiredExternalWorkerJobs)</span>
+<span class="nc" id="L433">                .extracting(ExternalWorkerJob::getProcessDefinitionId, ExternalWorkerJob::getElementId)</span>
+<span class="nc" id="L434">                .containsExactly(tuple(version2ProcessDef.getId(), &quot;externalWorker1Id&quot;));</span>
+
+        //Complete the external worker job
+<span class="nc" id="L437">        managementService.createExternalWorkerCompletionBuilder(acquiredExternalWorkerJobs.get(0).getId(), &quot;workerId&quot;)</span>
+<span class="nc" id="L438">                .complete();</span>
+
+        // Start the async executor to process the completion of the external worker job
+<span class="nc" id="L441">        JobTestHelper.waitForJobExecutorToProcessAllJobs(processEngineConfiguration, managementService, 1000L, 500L, true);</span>
+<span class="nc" id="L442">        assertThat(JobTestHelper.areJobsAvailable(managementService)).isFalse();</span>
+
+<span class="nc" id="L444">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L445">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

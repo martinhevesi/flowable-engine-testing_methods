@@ -1,0 +1,246 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BpmnDeploymentHelper.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.bpmn.deployer</a> &gt; <span class="el_source">BpmnDeploymentHelper.java</span></div><h1>BpmnDeploymentHelper.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.impl.bpmn.deployer;
+
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.bpmn.model.BpmnModel;
+import org.flowable.bpmn.model.Process;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.delegate.Expression;
+import org.flowable.common.engine.impl.assignment.CandidateUtil;
+import org.flowable.common.engine.impl.context.Context;
+import org.flowable.common.engine.impl.el.ExpressionManager;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.engine.ProcessEngineConfiguration;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.persistence.entity.DeploymentEntity;
+import org.flowable.engine.impl.persistence.entity.ProcessDefinitionEntity;
+import org.flowable.engine.impl.persistence.entity.ProcessDefinitionEntityManager;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.identitylink.api.IdentityLinkType;
+import org.flowable.identitylink.service.IdentityLinkService;
+import org.flowable.identitylink.service.impl.persistence.entity.IdentityLinkEntity;
+import org.flowable.variable.service.impl.el.NoExecutionVariableScope;
+
+/**
+ * Methods for working with deployments. Much of the actual work of {@link BpmnDeployer} is done by orchestrating the different pieces of work this class does; by having them here, we allow other
+ * deployers to make use of them.
+ */
+<span class="nc" id="L45">public class BpmnDeploymentHelper {</span>
+
+    protected TimerManager timerManager;
+    protected EventSubscriptionManager eventSubscriptionManager;
+
+    /**
+     * Verifies that no two process definitions share the same key, to prevent database unique index violation.
+     * 
+     * @throws FlowableException
+     *             if any two processes have the same key
+     */
+    public void verifyProcessDefinitionsDoNotShareKeys(Collection&lt;ProcessDefinitionEntity&gt; processDefinitions) {
+<span class="nc" id="L57">        Set&lt;String&gt; keySet = new LinkedHashSet&lt;&gt;();</span>
+<span class="nc bnc" id="L58" title="All 2 branches missed.">        for (ProcessDefinitionEntity processDefinition : processDefinitions) {</span>
+<span class="nc bnc" id="L59" title="All 2 branches missed.">            if (keySet.contains(processDefinition.getKey())) {</span>
+<span class="nc" id="L60">                throw new FlowableException(</span>
+<span class="nc" id="L61">                        &quot;The deployment contains process definitions with the same key '&quot; + processDefinition.getKey() + &quot;' (process id attribute), this is not allowed&quot;);</span>
+            }
+<span class="nc" id="L63">            keySet.add(processDefinition.getKey());</span>
+<span class="nc" id="L64">        }</span>
+<span class="nc" id="L65">    }</span>
+
+    /**
+     * Updates all the process definition entities to match the deployment's values for tenant, engine version, and deployment id.
+     */
+    public void copyDeploymentValuesToProcessDefinitions(DeploymentEntity deployment,
+            List&lt;ProcessDefinitionEntity&gt; processDefinitions) {
+<span class="nc" id="L72">        String engineVersion = deployment.getEngineVersion();</span>
+<span class="nc" id="L73">        String tenantId = deployment.getTenantId();</span>
+<span class="nc" id="L74">        String deploymentId = deployment.getId();</span>
+
+<span class="nc bnc" id="L76" title="All 2 branches missed.">        for (ProcessDefinitionEntity processDefinition : processDefinitions) {</span>
+
+            // Backwards compatibility
+<span class="nc bnc" id="L79" title="All 2 branches missed.">            if (engineVersion != null) {</span>
+<span class="nc" id="L80">                processDefinition.setEngineVersion(engineVersion);</span>
+            }
+
+            // process definition inherits the tenant id
+<span class="nc bnc" id="L84" title="All 2 branches missed.">            if (tenantId != null) {</span>
+<span class="nc" id="L85">                processDefinition.setTenantId(tenantId);</span>
+            }
+
+<span class="nc" id="L88">            processDefinition.setDeploymentId(deploymentId);</span>
+<span class="nc" id="L89">        }</span>
+<span class="nc" id="L90">    }</span>
+
+    /**
+     * Updates all the process definition entities to have the correct resource names.
+     */
+    public void setResourceNamesOnProcessDefinitions(ParsedDeployment parsedDeployment) {
+<span class="nc bnc" id="L96" title="All 2 branches missed.">        for (ProcessDefinitionEntity processDefinition : parsedDeployment.getAllProcessDefinitions()) {</span>
+<span class="nc" id="L97">            String resourceName = parsedDeployment.getResourceForProcessDefinition(processDefinition).getName();</span>
+<span class="nc" id="L98">            processDefinition.setResourceName(resourceName);</span>
+<span class="nc" id="L99">        }</span>
+<span class="nc" id="L100">    }</span>
+
+    /**
+     * Gets the most recent persisted process definition that matches this one for tenant and key. If none is found, returns null. This method assumes that the tenant and key are properly set on the
+     * process definition entity.
+     */
+    public ProcessDefinitionEntity getMostRecentVersionOfProcessDefinition(ProcessDefinitionEntity processDefinition) {
+<span class="nc" id="L107">        String key = processDefinition.getKey();</span>
+<span class="nc" id="L108">        String tenantId = processDefinition.getTenantId();</span>
+<span class="nc" id="L109">        ProcessDefinitionEntityManager processDefinitionManager = CommandContextUtil.getProcessEngineConfiguration().getProcessDefinitionEntityManager();</span>
+
+<span class="nc" id="L111">        ProcessDefinitionEntity existingDefinition = null;</span>
+
+<span class="nc bnc" id="L113" title="All 4 branches missed.">        if (tenantId != null &amp;&amp; !tenantId.equals(ProcessEngineConfiguration.NO_TENANT_ID)) {</span>
+<span class="nc" id="L114">            existingDefinition = processDefinitionManager.findLatestProcessDefinitionByKeyAndTenantId(key, tenantId);</span>
+        } else {
+<span class="nc" id="L116">            existingDefinition = processDefinitionManager.findLatestProcessDefinitionByKey(key);</span>
+        }
+
+<span class="nc" id="L119">        return existingDefinition;</span>
+    }
+    
+    /**
+     * Gets the most recent persisted derived process definition that matches this one for tenant and key. If none is found, returns null. This method assumes that the tenant and key are properly set on the
+     * process definition entity.
+     */
+    public ProcessDefinitionEntity getMostRecentDerivedVersionOfProcessDefinition(ProcessDefinitionEntity processDefinition) {
+<span class="nc" id="L127">        String key = processDefinition.getKey();</span>
+<span class="nc" id="L128">        String tenantId = processDefinition.getTenantId();</span>
+<span class="nc" id="L129">        ProcessDefinitionEntityManager processDefinitionManager = CommandContextUtil.getProcessEngineConfiguration().getProcessDefinitionEntityManager();</span>
+
+<span class="nc" id="L131">        ProcessDefinitionEntity existingDefinition = null;</span>
+
+<span class="nc bnc" id="L133" title="All 4 branches missed.">        if (tenantId != null &amp;&amp; !tenantId.equals(ProcessEngineConfiguration.NO_TENANT_ID)) {</span>
+<span class="nc" id="L134">            existingDefinition = processDefinitionManager.findLatestDerivedProcessDefinitionByKeyAndTenantId(key, tenantId);</span>
+        } else {
+<span class="nc" id="L136">            existingDefinition = processDefinitionManager.findLatestDerivedProcessDefinitionByKey(key);</span>
+        }
+
+<span class="nc" id="L139">        return existingDefinition;</span>
+    }
+
+    /**
+     * Gets the persisted version of the already-deployed process definition. Note that this is different from {@link #getMostRecentVersionOfProcessDefinition} as it looks specifically for a process
+     * definition that is already persisted and attached to a particular deployment, rather than the latest version across all deployments.
+     */
+    public ProcessDefinitionEntity getPersistedInstanceOfProcessDefinition(ProcessDefinitionEntity processDefinition) {
+<span class="nc" id="L147">        String deploymentId = processDefinition.getDeploymentId();</span>
+<span class="nc bnc" id="L148" title="All 2 branches missed.">        if (StringUtils.isEmpty(processDefinition.getDeploymentId())) {</span>
+<span class="nc" id="L149">            throw new IllegalStateException(&quot;Provided process definition must have a deployment id.&quot;);</span>
+        }
+
+<span class="nc" id="L152">        ProcessDefinitionEntityManager processDefinitionManager = CommandContextUtil.getProcessEngineConfiguration().getProcessDefinitionEntityManager();</span>
+<span class="nc" id="L153">        ProcessDefinitionEntity persistedProcessDefinition = null;</span>
+<span class="nc bnc" id="L154" title="All 4 branches missed.">        if (processDefinition.getTenantId() == null || ProcessEngineConfiguration.NO_TENANT_ID.equals(processDefinition.getTenantId())) {</span>
+<span class="nc" id="L155">            persistedProcessDefinition = processDefinitionManager.findProcessDefinitionByDeploymentAndKey(deploymentId, processDefinition.getKey());</span>
+        } else {
+<span class="nc" id="L157">            persistedProcessDefinition = processDefinitionManager.findProcessDefinitionByDeploymentAndKeyAndTenantId(deploymentId, processDefinition.getKey(), processDefinition.getTenantId());</span>
+        }
+
+<span class="nc" id="L160">        return persistedProcessDefinition;</span>
+    }
+
+    /**
+     * Updates all timers and events for the process definition. This removes obsolete message and signal subscriptions and timers, and adds new ones.
+     */
+    public void updateTimersAndEvents(ProcessDefinitionEntity processDefinition,
+            ProcessDefinitionEntity previousProcessDefinition, ParsedDeployment parsedDeployment) {
+
+<span class="nc" id="L169">        Process process = parsedDeployment.getProcessModelForProcessDefinition(processDefinition);</span>
+<span class="nc" id="L170">        BpmnModel bpmnModel = parsedDeployment.getBpmnModelForProcessDefinition(processDefinition);</span>
+
+<span class="nc" id="L172">        eventSubscriptionManager.removeObsoleteMessageEventSubscriptions(previousProcessDefinition);</span>
+<span class="nc" id="L173">        eventSubscriptionManager.removeObsoleteSignalEventSubscription(previousProcessDefinition);</span>
+<span class="nc" id="L174">        eventSubscriptionManager.removeOrUpdateObsoleteEventRegistryEventSubscription(previousProcessDefinition, processDefinition);</span>
+<span class="nc" id="L175">        eventSubscriptionManager.addEventSubscriptions(processDefinition, process, bpmnModel);</span>
+
+<span class="nc" id="L177">        timerManager.removeObsoleteTimers(processDefinition);</span>
+<span class="nc" id="L178">        timerManager.scheduleTimers(processDefinition, process);</span>
+<span class="nc" id="L179">    }</span>
+
+<span class="nc" id="L181">    enum ExpressionType {</span>
+<span class="nc" id="L182">        USER, GROUP</span>
+    }
+
+    /**
+     * @param processDefinition
+     */
+    public void addAuthorizationsForNewProcessDefinition(Process process, ProcessDefinitionEntity processDefinition) {
+<span class="nc" id="L189">        CommandContext commandContext = Context.getCommandContext();</span>
+
+<span class="nc" id="L191">        addAuthorizationsFromIterator(commandContext, process.getCandidateStarterUsers(), processDefinition, ExpressionType.USER);</span>
+<span class="nc" id="L192">        addAuthorizationsFromIterator(commandContext, process.getCandidateStarterGroups(), processDefinition, ExpressionType.GROUP);</span>
+<span class="nc" id="L193">    }</span>
+
+    protected void addAuthorizationsFromIterator(CommandContext commandContext, List&lt;String&gt; expressions,
+            ProcessDefinitionEntity processDefinition, ExpressionType expressionType) {
+
+<span class="nc bnc" id="L198" title="All 2 branches missed.">        if (expressions != null) {</span>
+<span class="nc" id="L199">            ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc" id="L200">            IdentityLinkService identityLinkService = processEngineConfiguration.getIdentityLinkServiceConfiguration().getIdentityLinkService();</span>
+<span class="nc" id="L201">            ExpressionManager expressionManager = processEngineConfiguration.getExpressionManager();</span>
+
+<span class="nc" id="L203">            Iterator&lt;String&gt; iterator = expressions.iterator();</span>
+<span class="nc bnc" id="L204" title="All 2 branches missed.">            while (iterator.hasNext()) {</span>
+                @SuppressWarnings(&quot;cast&quot;)
+<span class="nc" id="L206">                String expressionStr = iterator.next();</span>
+
+<span class="nc" id="L208">                Expression expression = expressionManager.createExpression(expressionStr);</span>
+<span class="nc" id="L209">                Object value = expression.getValue(NoExecutionVariableScope.getSharedInstance());</span>
+<span class="nc bnc" id="L210" title="All 2 branches missed.">                if (value != null) {</span>
+
+<span class="nc" id="L212">                    Collection&lt;String&gt; candidates = CandidateUtil.extractCandidates(value);</span>
+<span class="nc bnc" id="L213" title="All 2 branches missed.">                    for (String candidate : candidates) {</span>
+<span class="nc" id="L214">                        IdentityLinkEntity identityLink = identityLinkService.createIdentityLink();</span>
+<span class="nc" id="L215">                        identityLink.setProcessDefId(processDefinition.getId());</span>
+<span class="nc bnc" id="L216" title="All 2 branches missed.">                        if (expressionType == ExpressionType.USER) {</span>
+<span class="nc" id="L217">                            identityLink.setUserId(candidate);</span>
+<span class="nc bnc" id="L218" title="All 2 branches missed.">                        } else if (expressionType == ExpressionType.GROUP) {</span>
+<span class="nc" id="L219">                            identityLink.setGroupId(candidate);</span>
+                        }
+<span class="nc" id="L221">                        identityLink.setType(IdentityLinkType.CANDIDATE);</span>
+<span class="nc" id="L222">                        identityLinkService.insertIdentityLink(identityLink);</span>
+<span class="nc" id="L223">                    }</span>
+                }
+<span class="nc" id="L225">            }</span>
+        }
+
+<span class="nc" id="L228">    }</span>
+
+    public TimerManager getTimerManager() {
+<span class="nc" id="L231">        return timerManager;</span>
+    }
+
+    public void setTimerManager(TimerManager timerManager) {
+<span class="nc" id="L235">        this.timerManager = timerManager;</span>
+<span class="nc" id="L236">    }</span>
+
+    public EventSubscriptionManager getEventSubscriptionManager() {
+<span class="nc" id="L239">        return eventSubscriptionManager;</span>
+    }
+
+    public void setEventSubscriptionManager(EventSubscriptionManager eventSubscriptionManager) {
+<span class="nc" id="L243">        this.eventSubscriptionManager = eventSubscriptionManager;</span>
+<span class="nc" id="L244">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

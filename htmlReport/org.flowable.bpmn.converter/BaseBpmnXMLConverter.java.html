@@ -1,0 +1,714 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BaseBpmnXMLConverter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.bpmn.converter</a> &gt; <span class="el_source">BaseBpmnXMLConverter.java</span></div><h1>BaseBpmnXMLConverter.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.bpmn.converter;
+
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import javax.xml.stream.XMLStreamReader;
+import javax.xml.stream.XMLStreamWriter;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.bpmn.constants.BpmnXMLConstants;
+import org.flowable.bpmn.converter.child.BaseChildElementParser;
+import org.flowable.bpmn.converter.export.FailedJobRetryCountExport;
+import org.flowable.bpmn.converter.export.FlowableListenerExport;
+import org.flowable.bpmn.converter.export.MultiInstanceExport;
+import org.flowable.bpmn.converter.util.BpmnXMLUtil;
+import org.flowable.bpmn.model.Activity;
+import org.flowable.bpmn.model.Artifact;
+import org.flowable.bpmn.model.Assignment;
+import org.flowable.bpmn.model.BaseElement;
+import org.flowable.bpmn.model.BpmnModel;
+import org.flowable.bpmn.model.CancelEventDefinition;
+import org.flowable.bpmn.model.CompensateEventDefinition;
+import org.flowable.bpmn.model.ConditionalEventDefinition;
+import org.flowable.bpmn.model.DataAssociation;
+import org.flowable.bpmn.model.DataObject;
+import org.flowable.bpmn.model.ErrorEventDefinition;
+import org.flowable.bpmn.model.EscalationEventDefinition;
+import org.flowable.bpmn.model.Event;
+import org.flowable.bpmn.model.EventDefinition;
+import org.flowable.bpmn.model.ExtensionAttribute;
+import org.flowable.bpmn.model.ExtensionElement;
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.FlowNode;
+import org.flowable.bpmn.model.FormProperty;
+import org.flowable.bpmn.model.FormValue;
+import org.flowable.bpmn.model.Gateway;
+import org.flowable.bpmn.model.MessageEventDefinition;
+import org.flowable.bpmn.model.Process;
+import org.flowable.bpmn.model.SequenceFlow;
+import org.flowable.bpmn.model.ServiceTask;
+import org.flowable.bpmn.model.SignalEventDefinition;
+import org.flowable.bpmn.model.StartEvent;
+import org.flowable.bpmn.model.SubProcess;
+import org.flowable.bpmn.model.TerminateEventDefinition;
+import org.flowable.bpmn.model.ThrowEvent;
+import org.flowable.bpmn.model.TimerEventDefinition;
+import org.flowable.bpmn.model.UserTask;
+import org.flowable.bpmn.model.ValuedDataObject;
+import org.flowable.bpmn.model.VariableListenerEventDefinition;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * @author Tijs Rademakers
+ * @author Joram Barrez
+ */
+<span class="nc" id="L71">public abstract class BaseBpmnXMLConverter implements BpmnXMLConstants {</span>
+
+<span class="nc" id="L73">    protected static final Logger LOGGER = LoggerFactory.getLogger(BaseBpmnXMLConverter.class);</span>
+
+<span class="nc" id="L75">    protected static final List&lt;ExtensionAttribute&gt; defaultElementAttributes = Arrays.asList(new ExtensionAttribute(ATTRIBUTE_ID), new ExtensionAttribute(ATTRIBUTE_NAME));</span>
+
+<span class="nc" id="L77">    protected static final List&lt;ExtensionAttribute&gt; defaultActivityAttributes = Arrays.asList(</span>
+            new ExtensionAttribute(ATTRIBUTE_ACTIVITY_ASYNCHRONOUS),
+            new ExtensionAttribute(ATTRIBUTE_ACTIVITY_ASYNCHRONOUS_BEFORE),
+            new ExtensionAttribute(ATTRIBUTE_ACTIVITY_EXCLUSIVE),
+            new ExtensionAttribute(ATTRIBUTE_DEFAULT),
+            new ExtensionAttribute(ATTRIBUTE_ACTIVITY_ISFORCOMPENSATION));
+
+    public void convertToBpmnModel(XMLStreamReader xtr, BpmnModel model, Process activeProcess, List&lt;SubProcess&gt; activeSubProcessList) throws Exception {
+
+<span class="nc" id="L86">        String elementId = xtr.getAttributeValue(null, ATTRIBUTE_ID);</span>
+<span class="nc" id="L87">        String elementName = xtr.getAttributeValue(null, ATTRIBUTE_NAME);</span>
+<span class="nc" id="L88">        boolean async = parseAsync(xtr);</span>
+<span class="nc" id="L89">        boolean asyncLeave = parsAsyncLeave(xtr);</span>
+<span class="nc" id="L90">        boolean triggerable = parseTriggerable(xtr);</span>
+<span class="nc" id="L91">        boolean notExclusive = parseNotExclusive(xtr);</span>
+<span class="nc" id="L92">        boolean asyncLeaveNotExclusive = parseAsyncLeaveNotExclusive(xtr);</span>
+<span class="nc" id="L93">        String defaultFlow = xtr.getAttributeValue(null, ATTRIBUTE_DEFAULT);</span>
+<span class="nc" id="L94">        boolean isForCompensation = parseForCompensation(xtr);</span>
+
+<span class="nc" id="L96">        BaseElement parsedElement = convertXMLToElement(xtr, model);</span>
+
+<span class="nc bnc" id="L98" title="All 2 branches missed.">        if (parsedElement instanceof Artifact) {</span>
+<span class="nc" id="L99">            Artifact currentArtifact = (Artifact) parsedElement;</span>
+<span class="nc" id="L100">            currentArtifact.setId(elementId);</span>
+
+<span class="nc bnc" id="L102" title="All 2 branches missed.">            if (!activeSubProcessList.isEmpty()) {</span>
+<span class="nc" id="L103">                activeSubProcessList.get(activeSubProcessList.size() - 1).addArtifact(currentArtifact);</span>
+
+            } else {
+<span class="nc" id="L106">                activeProcess.addArtifact(currentArtifact);</span>
+            }
+        }
+
+<span class="nc bnc" id="L110" title="All 2 branches missed.">        if (parsedElement instanceof FlowElement) {</span>
+
+<span class="nc" id="L112">            FlowElement currentFlowElement = (FlowElement) parsedElement;</span>
+<span class="nc" id="L113">            currentFlowElement.setId(elementId);</span>
+<span class="nc" id="L114">            currentFlowElement.setName(elementName);</span>
+
+<span class="nc bnc" id="L116" title="All 2 branches missed.">            if (currentFlowElement instanceof FlowNode) {</span>
+<span class="nc" id="L117">                FlowNode flowNode = (FlowNode) currentFlowElement;</span>
+<span class="nc" id="L118">                flowNode.setAsynchronous(async);</span>
+<span class="nc" id="L119">                flowNode.setAsynchronousLeave(asyncLeave);</span>
+<span class="nc" id="L120">                flowNode.setNotExclusive(notExclusive);</span>
+<span class="nc" id="L121">                flowNode.setAsynchronousLeaveNotExclusive(asyncLeaveNotExclusive);</span>
+                
+<span class="nc bnc" id="L123" title="All 2 branches missed.">                if (currentFlowElement instanceof Activity) {</span>
+
+<span class="nc" id="L125">                    Activity activity = (Activity) currentFlowElement;</span>
+<span class="nc" id="L126">                    activity.setForCompensation(isForCompensation);</span>
+<span class="nc bnc" id="L127" title="All 2 branches missed.">                    if (StringUtils.isNotEmpty(defaultFlow)) {</span>
+<span class="nc" id="L128">                        activity.setDefaultFlow(defaultFlow);</span>
+                    }
+                }
+
+<span class="nc bnc" id="L132" title="All 2 branches missed.">                if (currentFlowElement instanceof Gateway) {</span>
+<span class="nc" id="L133">                    Gateway gateway = (Gateway) currentFlowElement;</span>
+<span class="nc bnc" id="L134" title="All 2 branches missed.">                    if (StringUtils.isNotEmpty(defaultFlow)) {</span>
+<span class="nc" id="L135">                        gateway.setDefaultFlow(defaultFlow);</span>
+                    }
+                }
+
+<span class="nc bnc" id="L139" title="All 2 branches missed.">                if (currentFlowElement instanceof ServiceTask) {</span>
+<span class="nc" id="L140">                    ServiceTask serviceTask = (ServiceTask) currentFlowElement;</span>
+<span class="nc" id="L141">                    serviceTask.setTriggerable(triggerable);</span>
+                }
+            }
+
+<span class="nc bnc" id="L145" title="All 2 branches missed.">            if (currentFlowElement instanceof DataObject) {</span>
+<span class="nc bnc" id="L146" title="All 2 branches missed.">                if (!activeSubProcessList.isEmpty()) {</span>
+<span class="nc" id="L147">                    SubProcess subProcess = activeSubProcessList.get(activeSubProcessList.size() - 1);</span>
+<span class="nc" id="L148">                    subProcess.getDataObjects().add((ValuedDataObject) parsedElement);</span>
+<span class="nc" id="L149">                } else {</span>
+<span class="nc" id="L150">                    activeProcess.getDataObjects().add((ValuedDataObject) parsedElement);</span>
+                }
+            }
+
+<span class="nc bnc" id="L154" title="All 2 branches missed.">            if (!activeSubProcessList.isEmpty()) {</span>
+
+<span class="nc" id="L156">                SubProcess subProcess = activeSubProcessList.get(activeSubProcessList.size() - 1);</span>
+<span class="nc" id="L157">                subProcess.addFlowElement(currentFlowElement);</span>
+
+<span class="nc" id="L159">            } else {</span>
+<span class="nc" id="L160">                activeProcess.addFlowElement(currentFlowElement);</span>
+            }
+        }
+<span class="nc" id="L163">    }</span>
+
+    public void convertToXML(XMLStreamWriter xtw, BaseElement baseElement, BpmnModel model) throws Exception {
+<span class="nc" id="L166">        xtw.writeStartElement(getXMLElementName());</span>
+<span class="nc" id="L167">        boolean didWriteExtensionStartElement = false;</span>
+<span class="nc" id="L168">        writeDefaultAttribute(ATTRIBUTE_ID, baseElement.getId(), xtw);</span>
+<span class="nc bnc" id="L169" title="All 2 branches missed.">        if (baseElement instanceof FlowElement) {</span>
+<span class="nc" id="L170">            writeDefaultAttribute(ATTRIBUTE_NAME, ((FlowElement) baseElement).getName(), xtw);</span>
+        }
+
+<span class="nc bnc" id="L173" title="All 2 branches missed.">        if (baseElement instanceof FlowNode) {</span>
+<span class="nc" id="L174">            final FlowNode flowNode = (FlowNode) baseElement;</span>
+
+<span class="nc bnc" id="L176" title="All 2 branches missed.">            if (flowNode.isAsynchronous()) {</span>
+<span class="nc" id="L177">                writeQualifiedAttribute(ATTRIBUTE_ACTIVITY_ASYNCHRONOUS, ATTRIBUTE_VALUE_TRUE, xtw);</span>
+<span class="nc bnc" id="L178" title="All 2 branches missed.">                if (flowNode.isNotExclusive()) {</span>
+<span class="nc" id="L179">                    writeQualifiedAttribute(ATTRIBUTE_ACTIVITY_EXCLUSIVE, ATTRIBUTE_VALUE_FALSE, xtw);</span>
+                }
+            }
+<span class="nc bnc" id="L182" title="All 2 branches missed.">            if (flowNode.isAsynchronousLeave()) {</span>
+<span class="nc" id="L183">                writeQualifiedAttribute(ATTRIBUTE_ACTIVITY_ASYNCHRONOUS_LEAVE, ATTRIBUTE_VALUE_TRUE, xtw);</span>
+<span class="nc bnc" id="L184" title="All 2 branches missed.">                if (flowNode.isAsynchronousLeaveNotExclusive()) {</span>
+<span class="nc" id="L185">                    writeQualifiedAttribute(ATTRIBUTE_ACTIVITY_ASYNCHRONOUS_LEAVE_EXCLUSIVE, ATTRIBUTE_VALUE_FALSE, xtw); // shared with async</span>
+                }
+            }
+
+<span class="nc bnc" id="L189" title="All 2 branches missed.">            if (baseElement instanceof Activity) {</span>
+<span class="nc" id="L190">                final Activity activity = (Activity) baseElement;</span>
+<span class="nc bnc" id="L191" title="All 2 branches missed.">                if (activity.isForCompensation()) {</span>
+<span class="nc" id="L192">                    writeDefaultAttribute(ATTRIBUTE_ACTIVITY_ISFORCOMPENSATION, ATTRIBUTE_VALUE_TRUE, xtw);</span>
+                }
+<span class="nc bnc" id="L194" title="All 2 branches missed.">                if (StringUtils.isNotEmpty(activity.getDefaultFlow())) {</span>
+<span class="nc" id="L195">                    FlowElement defaultFlowElement = model.getFlowElement(activity.getDefaultFlow());</span>
+<span class="nc bnc" id="L196" title="All 2 branches missed.">                    if (defaultFlowElement instanceof SequenceFlow) {</span>
+<span class="nc" id="L197">                        writeDefaultAttribute(ATTRIBUTE_DEFAULT, activity.getDefaultFlow(), xtw);</span>
+                    }
+                }
+            }
+
+<span class="nc bnc" id="L202" title="All 2 branches missed.">            if (baseElement instanceof Gateway) {</span>
+<span class="nc" id="L203">                final Gateway gateway = (Gateway) baseElement;</span>
+<span class="nc bnc" id="L204" title="All 2 branches missed.">                if (StringUtils.isNotEmpty(gateway.getDefaultFlow())) {</span>
+<span class="nc" id="L205">                    FlowElement defaultFlowElement = model.getFlowElement(gateway.getDefaultFlow());</span>
+<span class="nc bnc" id="L206" title="All 2 branches missed.">                    if (defaultFlowElement instanceof SequenceFlow) {</span>
+<span class="nc" id="L207">                        writeDefaultAttribute(ATTRIBUTE_DEFAULT, gateway.getDefaultFlow(), xtw);</span>
+                    }
+                }
+            }
+        }
+
+<span class="nc" id="L213">        writeAdditionalAttributes(baseElement, model, xtw);</span>
+
+<span class="nc bnc" id="L215" title="All 2 branches missed.">        if (baseElement instanceof FlowElement) {</span>
+<span class="nc" id="L216">            final FlowElement flowElement = (FlowElement) baseElement;</span>
+<span class="nc bnc" id="L217" title="All 2 branches missed.">            if (StringUtils.isNotEmpty(flowElement.getDocumentation())) {</span>
+
+<span class="nc" id="L219">                xtw.writeStartElement(ELEMENT_DOCUMENTATION);</span>
+<span class="nc" id="L220">                xtw.writeCharacters(flowElement.getDocumentation());</span>
+<span class="nc" id="L221">                xtw.writeEndElement();</span>
+            }
+        }
+
+<span class="nc" id="L225">        didWriteExtensionStartElement = writeExtensionChildElements(baseElement, didWriteExtensionStartElement, xtw);</span>
+<span class="nc" id="L226">        didWriteExtensionStartElement = writeListeners(baseElement, didWriteExtensionStartElement, xtw);</span>
+<span class="nc" id="L227">        didWriteExtensionStartElement = BpmnXMLUtil.writeExtensionElements(baseElement, didWriteExtensionStartElement, model.getNamespaces(), xtw);</span>
+<span class="nc bnc" id="L228" title="All 2 branches missed.">        if (baseElement instanceof Activity) {</span>
+<span class="nc" id="L229">            final Activity activity = (Activity) baseElement;</span>
+<span class="nc" id="L230">            didWriteExtensionStartElement = FailedJobRetryCountExport.writeFailedJobRetryCount(activity, didWriteExtensionStartElement, xtw);</span>
+        }
+
+<span class="nc bnc" id="L233" title="All 2 branches missed.">        if (didWriteExtensionStartElement) {</span>
+<span class="nc" id="L234">            xtw.writeEndElement();</span>
+        }
+
+<span class="nc bnc" id="L237" title="All 2 branches missed.">        if (baseElement instanceof Activity) {</span>
+<span class="nc" id="L238">            final Activity activity = (Activity) baseElement;</span>
+<span class="nc" id="L239">            MultiInstanceExport.writeMultiInstance(activity, model, xtw);</span>
+
+<span class="nc bnc" id="L241" title="All 2 branches missed.">            for (DataAssociation dataInputAssociation : activity.getDataInputAssociations()) {</span>
+<span class="nc" id="L242">                writeDataAssociation(ELEMENT_INPUT_ASSOCIATION, dataInputAssociation, xtw);</span>
+<span class="nc" id="L243">            }</span>
+<span class="nc bnc" id="L244" title="All 2 branches missed.">            for (DataAssociation dataOutputAssociation : activity.getDataOutputAssociations()) {</span>
+<span class="nc" id="L245">                writeDataAssociation(ELEMENT_OUTPUT_ASSOCIATION, dataOutputAssociation, xtw);</span>
+<span class="nc" id="L246">            }</span>
+        }
+
+<span class="nc" id="L249">        writeAdditionalChildElements(baseElement, model, xtw);</span>
+
+<span class="nc" id="L251">        xtw.writeEndElement();</span>
+<span class="nc" id="L252">    }</span>
+
+    protected abstract Class&lt;? extends BaseElement&gt; getBpmnElementType();
+
+    protected abstract BaseElement convertXMLToElement(XMLStreamReader xtr, BpmnModel model) throws Exception;
+
+    protected abstract String getXMLElementName();
+
+    protected abstract void writeAdditionalAttributes(BaseElement element, BpmnModel model, XMLStreamWriter xtw) throws Exception;
+
+    protected boolean writeExtensionChildElements(BaseElement element, boolean didWriteExtensionStartElement, XMLStreamWriter xtw) throws Exception {
+<span class="nc" id="L263">        return didWriteExtensionStartElement;</span>
+    }
+
+    protected abstract void writeAdditionalChildElements(BaseElement element, BpmnModel model, XMLStreamWriter xtw) throws Exception;
+
+    // To BpmnModel converter convenience methods
+
+    protected void parseChildElements(String elementName, BaseElement parentElement, BpmnModel model, XMLStreamReader xtr) throws Exception {
+<span class="nc" id="L271">        parseChildElements(elementName, parentElement, null, model, xtr);</span>
+<span class="nc" id="L272">    }</span>
+
+    protected void parseChildElements(String elementName, BaseElement parentElement, Map&lt;String, BaseChildElementParser&gt; additionalParsers, BpmnModel model, XMLStreamReader xtr) throws Exception {
+
+<span class="nc" id="L276">        Map&lt;String, BaseChildElementParser&gt; childParsers = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L277" title="All 2 branches missed.">        if (additionalParsers != null) {</span>
+<span class="nc" id="L278">            childParsers.putAll(additionalParsers);</span>
+        }
+<span class="nc" id="L280">        BpmnXMLUtil.parseChildElements(elementName, parentElement, xtr, childParsers, model);</span>
+<span class="nc" id="L281">    }</span>
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    protected ExtensionElement parseExtensionElement(XMLStreamReader xtr) throws Exception {
+<span class="nc" id="L285">        ExtensionElement extensionElement = new ExtensionElement();</span>
+<span class="nc" id="L286">        BpmnXMLUtil.addXMLLocation(extensionElement, xtr);</span>
+<span class="nc" id="L287">        extensionElement.setName(xtr.getLocalName());</span>
+<span class="nc bnc" id="L288" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(xtr.getNamespaceURI())) {</span>
+<span class="nc" id="L289">            extensionElement.setNamespace(xtr.getNamespaceURI());</span>
+        }
+<span class="nc bnc" id="L291" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(xtr.getPrefix())) {</span>
+<span class="nc" id="L292">            extensionElement.setNamespacePrefix(xtr.getPrefix());</span>
+        }
+
+<span class="nc" id="L295">        BpmnXMLUtil.addCustomAttributes(xtr, extensionElement, defaultElementAttributes);</span>
+
+<span class="nc" id="L297">        boolean readyWithExtensionElement = false;</span>
+<span class="nc bnc" id="L298" title="All 4 branches missed.">        while (!readyWithExtensionElement &amp;&amp; xtr.hasNext()) {</span>
+<span class="nc" id="L299">            xtr.next();</span>
+<span class="nc bnc" id="L300" title="All 4 branches missed.">            if (xtr.isCharacters() || XMLStreamReader.CDATA == xtr.getEventType()) {</span>
+<span class="nc bnc" id="L301" title="All 2 branches missed.">                if (StringUtils.isNotEmpty(xtr.getText().trim())) {</span>
+<span class="nc" id="L302">                    extensionElement.setElementText(xtr.getText().trim());</span>
+                }
+<span class="nc bnc" id="L304" title="All 2 branches missed.">            } else if (xtr.isStartElement()) {</span>
+<span class="nc" id="L305">                ExtensionElement childExtensionElement = parseExtensionElement(xtr);</span>
+<span class="nc" id="L306">                extensionElement.addChildElement(childExtensionElement);</span>
+<span class="nc bnc" id="L307" title="All 4 branches missed.">            } else if (xtr.isEndElement() &amp;&amp; extensionElement.getName().equalsIgnoreCase(xtr.getLocalName())) {</span>
+<span class="nc" id="L308">                readyWithExtensionElement = true;</span>
+            }
+        }
+<span class="nc" id="L311">        return extensionElement;</span>
+    }
+
+    protected boolean parseAsync(XMLStreamReader xtr) {
+<span class="nc" id="L315">        boolean async = false;</span>
+<span class="nc" id="L316">        String asyncString = BpmnXMLUtil.getAttributeValue(ATTRIBUTE_ACTIVITY_ASYNCHRONOUS, xtr);</span>
+
+<span class="nc bnc" id="L318" title="All 2 branches missed.">        if (asyncString == null) {</span>
+<span class="nc" id="L319">            asyncString = xtr.getAttributeValue(CAMUNDA_EXTENSIONS_NAMESPACE, ATTRIBUTE_ACTIVITY_ASYNCHRONOUS_BEFORE);</span>
+        }
+
+<span class="nc bnc" id="L322" title="All 2 branches missed.">        if (ATTRIBUTE_VALUE_TRUE.equalsIgnoreCase(asyncString)) {</span>
+<span class="nc" id="L323">            async = true;</span>
+        }
+<span class="nc" id="L325">        return async;</span>
+    }
+
+    protected boolean parseNotExclusive(XMLStreamReader xtr) {
+<span class="nc" id="L329">        boolean notExclusive = false;</span>
+<span class="nc" id="L330">        String exclusiveString = BpmnXMLUtil.getAttributeValue(ATTRIBUTE_ACTIVITY_EXCLUSIVE, xtr);</span>
+<span class="nc bnc" id="L331" title="All 2 branches missed.">        if (ATTRIBUTE_VALUE_FALSE.equalsIgnoreCase(exclusiveString)) {</span>
+<span class="nc" id="L332">            notExclusive = true;</span>
+        }
+<span class="nc" id="L334">        return notExclusive;</span>
+    }
+    
+    protected boolean parseAsyncLeaveNotExclusive(XMLStreamReader xtr) {
+<span class="nc" id="L338">        boolean notExclusive = false;</span>
+<span class="nc" id="L339">        String exclusiveString = BpmnXMLUtil.getAttributeValue(ATTRIBUTE_ACTIVITY_ASYNCHRONOUS_LEAVE_EXCLUSIVE, xtr);</span>
+<span class="nc bnc" id="L340" title="All 2 branches missed.">        if (ATTRIBUTE_VALUE_FALSE.equalsIgnoreCase(exclusiveString)) {</span>
+<span class="nc" id="L341">            notExclusive = true;</span>
+        }
+<span class="nc" id="L343">        return notExclusive;</span>
+    }
+
+    protected boolean parsAsyncLeave(XMLStreamReader xtr) {
+<span class="nc" id="L347">        String asyncLeaveString = BpmnXMLUtil.getAttributeValue(ATTRIBUTE_ACTIVITY_ASYNCHRONOUS_LEAVE, xtr);</span>
+<span class="nc bnc" id="L348" title="All 2 branches missed.">        if (StringUtils.isEmpty(asyncLeaveString)) {</span>
+<span class="nc" id="L349">            asyncLeaveString = BpmnXMLUtil.getAttributeValue(&quot;asyncAfter&quot;, xtr);</span>
+        }
+<span class="nc" id="L351">        return ATTRIBUTE_VALUE_TRUE.equalsIgnoreCase(asyncLeaveString);</span>
+    }
+
+    protected boolean parseTriggerable(XMLStreamReader xtr) {
+<span class="nc" id="L355">        String triggerable = BpmnXMLUtil.getAttributeValue(ATTRIBUTE_ACTIVITY_TRIGGERABLE, xtr);</span>
+<span class="nc" id="L356">        return ATTRIBUTE_VALUE_TRUE.equalsIgnoreCase(triggerable);</span>
+    }
+
+    protected boolean parseForCompensation(XMLStreamReader xtr) {
+<span class="nc" id="L360">        boolean isForCompensation = false;</span>
+<span class="nc" id="L361">        String compensationString = xtr.getAttributeValue(null, ATTRIBUTE_ACTIVITY_ISFORCOMPENSATION);</span>
+<span class="nc bnc" id="L362" title="All 2 branches missed.">        if (ATTRIBUTE_VALUE_TRUE.equalsIgnoreCase(compensationString)) {</span>
+<span class="nc" id="L363">            isForCompensation = true;</span>
+        }
+<span class="nc" id="L365">        return isForCompensation;</span>
+    }
+
+    protected List&lt;String&gt; parseDelimitedList(String expression) {
+<span class="nc" id="L369">        return BpmnXMLUtil.parseDelimitedList(expression);</span>
+    }
+
+    // To XML converter convenience methods
+
+    protected String convertToDelimitedString(List&lt;String&gt; stringList) {
+<span class="nc" id="L375">        return BpmnXMLUtil.convertToDelimitedString(stringList);</span>
+    }
+
+    protected boolean writeFormProperties(FlowElement flowElement, boolean didWriteExtensionStartElement, XMLStreamWriter xtw) throws Exception {
+
+<span class="nc" id="L380">        List&lt;FormProperty&gt; propertyList = null;</span>
+<span class="nc bnc" id="L381" title="All 2 branches missed.">        if (flowElement instanceof UserTask) {</span>
+<span class="nc" id="L382">            propertyList = ((UserTask) flowElement).getFormProperties();</span>
+<span class="nc bnc" id="L383" title="All 2 branches missed.">        } else if (flowElement instanceof StartEvent) {</span>
+<span class="nc" id="L384">            propertyList = ((StartEvent) flowElement).getFormProperties();</span>
+        }
+
+<span class="nc bnc" id="L387" title="All 2 branches missed.">        if (propertyList != null) {</span>
+
+<span class="nc bnc" id="L389" title="All 2 branches missed.">            for (FormProperty property : propertyList) {</span>
+
+<span class="nc bnc" id="L391" title="All 2 branches missed.">                if (StringUtils.isNotEmpty(property.getId())) {</span>
+
+<span class="nc bnc" id="L393" title="All 2 branches missed.">                    if (!didWriteExtensionStartElement) {</span>
+<span class="nc" id="L394">                        xtw.writeStartElement(ELEMENT_EXTENSIONS);</span>
+<span class="nc" id="L395">                        didWriteExtensionStartElement = true;</span>
+                    }
+
+<span class="nc" id="L398">                    xtw.writeStartElement(FLOWABLE_EXTENSIONS_PREFIX, ELEMENT_FORMPROPERTY, FLOWABLE_EXTENSIONS_NAMESPACE);</span>
+<span class="nc" id="L399">                    writeDefaultAttribute(ATTRIBUTE_FORM_ID, property.getId(), xtw);</span>
+
+<span class="nc" id="L401">                    writeDefaultAttribute(ATTRIBUTE_FORM_NAME, property.getName(), xtw);</span>
+<span class="nc" id="L402">                    writeDefaultAttribute(ATTRIBUTE_FORM_TYPE, property.getType(), xtw);</span>
+<span class="nc" id="L403">                    writeDefaultAttribute(ATTRIBUTE_FORM_EXPRESSION, property.getExpression(), xtw);</span>
+<span class="nc" id="L404">                    writeDefaultAttribute(ATTRIBUTE_FORM_VARIABLE, property.getVariable(), xtw);</span>
+<span class="nc" id="L405">                    writeDefaultAttribute(ATTRIBUTE_FORM_DEFAULT, property.getDefaultExpression(), xtw);</span>
+<span class="nc" id="L406">                    writeDefaultAttribute(ATTRIBUTE_FORM_DATEPATTERN, property.getDatePattern(), xtw);</span>
+<span class="nc bnc" id="L407" title="All 2 branches missed.">                    if (!property.isReadable()) {</span>
+<span class="nc" id="L408">                        writeDefaultAttribute(ATTRIBUTE_FORM_READABLE, ATTRIBUTE_VALUE_FALSE, xtw);</span>
+                    }
+<span class="nc bnc" id="L410" title="All 2 branches missed.">                    if (!property.isWriteable()) {</span>
+<span class="nc" id="L411">                        writeDefaultAttribute(ATTRIBUTE_FORM_WRITABLE, ATTRIBUTE_VALUE_FALSE, xtw);</span>
+                    }
+<span class="nc bnc" id="L413" title="All 2 branches missed.">                    if (property.isRequired()) {</span>
+<span class="nc" id="L414">                        writeDefaultAttribute(ATTRIBUTE_FORM_REQUIRED, ATTRIBUTE_VALUE_TRUE, xtw);</span>
+                    }
+
+<span class="nc bnc" id="L417" title="All 2 branches missed.">                    for (FormValue formValue : property.getFormValues()) {</span>
+<span class="nc bnc" id="L418" title="All 2 branches missed.">                        if (StringUtils.isNotEmpty(formValue.getId())) {</span>
+<span class="nc" id="L419">                            xtw.writeStartElement(FLOWABLE_EXTENSIONS_PREFIX, ELEMENT_VALUE, FLOWABLE_EXTENSIONS_NAMESPACE);</span>
+<span class="nc" id="L420">                            xtw.writeAttribute(ATTRIBUTE_ID, formValue.getId());</span>
+<span class="nc" id="L421">                            xtw.writeAttribute(ATTRIBUTE_NAME, formValue.getName());</span>
+<span class="nc" id="L422">                            xtw.writeEndElement();</span>
+                        }
+<span class="nc" id="L424">                    }</span>
+
+<span class="nc" id="L426">                    xtw.writeEndElement();</span>
+                }
+<span class="nc" id="L428">            }</span>
+        }
+
+<span class="nc" id="L431">        return didWriteExtensionStartElement;</span>
+    }
+
+    protected boolean writeListeners(BaseElement element, boolean didWriteExtensionStartElement, XMLStreamWriter xtw) throws Exception {
+<span class="nc" id="L435">        return FlowableListenerExport.writeListeners(element, didWriteExtensionStartElement, xtw);</span>
+    }
+
+    protected void writeEventDefinitions(Event parentEvent, List&lt;EventDefinition&gt; eventDefinitions, BpmnModel model, XMLStreamWriter xtw) throws Exception {
+<span class="nc bnc" id="L439" title="All 2 branches missed.">        for (EventDefinition eventDefinition : eventDefinitions) {</span>
+<span class="nc bnc" id="L440" title="All 2 branches missed.">            if (eventDefinition instanceof TimerEventDefinition) {</span>
+<span class="nc" id="L441">                writeTimerDefinition(parentEvent, (TimerEventDefinition) eventDefinition, model, xtw);</span>
+                
+<span class="nc bnc" id="L443" title="All 2 branches missed.">            } else if (eventDefinition instanceof SignalEventDefinition) {</span>
+<span class="nc" id="L444">                writeSignalDefinition(parentEvent, (SignalEventDefinition) eventDefinition, model, xtw);</span>
+                
+<span class="nc bnc" id="L446" title="All 2 branches missed.">            } else if (eventDefinition instanceof MessageEventDefinition) {</span>
+<span class="nc" id="L447">                writeMessageDefinition(parentEvent, (MessageEventDefinition) eventDefinition, model, xtw);</span>
+                
+<span class="nc bnc" id="L449" title="All 2 branches missed.">            } else if (eventDefinition instanceof ConditionalEventDefinition) {</span>
+<span class="nc" id="L450">                writeConditionalDefinition(parentEvent, (ConditionalEventDefinition) eventDefinition, model, xtw);</span>
+                
+<span class="nc bnc" id="L452" title="All 2 branches missed.">            } else if (eventDefinition instanceof ErrorEventDefinition) {</span>
+<span class="nc" id="L453">                writeErrorDefinition(parentEvent, (ErrorEventDefinition) eventDefinition, model, xtw);</span>
+                
+<span class="nc bnc" id="L455" title="All 2 branches missed.">            } else if (eventDefinition instanceof EscalationEventDefinition) {</span>
+<span class="nc" id="L456">                writeEscalationDefinition(parentEvent, (EscalationEventDefinition) eventDefinition, model, xtw);</span>
+                
+<span class="nc bnc" id="L458" title="All 2 branches missed.">            } else if (eventDefinition instanceof TerminateEventDefinition) {</span>
+<span class="nc" id="L459">                writeTerminateDefinition(parentEvent, (TerminateEventDefinition) eventDefinition, model, xtw);</span>
+                
+<span class="nc bnc" id="L461" title="All 2 branches missed.">            } else if (eventDefinition instanceof CancelEventDefinition) {</span>
+<span class="nc" id="L462">                writeCancelDefinition(parentEvent, (CancelEventDefinition) eventDefinition, model, xtw);</span>
+                
+<span class="nc bnc" id="L464" title="All 2 branches missed.">            } else if (eventDefinition instanceof CompensateEventDefinition) {</span>
+<span class="nc" id="L465">                writeCompensateDefinition(parentEvent, (CompensateEventDefinition) eventDefinition, model, xtw);</span>
+            }
+<span class="nc" id="L467">        }</span>
+<span class="nc" id="L468">    }</span>
+
+    protected void writeTimerDefinition(Event parentEvent, TimerEventDefinition timerDefinition, BpmnModel model, XMLStreamWriter xtw) throws Exception {
+<span class="nc" id="L471">        xtw.writeStartElement(ELEMENT_EVENT_TIMERDEFINITION);</span>
+<span class="nc bnc" id="L472" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(timerDefinition.getCalendarName())) {</span>
+<span class="nc" id="L473">            writeQualifiedAttribute(ATTRIBUTE_CALENDAR_NAME, timerDefinition.getCalendarName(), xtw);</span>
+        }
+<span class="nc" id="L475">        boolean didWriteExtensionStartElement = BpmnXMLUtil.writeExtensionElements(timerDefinition, false, model.getNamespaces(), xtw);</span>
+<span class="nc bnc" id="L476" title="All 2 branches missed.">        if (didWriteExtensionStartElement) {</span>
+<span class="nc" id="L477">            xtw.writeEndElement();</span>
+        }
+<span class="nc bnc" id="L479" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(timerDefinition.getTimeDate())) {</span>
+<span class="nc" id="L480">            xtw.writeStartElement(ATTRIBUTE_TIMER_DATE);</span>
+<span class="nc" id="L481">            xtw.writeCharacters(timerDefinition.getTimeDate());</span>
+<span class="nc" id="L482">            xtw.writeEndElement();</span>
+
+<span class="nc bnc" id="L484" title="All 2 branches missed.">        } else if (StringUtils.isNotEmpty(timerDefinition.getTimeCycle())) {</span>
+<span class="nc" id="L485">            xtw.writeStartElement(ATTRIBUTE_TIMER_CYCLE);</span>
+
+<span class="nc bnc" id="L487" title="All 2 branches missed.">            if (StringUtils.isNotEmpty(timerDefinition.getEndDate())) {</span>
+<span class="nc" id="L488">                xtw.writeAttribute(FLOWABLE_EXTENSIONS_PREFIX, FLOWABLE_EXTENSIONS_NAMESPACE, ATTRIBUTE_END_DATE, timerDefinition.getEndDate());</span>
+            }
+
+<span class="nc" id="L491">            xtw.writeCharacters(timerDefinition.getTimeCycle());</span>
+<span class="nc" id="L492">            xtw.writeEndElement();</span>
+
+<span class="nc bnc" id="L494" title="All 2 branches missed.">        } else if (StringUtils.isNotEmpty(timerDefinition.getTimeDuration())) {</span>
+<span class="nc" id="L495">            xtw.writeStartElement(ATTRIBUTE_TIMER_DURATION);</span>
+<span class="nc" id="L496">            xtw.writeCharacters(timerDefinition.getTimeDuration());</span>
+<span class="nc" id="L497">            xtw.writeEndElement();</span>
+        }
+
+<span class="nc" id="L500">        xtw.writeEndElement();</span>
+<span class="nc" id="L501">    }</span>
+
+    protected void writeSignalDefinition(Event parentEvent, SignalEventDefinition signalDefinition, 
+            BpmnModel model, XMLStreamWriter xtw) throws Exception {
+        
+<span class="nc" id="L506">        xtw.writeStartElement(ELEMENT_EVENT_SIGNALDEFINITION);</span>
+
+<span class="nc bnc" id="L508" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(signalDefinition.getSignalRef())) {</span>
+<span class="nc" id="L509">            writeDefaultAttribute(ATTRIBUTE_SIGNAL_REF, signalDefinition.getSignalRef(), xtw);</span>
+        }
+<span class="nc bnc" id="L511" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(signalDefinition.getSignalExpression())) {</span>
+<span class="nc" id="L512">            xtw.writeAttribute(FLOWABLE_EXTENSIONS_PREFIX, FLOWABLE_EXTENSIONS_NAMESPACE, ATTRIBUTE_SIGNAL_EXPRESSION, signalDefinition.getSignalExpression());</span>
+        }
+
+<span class="nc bnc" id="L515" title="All 4 branches missed.">        if (parentEvent instanceof ThrowEvent &amp;&amp; signalDefinition.isAsync()) {</span>
+<span class="nc" id="L516">            BpmnXMLUtil.writeQualifiedAttribute(ATTRIBUTE_ACTIVITY_ASYNCHRONOUS, &quot;true&quot;, xtw);</span>
+        }
+<span class="nc" id="L518">        boolean didWriteExtensionStartElement = BpmnXMLUtil.writeExtensionElements(signalDefinition, false, model.getNamespaces(), xtw);</span>
+<span class="nc bnc" id="L519" title="All 2 branches missed.">        if (didWriteExtensionStartElement) {</span>
+<span class="nc" id="L520">            xtw.writeEndElement();</span>
+        }
+<span class="nc" id="L522">        xtw.writeEndElement();</span>
+<span class="nc" id="L523">    }</span>
+
+    protected void writeCancelDefinition(Event parentEvent, CancelEventDefinition cancelEventDefinition, 
+            BpmnModel model, XMLStreamWriter xtw) throws Exception {
+        
+<span class="nc" id="L528">        xtw.writeStartElement(ELEMENT_EVENT_CANCELDEFINITION);</span>
+<span class="nc" id="L529">        boolean didWriteExtensionStartElement = BpmnXMLUtil.writeExtensionElements(cancelEventDefinition, false, model.getNamespaces(), xtw);</span>
+<span class="nc bnc" id="L530" title="All 2 branches missed.">        if (didWriteExtensionStartElement) {</span>
+<span class="nc" id="L531">            xtw.writeEndElement();</span>
+        }
+<span class="nc" id="L533">        xtw.writeEndElement();</span>
+<span class="nc" id="L534">    }</span>
+
+    protected void writeCompensateDefinition(Event parentEvent, CompensateEventDefinition compensateEventDefinition, 
+            BpmnModel model, XMLStreamWriter xtw) throws Exception {
+        
+<span class="nc" id="L539">        xtw.writeStartElement(ELEMENT_EVENT_COMPENSATEDEFINITION);</span>
+<span class="nc" id="L540">        writeDefaultAttribute(ATTRIBUTE_COMPENSATE_ACTIVITYREF, compensateEventDefinition.getActivityRef(), xtw);</span>
+<span class="nc" id="L541">        boolean didWriteExtensionStartElement = BpmnXMLUtil.writeExtensionElements(compensateEventDefinition, false, model.getNamespaces(), xtw);</span>
+<span class="nc bnc" id="L542" title="All 2 branches missed.">        if (didWriteExtensionStartElement) {</span>
+<span class="nc" id="L543">            xtw.writeEndElement();</span>
+        }
+<span class="nc" id="L545">        xtw.writeEndElement();</span>
+<span class="nc" id="L546">    }</span>
+
+    protected void writeMessageDefinition(Event parentEvent, MessageEventDefinition messageDefinition, BpmnModel model, XMLStreamWriter xtw) throws Exception {
+<span class="nc" id="L549">        xtw.writeStartElement(ELEMENT_EVENT_MESSAGEDEFINITION);</span>
+
+<span class="nc" id="L551">        String messageRef = messageDefinition.getMessageRef();</span>
+<span class="nc bnc" id="L552" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(messageRef)) {</span>
+            // remove the namespace from the message id if set
+<span class="nc bnc" id="L554" title="All 2 branches missed.">            if (messageRef.startsWith(model.getTargetNamespace())) {</span>
+<span class="nc" id="L555">                messageRef = messageRef.replace(model.getTargetNamespace(), &quot;&quot;);</span>
+<span class="nc" id="L556">                messageRef = messageRef.replaceFirst(&quot;:&quot;, &quot;&quot;);</span>
+            } else {
+<span class="nc bnc" id="L558" title="All 2 branches missed.">                for (String prefix : model.getNamespaces().keySet()) {</span>
+<span class="nc" id="L559">                    String namespace = model.getNamespace(prefix);</span>
+<span class="nc bnc" id="L560" title="All 2 branches missed.">                    if (messageRef.startsWith(namespace)) {</span>
+<span class="nc" id="L561">                        messageRef = messageRef.replace(model.getTargetNamespace(), &quot;&quot;);</span>
+<span class="nc" id="L562">                        messageRef = prefix + messageRef;</span>
+                    }
+<span class="nc" id="L564">                }</span>
+            }
+        }
+
+<span class="nc bnc" id="L568" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(messageRef)) {</span>
+<span class="nc" id="L569">            writeDefaultAttribute(ATTRIBUTE_MESSAGE_REF, messageRef, xtw);</span>
+        }
+<span class="nc bnc" id="L571" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(messageDefinition.getMessageExpression())) {</span>
+<span class="nc" id="L572">            xtw.writeAttribute(FLOWABLE_EXTENSIONS_PREFIX, FLOWABLE_EXTENSIONS_NAMESPACE, ATTRIBUTE_MESSAGE_EXPRESSION, messageDefinition.getMessageExpression());</span>
+        }
+
+<span class="nc" id="L575">        boolean didWriteExtensionStartElement = BpmnXMLUtil.writeExtensionElements(messageDefinition, false, model.getNamespaces(), xtw);</span>
+<span class="nc bnc" id="L576" title="All 2 branches missed.">        if (didWriteExtensionStartElement) {</span>
+<span class="nc" id="L577">            xtw.writeEndElement();</span>
+        }
+<span class="nc" id="L579">        xtw.writeEndElement();</span>
+<span class="nc" id="L580">    }</span>
+
+    protected void writeConditionalDefinition(Event parentEvent, ConditionalEventDefinition conditionalDefinition, BpmnModel model, XMLStreamWriter xtw) throws Exception {
+<span class="nc" id="L583">        xtw.writeStartElement(ELEMENT_EVENT_CONDITIONALDEFINITION);</span>
+<span class="nc" id="L584">        boolean didWriteExtensionStartElement = BpmnXMLUtil.writeExtensionElements(conditionalDefinition, false, model.getNamespaces(), xtw);</span>
+<span class="nc bnc" id="L585" title="All 2 branches missed.">        if (didWriteExtensionStartElement) {</span>
+<span class="nc" id="L586">            xtw.writeEndElement();</span>
+        }
+
+<span class="nc bnc" id="L589" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(conditionalDefinition.getConditionExpression())) {</span>
+<span class="nc" id="L590">            xtw.writeStartElement(ELEMENT_CONDITION);</span>
+<span class="nc" id="L591">            xtw.writeCharacters(conditionalDefinition.getConditionExpression());</span>
+<span class="nc" id="L592">            xtw.writeEndElement();</span>
+        }
+
+<span class="nc" id="L595">        xtw.writeEndElement();</span>
+<span class="nc" id="L596">    }</span>
+
+    protected void writeErrorDefinition(Event parentEvent, ErrorEventDefinition errorDefinition, BpmnModel model, XMLStreamWriter xtw) throws Exception {
+<span class="nc" id="L599">        xtw.writeStartElement(ELEMENT_EVENT_ERRORDEFINITION);</span>
+<span class="nc" id="L600">        writeDefaultAttribute(ATTRIBUTE_ERROR_REF, errorDefinition.getErrorCode(), xtw);</span>
+<span class="nc" id="L601">        writeQualifiedAttribute(ATTRIBUTE_ERROR_VARIABLE_NAME, errorDefinition.getErrorVariableName(), xtw);</span>
+        
+<span class="nc bnc" id="L603" title="All 2 branches missed.">        if (errorDefinition.getErrorVariableLocalScope() != null) {</span>
+<span class="nc" id="L604">            writeQualifiedAttribute(ATTRIBUTE_ERROR_VARIABLE_LOCAL_SCOPE, errorDefinition.getErrorVariableLocalScope().toString(), xtw);</span>
+        }
+        
+<span class="nc bnc" id="L607" title="All 2 branches missed.">        if (errorDefinition.getErrorVariableTransient() != null) {</span>
+<span class="nc" id="L608">            writeQualifiedAttribute(ATTRIBUTE_ERROR_VARIABLE_TRANSIENT, errorDefinition.getErrorVariableTransient().toString(), xtw);</span>
+        }
+
+<span class="nc" id="L611">        boolean didWriteExtensionStartElement = BpmnXMLUtil.writeExtensionElements(errorDefinition, false, model.getNamespaces(), xtw);</span>
+<span class="nc bnc" id="L612" title="All 2 branches missed.">        if (didWriteExtensionStartElement) {</span>
+<span class="nc" id="L613">            xtw.writeEndElement();</span>
+        }
+<span class="nc" id="L615">        xtw.writeEndElement();</span>
+<span class="nc" id="L616">    }</span>
+
+    protected void writeEscalationDefinition(Event parentEvent, EscalationEventDefinition escalationDefinition, BpmnModel model,
+                    XMLStreamWriter xtw) throws Exception {
+
+<span class="nc" id="L621">        xtw.writeStartElement(ELEMENT_EVENT_ESCALATIONDEFINITION);</span>
+<span class="nc" id="L622">        writeDefaultAttribute(ATTRIBUTE_ESCALATION_REF, escalationDefinition.getEscalationCode(), xtw);</span>
+
+<span class="nc" id="L624">        boolean didWriteExtensionStartElement = BpmnXMLUtil.writeExtensionElements(escalationDefinition, false, model.getNamespaces(), xtw);</span>
+<span class="nc bnc" id="L625" title="All 2 branches missed.">        if (didWriteExtensionStartElement) {</span>
+<span class="nc" id="L626">            xtw.writeEndElement();</span>
+        }
+<span class="nc" id="L628">        xtw.writeEndElement();</span>
+<span class="nc" id="L629">    }</span>
+
+    protected void writeTerminateDefinition(Event parentEvent, TerminateEventDefinition terminateDefinition, BpmnModel model,
+        XMLStreamWriter xtw) throws Exception {
+<span class="nc" id="L633">        xtw.writeStartElement(ELEMENT_EVENT_TERMINATEDEFINITION);</span>
+
+<span class="nc bnc" id="L635" title="All 2 branches missed.">        if (terminateDefinition.isTerminateAll()) {</span>
+<span class="nc" id="L636">            writeQualifiedAttribute(ATTRIBUTE_TERMINATE_ALL, &quot;true&quot;, xtw);</span>
+        }
+
+<span class="nc bnc" id="L639" title="All 2 branches missed.">        if (terminateDefinition.isTerminateMultiInstance()) {</span>
+<span class="nc" id="L640">            writeQualifiedAttribute(ATTRIBUTE_TERMINATE_MULTI_INSTANCE, &quot;true&quot;, xtw);</span>
+        }
+
+<span class="nc" id="L643">        boolean didWriteExtensionStartElement = BpmnXMLUtil.writeExtensionElements(terminateDefinition, false, model.getNamespaces(), xtw);</span>
+<span class="nc bnc" id="L644" title="All 2 branches missed.">        if (didWriteExtensionStartElement) {</span>
+<span class="nc" id="L645">            xtw.writeEndElement();</span>
+        }
+<span class="nc" id="L647">        xtw.writeEndElement();</span>
+<span class="nc" id="L648">    }</span>
+    
+    protected boolean writeVariableListenerDefinition(Event parentEvent, boolean didWriteExtensionStartElement, XMLStreamWriter xtw) throws Exception {
+<span class="nc bnc" id="L651" title="All 2 branches missed.">        if (parentEvent.getEventDefinitions().size() == 1) {</span>
+<span class="nc" id="L652">            EventDefinition eventDefinition = parentEvent.getEventDefinitions().iterator().next();</span>
+<span class="nc bnc" id="L653" title="All 2 branches missed.">            if (eventDefinition instanceof VariableListenerEventDefinition) {</span>
+<span class="nc bnc" id="L654" title="All 2 branches missed.">                if (!didWriteExtensionStartElement) {</span>
+<span class="nc" id="L655">                    xtw.writeStartElement(ELEMENT_EXTENSIONS);</span>
+<span class="nc" id="L656">                    didWriteExtensionStartElement = true;</span>
+                }
+
+<span class="nc" id="L659">                xtw.writeStartElement(FLOWABLE_EXTENSIONS_PREFIX, ELEMENT_EVENT_VARIABLELISTENERDEFINITION, FLOWABLE_EXTENSIONS_NAMESPACE);</span>
+
+<span class="nc" id="L661">                VariableListenerEventDefinition variableListenerEventDefinition = (VariableListenerEventDefinition) eventDefinition;</span>
+<span class="nc bnc" id="L662" title="All 2 branches missed.">                if (StringUtils.isNotEmpty(variableListenerEventDefinition.getVariableName())) {</span>
+<span class="nc" id="L663">                    writeDefaultAttribute(ATTRIBUTE_VARIABLE_NAME, variableListenerEventDefinition.getVariableName(), xtw);</span>
+                }
+                
+<span class="nc bnc" id="L666" title="All 2 branches missed.">                if (StringUtils.isNotEmpty(variableListenerEventDefinition.getVariableChangeType())) {</span>
+<span class="nc" id="L667">                    writeDefaultAttribute(ATTRIBUTE_VARIABLE_CHANGE_TYPE, variableListenerEventDefinition.getVariableChangeType(), xtw);</span>
+                }
+
+<span class="nc" id="L670">                xtw.writeEndElement();</span>
+            }
+        }
+        
+<span class="nc" id="L674">        return didWriteExtensionStartElement;</span>
+    }
+
+    protected void writeDefaultAttribute(String attributeName, String value, XMLStreamWriter xtw) throws Exception {
+<span class="nc" id="L678">        BpmnXMLUtil.writeDefaultAttribute(attributeName, value, xtw);</span>
+<span class="nc" id="L679">    }</span>
+
+    protected void writeQualifiedAttribute(String attributeName, String value, XMLStreamWriter xtw) throws Exception {
+<span class="nc" id="L682">        BpmnXMLUtil.writeQualifiedAttribute(attributeName, value, xtw);</span>
+<span class="nc" id="L683">    }</span>
+
+    protected void writeDataAssociation(String elementName, DataAssociation dataAssociation, XMLStreamWriter xtw) throws Exception {
+<span class="nc" id="L686">        xtw.writeStartElement(elementName);</span>
+<span class="nc" id="L687">        writeDefaultAttribute(ATTRIBUTE_ID, dataAssociation.getId(), xtw);</span>
+<span class="nc bnc" id="L688" title="All 2 branches missed.">        if (!StringUtils.isEmpty(dataAssociation.getSourceRef())) {</span>
+<span class="nc" id="L689">            xtw.writeStartElement(ELEMENT_SOURCE_REF);</span>
+<span class="nc" id="L690">            xtw.writeCharacters(dataAssociation.getSourceRef());</span>
+<span class="nc" id="L691">            xtw.writeEndElement();</span>
+        }
+<span class="nc" id="L693">        xtw.writeStartElement(ELEMENT_TARGET_REF);</span>
+<span class="nc" id="L694">        xtw.writeCharacters(dataAssociation.getTargetRef());</span>
+<span class="nc" id="L695">        xtw.writeEndElement();</span>
+<span class="nc bnc" id="L696" title="All 2 branches missed.">        if (!StringUtils.isEmpty(dataAssociation.getTransformation())) {</span>
+<span class="nc" id="L697">            xtw.writeStartElement(ELEMENT_TRANSFORMATION);</span>
+<span class="nc" id="L698">            xtw.writeCharacters(dataAssociation.getTransformation());</span>
+<span class="nc" id="L699">            xtw.writeEndElement();</span>
+        }
+<span class="nc bnc" id="L701" title="All 2 branches missed.">        for (Assignment assignment : dataAssociation.getAssignments()) {</span>
+<span class="nc" id="L702">            xtw.writeStartElement(ELEMENT_ASSIGNMENT);</span>
+<span class="nc" id="L703">            xtw.writeStartElement(ELEMENT_FROM);</span>
+<span class="nc" id="L704">            xtw.writeCharacters(assignment.getFrom());</span>
+<span class="nc" id="L705">            xtw.writeEndElement();</span>
+<span class="nc" id="L706">            xtw.writeStartElement(ELEMENT_TO);</span>
+<span class="nc" id="L707">            xtw.writeCharacters(assignment.getTo());</span>
+<span class="nc" id="L708">            xtw.writeEndElement();</span>
+<span class="nc" id="L709">            xtw.writeEndElement();</span>
+<span class="nc" id="L710">        }</span>
+<span class="nc" id="L711">        xtw.writeEndElement();</span>
+<span class="nc" id="L712">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

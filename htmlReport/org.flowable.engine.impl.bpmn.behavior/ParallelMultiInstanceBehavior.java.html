@@ -1,0 +1,413 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ParallelMultiInstanceBehavior.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.bpmn.behavior</a> &gt; <span class="el_source">ParallelMultiInstanceBehavior.java</span></div><h1>ParallelMultiInstanceBehavior.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.impl.bpmn.behavior;
+
+import java.util.ArrayList;
+import java.util.LinkedList;
+import java.util.List;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.bpmn.model.Activity;
+import org.flowable.bpmn.model.BoundaryEvent;
+import org.flowable.bpmn.model.CallActivity;
+import org.flowable.bpmn.model.CompensateEventDefinition;
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.SubProcess;
+import org.flowable.bpmn.model.Transaction;
+import org.flowable.common.engine.api.FlowableIllegalArgumentException;
+import org.flowable.common.engine.impl.util.CollectionUtil;
+import org.flowable.engine.delegate.BpmnError;
+import org.flowable.engine.delegate.DelegateExecution;
+import org.flowable.engine.impl.bpmn.helper.ErrorPropagation;
+import org.flowable.engine.impl.bpmn.helper.ScopeUtil;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.delegate.ActivityBehavior;
+import org.flowable.engine.impl.jobexecutor.ParallelMultiInstanceActivityCompletionJobHandler;
+import org.flowable.engine.impl.jobexecutor.ParallelMultiInstanceWithNoWaitStatesAsyncLeaveJobHandler;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntity;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntityManager;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.engine.impl.util.JobUtil;
+import org.flowable.engine.impl.variable.ParallelMultiInstanceLoopVariable;
+import org.flowable.engine.impl.variable.ParallelMultiInstanceLoopVariableType;
+import org.flowable.job.service.JobService;
+import org.flowable.job.service.impl.persistence.entity.JobEntity;
+import org.flowable.variable.api.persistence.entity.VariableInstance;
+
+/**
+ * @author Joram Barrez
+ * @author Tijs Rademakers
+ * @author Filip Hrisafov
+ */
+public class ParallelMultiInstanceBehavior extends MultiInstanceActivityBehavior {
+
+    private static final long serialVersionUID = 1L;
+
+    public ParallelMultiInstanceBehavior(Activity activity, AbstractBpmnActivityBehavior originalActivityBehavior) {
+<span class="nc" id="L57">        super(activity, originalActivityBehavior);</span>
+<span class="nc" id="L58">    }</span>
+
+    /**
+     * Handles the parallel case of spawning the instances. Will create child executions accordingly for every instance needed.
+     */
+    @Override
+    protected int createInstances(DelegateExecution multiInstanceRootExecution) {
+<span class="nc" id="L65">        int nrOfInstances = resolveNrOfInstances(multiInstanceRootExecution);</span>
+<span class="nc bnc" id="L66" title="All 2 branches missed.">        if (nrOfInstances &lt; 0) {</span>
+<span class="nc" id="L67">            throw new FlowableIllegalArgumentException(&quot;Invalid number of instances: must be non-negative integer value&quot; + &quot;, but was &quot; + nrOfInstances);</span>
+<span class="nc bnc" id="L68" title="All 2 branches missed.">        } else if (nrOfInstances == 0) {</span>
+            // This is the same logic as with the Sequential multi instance behaviour.
+            // Variables will not be created
+<span class="nc" id="L71">            return nrOfInstances;</span>
+        }
+
+<span class="nc" id="L74">        setLoopVariable(multiInstanceRootExecution, NUMBER_OF_INSTANCES, nrOfInstances);</span>
+<span class="nc" id="L75">        setLoopVariable(multiInstanceRootExecution, NUMBER_OF_COMPLETED_INSTANCES, ParallelMultiInstanceLoopVariable.completed(multiInstanceRootExecution.getId()));</span>
+<span class="nc" id="L76">        setLoopVariable(multiInstanceRootExecution, NUMBER_OF_ACTIVE_INSTANCES, ParallelMultiInstanceLoopVariable.active(multiInstanceRootExecution.getId()));</span>
+
+<span class="nc" id="L78">        List&lt;ExecutionEntity&gt; concurrentExecutions = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L79" title="All 2 branches missed.">        for (int loopCounter = 0; loopCounter &lt; nrOfInstances; loopCounter++) {</span>
+<span class="nc" id="L80">            ExecutionEntity concurrentExecution = CommandContextUtil.getExecutionEntityManager()</span>
+<span class="nc" id="L81">                    .createChildExecution((ExecutionEntity) multiInstanceRootExecution);</span>
+<span class="nc" id="L82">            concurrentExecution.setCurrentFlowElement(activity);</span>
+<span class="nc" id="L83">            concurrentExecution.setActive(true);</span>
+<span class="nc" id="L84">            concurrentExecution.setScope(false);</span>
+
+<span class="nc" id="L86">            concurrentExecutions.add(concurrentExecution);</span>
+<span class="nc" id="L87">            logLoopDetails(concurrentExecution, &quot;initialized&quot;, loopCounter, 0, nrOfInstances, nrOfInstances);</span>
+            
+            //CommandContextUtil.getHistoryManager().recordActivityStart(concurrentExecution);
+        }
+
+        // Before the activities are executed, all executions MUST be created up front
+        // Do not try to merge this loop with the previous one, as it will lead
+        // to bugs, due to possible child execution pruning.
+<span class="nc bnc" id="L95" title="All 2 branches missed.">        for (int loopCounter = 0; loopCounter &lt; nrOfInstances; loopCounter++) {</span>
+<span class="nc" id="L96">            ExecutionEntity concurrentExecution = concurrentExecutions.get(loopCounter);</span>
+            // executions can be inactive, if instances are all automatics
+            // (no-waitstate) and completionCondition has been met in the meantime
+<span class="nc bnc" id="L99" title="All 2 branches missed.">            if (concurrentExecution.isActive() </span>
+<span class="nc bnc" id="L100" title="All 2 branches missed.">                    &amp;&amp; !concurrentExecution.isEnded() </span>
+<span class="nc bnc" id="L101" title="All 2 branches missed.">                    &amp;&amp; !concurrentExecution.getParent().isEnded()) {</span>
+<span class="nc" id="L102">                executeOriginalBehavior(concurrentExecution, (ExecutionEntity) multiInstanceRootExecution, loopCounter);</span>
+            } 
+        }
+
+        // See ACT-1586: ExecutionQuery returns wrong results when using multi
+        // instance on a receive task The parent execution must be set to false, so it wouldn't show up in
+        // the execution query when using .activityId(something). Do not we cannot nullify the
+        // activityId (that would have been a better solution), as it would break boundary event behavior.
+<span class="nc bnc" id="L110" title="All 2 branches missed.">        if (!concurrentExecutions.isEmpty()) {</span>
+<span class="nc" id="L111">            multiInstanceRootExecution.setActive(false);</span>
+        }
+
+<span class="nc" id="L114">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration();</span>
+        // No need to check the completed variable for backwards compatibility(like below),
+        // as this is for new instances and not for existing ones that get completed and might be started in the 'old way'
+<span class="nc bnc" id="L117" title="All 2 branches missed.">        if (isAsyncWithoutWaitStates(processEngineConfiguration)) {</span>
+
+            // The difference with the ParallelMultiInstanceActivityCompletionJobHandler approach is that here the job gets created up front
+            // (as the flag for no wait states has been set, this won't create an ever-recreating job).
+
+<span class="nc" id="L122">            JobEntity job = JobUtil.createJob(concurrentExecutions.get(0), ParallelMultiInstanceWithNoWaitStatesAsyncLeaveJobHandler.TYPE, processEngineConfiguration);</span>
+<span class="nc" id="L123">            JobService jobService = processEngineConfiguration.getJobServiceConfiguration().getJobService();</span>
+<span class="nc" id="L124">            jobService.createAsyncJobNoTriggerAsyncExecutor(job, true);</span>
+<span class="nc" id="L125">            jobService.insertJob(job);</span>
+        }
+
+<span class="nc" id="L128">        return nrOfInstances;</span>
+    }
+
+    public boolean isAsyncWithoutWaitStates(ProcessEngineConfigurationImpl processEngineConfiguration) {
+<span class="nc bnc" id="L132" title="All 2 branches missed.">        return activity.isAsynchronous()</span>
+<span class="nc bnc" id="L133" title="All 2 branches missed.">            &amp;&amp; activity.getLoopCharacteristics().isNoWaitStatesAsyncLeave()</span>
+<span class="nc bnc" id="L134" title="All 2 branches missed.">            &amp;&amp; processEngineConfiguration.isParallelMultiInstanceAsyncLeave();</span>
+    }
+
+    /**
+     * Called when the wrapped {@link ActivityBehavior} calls the {@link AbstractBpmnActivityBehavior#leave(DelegateExecution)} method. Handles the completion of one of the parallel instances
+     */
+    @Override
+    public void leave(DelegateExecution execution) {
+
+<span class="nc" id="L143">        boolean zeroNrOfInstances = false;</span>
+<span class="nc bnc" id="L144" title="All 2 branches missed.">        if (resolveNrOfInstances(execution) == 0) {</span>
+            // Empty collection, just leave.
+<span class="nc" id="L146">            zeroNrOfInstances = true;</span>
+<span class="nc" id="L147">            super.leave(execution); // Plan the default leave</span>
+        }
+
+<span class="nc" id="L150">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration();</span>
+<span class="nc bnc" id="L151" title="All 2 branches missed.">        if (isAsyncWithoutWaitStates(processEngineConfiguration)) {</span>
+
+            // Optimization: if there are active child executions in the database, the childExecutions definitely must not be fetched.
+            // If there are none in the database, the child executions need to be fetched: either the multi instance is completed
+            // or this logic is called at a time when things have not yet been flushed.
+
+<span class="nc" id="L157">            ExecutionEntityManager executionEntityManager = processEngineConfiguration.getExecutionEntityManager();</span>
+<span class="nc" id="L158">            DelegateExecution miRootExecution = getMultiInstanceRootExecution(execution);</span>
+<span class="nc" id="L159">            long activeChildExecutionsCount = executionEntityManager.countActiveExecutionsByParentId(miRootExecution.getId());</span>
+
+<span class="nc bnc" id="L161" title="All 2 branches missed.">            if (activeChildExecutionsCount &gt; 0) { // there are active ones, nothing to do</span>
+
+                // In this 'no wait state' mode, all executions until the multi instance root need to be inactivated, to make the async job work.
+<span class="nc" id="L164">                inactivateExecutionAndParentExecutions(execution, processEngineConfiguration);</span>
+
+<span class="nc" id="L166">                callActivityEndListeners(execution);</span>
+<span class="nc" id="L167">                aggregateVariablesForChildExecution(execution, miRootExecution);</span>
+
+            } else {
+<span class="nc" id="L170">                internalLeave(execution, zeroNrOfInstances);</span>
+            }
+
+<span class="nc" id="L173">        } else {</span>
+<span class="nc" id="L174">            internalLeave(execution, zeroNrOfInstances);</span>
+
+        }
+
+<span class="nc" id="L178">    }</span>
+
+    protected void internalLeave(DelegateExecution execution, boolean zeroNrOfInstances) {
+<span class="nc" id="L181">        int loopCounter = getLoopVariable(execution, getCollectionElementIndexVariable());</span>
+<span class="nc" id="L182">        int nrOfInstances = getLoopVariable(execution, NUMBER_OF_INSTANCES);</span>
+<span class="nc" id="L183">        VariableInstance nrOfCompletedInstancesVariable = getLoopVariableInstance(execution, NUMBER_OF_COMPLETED_INSTANCES);</span>
+<span class="nc bnc" id="L184" title="All 2 branches missed.">        boolean usesParallelMultiInstanceLoopVariable =</span>
+<span class="nc bnc" id="L185" title="All 2 branches missed.">            nrOfCompletedInstancesVariable != null &amp;&amp; ParallelMultiInstanceLoopVariableType.TYPE_NAME.equals(nrOfCompletedInstancesVariable.getTypeName());</span>
+
+<span class="nc" id="L187">        int nrOfCompletedInstances = getLoopVariable(execution, NUMBER_OF_COMPLETED_INSTANCES) + 1;</span>
+<span class="nc" id="L188">        int nrOfActiveInstances = getLoopVariable(execution, NUMBER_OF_ACTIVE_INSTANCES) - 1;</span>
+
+<span class="nc" id="L190">        DelegateExecution miRootExecution = getMultiInstanceRootExecution(execution);</span>
+<span class="nc bnc" id="L191" title="All 4 branches missed.">        if (miRootExecution != null &amp;&amp; !usesParallelMultiInstanceLoopVariable) { // will be null in case of empty collection</span>
+            // only need to update the variables if it doesn't use the new mechanism, i.e. backwards compatibility for already running instances
+<span class="nc" id="L193">            setLoopVariable(miRootExecution, NUMBER_OF_COMPLETED_INSTANCES, nrOfCompletedInstances);</span>
+<span class="nc" id="L194">            setLoopVariable(miRootExecution, NUMBER_OF_ACTIVE_INSTANCES, nrOfActiveInstances);</span>
+        }
+
+<span class="nc" id="L197">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration();</span>
+<span class="nc" id="L198">        inactivateExecution(execution, processEngineConfiguration);</span>
+
+        try {
+<span class="nc" id="L201">            callActivityEndListeners(execution);</span>
+<span class="nc" id="L202">        } catch (BpmnError bpmnError) {</span>
+<span class="nc" id="L203">            ErrorPropagation.propagateError(bpmnError, execution);</span>
+<span class="nc" id="L204">            return;</span>
+<span class="nc" id="L205">        }</span>
+
+<span class="nc" id="L207">        logLoopDetails(execution, &quot;instance completed&quot;, loopCounter, nrOfCompletedInstances, nrOfActiveInstances, nrOfInstances);</span>
+
+<span class="nc bnc" id="L209" title="All 2 branches missed.">        if (zeroNrOfInstances) {</span>
+<span class="nc" id="L210">            return;</span>
+        }
+
+<span class="nc" id="L213">        ExecutionEntity executionEntity = (ExecutionEntity) execution;</span>
+<span class="nc bnc" id="L214" title="All 2 branches missed.">        if (executionEntity.getParent() != null) {</span>
+
+            // If usesParallelMultiInstanceLoopVariable is true, it means that this instance is running
+            // with the old logic and we can't async leave.
+<span class="nc bnc" id="L218" title="All 2 branches missed.">            boolean asyncLeave = usesParallelMultiInstanceLoopVariable</span>
+<span class="nc bnc" id="L219" title="All 2 branches missed.">                &amp;&amp; processEngineConfiguration.isParallelMultiInstanceAsyncLeave()</span>
+<span class="nc bnc" id="L220" title="All 2 branches missed.">                &amp;&amp; !isAsyncWithoutWaitStates(processEngineConfiguration); // when using the 'no wait states' flag, the regular leave logic should be executed.</span>
+
+<span class="nc bnc" id="L222" title="All 2 branches missed.">            if (!asyncLeave) {</span>
+                // If we are not leaving async then we have to lock the parent scope
+<span class="nc" id="L224">                lockFirstParentScope(executionEntity);</span>
+            }
+
+            // When leaving one of the child executions we need to aggregate the information for it
+            // Aggregation of all variables will be done in MultiInstanceActivityBehavior#leave()
+<span class="nc" id="L229">            aggregateVariablesForChildExecution(execution, miRootExecution);</span>
+
+<span class="nc" id="L231">            boolean isCompletionConditionSatisfied = completionConditionSatisfied(execution.getParent());</span>
+<span class="nc bnc" id="L232" title="All 4 branches missed.">            if (nrOfCompletedInstances &gt;= nrOfInstances || isCompletionConditionSatisfied) {</span>
+<span class="nc" id="L233">                leave(executionEntity, nrOfInstances, nrOfCompletedInstances, isCompletionConditionSatisfied);</span>
+
+<span class="nc bnc" id="L235" title="All 2 branches missed.">            } else if (asyncLeave) {</span>
+<span class="nc" id="L236">                JobService jobService = processEngineConfiguration.getJobServiceConfiguration().getJobService();</span>
+<span class="nc" id="L237">                JobEntity job = JobUtil.createJob(executionEntity, ParallelMultiInstanceActivityCompletionJobHandler.TYPE, processEngineConfiguration);</span>
+
+<span class="nc" id="L239">                jobService.createAsyncJob(job, true);</span>
+<span class="nc" id="L240">                jobService.scheduleAsyncJob(job);</span>
+
+            }
+
+<span class="nc" id="L244">        } else {</span>
+<span class="nc" id="L245">            sendCompletedEvent(execution);</span>
+<span class="nc" id="L246">            super.leave(execution);</span>
+        }
+<span class="nc" id="L248">    }</span>
+
+    protected void inactivateExecutionAndParentExecutions(DelegateExecution execution, ProcessEngineConfigurationImpl processEngineConfiguration) {
+<span class="nc" id="L251">        inactivateExecution(execution, processEngineConfiguration);</span>
+
+<span class="nc" id="L253">        ExecutionEntity parentExecution = (ExecutionEntity) execution.getParent();</span>
+<span class="nc bnc" id="L254" title="All 2 branches missed.">        while (!parentExecution.isMultiInstanceRoot()) {</span>
+<span class="nc" id="L255">            inactivateExecution(parentExecution, processEngineConfiguration);</span>
+<span class="nc" id="L256">            parentExecution = parentExecution.getParent();</span>
+        }
+<span class="nc" id="L258">    }</span>
+
+    protected ExecutionEntity inactivateExecution(DelegateExecution execution, ProcessEngineConfigurationImpl processEngineConfiguration) {
+<span class="nc" id="L261">        processEngineConfiguration.getActivityInstanceEntityManager().recordActivityEnd((ExecutionEntity) execution, null);</span>
+<span class="nc" id="L262">        ExecutionEntity executionEntity = (ExecutionEntity) execution;</span>
+<span class="nc bnc" id="L263" title="All 2 branches missed.">        if (execution.getParent() != null) {</span>
+<span class="nc" id="L264">            executionEntity.inactivate();</span>
+        }
+<span class="nc" id="L266">        return executionEntity;</span>
+    }
+
+    public boolean leaveAsync(ExecutionEntity execution) {
+<span class="nc" id="L270">        int nrOfInstances = getLoopVariable(execution, NUMBER_OF_INSTANCES);</span>
+<span class="nc" id="L271">        int nrOfCompletedInstances = getLoopVariable(execution, NUMBER_OF_COMPLETED_INSTANCES);</span>
+<span class="nc" id="L272">        boolean isCompletionConditionSatisfied = completionConditionSatisfied(execution.getParent());</span>
+<span class="nc bnc" id="L273" title="All 4 branches missed.">        if (nrOfCompletedInstances &gt;= nrOfInstances || isCompletionConditionSatisfied) {</span>
+<span class="nc" id="L274">            leave(execution, nrOfInstances, nrOfCompletedInstances, isCompletionConditionSatisfied);</span>
+<span class="nc" id="L275">            return true;</span>
+        }
+<span class="nc" id="L277">        return false;</span>
+    }
+
+    protected void leave(ExecutionEntity execution, int nrOfInstances, int nrOfCompletedInstances, boolean isCompletionConditionSatisfied) {
+<span class="nc" id="L281">        DelegateExecution miRootExecution = getMultiInstanceRootExecution(execution);</span>
+<span class="nc" id="L282">        ExecutionEntity leavingExecution = null;</span>
+<span class="nc bnc" id="L283" title="All 2 branches missed.">        if (nrOfInstances &gt; 0) {</span>
+<span class="nc" id="L284">            leavingExecution = execution.getParent();</span>
+        } else {
+<span class="nc" id="L286">            CommandContextUtil.getActivityInstanceEntityManager().recordActivityEnd((ExecutionEntity) execution, null);</span>
+<span class="nc" id="L287">            leavingExecution = execution;</span>
+        }
+
+<span class="nc" id="L290">        Activity activity = (Activity) execution.getCurrentFlowElement();</span>
+<span class="nc" id="L291">        verifyCompensation(execution, leavingExecution, activity);</span>
+<span class="nc" id="L292">        verifyCallActivity(leavingExecution, activity);</span>
+
+        // When we complete the Multi Instance Root execution we need to explicitly set the number of completed / active instances
+        // as the ParallelMultiInstanceLoopVariable can only handle the runtime information
+<span class="nc" id="L296">        setLoopVariable(miRootExecution, NUMBER_OF_COMPLETED_INSTANCES, nrOfCompletedInstances);</span>
+        // For backwards compatibility we set the current value of the number of active instances,
+        // since the execution might be completed with a completion event.
+        // In this case the active instances is the number of active instances when the execution completed
+<span class="nc" id="L300">        setLoopVariable(miRootExecution, NUMBER_OF_ACTIVE_INSTANCES, getLoopVariable(execution, NUMBER_OF_ACTIVE_INSTANCES));</span>
+
+<span class="nc bnc" id="L302" title="All 2 branches missed.">        if (isCompletionConditionSatisfied) {</span>
+<span class="nc" id="L303">            LinkedList&lt;DelegateExecution&gt; toVerify = new LinkedList&lt;&gt;(miRootExecution.getExecutions());</span>
+<span class="nc bnc" id="L304" title="All 2 branches missed.">            while (!toVerify.isEmpty()) {</span>
+<span class="nc" id="L305">                DelegateExecution childExecution = toVerify.pop();</span>
+<span class="nc bnc" id="L306" title="All 2 branches missed.">                if (((ExecutionEntity) childExecution).isInserted()) {</span>
+<span class="nc" id="L307">                    childExecution.inactivate();</span>
+                }
+
+<span class="nc" id="L310">                List&lt;? extends DelegateExecution&gt; childExecutions = childExecution.getExecutions();</span>
+<span class="nc bnc" id="L311" title="All 4 branches missed.">                if (childExecutions != null &amp;&amp; !childExecutions.isEmpty()) {</span>
+<span class="nc" id="L312">                    toVerify.addAll(childExecutions);</span>
+                }
+<span class="nc" id="L314">            }</span>
+<span class="nc" id="L315">            sendCompletedWithConditionEvent(leavingExecution);</span>
+<span class="nc" id="L316">        }</span>
+        else {
+<span class="nc" id="L318">            sendCompletedEvent(leavingExecution);</span>
+        }
+
+<span class="nc" id="L321">        super.leave(leavingExecution);</span>
+<span class="nc" id="L322">    }</span>
+
+    protected Activity verifyCompensation(DelegateExecution execution, ExecutionEntity executionToUse, Activity activity) {
+<span class="nc" id="L325">        boolean hasCompensation = false;</span>
+<span class="nc bnc" id="L326" title="All 2 branches missed.">        if (activity instanceof Transaction) {</span>
+<span class="nc" id="L327">            hasCompensation = true;</span>
+<span class="nc bnc" id="L328" title="All 2 branches missed.">        } else if (activity instanceof SubProcess) {</span>
+<span class="nc" id="L329">            SubProcess subProcess = (SubProcess) activity;</span>
+<span class="nc bnc" id="L330" title="All 2 branches missed.">            for (FlowElement subElement : subProcess.getFlowElements()) {</span>
+<span class="nc bnc" id="L331" title="All 2 branches missed.">                if (subElement instanceof Activity) {</span>
+<span class="nc" id="L332">                    Activity subActivity = (Activity) subElement;</span>
+<span class="nc bnc" id="L333" title="All 2 branches missed.">                    if (CollectionUtil.isNotEmpty(subActivity.getBoundaryEvents())) {</span>
+<span class="nc bnc" id="L334" title="All 2 branches missed.">                        for (BoundaryEvent boundaryEvent : subActivity.getBoundaryEvents()) {</span>
+<span class="nc bnc" id="L335" title="All 2 branches missed.">                            if (CollectionUtil.isNotEmpty(boundaryEvent.getEventDefinitions()) &amp;&amp;</span>
+<span class="nc bnc" id="L336" title="All 2 branches missed.">                                    boundaryEvent.getEventDefinitions().get(0) instanceof CompensateEventDefinition) {</span>
+
+<span class="nc" id="L338">                                hasCompensation = true;</span>
+<span class="nc" id="L339">                                break;</span>
+                            }
+<span class="nc" id="L341">                        }</span>
+                    }
+                }
+<span class="nc" id="L344">            }</span>
+        }
+
+<span class="nc bnc" id="L347" title="All 2 branches missed.">        if (hasCompensation) {</span>
+<span class="nc" id="L348">            ScopeUtil.createCopyOfSubProcessExecutionForCompensation(executionToUse);</span>
+        }
+<span class="nc" id="L350">        return activity;</span>
+    }
+
+    protected void verifyCallActivity(ExecutionEntity executionToUse, Activity activity) {
+<span class="nc bnc" id="L354" title="All 2 branches missed.">        if (activity instanceof CallActivity) {</span>
+<span class="nc" id="L355">            ExecutionEntityManager executionEntityManager = CommandContextUtil.getExecutionEntityManager();</span>
+<span class="nc bnc" id="L356" title="All 2 branches missed.">            if (executionToUse != null) {</span>
+<span class="nc" id="L357">                List&lt;String&gt; callActivityExecutionIds = new ArrayList&lt;&gt;();</span>
+
+                // Find all execution entities that are at the call activity
+<span class="nc" id="L360">                List&lt;ExecutionEntity&gt; childExecutions = executionEntityManager.collectChildren(executionToUse);</span>
+<span class="nc bnc" id="L361" title="All 2 branches missed.">                if (childExecutions != null) {</span>
+<span class="nc bnc" id="L362" title="All 2 branches missed.">                    for (ExecutionEntity childExecution : childExecutions) {</span>
+<span class="nc bnc" id="L363" title="All 2 branches missed.">                        if (activity.getId().equals(childExecution.getCurrentActivityId())) {</span>
+<span class="nc" id="L364">                            callActivityExecutionIds.add(childExecution.getId());</span>
+                        }
+<span class="nc" id="L366">                    }</span>
+
+                    // Now all call activity executions have been collected, loop again and check which should be removed
+<span class="nc bnc" id="L369" title="All 2 branches missed.">                    for (int i = childExecutions.size() - 1; i &gt;= 0; i--) {</span>
+<span class="nc" id="L370">                        ExecutionEntity childExecution = childExecutions.get(i);</span>
+<span class="nc bnc" id="L371" title="All 2 branches missed.">                        if (StringUtils.isNotEmpty(childExecution.getSuperExecutionId())</span>
+<span class="nc bnc" id="L372" title="All 2 branches missed.">                                &amp;&amp; callActivityExecutionIds.contains(childExecution.getSuperExecutionId())) {</span>
+
+<span class="nc" id="L374">                            executionEntityManager.deleteProcessInstanceExecutionEntity(childExecution.getId(), activity.getId(),</span>
+                                    &quot;call activity completion condition met&quot;, true, false, true);
+                        }
+                    }
+
+                }
+            }
+        }
+<span class="nc" id="L382">    }</span>
+
+
+    protected void lockFirstParentScope(DelegateExecution execution) {
+
+<span class="nc" id="L387">        ExecutionEntityManager executionEntityManager = CommandContextUtil.getExecutionEntityManager();</span>
+
+<span class="nc" id="L389">        boolean found = false;</span>
+<span class="nc" id="L390">        ExecutionEntity parentScopeExecution = null;</span>
+<span class="nc" id="L391">        ExecutionEntity currentExecution = (ExecutionEntity) execution;</span>
+<span class="nc bnc" id="L392" title="All 6 branches missed.">        while (!found &amp;&amp; currentExecution != null &amp;&amp; currentExecution.getParentId() != null) {</span>
+<span class="nc" id="L393">            parentScopeExecution = executionEntityManager.findById(currentExecution.getParentId());</span>
+<span class="nc bnc" id="L394" title="All 4 branches missed.">            if (parentScopeExecution != null &amp;&amp; parentScopeExecution.isScope()) {</span>
+<span class="nc" id="L395">                found = true;</span>
+            }
+<span class="nc" id="L397">            currentExecution = parentScopeExecution;</span>
+        }
+
+<span class="nc" id="L400">        parentScopeExecution.forceUpdate();</span>
+<span class="nc" id="L401">    }</span>
+
+    @Override
+    protected void internalInterrupted(DelegateExecution execution) {
+        // When the activity is interrupted we need to update the number of completed / active instances
+        // to only be primitive values based on their current values
+<span class="nc" id="L407">        setLoopVariable(execution, NUMBER_OF_COMPLETED_INSTANCES, getLoopVariable(execution, NUMBER_OF_COMPLETED_INSTANCES));</span>
+<span class="nc" id="L408">        setLoopVariable(execution, NUMBER_OF_ACTIVE_INSTANCES, getLoopVariable(execution, NUMBER_OF_ACTIVE_INSTANCES));</span>
+
+<span class="nc" id="L410">        super.internalInterrupted(execution);</span>
+<span class="nc" id="L411">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

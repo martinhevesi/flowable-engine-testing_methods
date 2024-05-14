@@ -1,0 +1,533 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>EndExecutionOperation.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.agenda</a> &gt; <span class="el_source">EndExecutionOperation.java</span></div><h1>EndExecutionOperation.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.impl.agenda;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+
+import org.flowable.bpmn.model.Activity;
+import org.flowable.bpmn.model.BoundaryEvent;
+import org.flowable.bpmn.model.CallActivity;
+import org.flowable.bpmn.model.CompensateEventDefinition;
+import org.flowable.bpmn.model.EndEvent;
+import org.flowable.bpmn.model.EventSubProcess;
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.FlowNode;
+import org.flowable.bpmn.model.Process;
+import org.flowable.bpmn.model.StartEvent;
+import org.flowable.bpmn.model.SubProcess;
+import org.flowable.bpmn.model.Transaction;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.delegate.event.FlowableEngineEventType;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.common.engine.impl.util.CollectionUtil;
+import org.flowable.engine.delegate.ExecutionListener;
+import org.flowable.engine.delegate.event.impl.FlowableEventBuilder;
+import org.flowable.engine.impl.bpmn.behavior.MultiInstanceActivityBehavior;
+import org.flowable.engine.impl.bpmn.behavior.ParallelMultiInstanceBehavior;
+import org.flowable.engine.impl.bpmn.helper.ScopeUtil;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.delegate.ActivityBehavior;
+import org.flowable.engine.impl.delegate.SubProcessActivityBehavior;
+import org.flowable.engine.impl.jobexecutor.AsyncCompleteCallActivityJobHandler;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntity;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntityManager;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.engine.impl.util.ProcessDefinitionUtil;
+import org.flowable.job.service.JobService;
+import org.flowable.job.service.impl.persistence.entity.JobEntity;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * This operations ends an execution and follows the typical BPMN rules to continue the process (if possible).
+ * 
+ * This operations is typically not scheduled from an {@link ActivityBehavior}, but rather from another operation. 
+ * This happens when the conditions are so that the process can't continue via the
+ * regular ways and an execution cleanup needs to happen, potentially opening up new ways of continuing the process instance.
+ * 
+ * @author Joram Barrez
+ */
+public class EndExecutionOperation extends AbstractOperation {
+
+<span class="nc" id="L64">    private static final Logger LOGGER = LoggerFactory.getLogger(EndExecutionOperation.class);</span>
+
+    protected boolean forceSynchronous;
+    
+    public EndExecutionOperation(CommandContext commandContext, ExecutionEntity execution) {
+<span class="nc" id="L69">        super(commandContext, execution);</span>
+<span class="nc" id="L70">    }</span>
+    
+    public EndExecutionOperation(CommandContext commandContext, ExecutionEntity execution, boolean forceSynchronous) {
+<span class="nc" id="L73">        this(commandContext, execution);</span>
+<span class="nc" id="L74">        this.forceSynchronous = forceSynchronous;</span>
+<span class="nc" id="L75">    }</span>
+
+    @Override
+    public void run() {
+<span class="nc bnc" id="L79" title="All 2 branches missed.">        if (execution.isProcessInstanceType()) {</span>
+<span class="nc" id="L80">            handleProcessInstanceExecution(execution);</span>
+        } else {
+<span class="nc" id="L82">            handleRegularExecution();</span>
+        }
+<span class="nc" id="L84">    }</span>
+
+    protected void handleProcessInstanceExecution(ExecutionEntity processInstanceExecution) {
+<span class="nc" id="L87">        ExecutionEntityManager executionEntityManager = CommandContextUtil.getExecutionEntityManager(commandContext);</span>
+
+<span class="nc" id="L89">        String processInstanceId = processInstanceExecution.getId(); // No parent execution == process instance id</span>
+<span class="nc" id="L90">        LOGGER.debug(&quot;No parent execution found. Verifying if process instance {} can be stopped.&quot;, processInstanceId);</span>
+
+<span class="nc" id="L92">        ExecutionEntity superExecution = processInstanceExecution.getSuperExecution();</span>
+<span class="nc bnc" id="L93" title="All 4 branches missed.">        if (!forceSynchronous &amp;&amp; isAsyncCompleteCallActivity(superExecution)) {</span>
+<span class="nc" id="L94">            scheduleAsyncCompleteCallActivity(superExecution, processInstanceExecution);</span>
+<span class="nc" id="L95">            return;</span>
+        }
+        
+        // copy variables before destroying the ended sub process instance (call activity)
+<span class="nc" id="L99">        SubProcessActivityBehavior subProcessActivityBehavior = null;</span>
+<span class="nc bnc" id="L100" title="All 2 branches missed.">        if (superExecution != null) {</span>
+<span class="nc" id="L101">            FlowNode superExecutionElement = (FlowNode) superExecution.getCurrentFlowElement();</span>
+<span class="nc" id="L102">            subProcessActivityBehavior = (SubProcessActivityBehavior) superExecutionElement.getBehavior();</span>
+            try {
+<span class="nc" id="L104">                subProcessActivityBehavior.completing(superExecution, processInstanceExecution);</span>
+<span class="nc" id="L105">            } catch (RuntimeException e) {</span>
+<span class="nc" id="L106">                LOGGER.error(&quot;Error while completing sub process of execution {}&quot;, processInstanceExecution, e);</span>
+<span class="nc" id="L107">                throw e;</span>
+<span class="nc" id="L108">            } catch (Exception e) {</span>
+<span class="nc" id="L109">                LOGGER.error(&quot;Error while completing sub process of execution {}&quot;, processInstanceExecution, e);</span>
+<span class="nc" id="L110">                throw new FlowableException(&quot;Error while completing sub process of execution &quot; + processInstanceExecution, e);</span>
+<span class="nc" id="L111">            }</span>
+        }
+
+<span class="nc" id="L114">        int activeExecutions = getNumberOfActiveChildExecutionsForProcessInstance(executionEntityManager, processInstanceId);</span>
+<span class="nc bnc" id="L115" title="All 2 branches missed.">        if (activeExecutions == 0) {</span>
+<span class="nc" id="L116">            LOGGER.debug(&quot;No active executions found. Ending process instance {}&quot;, processInstanceId);</span>
+
+            // note the use of execution here vs processinstance execution for getting the flow element
+<span class="nc" id="L119">            executionEntityManager.deleteProcessInstanceExecutionEntity(processInstanceId,</span>
+<span class="nc bnc" id="L120" title="All 2 branches missed.">                    execution.getCurrentFlowElement() != null ? execution.getCurrentFlowElement().getId() : null, null, false, false, true);</span>
+        } else {
+<span class="nc" id="L122">            LOGGER.debug(&quot;Active executions found. Process instance {} will not be ended.&quot;, processInstanceId);</span>
+        }
+
+<span class="nc" id="L125">        Process process = ProcessDefinitionUtil.getProcess(processInstanceExecution.getProcessDefinitionId());</span>
+
+        // Execute execution listeners for process end.
+<span class="nc bnc" id="L128" title="All 2 branches missed.">        if (CollectionUtil.isNotEmpty(process.getExecutionListeners())) {</span>
+<span class="nc" id="L129">            executeExecutionListeners(process, processInstanceExecution, ExecutionListener.EVENTNAME_END);</span>
+        }
+
+        // and trigger execution afterwards if doing a call activity
+<span class="nc bnc" id="L133" title="All 2 branches missed.">        if (superExecution != null) {</span>
+<span class="nc" id="L134">            superExecution.setSubProcessInstance(null);</span>
+            try {
+<span class="nc" id="L136">                subProcessActivityBehavior.completed(superExecution);</span>
+<span class="nc" id="L137">            } catch (RuntimeException e) {</span>
+<span class="nc" id="L138">                LOGGER.error(&quot;Error while completing sub process of execution {}&quot;, processInstanceExecution, e);</span>
+<span class="nc" id="L139">                throw e;</span>
+<span class="nc" id="L140">            } catch (Exception e) {</span>
+<span class="nc" id="L141">                LOGGER.error(&quot;Error while completing sub process of execution {}&quot;, processInstanceExecution, e);</span>
+<span class="nc" id="L142">                throw new FlowableException(&quot;Error while completing sub process of execution &quot; + processInstanceExecution, e);</span>
+<span class="nc" id="L143">            }</span>
+
+        }
+<span class="nc" id="L146">    }</span>
+    
+    protected boolean isAsyncCompleteCallActivity(ExecutionEntity superExecution) {
+<span class="nc bnc" id="L149" title="All 2 branches missed.">        if (superExecution != null) {</span>
+<span class="nc" id="L150">            FlowNode superExecutionFlowNode = (FlowNode) superExecution.getCurrentFlowElement();</span>
+<span class="nc bnc" id="L151" title="All 2 branches missed.">            if (superExecutionFlowNode instanceof CallActivity) {</span>
+<span class="nc" id="L152">                CallActivity callActivity = (CallActivity) superExecutionFlowNode;</span>
+<span class="nc" id="L153">                return callActivity.isCompleteAsync();</span>
+            }
+        }
+<span class="nc" id="L156">        return false;</span>
+    }
+    
+    protected void scheduleAsyncCompleteCallActivity(ExecutionEntity superExecutionEntity, ExecutionEntity childProcessInstanceExecutionEntity) {
+<span class="nc" id="L160">        JobService jobService = CommandContextUtil.getJobService(commandContext);</span>
+        
+<span class="nc" id="L162">        JobEntity job = jobService.createJob();</span>
+        
+        // Needs to be the parent process instance, as the parent needs to be locked to avoid concurrency when multiple call activities are ended
+<span class="nc" id="L165">        job.setExecutionId(superExecutionEntity.getId()); </span>
+        
+        // Child execution of subprocess is passed as configuration
+<span class="nc" id="L168">        job.setJobHandlerConfiguration(childProcessInstanceExecutionEntity.getId());</span>
+        
+<span class="nc bnc" id="L170" title="All 2 branches missed.">        String processInstanceId = superExecutionEntity.getProcessInstanceId() != null ? superExecutionEntity.getProcessInstanceId() : superExecutionEntity.getId();</span>
+<span class="nc" id="L171">        job.setProcessInstanceId(processInstanceId);</span>
+<span class="nc" id="L172">        job.setProcessDefinitionId(childProcessInstanceExecutionEntity.getProcessDefinitionId());</span>
+<span class="nc" id="L173">        job.setElementId(superExecutionEntity.getCurrentFlowElement().getId());</span>
+<span class="nc" id="L174">        job.setElementName(superExecutionEntity.getCurrentFlowElement().getName());</span>
+<span class="nc" id="L175">        job.setTenantId(childProcessInstanceExecutionEntity.getTenantId());</span>
+<span class="nc" id="L176">        job.setJobHandlerType(AsyncCompleteCallActivityJobHandler.TYPE);</span>
+        
+<span class="nc" id="L178">        jobService.createAsyncJob(job, true); // Always exclusive to avoid concurrency problems</span>
+<span class="nc" id="L179">        jobService.scheduleAsyncJob(job);</span>
+<span class="nc" id="L180">    }</span>
+
+    protected void handleRegularExecution() {
+<span class="nc" id="L183">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc" id="L184">        ExecutionEntityManager executionEntityManager = processEngineConfiguration.getExecutionEntityManager();</span>
+
+        // There will be a parent execution (or else we would be in the process instance handling method)
+<span class="nc" id="L187">        ExecutionEntity parentExecution = executionEntityManager.findById(execution.getParentId());</span>
+
+        // If the execution is a scope, all the child executions must be deleted first.
+<span class="nc bnc" id="L190" title="All 2 branches missed.">        if (execution.isScope()) {</span>
+<span class="nc" id="L191">            executionEntityManager.deleteChildExecutions(execution, null, false);</span>
+        }
+
+        // Delete current execution
+<span class="nc" id="L195">        LOGGER.debug(&quot;Ending execution {}&quot;, execution.getId());</span>
+<span class="nc" id="L196">        executionEntityManager.deleteExecutionAndRelatedData(execution, null, false);</span>
+
+<span class="nc" id="L198">        LOGGER.debug(&quot;Parent execution found. Continuing process using execution {}&quot;, parentExecution.getId());</span>
+
+        // When ending an execution in a multi instance subprocess , special care is needed
+<span class="nc bnc" id="L201" title="All 2 branches missed.">        if (isEndEventOrImpliedEndEventInMultiInstanceSubprocess(execution)) {</span>
+<span class="nc" id="L202">            handleMultiInstanceSubProcess(processEngineConfiguration, executionEntityManager, parentExecution, execution);</span>
+<span class="nc" id="L203">            return;</span>
+        }
+
+<span class="nc" id="L206">        SubProcess subProcess = execution.getCurrentFlowElement().getSubProcess();</span>
+
+<span class="nc bnc" id="L208" title="All 2 branches missed.">        if (subProcess instanceof EventSubProcess) {</span>
+<span class="nc" id="L209">            EventSubProcess eventSubProcess = (EventSubProcess) subProcess;</span>
+
+<span class="nc" id="L211">            boolean hasNonInterruptingStartEvent = false;</span>
+<span class="nc bnc" id="L212" title="All 2 branches missed.">            for (FlowElement eventSubElement : eventSubProcess.getFlowElements()) {</span>
+<span class="nc bnc" id="L213" title="All 2 branches missed.">                if (eventSubElement instanceof StartEvent) {</span>
+<span class="nc" id="L214">                    StartEvent subStartEvent = (StartEvent) eventSubElement;</span>
+<span class="nc bnc" id="L215" title="All 2 branches missed.">                    if (!subStartEvent.isInterrupting()) {</span>
+<span class="nc" id="L216">                        hasNonInterruptingStartEvent = true;</span>
+<span class="nc" id="L217">                        break;</span>
+                    }
+                }
+<span class="nc" id="L220">            }</span>
+
+<span class="nc bnc" id="L222" title="All 2 branches missed.">            if (hasNonInterruptingStartEvent) {</span>
+<span class="nc" id="L223">                executionEntityManager.deleteChildExecutions(parentExecution, null, false);</span>
+<span class="nc" id="L224">                executionEntityManager.deleteExecutionAndRelatedData(parentExecution, null, false);</span>
+
+<span class="nc" id="L226">                CommandContextUtil.getEventDispatcher(commandContext).dispatchEvent(</span>
+<span class="nc" id="L227">                        FlowableEventBuilder.createActivityEvent(FlowableEngineEventType.ACTIVITY_COMPLETED, subProcess.getId(), subProcess.getName(),</span>
+<span class="nc" id="L228">                                parentExecution.getId(), parentExecution.getProcessInstanceId(), parentExecution.getProcessDefinitionId(), subProcess),</span>
+<span class="nc" id="L229">                        processEngineConfiguration.getEngineCfgKey());</span>
+
+<span class="nc" id="L231">                ExecutionEntity subProcessParentExecution = parentExecution.getParent();</span>
+<span class="nc bnc" id="L232" title="All 2 branches missed.">                if (getNumberOfActiveChildExecutionsForExecution(executionEntityManager, subProcessParentExecution.getId()) == 0) {</span>
+<span class="nc bnc" id="L233" title="All 2 branches missed.">                    if (subProcessParentExecution.getCurrentFlowElement() instanceof SubProcess) {</span>
+<span class="nc" id="L234">                        SubProcess parentSubProcess = (SubProcess) subProcessParentExecution.getCurrentFlowElement();</span>
+<span class="nc bnc" id="L235" title="All 2 branches missed.">                        if (parentSubProcess.getOutgoingFlows().size() &gt; 0) {</span>
+<span class="nc" id="L236">                            ExecutionEntity executionToContinue = handleSubProcessEnd(executionEntityManager, subProcessParentExecution, parentSubProcess);</span>
+<span class="nc" id="L237">                            agenda.planTakeOutgoingSequenceFlowsOperation(executionToContinue, true);</span>
+<span class="nc" id="L238">                            return;</span>
+                        }
+                        
+                    }
+                    
+<span class="nc" id="L243">                    agenda.planEndExecutionOperation(subProcessParentExecution);</span>
+                }
+
+<span class="nc" id="L246">                return;</span>
+            }
+        }
+
+        // If there are no more active child executions, the process can be continued
+        // If not (eg an embedded subprocess still has active elements, we cannot continue)
+<span class="nc" id="L252">        List&lt;ExecutionEntity&gt; eventScopeExecutions = getEventScopeExecutions(executionEntityManager, parentExecution);</span>
+        
+        // Event scoped executions need to be deleted when there are no active siblings anymore, 
+        // unless instances of the event subprocess itself. If there are no active siblings anymore,
+        // the current scope had ended and the event subprocess start event should stop listening to any trigger.
+<span class="nc bnc" id="L257" title="All 2 branches missed.">        if (!eventScopeExecutions.isEmpty()) {</span>
+<span class="nc" id="L258">            List&lt;? extends ExecutionEntity&gt; childExecutions = parentExecution.getExecutions();</span>
+<span class="nc" id="L259">            boolean activeSiblings = false;</span>
+<span class="nc bnc" id="L260" title="All 2 branches missed.">            for (ExecutionEntity childExecutionEntity : childExecutions) {</span>
+<span class="nc bnc" id="L261" title="All 6 branches missed.">                if (!isInEventSubProcess(childExecutionEntity) &amp;&amp; childExecutionEntity.isActive() &amp;&amp; !childExecutionEntity.isEnded()) {</span>
+<span class="nc" id="L262">                    activeSiblings = true;</span>
+                }
+<span class="nc" id="L264">            }</span>
+            
+<span class="nc bnc" id="L266" title="All 2 branches missed.">            if (!activeSiblings) {</span>
+<span class="nc bnc" id="L267" title="All 2 branches missed.">                for (ExecutionEntity eventScopeExecution : eventScopeExecutions) {</span>
+<span class="nc" id="L268">                    executionEntityManager.deleteExecutionAndRelatedData(eventScopeExecution, null, false);                    </span>
+<span class="nc" id="L269">                }</span>
+            }
+        }
+        
+<span class="nc bnc" id="L273" title="All 2 branches missed.">        if (getNumberOfActiveChildExecutionsForExecution(executionEntityManager, parentExecution.getId()) == 0) {</span>
+
+<span class="nc" id="L275">            ExecutionEntity executionToContinue = null;</span>
+
+<span class="nc bnc" id="L277" title="All 2 branches missed.">            if (subProcess != null) {</span>
+
+                // In case of ending a subprocess: go up in the scopes and continue via the parent scope
+                // unless its a compensation, then we don't need to do anything and can just end it
+
+<span class="nc bnc" id="L282" title="All 2 branches missed.">                if (subProcess.isForCompensation()) {</span>
+<span class="nc" id="L283">                    agenda.planEndExecutionOperation(parentExecution);</span>
+                } else {
+<span class="nc" id="L285">                    executionToContinue = handleSubProcessEnd(executionEntityManager, parentExecution, subProcess);</span>
+                }
+
+            } else {
+
+                // In the 'regular' case (not being in a subprocess), we use the parent execution to
+                // continue process instance execution
+
+<span class="nc" id="L293">                executionToContinue = handleRegularExecutionEnd(executionEntityManager, parentExecution);</span>
+            }
+
+<span class="nc bnc" id="L296" title="All 2 branches missed.">            if (executionToContinue != null) {</span>
+                // only continue with outgoing sequence flows if the execution is
+                // not the process instance root execution (otherwise the process instance is finished)
+<span class="nc bnc" id="L299" title="All 2 branches missed.">                if (executionToContinue.isProcessInstanceType()) {</span>
+<span class="nc" id="L300">                    handleProcessInstanceExecution(executionToContinue);</span>
+
+                } else {
+<span class="nc" id="L303">                    agenda.planTakeOutgoingSequenceFlowsOperation(executionToContinue, true);</span>
+                }
+            }
+
+        }
+<span class="nc" id="L308">    }</span>
+
+    protected ExecutionEntity handleSubProcessEnd(ExecutionEntityManager executionEntityManager, ExecutionEntity parentExecution, SubProcess subProcess) {
+
+<span class="nc" id="L312">        ExecutionEntity executionToContinue = null;</span>
+        // create a new execution to take the outgoing sequence flows
+<span class="nc" id="L314">        executionToContinue = executionEntityManager.createChildExecution(parentExecution.getParent());</span>
+<span class="nc" id="L315">        executionToContinue.setCurrentFlowElement(subProcess);</span>
+<span class="nc" id="L316">        executionToContinue.setActive(false);</span>
+
+<span class="nc" id="L318">        boolean hasCompensation = false;</span>
+<span class="nc bnc" id="L319" title="All 2 branches missed.">        if (subProcess instanceof Transaction) {</span>
+<span class="nc" id="L320">            hasCompensation = true;</span>
+        } else {
+<span class="nc bnc" id="L322" title="All 2 branches missed.">            for (FlowElement subElement : subProcess.getFlowElements()) {</span>
+<span class="nc bnc" id="L323" title="All 2 branches missed.">                if (subElement instanceof Activity) {</span>
+<span class="nc" id="L324">                    Activity subActivity = (Activity) subElement;</span>
+<span class="nc bnc" id="L325" title="All 2 branches missed.">                    if (CollectionUtil.isNotEmpty(subActivity.getBoundaryEvents())) {</span>
+<span class="nc bnc" id="L326" title="All 2 branches missed.">                        for (BoundaryEvent boundaryEvent : subActivity.getBoundaryEvents()) {</span>
+<span class="nc bnc" id="L327" title="All 2 branches missed.">                            if (CollectionUtil.isNotEmpty(boundaryEvent.getEventDefinitions()) &amp;&amp;</span>
+<span class="nc bnc" id="L328" title="All 2 branches missed.">                                    boundaryEvent.getEventDefinitions().get(0) instanceof CompensateEventDefinition) {</span>
+                                
+<span class="nc" id="L330">                                hasCompensation = true;</span>
+<span class="nc" id="L331">                                break;</span>
+                            }
+<span class="nc" id="L333">                        }</span>
+                    }
+                }
+<span class="nc" id="L336">            }</span>
+        }
+
+        // All executions will be cleaned up afterwards. However, for compensation we need
+        // a copy of these executions so we can use them later on when the compensation is thrown.
+        // The following method does exactly that, and moves the executions beneath the process instance.
+<span class="nc bnc" id="L342" title="All 2 branches missed.">        if (hasCompensation) {</span>
+<span class="nc" id="L343">            ScopeUtil.createCopyOfSubProcessExecutionForCompensation(parentExecution);</span>
+        }
+
+<span class="nc" id="L346">        executionEntityManager.deleteChildExecutions(parentExecution, null, false);</span>
+<span class="nc" id="L347">        executionEntityManager.deleteExecutionAndRelatedData(parentExecution, null, false);</span>
+
+<span class="nc" id="L349">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc" id="L350">        CommandContextUtil.getEventDispatcher(commandContext).dispatchEvent(</span>
+<span class="nc" id="L351">                FlowableEventBuilder.createActivityEvent(FlowableEngineEventType.ACTIVITY_COMPLETED, subProcess.getId(), subProcess.getName(),</span>
+<span class="nc" id="L352">                        parentExecution.getId(), parentExecution.getProcessInstanceId(), parentExecution.getProcessDefinitionId(), subProcess),</span>
+<span class="nc" id="L353">                processEngineConfiguration.getEngineCfgKey());</span>
+<span class="nc" id="L354">        return executionToContinue;</span>
+    }
+
+    protected ExecutionEntity handleRegularExecutionEnd(ExecutionEntityManager executionEntityManager, ExecutionEntity parentExecution) {
+<span class="nc" id="L358">        ExecutionEntity executionToContinue = null;</span>
+
+<span class="nc bnc" id="L360" title="All 2 branches missed.">        if (!parentExecution.isProcessInstanceType()</span>
+<span class="nc bnc" id="L361" title="All 2 branches missed.">                &amp;&amp; !(parentExecution.getCurrentFlowElement() instanceof SubProcess)) {</span>
+<span class="nc" id="L362">            parentExecution.setCurrentFlowElement(execution.getCurrentFlowElement());</span>
+        }
+
+<span class="nc bnc" id="L365" title="All 2 branches missed.">        if (execution.getCurrentFlowElement() instanceof SubProcess) {</span>
+<span class="nc" id="L366">            SubProcess currentSubProcess = (SubProcess) execution.getCurrentFlowElement();</span>
+<span class="nc bnc" id="L367" title="All 2 branches missed.">            if (currentSubProcess.getOutgoingFlows().size() &gt; 0) {</span>
+                // create a new execution to take the outgoing sequence flows
+<span class="nc" id="L369">                executionToContinue = executionEntityManager.createChildExecution(parentExecution);</span>
+<span class="nc" id="L370">                executionToContinue.setCurrentFlowElement(execution.getCurrentFlowElement());</span>
+
+            } else {
+<span class="nc bnc" id="L373" title="All 2 branches missed.">                if (!parentExecution.getId().equals(parentExecution.getProcessInstanceId())) {</span>
+                    // create a new execution to take the outgoing sequence flows
+<span class="nc" id="L375">                    executionToContinue = executionEntityManager.createChildExecution(parentExecution.getParent());</span>
+<span class="nc" id="L376">                    executionToContinue.setCurrentFlowElement(parentExecution.getCurrentFlowElement());</span>
+
+<span class="nc" id="L378">                    executionEntityManager.deleteChildExecutions(parentExecution, null, false);</span>
+<span class="nc" id="L379">                    executionEntityManager.deleteExecutionAndRelatedData(parentExecution, null, false);</span>
+
+                } else {
+<span class="nc" id="L382">                    executionToContinue = parentExecution;</span>
+                }
+            }
+
+<span class="nc" id="L386">        } else {</span>
+<span class="nc" id="L387">            executionToContinue = parentExecution;</span>
+        }
+<span class="nc" id="L389">        return executionToContinue;</span>
+    }
+
+    protected void handleMultiInstanceSubProcess(ProcessEngineConfigurationImpl processEngineConfiguration, ExecutionEntityManager executionEntityManager,
+            ExecutionEntity parentExecution, ExecutionEntity currentExecution) {
+
+        // Special case: will be handled by the ParallelMultiInstanceWithNoWaitStateCompletionJobHandler asynchronously
+<span class="nc" id="L396">        Object subProcessBehavior = currentExecution.getCurrentFlowElement().getSubProcess().getBehavior();</span>
+<span class="nc bnc" id="L397" title="All 2 branches missed.">        if (subProcessBehavior instanceof ParallelMultiInstanceBehavior) {</span>
+<span class="nc" id="L398">            ParallelMultiInstanceBehavior parallelMultiInstanceBehavior = (ParallelMultiInstanceBehavior) subProcessBehavior;</span>
+<span class="nc bnc" id="L399" title="All 2 branches missed.">            if (parallelMultiInstanceBehavior.isAsyncWithoutWaitStates(CommandContextUtil.getProcessEngineConfiguration())) {</span>
+<span class="nc" id="L400">                parallelMultiInstanceBehavior.leave(currentExecution);</span>
+<span class="nc" id="L401">                return;</span>
+            }
+        }
+
+<span class="nc" id="L405">        List&lt;ExecutionEntity&gt; activeChildExecutions = getActiveChildExecutionsForExecution(executionEntityManager, parentExecution.getId());</span>
+<span class="nc" id="L406">        boolean containsOtherChildExecutions = false;</span>
+<span class="nc bnc" id="L407" title="All 2 branches missed.">        for (ExecutionEntity activeExecution : activeChildExecutions) {</span>
+<span class="nc bnc" id="L408" title="All 2 branches missed.">            if (!activeExecution.getId().equals(execution.getId())) {</span>
+<span class="nc" id="L409">                containsOtherChildExecutions = true;</span>
+            }
+<span class="nc" id="L411">        }</span>
+
+<span class="nc bnc" id="L413" title="All 2 branches missed.">        if (!containsOtherChildExecutions) {</span>
+
+            // Destroy the current scope (subprocess) and leave via the subprocess
+
+<span class="nc" id="L417">            ScopeUtil.createCopyOfSubProcessExecutionForCompensation(parentExecution);</span>
+
+<span class="nc" id="L419">            SubProcess subProcess = execution.getCurrentFlowElement().getSubProcess();</span>
+<span class="nc" id="L420">            MultiInstanceActivityBehavior multiInstanceBehavior = (MultiInstanceActivityBehavior) subProcess.getBehavior();</span>
+            
+            // For a parallel multi instance with async leave, the scope will be destroyed during job execution.
+            // The scope shouldn't be destroyed here, or the variable resolvement (e.g. completed instances) won't be correct anymore.
+<span class="nc bnc" id="L424" title="All 2 branches missed.">            if (!(multiInstanceBehavior instanceof ParallelMultiInstanceBehavior)</span>
+<span class="nc bnc" id="L425" title="All 2 branches missed.">                    || !processEngineConfiguration.isParallelMultiInstanceAsyncLeave()) {</span>
+<span class="nc" id="L426">                agenda.planDestroyScopeOperation(parentExecution);</span>
+            }
+            
+<span class="nc" id="L429">            parentExecution.setCurrentFlowElement(subProcess);</span>
+<span class="nc" id="L430">            multiInstanceBehavior.leave(parentExecution);</span>
+        }
+<span class="nc" id="L432">    }</span>
+
+    protected boolean isEndEventOrImpliedEndEventInMultiInstanceSubprocess(ExecutionEntity executionEntity) {
+<span class="nc" id="L435">        FlowElement currentFlowElement = executionEntity.getCurrentFlowElement();</span>
+<span class="nc bnc" id="L436" title="All 4 branches missed.">        if (currentFlowElement instanceof EndEvent || isFlowNodeWithoutOutgoingSequenceFlow(currentFlowElement)) {</span>
+<span class="nc" id="L437">            SubProcess subProcess = execution.getCurrentFlowElement().getSubProcess();</span>
+<span class="nc bnc" id="L438" title="All 4 branches missed.">            return !executionEntity.getParent().isProcessInstanceType()</span>
+                    &amp;&amp; subProcess != null
+<span class="nc bnc" id="L440" title="All 2 branches missed.">                    &amp;&amp; subProcess.getLoopCharacteristics() != null</span>
+<span class="nc bnc" id="L441" title="All 2 branches missed.">                    &amp;&amp; subProcess.getBehavior() instanceof MultiInstanceActivityBehavior;</span>
+
+        }
+<span class="nc" id="L444">        return false;</span>
+    }
+
+    protected boolean isFlowNodeWithoutOutgoingSequenceFlow(FlowElement flowElement) {
+<span class="nc bnc" id="L448" title="All 2 branches missed.">        if (flowElement instanceof FlowNode) {</span>
+<span class="nc" id="L449">            FlowNode flowNode = (FlowNode) flowElement;</span>
+<span class="nc bnc" id="L450" title="All 4 branches missed.">            return flowNode.getOutgoingFlows() == null || flowNode.getOutgoingFlows().isEmpty();</span>
+        }
+<span class="nc" id="L452">        return false;</span>
+    }
+
+    protected int getNumberOfActiveChildExecutionsForProcessInstance(ExecutionEntityManager executionEntityManager, String processInstanceId) {
+<span class="nc" id="L456">        Collection&lt;ExecutionEntity&gt; executions = executionEntityManager.findChildExecutionsByProcessInstanceId(processInstanceId);</span>
+<span class="nc" id="L457">        int activeExecutions = 0;</span>
+<span class="nc bnc" id="L458" title="All 2 branches missed.">        for (ExecutionEntity execution : executions) {</span>
+<span class="nc bnc" id="L459" title="All 4 branches missed.">            if (execution.isActive() &amp;&amp; !processInstanceId.equals(execution.getId())) {</span>
+<span class="nc" id="L460">                activeExecutions++;</span>
+            }
+<span class="nc" id="L462">        }</span>
+<span class="nc" id="L463">        return activeExecutions;</span>
+    }
+
+    protected int getNumberOfActiveChildExecutionsForExecution(ExecutionEntityManager executionEntityManager, String executionId) {
+<span class="nc" id="L467">        List&lt;ExecutionEntity&gt; executions = executionEntityManager.findChildExecutionsByParentExecutionId(executionId);</span>
+<span class="nc" id="L468">        int activeExecutions = 0;</span>
+
+        // Filter out the boundary events
+<span class="nc bnc" id="L471" title="All 2 branches missed.">        for (ExecutionEntity activeExecution : executions) {</span>
+<span class="nc bnc" id="L472" title="All 2 branches missed.">            if (!(activeExecution.getCurrentFlowElement() instanceof BoundaryEvent)) {</span>
+<span class="nc" id="L473">                activeExecutions++;</span>
+            }
+<span class="nc" id="L475">        }</span>
+
+<span class="nc" id="L477">        return activeExecutions;</span>
+    }
+
+    protected List&lt;ExecutionEntity&gt; getActiveChildExecutionsForExecution(ExecutionEntityManager executionEntityManager, String executionId) {
+<span class="nc" id="L481">        List&lt;ExecutionEntity&gt; activeChildExecutions = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L482">        List&lt;ExecutionEntity&gt; executions = executionEntityManager.findChildExecutionsByParentExecutionId(executionId);</span>
+
+<span class="nc bnc" id="L484" title="All 2 branches missed.">        for (ExecutionEntity activeExecution : executions) {</span>
+<span class="nc bnc" id="L485" title="All 2 branches missed.">            if (!(activeExecution.getCurrentFlowElement() instanceof BoundaryEvent)) {</span>
+<span class="nc" id="L486">                activeChildExecutions.add(activeExecution);</span>
+            }
+<span class="nc" id="L488">        }</span>
+
+<span class="nc" id="L490">        return activeChildExecutions;</span>
+    }
+
+    protected List&lt;ExecutionEntity&gt; getEventScopeExecutions(ExecutionEntityManager executionEntityManager, ExecutionEntity parentExecution) {
+<span class="nc" id="L494">        List&lt;ExecutionEntity&gt; eventScopeExecutions = new ArrayList&lt;&gt;(1);</span>
+<span class="nc" id="L495">        List&lt;ExecutionEntity&gt; executions = executionEntityManager.findChildExecutionsByParentExecutionId(parentExecution.getId());</span>
+<span class="nc bnc" id="L496" title="All 2 branches missed.">        for (ExecutionEntity childExecution : executions) {</span>
+<span class="nc bnc" id="L497" title="All 2 branches missed.">            if (childExecution.isEventScope()) {</span>
+<span class="nc" id="L498">                eventScopeExecutions.add(childExecution);</span>
+                
+            } 
+<span class="nc" id="L501">        }</span>
+<span class="nc" id="L502">        return eventScopeExecutions;</span>
+    }
+
+    protected boolean allChildExecutionsEnded(ExecutionEntity parentExecutionEntity, ExecutionEntity executionEntityToIgnore) {
+<span class="nc bnc" id="L506" title="All 2 branches missed.">        for (ExecutionEntity childExecutionEntity : parentExecutionEntity.getExecutions()) {</span>
+<span class="nc bnc" id="L507" title="All 4 branches missed.">            if (executionEntityToIgnore == null || !executionEntityToIgnore.getId().equals(childExecutionEntity.getId())) {</span>
+<span class="nc bnc" id="L508" title="All 2 branches missed.">                if (!childExecutionEntity.isEnded()) {</span>
+<span class="nc" id="L509">                    return false;</span>
+                }
+<span class="nc bnc" id="L511" title="All 4 branches missed.">                if (childExecutionEntity.getExecutions() != null &amp;&amp; childExecutionEntity.getExecutions().size() &gt; 0) {</span>
+<span class="nc bnc" id="L512" title="All 2 branches missed.">                    if (!allChildExecutionsEnded(childExecutionEntity, executionEntityToIgnore)) {</span>
+<span class="nc" id="L513">                        return false;</span>
+                    }
+                }
+            }
+<span class="nc" id="L517">        }</span>
+<span class="nc" id="L518">        return true;</span>
+    }
+    
+    protected boolean isInEventSubProcess(ExecutionEntity executionEntity) {
+<span class="nc" id="L522">        ExecutionEntity currentExecutionEntity = executionEntity;</span>
+<span class="nc bnc" id="L523" title="All 2 branches missed.">        while (currentExecutionEntity != null) {</span>
+<span class="nc bnc" id="L524" title="All 2 branches missed.">            if (currentExecutionEntity.getCurrentFlowElement() instanceof EventSubProcess) {</span>
+<span class="nc" id="L525">                return true;</span>
+            }
+<span class="nc" id="L527">            currentExecutionEntity = currentExecutionEntity.getParent();</span>
+        }
+<span class="nc" id="L529">        return false;</span>
+    }
+    
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

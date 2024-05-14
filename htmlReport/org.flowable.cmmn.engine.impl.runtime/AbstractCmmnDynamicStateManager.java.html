@@ -1,0 +1,1338 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AbstractCmmnDynamicStateManager.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.cmmn.engine.impl.runtime</a> &gt; <span class="el_source">AbstractCmmnDynamicStateManager.java</span></div><h1>AbstractCmmnDynamicStateManager.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.cmmn.engine.impl.runtime;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.cmmn.api.migration.ActivatePlanItemDefinitionMapping;
+import org.flowable.cmmn.api.migration.ChangePlanItemDefinitionWithNewTargetIdsMapping;
+import org.flowable.cmmn.api.migration.ChangePlanItemIdMapping;
+import org.flowable.cmmn.api.migration.ChangePlanItemIdWithDefinitionIdMapping;
+import org.flowable.cmmn.api.migration.MoveToAvailablePlanItemDefinitionMapping;
+import org.flowable.cmmn.api.migration.PlanItemDefinitionMapping;
+import org.flowable.cmmn.api.migration.RemoveWaitingForRepetitionPlanItemDefinitionMapping;
+import org.flowable.cmmn.api.migration.TerminatePlanItemDefinitionMapping;
+import org.flowable.cmmn.api.migration.WaitingForRepetitionPlanItemDefinitionMapping;
+import org.flowable.cmmn.api.repository.CaseDefinition;
+import org.flowable.cmmn.api.runtime.MilestoneInstance;
+import org.flowable.cmmn.api.runtime.PlanItemInstance;
+import org.flowable.cmmn.api.runtime.PlanItemInstanceState;
+import org.flowable.cmmn.engine.CmmnEngineConfiguration;
+import org.flowable.cmmn.engine.impl.agenda.CmmnEngineAgenda;
+import org.flowable.cmmn.engine.impl.behavior.impl.ChildTaskActivityBehavior;
+import org.flowable.cmmn.engine.impl.deployer.CmmnDeploymentManager;
+import org.flowable.cmmn.engine.impl.history.CmmnHistoryManager;
+import org.flowable.cmmn.engine.impl.persistence.entity.CaseDefinitionEntityManager;
+import org.flowable.cmmn.engine.impl.persistence.entity.CaseInstanceEntity;
+import org.flowable.cmmn.engine.impl.persistence.entity.CaseInstanceEntityManager;
+import org.flowable.cmmn.engine.impl.persistence.entity.HistoricMilestoneInstanceEntity;
+import org.flowable.cmmn.engine.impl.persistence.entity.HistoricMilestoneInstanceEntityManager;
+import org.flowable.cmmn.engine.impl.persistence.entity.MilestoneInstanceEntity;
+import org.flowable.cmmn.engine.impl.persistence.entity.MilestoneInstanceEntityManager;
+import org.flowable.cmmn.engine.impl.persistence.entity.PlanItemInstanceEntity;
+import org.flowable.cmmn.engine.impl.persistence.entity.PlanItemInstanceEntityManager;
+import org.flowable.cmmn.engine.impl.persistence.entity.SentryPartInstanceEntity;
+import org.flowable.cmmn.engine.impl.persistence.entity.SentryPartInstanceEntityManager;
+import org.flowable.cmmn.engine.impl.repository.CaseDefinitionUtil;
+import org.flowable.cmmn.engine.impl.runtime.MovePlanItemInstanceEntityContainer.PlanItemMoveEntry;
+import org.flowable.cmmn.engine.impl.task.TaskHelper;
+import org.flowable.cmmn.engine.impl.util.CommandContextUtil;
+import org.flowable.cmmn.engine.impl.util.ExpressionUtil;
+import org.flowable.cmmn.engine.interceptor.MigrationContext;
+import org.flowable.cmmn.model.Case;
+import org.flowable.cmmn.model.CaseTask;
+import org.flowable.cmmn.model.CmmnModel;
+import org.flowable.cmmn.model.Criterion;
+import org.flowable.cmmn.model.EventListener;
+import org.flowable.cmmn.model.HumanTask;
+import org.flowable.cmmn.model.PlanItem;
+import org.flowable.cmmn.model.PlanItemDefinition;
+import org.flowable.cmmn.model.ProcessTask;
+import org.flowable.cmmn.model.RepetitionRule;
+import org.flowable.cmmn.model.Sentry;
+import org.flowable.cmmn.model.SentryIfPart;
+import org.flowable.cmmn.model.SentryOnPart;
+import org.flowable.cmmn.model.Stage;
+import org.flowable.cmmn.model.TimerEventListener;
+import org.flowable.cmmn.model.UserEventListener;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.api.variable.VariableContainer;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.eventsubscription.service.EventSubscriptionService;
+import org.flowable.eventsubscription.service.impl.persistence.entity.EventSubscriptionEntity;
+import org.flowable.job.api.Job;
+import org.flowable.job.service.JobService;
+import org.flowable.task.service.TaskService;
+import org.flowable.task.service.impl.persistence.entity.TaskEntity;
+import org.flowable.task.service.impl.persistence.entity.TaskEntityImpl;
+import org.flowable.task.service.impl.persistence.entity.TaskEntityManager;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * @author Tijs Rademakers
+ * @author Valentin Zickner
+ */
+public abstract class AbstractCmmnDynamicStateManager {
+
+<span class="nc" id="L100">    protected final Logger LOGGER = LoggerFactory.getLogger(this.getClass());</span>
+    
+    protected CmmnEngineConfiguration cmmnEngineConfiguration;
+    
+<span class="nc" id="L104">    public AbstractCmmnDynamicStateManager(CmmnEngineConfiguration cmmnEngineConfiguration) {</span>
+<span class="nc" id="L105">        this.cmmnEngineConfiguration = cmmnEngineConfiguration;</span>
+<span class="nc" id="L106">    }</span>
+
+    protected PlanItem resolvePlanItemFromCmmnModelWithDefinitionId(String planItemDefinitionId, String caseDefinitionId) {
+<span class="nc" id="L109">        CmmnModel cmmnModel = CaseDefinitionUtil.getCmmnModel(caseDefinitionId);</span>
+<span class="nc" id="L110">        PlanItem planItem = cmmnModel.findPlanItemByPlanItemDefinitionId(planItemDefinitionId);</span>
+<span class="nc bnc" id="L111" title="All 2 branches missed.">        if (planItem == null) {</span>
+<span class="nc" id="L112">            throw new FlowableException(&quot;Cannot find plan item with definition id '&quot; + planItemDefinitionId + &quot;' in case definition with id '&quot; + caseDefinitionId + &quot;'&quot;);</span>
+        }
+<span class="nc" id="L114">        return planItem;</span>
+    }
+
+    protected PlanItem resolvePlanItemFromCmmnModel(CmmnModel cmmnModel, String planItemId, String caseDefinitionId) {
+<span class="nc" id="L118">        PlanItem planItem = cmmnModel.findPlanItem(planItemId);</span>
+<span class="nc bnc" id="L119" title="All 2 branches missed.">        if (planItem == null) {</span>
+<span class="nc" id="L120">            throw new FlowableException(&quot;Cannot find plan item '&quot; + planItemId + &quot;' in case definition with id '&quot; + caseDefinitionId + &quot;'&quot;);</span>
+        }
+<span class="nc" id="L122">        return planItem;</span>
+    }
+
+    protected void doMovePlanItemState(CaseInstanceChangeState caseInstanceChangeState, String originalCaseDefinitionId, CommandContext commandContext) {
+<span class="nc" id="L126">        CaseInstanceEntityManager caseInstanceEntityManager = cmmnEngineConfiguration.getCaseInstanceEntityManager();</span>
+<span class="nc" id="L127">        CaseInstanceEntity caseInstance = caseInstanceEntityManager.findById(caseInstanceChangeState.getCaseInstanceId());</span>
+        
+<span class="nc" id="L129">        Map&lt;String, List&lt;PlanItemInstanceEntity&gt;&gt; currentPlanItemInstances = retrievePlanItemInstances(caseInstanceChangeState.getCaseInstanceId());</span>
+<span class="nc" id="L130">        caseInstanceChangeState.setCurrentPlanItemInstances(currentPlanItemInstances);</span>
+        
+<span class="nc" id="L132">        executeVerifySatisfiedSentryParts(caseInstanceChangeState, caseInstance, originalCaseDefinitionId, commandContext);</span>
+        
+<span class="nc" id="L134">        executeTerminatePlanItemInstances(caseInstanceChangeState, caseInstance, commandContext);</span>
+        
+<span class="nc" id="L136">        setCaseDefinitionIdForPlanItemInstances(currentPlanItemInstances, caseInstanceChangeState.getCaseDefinitionToMigrateTo());</span>
+        
+<span class="nc" id="L138">        executeChangePlanItemIds(caseInstanceChangeState, originalCaseDefinitionId, commandContext);</span>
+        
+<span class="nc" id="L140">        executeChangePlanItemDefinitionWithNewTargetIds(caseInstanceChangeState, originalCaseDefinitionId, commandContext);</span>
+        
+<span class="nc" id="L142">        navigatePlanItemInstances(currentPlanItemInstances, caseInstanceChangeState.getCaseDefinitionToMigrateTo());</span>
+        
+        // Set the case variables first so they are available during the change state logic
+<span class="nc" id="L145">        caseInstance.setVariables(caseInstanceChangeState.getCaseVariables());</span>
+        
+<span class="nc" id="L147">        executeActivatePlanItemInstances(caseInstanceChangeState, caseInstance, true, commandContext);</span>
+<span class="nc" id="L148">        executeActivatePlanItemInstances(caseInstanceChangeState, caseInstance, false, commandContext);</span>
+<span class="nc" id="L149">        executeChangePlanItemInstancesToAvailableState(caseInstanceChangeState, caseInstance, true, commandContext);</span>
+<span class="nc" id="L150">        executeChangePlanItemInstancesToAvailableState(caseInstanceChangeState, caseInstance, false, commandContext);</span>
+<span class="nc" id="L151">        executeAddWaitingForRepetitionPlanItemInstances(caseInstanceChangeState, caseInstance, commandContext);</span>
+<span class="nc" id="L152">        executeRemoveWaitingForRepetitionPlanItemInstances(caseInstanceChangeState, caseInstance, commandContext);</span>
+        
+<span class="nc" id="L154">        CmmnEngineAgenda agenda = CommandContextUtil.getAgenda(commandContext);</span>
+<span class="nc" id="L155">        MigrationContext migrationContext = new MigrationContext();</span>
+<span class="nc" id="L156">        migrationContext.setFetchPlanItemInstances(true);</span>
+<span class="nc" id="L157">        agenda.planEvaluateCriteriaOperation(caseInstance.getId(), migrationContext);</span>
+<span class="nc" id="L158">    }</span>
+    
+    protected void executeChangePlanItemIds(CaseInstanceChangeState caseInstanceChangeState, String originalCaseDefinitionId, CommandContext commandContext) {
+<span class="nc bnc" id="L161" title="All 4 branches missed.">        if ((caseInstanceChangeState.getChangePlanItemIds() == null || caseInstanceChangeState.getChangePlanItemIds().isEmpty()) &amp;&amp;</span>
+<span class="nc bnc" id="L162" title="All 4 branches missed.">                (caseInstanceChangeState.getChangePlanItemIdsWithDefinitionId() == null || caseInstanceChangeState.getChangePlanItemIdsWithDefinitionId().isEmpty())) {</span>
+<span class="nc" id="L163">            return;</span>
+        }
+        
+<span class="nc" id="L166">        Map&lt;String, String&gt; changePlanItemIdMap = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L167" title="All 4 branches missed.">        if (caseInstanceChangeState.getChangePlanItemIds() != null &amp;&amp; !caseInstanceChangeState.getChangePlanItemIds().isEmpty()) {</span>
+<span class="nc bnc" id="L168" title="All 2 branches missed.">            for (ChangePlanItemIdMapping changePlanItemIdMapping : caseInstanceChangeState.getChangePlanItemIds()) {</span>
+<span class="nc" id="L169">                changePlanItemIdMap.put(changePlanItemIdMapping.getExistingPlanItemId(), changePlanItemIdMapping.getNewPlanItemId());</span>
+<span class="nc" id="L170">            }</span>
+            
+        } else {
+<span class="nc" id="L173">            CmmnModel originalCmmnModel = CaseDefinitionUtil.getCmmnModel(originalCaseDefinitionId);</span>
+<span class="nc" id="L174">            CmmnModel targetCmmnModel = CaseDefinitionUtil.getCmmnModel(caseInstanceChangeState.getCaseDefinitionToMigrateTo().getId());</span>
+<span class="nc bnc" id="L175" title="All 2 branches missed.">            for (ChangePlanItemIdWithDefinitionIdMapping definitionIdMapping : caseInstanceChangeState.getChangePlanItemIdsWithDefinitionId()) {</span>
+<span class="nc" id="L176">                PlanItem existingPlanItem = originalCmmnModel.findPlanItemByPlanItemDefinitionId(definitionIdMapping.getExistingPlanItemDefinitionId());</span>
+<span class="nc" id="L177">                PlanItem newPlanItem = targetCmmnModel.findPlanItemByPlanItemDefinitionId(definitionIdMapping.getNewPlanItemDefinitionId());</span>
+                
+<span class="nc bnc" id="L179" title="All 4 branches missed.">                if (existingPlanItem != null &amp;&amp; newPlanItem != null) {</span>
+<span class="nc" id="L180">                    changePlanItemIdMap.put(existingPlanItem.getId(), newPlanItem.getId());</span>
+                }
+<span class="nc" id="L182">            }</span>
+            
+        }
+        
+<span class="nc" id="L186">        PlanItemInstanceEntityManager planItemInstanceEntityManager = cmmnEngineConfiguration.getPlanItemInstanceEntityManager();</span>
+<span class="nc" id="L187">        CmmnHistoryManager cmmnHistoryManager = cmmnEngineConfiguration.getCmmnHistoryManager();</span>
+<span class="nc bnc" id="L188" title="All 2 branches missed.">        for (String planItemDefinitionId : caseInstanceChangeState.getCurrentPlanItemInstances().keySet()) {</span>
+<span class="nc bnc" id="L189" title="All 2 branches missed.">            for (PlanItemInstanceEntity currentPlanItemInstance : caseInstanceChangeState.getCurrentPlanItemInstances().get(planItemDefinitionId)) {</span>
+<span class="nc bnc" id="L190" title="All 2 branches missed.">                if (changePlanItemIdMap.containsKey(currentPlanItemInstance.getElementId())) {</span>
+<span class="nc" id="L191">                    currentPlanItemInstance.setElementId(changePlanItemIdMap.get(currentPlanItemInstance.getElementId()));</span>
+<span class="nc" id="L192">                    planItemInstanceEntityManager.update(currentPlanItemInstance);</span>
+<span class="nc" id="L193">                    cmmnHistoryManager.recordPlanItemInstanceUpdated(currentPlanItemInstance);</span>
+                }
+<span class="nc" id="L195">            }</span>
+<span class="nc" id="L196">        }</span>
+        
+<span class="nc" id="L198">        MilestoneInstanceEntityManager milestoneInstanceEntityManager = cmmnEngineConfiguration.getMilestoneInstanceEntityManager();</span>
+<span class="nc" id="L199">        HistoricMilestoneInstanceEntityManager historicMilestoneInstanceEntityManager = cmmnEngineConfiguration.getHistoricMilestoneInstanceEntityManager();</span>
+<span class="nc" id="L200">        MilestoneInstanceQueryImpl milestoneInstanceQuery = new MilestoneInstanceQueryImpl(cmmnEngineConfiguration.getCommandExecutor());</span>
+<span class="nc" id="L201">        milestoneInstanceQuery.milestoneInstanceCaseInstanceId(caseInstanceChangeState.getCaseInstanceId());</span>
+<span class="nc" id="L202">        List&lt;MilestoneInstance&gt; milestoneInstances = milestoneInstanceEntityManager.findMilestoneInstancesByQueryCriteria(milestoneInstanceQuery);</span>
+<span class="nc bnc" id="L203" title="All 2 branches missed.">        for (MilestoneInstance milestoneInstance : milestoneInstances) {</span>
+<span class="nc bnc" id="L204" title="All 2 branches missed.">            if (changePlanItemIdMap.containsKey(milestoneInstance.getElementId())) {</span>
+<span class="nc" id="L205">                MilestoneInstanceEntity milestoneInstanceEntity = (MilestoneInstanceEntity) milestoneInstance;</span>
+<span class="nc" id="L206">                milestoneInstanceEntity.setElementId(changePlanItemIdMap.get(milestoneInstance.getElementId()));</span>
+<span class="nc" id="L207">                milestoneInstanceEntity.setCaseDefinitionId(caseInstanceChangeState.getCaseDefinitionToMigrateTo().getId());</span>
+<span class="nc" id="L208">                milestoneInstanceEntityManager.update(milestoneInstanceEntity);</span>
+                
+<span class="nc" id="L210">                HistoricMilestoneInstanceEntity historicMilestoneInstanceEntity = historicMilestoneInstanceEntityManager.findById(milestoneInstanceEntity.getId());</span>
+<span class="nc" id="L211">                historicMilestoneInstanceEntity.setElementId(milestoneInstanceEntity.getElementId());</span>
+<span class="nc" id="L212">                historicMilestoneInstanceEntity.setCaseDefinitionId(caseInstanceChangeState.getCaseDefinitionToMigrateTo().getId());</span>
+<span class="nc" id="L213">                historicMilestoneInstanceEntityManager.update(historicMilestoneInstanceEntity);</span>
+            }
+<span class="nc" id="L215">        }</span>
+<span class="nc" id="L216">    }</span>
+    
+    protected void executeChangePlanItemDefinitionWithNewTargetIds(CaseInstanceChangeState caseInstanceChangeState, String originalCaseDefinitionId, CommandContext commandContext) {
+<span class="nc bnc" id="L219" title="All 4 branches missed.">        if ((caseInstanceChangeState.getChangePlanItemDefinitionWithNewTargetIds() == null || caseInstanceChangeState.getChangePlanItemDefinitionWithNewTargetIds().isEmpty())) {</span>
+<span class="nc" id="L220">            return;</span>
+        }
+        
+<span class="nc" id="L223">        Map&lt;String, ChangePlanItemDefinitionWithNewTargetIdsMapping&gt; changePlanItemIdMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L224">        Map&lt;String, ChangePlanItemDefinitionWithNewTargetIdsMapping&gt; changePlanItemDefinitionIdMap = new HashMap&lt;&gt;();</span>
+        
+<span class="nc" id="L226">        CmmnModel originalCmmnModel = CaseDefinitionUtil.getCmmnModel(originalCaseDefinitionId);</span>
+<span class="nc" id="L227">        CmmnModel targetCmmnModel = CaseDefinitionUtil.getCmmnModel(caseInstanceChangeState.getCaseDefinitionToMigrateTo().getId());</span>
+<span class="nc bnc" id="L228" title="All 2 branches missed.">        for (ChangePlanItemDefinitionWithNewTargetIdsMapping definitionIdMapping : caseInstanceChangeState.getChangePlanItemDefinitionWithNewTargetIds()) {</span>
+<span class="nc" id="L229">            PlanItem existingPlanItem = originalCmmnModel.findPlanItemByPlanItemDefinitionId(definitionIdMapping.getExistingPlanItemDefinitionId());</span>
+<span class="nc" id="L230">            PlanItem newPlanItem = targetCmmnModel.findPlanItemByPlanItemDefinitionId(definitionIdMapping.getNewPlanItemDefinitionId());</span>
+            
+<span class="nc bnc" id="L232" title="All 4 branches missed.">            if (existingPlanItem != null &amp;&amp; newPlanItem != null) {</span>
+<span class="nc" id="L233">                changePlanItemIdMap.put(existingPlanItem.getId(), definitionIdMapping);</span>
+<span class="nc" id="L234">                changePlanItemDefinitionIdMap.put(definitionIdMapping.getExistingPlanItemDefinitionId(), definitionIdMapping);</span>
+            }
+<span class="nc" id="L236">        }</span>
+        
+<span class="nc" id="L238">        PlanItemInstanceEntityManager planItemInstanceEntityManager = cmmnEngineConfiguration.getPlanItemInstanceEntityManager();</span>
+<span class="nc" id="L239">        CmmnHistoryManager cmmnHistoryManager = cmmnEngineConfiguration.getCmmnHistoryManager();</span>
+<span class="nc bnc" id="L240" title="All 2 branches missed.">        for (String planItemDefinitionId : caseInstanceChangeState.getCurrentPlanItemInstances().keySet()) {</span>
+<span class="nc bnc" id="L241" title="All 2 branches missed.">            for (PlanItemInstanceEntity currentPlanItemInstance : caseInstanceChangeState.getCurrentPlanItemInstances().get(planItemDefinitionId)) {</span>
+<span class="nc bnc" id="L242" title="All 2 branches missed.">                if (changePlanItemIdMap.containsKey(currentPlanItemInstance.getElementId())) {</span>
+<span class="nc" id="L243">                    ChangePlanItemDefinitionWithNewTargetIdsMapping definitionIdMapping = changePlanItemIdMap.get(currentPlanItemInstance.getElementId());</span>
+<span class="nc" id="L244">                    currentPlanItemInstance.setElementId(definitionIdMapping.getNewPlanItemId());</span>
+<span class="nc" id="L245">                    currentPlanItemInstance.setPlanItemDefinitionId(definitionIdMapping.getNewPlanItemDefinitionId());</span>
+<span class="nc" id="L246">                    planItemInstanceEntityManager.update(currentPlanItemInstance);</span>
+<span class="nc" id="L247">                    cmmnHistoryManager.recordPlanItemInstanceUpdated(currentPlanItemInstance);</span>
+                }
+<span class="nc" id="L249">            }</span>
+<span class="nc" id="L250">        }</span>
+        
+<span class="nc" id="L252">        TaskEntityManager taskEntityManager = cmmnEngineConfiguration.getTaskServiceConfiguration().getTaskEntityManager();</span>
+<span class="nc" id="L253">        List&lt;TaskEntity&gt; tasks = taskEntityManager.findTasksByScopeIdAndScopeType(caseInstanceChangeState.getCaseInstanceId(), ScopeTypes.CMMN);</span>
+<span class="nc bnc" id="L254" title="All 2 branches missed.">        for (TaskEntity task : tasks) {</span>
+<span class="nc bnc" id="L255" title="All 2 branches missed.">            if (changePlanItemDefinitionIdMap.containsKey(task.getTaskDefinitionKey())) {</span>
+<span class="nc" id="L256">                ChangePlanItemDefinitionWithNewTargetIdsMapping definitionIdMapping = changePlanItemDefinitionIdMap.get(task.getTaskDefinitionKey());</span>
+<span class="nc" id="L257">                task.setTaskDefinitionKey(definitionIdMapping.getNewPlanItemDefinitionId());</span>
+<span class="nc" id="L258">                taskEntityManager.update(task);</span>
+<span class="nc" id="L259">                cmmnHistoryManager.recordTaskInfoChange(task, cmmnEngineConfiguration.getClock().getCurrentTime());</span>
+            }
+<span class="nc" id="L261">        }</span>
+<span class="nc" id="L262">    }</span>
+    
+    protected void executeActivatePlanItemInstances(CaseInstanceChangeState caseInstanceChangeState, CaseInstanceEntity caseInstance, 
+                    boolean onlyStages, CommandContext commandContext) {
+        
+<span class="nc bnc" id="L267" title="All 4 branches missed.">        if (caseInstanceChangeState.getActivatePlanItemDefinitions() == null || caseInstanceChangeState.getActivatePlanItemDefinitions().isEmpty()) {</span>
+<span class="nc" id="L268">            return;</span>
+        }
+        
+<span class="nc bnc" id="L271" title="All 2 branches missed.">        for (ActivatePlanItemDefinitionMapping planItemDefinitionMapping : caseInstanceChangeState.getActivatePlanItemDefinitions()) {</span>
+            
+<span class="nc" id="L273">            PlanItem planItem = resolvePlanItemFromCmmnModelWithDefinitionId(planItemDefinitionMapping.getPlanItemDefinitionId(), </span>
+<span class="nc" id="L274">                    caseInstance.getCaseDefinitionId());</span>
+            
+<span class="nc bnc" id="L276" title="All 4 branches missed.">            if ((!(planItem.getPlanItemDefinition() instanceof Stage) &amp;&amp; onlyStages) ||</span>
+<span class="nc bnc" id="L277" title="All 4 branches missed.">                    (planItem.getPlanItemDefinition() instanceof Stage &amp;&amp; !onlyStages)) {</span>
+                
+<span class="nc" id="L279">                continue;</span>
+            }
+
+<span class="nc" id="L282">            PlanItemInstanceEntity newPlanItemInstance = createStagesAndPlanItemInstances(planItem, </span>
+                            caseInstance, caseInstanceChangeState, planItemDefinitionMapping, commandContext);
+
+<span class="nc bnc" id="L285" title="All 2 branches missed.">            if (newPlanItemInstance == null) {</span>
+<span class="nc" id="L286">                continue; // condition evaluated to false, this plan item should not be activated</span>
+            }
+            
+<span class="nc bnc" id="L289" title="All 4 branches missed.">            if (planItemDefinitionMapping.getWithLocalVariables() != null &amp;&amp; !planItemDefinitionMapping.getWithLocalVariables().isEmpty()) {</span>
+<span class="nc" id="L290">                newPlanItemInstance.setVariablesLocal(planItemDefinitionMapping.getWithLocalVariables());</span>
+            }
+
+<span class="nc" id="L293">            CmmnEngineAgenda agenda = CommandContextUtil.getAgenda(commandContext);</span>
+<span class="nc bnc" id="L294" title="All 4 branches missed.">            if (planItemDefinitionMapping.getNewAssignee() != null &amp;&amp; planItem.getPlanItemDefinition() instanceof HumanTask) {</span>
+<span class="nc" id="L295">                MigrationContext migrationContext = new MigrationContext();</span>
+<span class="nc" id="L296">                migrationContext.setAssignee(planItemDefinitionMapping.getNewAssignee());</span>
+<span class="nc" id="L297">                agenda.planStartPlanItemInstanceOperation(newPlanItemInstance, null, migrationContext);</span>
+                
+<span class="nc bnc" id="L299" title="All 2 branches missed.">            } else if (caseInstanceChangeState.getChildInstanceTaskVariables().containsKey(planItemDefinitionMapping.getPlanItemDefinitionId()) &amp;&amp; </span>
+<span class="nc bnc" id="L300" title="All 4 branches missed.">                            (planItem.getPlanItemDefinition() instanceof ProcessTask || planItem.getPlanItemDefinition() instanceof CaseTask)) {</span>
+
+<span class="nc" id="L302">                agenda.planStartPlanItemInstanceOperation(newPlanItemInstance, null,</span>
+                        new ChildTaskActivityBehavior.VariableInfo(
+<span class="nc" id="L304">                                caseInstanceChangeState.getChildInstanceTaskVariables().get(planItemDefinitionMapping.getPlanItemDefinitionId())));</span>
+                
+            } else {
+<span class="nc" id="L307">                agenda.planStartPlanItemInstanceOperation(newPlanItemInstance, null);</span>
+            }
+            
+<span class="nc bnc" id="L310" title="All 4 branches missed.">            if (!newPlanItemInstance.getPlanItem().getEntryCriteria().isEmpty() &amp;&amp; hasRepetitionRule(newPlanItemInstance)) {</span>
+<span class="nc bnc" id="L311" title="All 2 branches missed.">                if (evaluateRepetitionRule(newPlanItemInstance, commandContext)) {</span>
+<span class="nc" id="L312">                    createPlanItemInstanceDuplicateForRepetition(newPlanItemInstance, commandContext);</span>
+                }
+            
+<span class="nc bnc" id="L315" title="All 2 branches missed.">            } else if (hasRepetitionRule(newPlanItemInstance)) {</span>
+<span class="nc" id="L316">                setRepetitionCounter(newPlanItemInstance, 1);</span>
+            }
+<span class="nc" id="L318">        }</span>
+<span class="nc" id="L319">    }</span>
+    
+    protected void executeChangePlanItemInstancesToAvailableState(CaseInstanceChangeState caseInstanceChangeState, 
+                    CaseInstanceEntity caseInstance, boolean onlyStages, CommandContext commandContext) {
+        
+<span class="nc bnc" id="L324" title="All 4 branches missed.">        if (caseInstanceChangeState.getChangePlanItemDefinitionsToAvailable() == null || caseInstanceChangeState.getChangePlanItemDefinitionsToAvailable().isEmpty()) {</span>
+<span class="nc" id="L325">            return;</span>
+        }
+        
+<span class="nc" id="L328">        PlanItemInstanceEntityManager planItemInstanceEntityManager = cmmnEngineConfiguration.getPlanItemInstanceEntityManager();</span>
+
+<span class="nc bnc" id="L330" title="All 2 branches missed.">        for (MoveToAvailablePlanItemDefinitionMapping planItemDefinitionMapping : caseInstanceChangeState.getChangePlanItemDefinitionsToAvailable()) {</span>
+            
+<span class="nc" id="L332">            PlanItem planItem = resolvePlanItemFromCmmnModelWithDefinitionId(planItemDefinitionMapping.getPlanItemDefinitionId(), caseInstance.getCaseDefinitionId());</span>
+<span class="nc bnc" id="L333" title="All 4 branches missed.">            if ((!(planItem.getPlanItemDefinition() instanceof Stage) &amp;&amp; onlyStages) ||</span>
+<span class="nc bnc" id="L334" title="All 4 branches missed.">                    (planItem.getPlanItemDefinition() instanceof Stage &amp;&amp; !onlyStages)) {</span>
+                
+<span class="nc" id="L336">                continue;</span>
+            }
+            
+<span class="nc" id="L339">            List&lt;PlanItemInstance&gt; planItemInstances = planItemInstanceEntityManager.createPlanItemInstanceQuery().caseInstanceId(caseInstance.getId())</span>
+<span class="nc" id="L340">                    .planItemDefinitionId(planItemDefinitionMapping.getPlanItemDefinitionId())</span>
+<span class="nc" id="L341">                    .list();</span>
+            
+<span class="nc" id="L343">            List&lt;PlanItemInstance&gt; activePlanItemInstances = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L344" title="All 4 branches missed.">            if (planItemInstances != null &amp;&amp; !planItemInstances.isEmpty()) {</span>
+<span class="nc bnc" id="L345" title="All 2 branches missed.">                for (PlanItemInstance planItemInstance : planItemInstances) {</span>
+<span class="nc bnc" id="L346" title="All 2 branches missed.">                    if (!PlanItemInstanceState.TERMINAL_STATES.contains(planItemInstance.getState())) {</span>
+<span class="nc" id="L347">                        activePlanItemInstances.add(planItemInstance);</span>
+                    }
+<span class="nc" id="L349">                }</span>
+            }
+            
+<span class="nc bnc" id="L352" title="All 2 branches missed.">            if (activePlanItemInstances.isEmpty()) {</span>
+<span class="nc" id="L353">                PlanItemInstanceEntity parentPlanItemInstance = null;</span>
+<span class="nc bnc" id="L354" title="All 4 branches missed.">                if (planItem.getParentStage() != null &amp;&amp; caseInstanceChangeState.getCreatedStageInstances().containsKey(planItem.getParentStage().getId())) {</span>
+<span class="nc" id="L355">                    parentPlanItemInstance = caseInstanceChangeState.getCreatedStageInstances().get(planItem.getParentStage().getId());</span>
+                    
+<span class="nc bnc" id="L357" title="All 2 branches missed.">                } else if (planItem.getParentStage() != null) {</span>
+<span class="nc" id="L358">                    List&lt;PlanItemInstanceEntity&gt; caseInstancePlanItemInstances = planItemInstanceEntityManager.findByCaseInstanceId(caseInstance.getId());</span>
+<span class="nc bnc" id="L359" title="All 2 branches missed.">                    for (PlanItemInstanceEntity caseInstancePlanItemInstance : caseInstancePlanItemInstances) {</span>
+<span class="nc bnc" id="L360" title="All 2 branches missed.">                        if (caseInstancePlanItemInstance.getPlanItemDefinitionId().equals(planItem.getParentStage().getId()) &amp;&amp;</span>
+<span class="nc bnc" id="L361" title="All 2 branches missed.">                                !PlanItemInstanceState.WAITING_FOR_REPETITION.equalsIgnoreCase(caseInstancePlanItemInstance.getState()) &amp;&amp;</span>
+<span class="nc bnc" id="L362" title="All 2 branches missed.">                                !PlanItemInstanceState.isInTerminalState(caseInstancePlanItemInstance)) {</span>
+                            
+<span class="nc" id="L364">                            parentPlanItemInstance = caseInstancePlanItemInstance;</span>
+<span class="nc" id="L365">                            break;</span>
+                        }
+<span class="nc" id="L367">                    }</span>
+                }
+
+<span class="nc bnc" id="L370" title="All 6 branches missed.">                boolean conditionResult = (parentPlanItemInstance != null &amp;&amp; evaluateCondition(parentPlanItemInstance, planItemDefinitionMapping))</span>
+<span class="nc bnc" id="L371" title="All 2 branches missed.">                        || (parentPlanItemInstance == null &amp;&amp; evaluateCondition(caseInstance, planItemDefinitionMapping));</span>
+<span class="nc bnc" id="L372" title="All 2 branches missed.">                if (!conditionResult) {</span>
+<span class="nc" id="L373">                    continue;</span>
+                }
+                
+<span class="nc" id="L376">                PlanItemInstanceEntity availablePlanItemInstance = planItemInstanceEntityManager.createPlanItemInstanceEntityBuilder()</span>
+<span class="nc" id="L377">                        .planItem(planItem)</span>
+<span class="nc" id="L378">                        .caseDefinitionId(caseInstance.getCaseDefinitionId())</span>
+<span class="nc" id="L379">                        .caseInstanceId(caseInstance.getId())</span>
+<span class="nc" id="L380">                        .stagePlanItemInstance(parentPlanItemInstance)</span>
+<span class="nc" id="L381">                        .tenantId(caseInstance.getTenantId())</span>
+<span class="nc" id="L382">                        .addToParent(true)</span>
+<span class="nc" id="L383">                        .create();</span>
+                
+<span class="nc bnc" id="L385" title="All 2 branches missed.">                if (planItem.getPlanItemDefinition() instanceof Stage) {</span>
+<span class="nc" id="L386">                    caseInstanceChangeState.addCreatedStageInstance(planItemDefinitionMapping.getPlanItemDefinitionId(), availablePlanItemInstance);</span>
+                }
+                
+<span class="nc bnc" id="L389" title="All 2 branches missed.">                if (hasRepetitionRule(availablePlanItemInstance)) {</span>
+<span class="nc" id="L390">                    setRepetitionCounter(availablePlanItemInstance, 1);</span>
+                }
+                
+<span class="nc bnc" id="L393" title="All 4 branches missed.">                if (planItemDefinitionMapping.getWithLocalVariables() != null &amp;&amp; !planItemDefinitionMapping.getWithLocalVariables().isEmpty()) {</span>
+<span class="nc" id="L394">                    availablePlanItemInstance.setVariablesLocal(planItemDefinitionMapping.getWithLocalVariables());</span>
+                }
+                
+<span class="nc" id="L397">                CmmnHistoryManager cmmnHistoryManager = cmmnEngineConfiguration.getCmmnHistoryManager();</span>
+<span class="nc" id="L398">                cmmnHistoryManager.recordPlanItemInstanceCreated(availablePlanItemInstance);</span>
+                
+<span class="nc" id="L400">                CmmnEngineAgenda agenda = CommandContextUtil.getAgenda(commandContext);</span>
+<span class="nc" id="L401">                agenda.planChangePlanItemInstanceToAvailableOperation(availablePlanItemInstance);</span>
+                
+<span class="nc" id="L403">                continue;</span>
+            }
+            
+<span class="nc" id="L406">            PlanItemInstance existingPlanItemInstance = null;</span>
+<span class="nc" id="L407">            boolean allExistingPlanItemsAreAvailable = true;</span>
+<span class="nc bnc" id="L408" title="All 2 branches missed.">            for (PlanItemInstance planItemInstance : planItemInstances) {</span>
+<span class="nc bnc" id="L409" title="All 4 branches missed.">                if (PlanItemInstanceState.ACTIVE.equals(planItemInstance.getState()) || PlanItemInstanceState.ENABLED.equals(planItemInstance.getState())) {</span>
+<span class="nc bnc" id="L410" title="All 2 branches missed.">                    if (existingPlanItemInstance != null) {</span>
+<span class="nc" id="L411">                        throw new FlowableException(&quot;multiple active or enabled plan item instances found for plan item definition &quot; + planItemDefinitionMapping.getPlanItemDefinitionId());</span>
+                    } else {
+<span class="nc" id="L413">                        existingPlanItemInstance = planItemInstance;</span>
+                    }
+                }
+<span class="nc bnc" id="L416" title="All 2 branches missed.">                if (!PlanItemInstanceState.AVAILABLE.equals(planItemInstance.getState())) {</span>
+<span class="nc" id="L417">                    allExistingPlanItemsAreAvailable = false;</span>
+                }
+<span class="nc" id="L419">            }</span>
+
+<span class="nc bnc" id="L421" title="All 2 branches missed.">            if (allExistingPlanItemsAreAvailable) {</span>
+                // all existing plan items are available, we can continue without any changes
+<span class="nc" id="L423">                continue;</span>
+            }
+            
+<span class="nc bnc" id="L426" title="All 2 branches missed.">            if (existingPlanItemInstance == null) {</span>
+<span class="nc" id="L427">                throw new FlowableException(&quot;No active or enabled plan item instances found for plan item definition &quot; + planItemDefinitionMapping.getPlanItemDefinitionId());</span>
+            }
+            
+<span class="nc" id="L430">            PlanItemInstanceEntity existingPlanItemInstanceEntity = (PlanItemInstanceEntity) existingPlanItemInstance;</span>
+
+<span class="nc bnc" id="L432" title="All 2 branches missed.">            if (!evaluateCondition(existingPlanItemInstanceEntity, planItemDefinitionMapping)) {</span>
+<span class="nc" id="L433">                continue;</span>
+            }
+
+<span class="nc bnc" id="L436" title="All 2 branches missed.">            if (existingPlanItemInstanceEntity.getPlanItem().getPlanItemDefinition() instanceof HumanTask) {</span>
+<span class="nc" id="L437">                TaskService taskService = cmmnEngineConfiguration.getTaskServiceConfiguration().getTaskService();</span>
+<span class="nc" id="L438">                List&lt;TaskEntity&gt; taskEntities = taskService.findTasksBySubScopeIdScopeType(existingPlanItemInstanceEntity.getId(), ScopeTypes.CMMN);</span>
+<span class="nc bnc" id="L439" title="All 4 branches missed.">                if (taskEntities == null || taskEntities.isEmpty()) {</span>
+<span class="nc" id="L440">                    throw new FlowableException(&quot;No task entity found for plan item instance &quot; + existingPlanItemInstanceEntity.getId());</span>
+                }
+
+                // Should be only one
+<span class="nc bnc" id="L444" title="All 2 branches missed.">                for (TaskEntity taskEntity : taskEntities) {</span>
+<span class="nc bnc" id="L445" title="All 2 branches missed.">                    if (!taskEntity.isDeleted()) {</span>
+<span class="nc" id="L446">                        TaskHelper.deleteTask(taskEntity, &quot;Change plan item state&quot;, false, false, cmmnEngineConfiguration);</span>
+                    }
+<span class="nc" id="L448">                }</span>
+            }
+
+<span class="nc" id="L451">            CmmnEngineAgenda agenda = CommandContextUtil.getAgenda(commandContext);</span>
+<span class="nc" id="L452">            agenda.planChangePlanItemInstanceToAvailableOperation(existingPlanItemInstanceEntity);</span>
+<span class="nc" id="L453">        }</span>
+<span class="nc" id="L454">    }</span>
+    
+    protected void executeAddWaitingForRepetitionPlanItemInstances(CaseInstanceChangeState caseInstanceChangeState, 
+            CaseInstanceEntity caseInstance, CommandContext commandContext) {
+
+<span class="nc bnc" id="L459" title="All 4 branches missed.">        if (caseInstanceChangeState.getWaitingForRepetitionPlanItemDefinitions() == null || caseInstanceChangeState.getWaitingForRepetitionPlanItemDefinitions().isEmpty()) {</span>
+<span class="nc" id="L460">            return;</span>
+        }
+        
+<span class="nc" id="L463">        PlanItemInstanceEntityManager planItemInstanceEntityManager = cmmnEngineConfiguration.getPlanItemInstanceEntityManager();</span>
+        
+<span class="nc bnc" id="L465" title="All 2 branches missed.">        for (WaitingForRepetitionPlanItemDefinitionMapping planItemDefinitionMapping : caseInstanceChangeState.getWaitingForRepetitionPlanItemDefinitions()) {</span>
+            
+<span class="nc" id="L467">            PlanItem planItem = resolvePlanItemFromCmmnModelWithDefinitionId(planItemDefinitionMapping.getPlanItemDefinitionId(), caseInstance.getCaseDefinitionId());</span>
+            
+<span class="nc" id="L469">            List&lt;PlanItemInstance&gt; planItemInstances = planItemInstanceEntityManager.createPlanItemInstanceQuery().caseInstanceId(caseInstance.getId())</span>
+<span class="nc" id="L470">                    .planItemDefinitionId(planItemDefinitionMapping.getPlanItemDefinitionId())</span>
+<span class="nc" id="L471">                    .list();</span>
+            
+<span class="nc" id="L473">            List&lt;PlanItemInstance&gt; waitingForRepetitionPlanItemInstances = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L474">            PlanItemInstance activePlanItemInstance = null;</span>
+<span class="nc bnc" id="L475" title="All 4 branches missed.">            if (planItemInstances != null &amp;&amp; !planItemInstances.isEmpty()) {</span>
+<span class="nc bnc" id="L476" title="All 2 branches missed.">                for (PlanItemInstance planItemInstance : planItemInstances) {</span>
+<span class="nc bnc" id="L477" title="All 2 branches missed.">                    if (planItemInstance.getState().equalsIgnoreCase(PlanItemInstanceState.WAITING_FOR_REPETITION)) {</span>
+<span class="nc" id="L478">                        waitingForRepetitionPlanItemInstances.add(planItemInstance);</span>
+<span class="nc bnc" id="L479" title="All 2 branches missed.">                    } else if (planItemInstance.getState().equalsIgnoreCase(PlanItemInstanceState.ACTIVE)) {</span>
+<span class="nc" id="L480">                        activePlanItemInstance = planItemInstance;</span>
+                    }
+<span class="nc" id="L482">                }</span>
+            }
+            
+<span class="nc bnc" id="L485" title="All 2 branches missed.">            if (waitingForRepetitionPlanItemInstances.isEmpty()) {</span>
+<span class="nc" id="L486">                PlanItemInstanceEntity parentPlanItemInstance = null;</span>
+<span class="nc bnc" id="L487" title="All 4 branches missed.">                if (planItem.getParentStage() != null &amp;&amp; caseInstanceChangeState.getCreatedStageInstances().containsKey(planItem.getParentStage().getId())) {</span>
+<span class="nc" id="L488">                    parentPlanItemInstance = caseInstanceChangeState.getCreatedStageInstances().get(planItem.getParentStage().getId());</span>
+                    
+<span class="nc bnc" id="L490" title="All 2 branches missed.">                } else if (planItem.getParentStage() != null) {</span>
+<span class="nc" id="L491">                    List&lt;PlanItemInstanceEntity&gt; caseInstancePlanItemInstances = planItemInstanceEntityManager.findByCaseInstanceId(caseInstance.getId());</span>
+<span class="nc bnc" id="L492" title="All 2 branches missed.">                    for (PlanItemInstanceEntity caseInstancePlanItemInstance : caseInstancePlanItemInstances) {</span>
+<span class="nc bnc" id="L493" title="All 2 branches missed.">                        if (caseInstancePlanItemInstance.getPlanItemDefinitionId().equals(planItem.getParentStage().getId())) {</span>
+<span class="nc" id="L494">                            parentPlanItemInstance = caseInstancePlanItemInstance;</span>
+<span class="nc" id="L495">                            break;</span>
+                        }
+<span class="nc" id="L497">                    }</span>
+                }
+
+<span class="nc bnc" id="L500" title="All 8 branches missed.">                if ((activePlanItemInstance == null &amp;&amp; parentPlanItemInstance == null &amp;&amp; evaluateCondition(caseInstance, planItemDefinitionMapping))</span>
+                        || (activePlanItemInstance instanceof PlanItemInstanceEntity
+<span class="nc bnc" id="L502" title="All 4 branches missed.">                        &amp;&amp; evaluateCondition((PlanItemInstanceEntity) activePlanItemInstance, planItemDefinitionMapping))</span>
+<span class="nc bnc" id="L503" title="All 2 branches missed.">                        || (parentPlanItemInstance != null &amp;&amp; evaluateCondition(parentPlanItemInstance, planItemDefinitionMapping))) {</span>
+
+<span class="nc" id="L505">                    PlanItemInstanceEntity waitingForRepetitionPlanItemInstance = planItemInstanceEntityManager.createPlanItemInstanceEntityBuilder()</span>
+<span class="nc" id="L506">                            .planItem(planItem)</span>
+<span class="nc" id="L507">                            .caseDefinitionId(caseInstance.getCaseDefinitionId())</span>
+<span class="nc" id="L508">                            .caseInstanceId(caseInstance.getId())</span>
+<span class="nc" id="L509">                            .stagePlanItemInstance(parentPlanItemInstance)</span>
+<span class="nc" id="L510">                            .tenantId(caseInstance.getTenantId())</span>
+<span class="nc" id="L511">                            .addToParent(true)</span>
+<span class="nc" id="L512">                            .create();</span>
+
+<span class="nc bnc" id="L514" title="All 2 branches missed.">                    if (planItem.getPlanItemDefinition() instanceof Stage) {</span>
+<span class="nc" id="L515">                        caseInstanceChangeState.addCreatedStageInstance(planItemDefinitionMapping.getPlanItemDefinitionId(), waitingForRepetitionPlanItemInstance);</span>
+                    }
+
+<span class="nc" id="L518">                    CmmnHistoryManager cmmnHistoryManager = cmmnEngineConfiguration.getCmmnHistoryManager();</span>
+<span class="nc" id="L519">                    cmmnHistoryManager.recordPlanItemInstanceCreated(waitingForRepetitionPlanItemInstance);</span>
+
+<span class="nc" id="L521">                    waitingForRepetitionPlanItemInstance.setState(PlanItemInstanceState.WAITING_FOR_REPETITION);</span>
+<span class="nc" id="L522">                    cmmnHistoryManager.recordPlanItemInstanceAvailable(waitingForRepetitionPlanItemInstance);</span>
+                }
+            }
+<span class="nc" id="L525">        }</span>
+<span class="nc" id="L526">    }</span>
+    
+    protected void executeRemoveWaitingForRepetitionPlanItemInstances(CaseInstanceChangeState caseInstanceChangeState, 
+            CaseInstanceEntity caseInstance, CommandContext commandContext) {
+
+<span class="nc bnc" id="L531" title="All 4 branches missed.">        if (caseInstanceChangeState.getRemoveWaitingForRepetitionPlanItemDefinitions() == null || caseInstanceChangeState.getRemoveWaitingForRepetitionPlanItemDefinitions().isEmpty()) {</span>
+<span class="nc" id="L532">            return;</span>
+        }
+        
+<span class="nc" id="L535">        PlanItemInstanceEntityManager planItemInstanceEntityManager = cmmnEngineConfiguration.getPlanItemInstanceEntityManager();</span>
+        
+<span class="nc bnc" id="L537" title="All 2 branches missed.">        for (RemoveWaitingForRepetitionPlanItemDefinitionMapping planItemDefinitionMapping : caseInstanceChangeState.getRemoveWaitingForRepetitionPlanItemDefinitions()) {</span>
+            
+<span class="nc" id="L539">            List&lt;PlanItemInstance&gt; planItemInstances = planItemInstanceEntityManager.createPlanItemInstanceQuery().caseInstanceId(caseInstance.getId())</span>
+<span class="nc" id="L540">                    .planItemDefinitionId(planItemDefinitionMapping.getPlanItemDefinitionId())</span>
+<span class="nc" id="L541">                    .list();</span>
+            
+<span class="nc bnc" id="L543" title="All 4 branches missed.">            if (planItemInstances != null &amp;&amp; !planItemInstances.isEmpty()) {</span>
+<span class="nc bnc" id="L544" title="All 2 branches missed.">                for (PlanItemInstance planItemInstance : planItemInstances) {</span>
+<span class="nc bnc" id="L545" title="All 2 branches missed.">                    if (planItemInstance.getState().equalsIgnoreCase(PlanItemInstanceState.WAITING_FOR_REPETITION)) {</span>
+<span class="nc" id="L546">                        PlanItemInstanceEntity planItemInstanceEntity = (PlanItemInstanceEntity) planItemInstance;</span>
+
+<span class="nc bnc" id="L548" title="All 2 branches missed.">                        if (evaluateCondition(planItemInstanceEntity, planItemDefinitionMapping)) {</span>
+<span class="nc" id="L549">                            Date currentTime = cmmnEngineConfiguration.getClock().getCurrentTime();</span>
+<span class="nc" id="L550">                            CmmnHistoryManager cmmnHistoryManager = cmmnEngineConfiguration.getCmmnHistoryManager();</span>
+<span class="nc" id="L551">                            planItemInstanceEntity.setState(PlanItemInstanceState.TERMINATED);</span>
+<span class="nc" id="L552">                            planItemInstanceEntity.setEndedTime(currentTime);</span>
+<span class="nc" id="L553">                            planItemInstanceEntity.setTerminatedTime(currentTime);</span>
+<span class="nc" id="L554">                            cmmnHistoryManager.recordPlanItemInstanceTerminated(planItemInstanceEntity);</span>
+
+<span class="nc" id="L556">                            planItemInstanceEntityManager.delete(planItemInstanceEntity);</span>
+                        }
+                    }
+<span class="nc" id="L559">                }</span>
+            }
+<span class="nc" id="L561">        }</span>
+<span class="nc" id="L562">    }</span>
+    
+    protected void executeVerifySatisfiedSentryParts(CaseInstanceChangeState caseInstanceChangeState, 
+            CaseInstanceEntity caseInstance, String originalCaseDefinitionId, CommandContext commandContext) {
+        
+<span class="nc" id="L567">        SentryPartInstanceEntityManager sentryPartInstanceEntityManager = cmmnEngineConfiguration.getSentryPartInstanceEntityManager();</span>
+<span class="nc" id="L568">        List&lt;SentryPartInstanceEntity&gt; sentryPartInstances = sentryPartInstanceEntityManager.findSentryPartInstancesByCaseInstanceId(caseInstance.getId());</span>
+<span class="nc bnc" id="L569" title="All 2 branches missed.">        if (sentryPartInstances.isEmpty()) {</span>
+<span class="nc" id="L570">            return;</span>
+        }
+        
+<span class="nc" id="L573">        Map&lt;String, List&lt;SentryPartInstanceEntity&gt;&gt; sentryInstanceMap = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L574" title="All 2 branches missed.">        for (SentryPartInstanceEntity sentryPartInstanceEntity : sentryPartInstances) {</span>
+<span class="nc bnc" id="L575" title="All 2 branches missed.">            if (!sentryInstanceMap.containsKey(sentryPartInstanceEntity.getPlanItemInstanceId())) {</span>
+<span class="nc" id="L576">                sentryInstanceMap.put(sentryPartInstanceEntity.getPlanItemInstanceId(), new ArrayList&lt;&gt;());</span>
+            }
+            
+<span class="nc" id="L579">            sentryInstanceMap.get(sentryPartInstanceEntity.getPlanItemInstanceId()).add(sentryPartInstanceEntity);</span>
+<span class="nc" id="L580">        }</span>
+        
+<span class="nc" id="L582">        PlanItemInstanceEntityManager planItemInstanceEntityManager = cmmnEngineConfiguration.getPlanItemInstanceEntityManager();</span>
+<span class="nc" id="L583">        List&lt;PlanItemInstanceEntity&gt; planItemInstances = planItemInstanceEntityManager.findByCaseInstanceId(caseInstance.getId());</span>
+        
+<span class="nc" id="L585">        CmmnDeploymentManager deploymentManager = cmmnEngineConfiguration.getDeploymentManager();</span>
+<span class="nc" id="L586">        CmmnModel targetCmmnModel = deploymentManager.resolveCaseDefinition(caseInstanceChangeState.getCaseDefinitionToMigrateTo()).getCmmnModel();</span>
+        
+<span class="nc bnc" id="L588" title="All 2 branches missed.">        for (PlanItemInstanceEntity planItemInstanceEntity : planItemInstances) {</span>
+<span class="nc" id="L589">            List&lt;String&gt; skipSentryPartInstanceForDeleteIds = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L590" title="All 2 branches missed.">            if (PlanItemInstanceState.AVAILABLE.equalsIgnoreCase(planItemInstanceEntity.getState()) &amp;&amp; </span>
+<span class="nc bnc" id="L591" title="All 2 branches missed.">                    sentryInstanceMap.containsKey(planItemInstanceEntity.getId())) {</span>
+                
+<span class="nc bnc" id="L593" title="All 2 branches missed.">                if (planItemInstanceEntity.getPlanItem() == null) {</span>
+<span class="nc" id="L594">                    throw new FlowableException(&quot;Plan item could not be found for &quot; + planItemInstanceEntity.getElementId());</span>
+                }
+                
+<span class="nc bnc" id="L597" title="All 2 branches missed.">                if (planItemInstanceEntity.getPlanItem().getEntryCriteria().isEmpty()) {</span>
+<span class="nc" id="L598">                    continue;</span>
+                }
+                
+<span class="nc bnc" id="L601" title="All 2 branches missed.">                for (Criterion criterion : planItemInstanceEntity.getPlanItem().getEntryCriteria()) {</span>
+<span class="nc" id="L602">                    verifySatisfiedSentryPartsForCriterion(criterion, planItemInstanceEntity, sentryInstanceMap, </span>
+                            skipSentryPartInstanceForDeleteIds, false, targetCmmnModel, sentryPartInstanceEntityManager);
+<span class="nc" id="L604">                }</span>
+                
+<span class="nc bnc" id="L606" title="All 2 branches missed.">            } else if (PlanItemInstanceState.ACTIVE.equalsIgnoreCase(planItemInstanceEntity.getState()) &amp;&amp; </span>
+<span class="nc bnc" id="L607" title="All 2 branches missed.">                    sentryInstanceMap.containsKey(planItemInstanceEntity.getId())) {</span>
+                
+<span class="nc bnc" id="L609" title="All 2 branches missed.">                if (planItemInstanceEntity.getPlanItem() == null) {</span>
+<span class="nc" id="L610">                    throw new FlowableException(&quot;Plan item could not be found for &quot; + planItemInstanceEntity.getElementId());</span>
+                }
+                
+<span class="nc bnc" id="L613" title="All 2 branches missed.">                if (planItemInstanceEntity.getPlanItem().getExitCriteria().isEmpty()) {</span>
+<span class="nc" id="L614">                    continue;</span>
+                }
+                
+<span class="nc bnc" id="L617" title="All 2 branches missed.">                for (Criterion criterion : planItemInstanceEntity.getPlanItem().getExitCriteria()) {</span>
+<span class="nc" id="L618">                    verifySatisfiedSentryPartsForCriterion(criterion, planItemInstanceEntity, sentryInstanceMap, </span>
+                            skipSentryPartInstanceForDeleteIds, true, targetCmmnModel, sentryPartInstanceEntityManager);
+<span class="nc" id="L620">                }</span>
+            }
+            
+<span class="nc" id="L623">            List&lt;SentryPartInstanceEntity&gt; planItemSentryInstances = sentryInstanceMap.get(planItemInstanceEntity.getId());</span>
+<span class="nc bnc" id="L624" title="All 2 branches missed.">            if (planItemSentryInstances != null) {</span>
+<span class="nc bnc" id="L625" title="All 2 branches missed.">                for (SentryPartInstanceEntity planItemSentryInstanceEntity : planItemSentryInstances) {</span>
+<span class="nc bnc" id="L626" title="All 2 branches missed.">                    if (!skipSentryPartInstanceForDeleteIds.contains(planItemSentryInstanceEntity.getId())) {</span>
+<span class="nc" id="L627">                        sentryPartInstanceEntityManager.delete(planItemSentryInstanceEntity);</span>
+                    }
+<span class="nc" id="L629">                }</span>
+            }
+<span class="nc" id="L631">        }</span>
+        
+<span class="nc bnc" id="L633" title="All 2 branches missed.">        if (sentryInstanceMap.containsKey(null)) {</span>
+<span class="nc" id="L634">            List&lt;String&gt; skipSentryPartInstanceForDeleteIds = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L635">            CaseDefinition sourceCaseDefinition = cmmnEngineConfiguration.getCaseDefinitionEntityManager().findById(originalCaseDefinitionId);</span>
+<span class="nc" id="L636">            CmmnModel sourceCmmnModel = deploymentManager.resolveCaseDefinition(sourceCaseDefinition).getCmmnModel();</span>
+<span class="nc" id="L637">            Case sourceCase = sourceCmmnModel.getCaseById(sourceCaseDefinition.getKey());</span>
+<span class="nc" id="L638">            Case targetCase = targetCmmnModel.getCaseById(caseInstance.getCaseDefinitionKey());</span>
+<span class="nc bnc" id="L639" title="All 2 branches missed.">            if (!sourceCase.getPlanModel().getExitCriteria().isEmpty()) {</span>
+<span class="nc bnc" id="L640" title="All 2 branches missed.">                for (Criterion criterion : sourceCase.getPlanModel().getExitCriteria()) {</span>
+<span class="nc" id="L641">                    Sentry sentry = criterion.getSentry();</span>
+<span class="nc bnc" id="L642" title="All 2 branches missed.">                    if (sentry.getOnParts().size() &gt; 1 || </span>
+<span class="nc bnc" id="L643" title="All 4 branches missed.">                            (!sentry.getOnParts().isEmpty() &amp;&amp; sentry.getSentryIfPart() != null)) {</span>
+                        
+<span class="nc" id="L645">                        List&lt;SentryPartInstanceEntity&gt; planItemSentryInstances = sentryInstanceMap.get(null);</span>
+<span class="nc bnc" id="L646" title="All 2 branches missed.">                        if (sentry.getSentryIfPart() != null) {</span>
+<span class="nc bnc" id="L647" title="All 2 branches missed.">                            for (SentryPartInstanceEntity planItemSentryInstanceEntity : planItemSentryInstances) {</span>
+<span class="nc bnc" id="L648" title="All 2 branches missed.">                                if (sentry.getSentryIfPart().getId().equals(planItemSentryInstanceEntity.getIfPartId())) {</span>
+<span class="nc bnc" id="L649" title="All 2 branches missed.">                                    for (Criterion targetCriterion : targetCase.getPlanModel().getExitCriteria()) {</span>
+<span class="nc bnc" id="L650" title="All 2 branches missed.">                                        if (targetCriterion.getSentry().getSentryIfPart() == null) {</span>
+<span class="nc" id="L651">                                            continue;</span>
+                                        }
+                                        
+<span class="nc" id="L654">                                        SentryIfPart targetSentryIfPart = targetCriterion.getSentry().getSentryIfPart();</span>
+                                        
+<span class="nc bnc" id="L656" title="All 2 branches missed.">                                        if (criterion.getAttachedToRefId().equals(targetCriterion.getAttachedToRefId()) &amp;&amp;</span>
+<span class="nc bnc" id="L657" title="All 2 branches missed.">                                                sentry.getId().equals(targetCriterion.getSentryRef()) &amp;&amp;</span>
+<span class="nc bnc" id="L658" title="All 2 branches missed.">                                                sentry.getSentryIfPart().getCondition().equals(targetSentryIfPart.getCondition())) {</span>
+                                            
+<span class="nc bnc" id="L660" title="All 4 branches missed.">                                            if (!sentry.isOnEventTriggerMode() &amp;&amp; targetCriterion.getSentry().isOnEventTriggerMode()) {</span>
+<span class="nc" id="L661">                                                continue;</span>
+                                            }
+                                            
+<span class="nc" id="L664">                                            skipSentryPartInstanceForDeleteIds.add(planItemSentryInstanceEntity.getId());</span>
+                                            
+<span class="nc bnc" id="L666" title="All 2 branches missed.">                                            if (!planItemSentryInstanceEntity.getIfPartId().equals(targetSentryIfPart.getId())) {</span>
+<span class="nc" id="L667">                                                planItemSentryInstanceEntity.setIfPartId(targetSentryIfPart.getId());</span>
+<span class="nc" id="L668">                                                sentryPartInstanceEntityManager.update(planItemSentryInstanceEntity);</span>
+                                            }
+                                        }
+<span class="nc" id="L671">                                    }</span>
+                                }
+<span class="nc" id="L673">                            }</span>
+                        }
+                        
+<span class="nc bnc" id="L676" title="All 2 branches missed.">                        for (SentryOnPart sentryOnPart : sentry.getOnParts()) {</span>
+<span class="nc bnc" id="L677" title="All 2 branches missed.">                            for (SentryPartInstanceEntity planItemSentryInstanceEntity : planItemSentryInstances) {</span>
+<span class="nc bnc" id="L678" title="All 2 branches missed.">                                if (sentryOnPart.getId().equals(planItemSentryInstanceEntity.getOnPartId())) {</span>
+<span class="nc bnc" id="L679" title="All 2 branches missed.">                                    for (Criterion targetCriterion : targetCase.getPlanModel().getExitCriteria()) {</span>
+<span class="nc bnc" id="L680" title="All 2 branches missed.">                                        if (targetCriterion.getSentry().getOnParts().isEmpty()) {</span>
+<span class="nc" id="L681">                                            continue;</span>
+                                        }
+                                        
+<span class="nc bnc" id="L684" title="All 2 branches missed.">                                        for (SentryOnPart targetSentryOnPart : targetCriterion.getSentry().getOnParts()) {</span>
+<span class="nc bnc" id="L685" title="All 2 branches missed.">                                            if (criterion.getAttachedToRefId().equals(targetCriterion.getAttachedToRefId()) &amp;&amp;</span>
+<span class="nc bnc" id="L686" title="All 2 branches missed.">                                                    sentryOnPart.getSourceRef().equals(targetSentryOnPart.getSourceRef()) &amp;&amp;</span>
+<span class="nc bnc" id="L687" title="All 2 branches missed.">                                                    sentry.getId().equals(targetCriterion.getSentryRef()) &amp;&amp;</span>
+<span class="nc bnc" id="L688" title="All 2 branches missed.">                                                    sentryOnPart.getStandardEvent().equals(targetSentryOnPart.getStandardEvent())) {</span>
+                                                
+<span class="nc bnc" id="L690" title="All 4 branches missed.">                                                if (!sentry.isOnEventTriggerMode() &amp;&amp; targetCriterion.getSentry().isOnEventTriggerMode()) {</span>
+<span class="nc" id="L691">                                                    continue;</span>
+                                                }
+                                                
+<span class="nc" id="L694">                                                skipSentryPartInstanceForDeleteIds.add(planItemSentryInstanceEntity.getId());</span>
+                                                
+<span class="nc bnc" id="L696" title="All 2 branches missed.">                                                if (!planItemSentryInstanceEntity.getOnPartId().equals(targetSentryOnPart.getId())) {</span>
+<span class="nc" id="L697">                                                    planItemSentryInstanceEntity.setOnPartId(targetSentryOnPart.getId());</span>
+<span class="nc" id="L698">                                                    sentryPartInstanceEntityManager.update(planItemSentryInstanceEntity);</span>
+                                                }
+                                            }
+<span class="nc" id="L701">                                        }</span>
+<span class="nc" id="L702">                                    }</span>
+                                }
+<span class="nc" id="L704">                            }</span>
+<span class="nc" id="L705">                        }</span>
+                    }
+<span class="nc" id="L707">                }</span>
+            }
+            
+<span class="nc" id="L710">            List&lt;SentryPartInstanceEntity&gt; planItemSentryInstances = sentryInstanceMap.get(null);</span>
+<span class="nc bnc" id="L711" title="All 2 branches missed.">            for (SentryPartInstanceEntity planItemSentryInstanceEntity : planItemSentryInstances) {</span>
+<span class="nc bnc" id="L712" title="All 2 branches missed.">                if (!skipSentryPartInstanceForDeleteIds.contains(planItemSentryInstanceEntity.getId())) {</span>
+<span class="nc" id="L713">                    sentryPartInstanceEntityManager.delete(planItemSentryInstanceEntity);</span>
+                }
+<span class="nc" id="L715">            }</span>
+        }
+        
+<span class="nc" id="L718">    }</span>
+    
+    protected void verifySatisfiedSentryPartsForCriterion(Criterion criterion, PlanItemInstanceEntity planItemInstanceEntity,
+            Map&lt;String, List&lt;SentryPartInstanceEntity&gt;&gt; sentryInstanceMap, List&lt;String&gt; skipSentryPartInstanceForDeleteIds, 
+            boolean isExitCriterion, CmmnModel cmmnModel, SentryPartInstanceEntityManager sentryPartInstanceEntityManager) {
+        
+<span class="nc" id="L724">        Sentry sentry = criterion.getSentry();</span>
+<span class="nc bnc" id="L725" title="All 2 branches missed.">        if (sentry.getOnParts().size() &gt; 1 || </span>
+<span class="nc bnc" id="L726" title="All 4 branches missed.">                (!sentry.getOnParts().isEmpty() &amp;&amp; sentry.getSentryIfPart() != null)) {</span>
+            
+<span class="nc" id="L728">            List&lt;SentryPartInstanceEntity&gt; planItemSentryInstances = sentryInstanceMap.get(planItemInstanceEntity.getId());</span>
+<span class="nc bnc" id="L729" title="All 2 branches missed.">            if (sentry.getSentryIfPart() != null) {</span>
+<span class="nc bnc" id="L730" title="All 2 branches missed.">                for (SentryPartInstanceEntity planItemSentryInstanceEntity : planItemSentryInstances) {</span>
+<span class="nc bnc" id="L731" title="All 2 branches missed.">                    if (sentry.getSentryIfPart().getId().equals(planItemSentryInstanceEntity.getIfPartId())) {</span>
+<span class="nc" id="L732">                        PlanItem targetPlanItem = cmmnModel.findPlanItemByPlanItemDefinitionId(planItemInstanceEntity.getPlanItemDefinitionId());</span>
+<span class="nc bnc" id="L733" title="All 2 branches missed.">                        if (targetPlanItem == null) {</span>
+<span class="nc" id="L734">                            continue;</span>
+                        }
+                        
+<span class="nc" id="L737">                        List&lt;Criterion&gt; targetCriteria = null;</span>
+<span class="nc bnc" id="L738" title="All 2 branches missed.">                        if (isExitCriterion) {</span>
+<span class="nc" id="L739">                            targetCriteria = targetPlanItem.getExitCriteria();</span>
+                        } else {
+<span class="nc" id="L741">                            targetCriteria = targetPlanItem.getEntryCriteria();</span>
+                        }
+                        
+<span class="nc bnc" id="L744" title="All 2 branches missed.">                        for (Criterion targetCriterion : targetCriteria) {</span>
+<span class="nc bnc" id="L745" title="All 2 branches missed.">                            if (targetCriterion.getSentry().getSentryIfPart() == null) {</span>
+<span class="nc" id="L746">                                continue;</span>
+                            }
+                            
+<span class="nc" id="L749">                            SentryIfPart targetSentryIfPart = targetCriterion.getSentry().getSentryIfPart();</span>
+                            
+<span class="nc bnc" id="L751" title="All 2 branches missed.">                            if (criterion.getAttachedToRefId().equals(targetCriterion.getAttachedToRefId()) &amp;&amp;</span>
+<span class="nc bnc" id="L752" title="All 2 branches missed.">                                    sentry.getId().equals(targetCriterion.getSentryRef()) &amp;&amp;</span>
+<span class="nc bnc" id="L753" title="All 2 branches missed.">                                    sentry.getSentryIfPart().getCondition().equals(targetSentryIfPart.getCondition())) {</span>
+                                
+<span class="nc bnc" id="L755" title="All 4 branches missed.">                                if (!sentry.isOnEventTriggerMode() &amp;&amp; targetCriterion.getSentry().isOnEventTriggerMode()) {</span>
+<span class="nc" id="L756">                                    continue;</span>
+                                }
+                                
+<span class="nc" id="L759">                                skipSentryPartInstanceForDeleteIds.add(planItemSentryInstanceEntity.getId());</span>
+                                
+<span class="nc bnc" id="L761" title="All 2 branches missed.">                                if (!planItemSentryInstanceEntity.getIfPartId().equals(targetSentryIfPart.getId())) {</span>
+<span class="nc" id="L762">                                    planItemSentryInstanceEntity.setIfPartId(targetSentryIfPart.getId());</span>
+<span class="nc" id="L763">                                    sentryPartInstanceEntityManager.update(planItemSentryInstanceEntity);</span>
+                                }
+                            }
+<span class="nc" id="L766">                        }</span>
+                    }
+<span class="nc" id="L768">                }</span>
+            }
+            
+<span class="nc bnc" id="L771" title="All 2 branches missed.">            for (SentryOnPart sentryOnPart : sentry.getOnParts()) {</span>
+<span class="nc bnc" id="L772" title="All 2 branches missed.">                for (SentryPartInstanceEntity planItemSentryInstanceEntity : planItemSentryInstances) {</span>
+<span class="nc bnc" id="L773" title="All 2 branches missed.">                    if (sentryOnPart.getId().equals(planItemSentryInstanceEntity.getOnPartId())) {</span>
+<span class="nc" id="L774">                        PlanItem targetPlanItem = cmmnModel.findPlanItemByPlanItemDefinitionId(planItemInstanceEntity.getPlanItemDefinitionId());</span>
+<span class="nc bnc" id="L775" title="All 2 branches missed.">                        if (targetPlanItem == null) {</span>
+<span class="nc" id="L776">                            continue;</span>
+                        }
+                        
+<span class="nc" id="L779">                        List&lt;Criterion&gt; targetCriteria = null;</span>
+<span class="nc bnc" id="L780" title="All 2 branches missed.">                        if (isExitCriterion) {</span>
+<span class="nc" id="L781">                            targetCriteria = targetPlanItem.getExitCriteria();</span>
+                        } else {
+<span class="nc" id="L783">                            targetCriteria = targetPlanItem.getEntryCriteria();</span>
+                        }
+                        
+<span class="nc bnc" id="L786" title="All 2 branches missed.">                        for (Criterion targetCriterion : targetCriteria) {</span>
+<span class="nc bnc" id="L787" title="All 2 branches missed.">                            if (targetCriterion.getSentry().getOnParts().isEmpty()) {</span>
+<span class="nc" id="L788">                                continue;</span>
+                            }
+                            
+<span class="nc bnc" id="L791" title="All 2 branches missed.">                            for (SentryOnPart targetSentryOnPart : targetCriterion.getSentry().getOnParts()) {</span>
+<span class="nc bnc" id="L792" title="All 2 branches missed.">                                if (criterion.getAttachedToRefId().equals(targetCriterion.getAttachedToRefId()) &amp;&amp;</span>
+<span class="nc bnc" id="L793" title="All 2 branches missed.">                                        sentryOnPart.getSourceRef().equals(targetSentryOnPart.getSourceRef()) &amp;&amp;</span>
+<span class="nc bnc" id="L794" title="All 2 branches missed.">                                        sentry.getId().equals(targetCriterion.getSentryRef()) &amp;&amp;</span>
+<span class="nc bnc" id="L795" title="All 2 branches missed.">                                        sentryOnPart.getStandardEvent().equals(targetSentryOnPart.getStandardEvent())) {</span>
+                                    
+<span class="nc bnc" id="L797" title="All 4 branches missed.">                                    if (!sentry.isOnEventTriggerMode() &amp;&amp; targetCriterion.getSentry().isOnEventTriggerMode()) {</span>
+<span class="nc" id="L798">                                        continue;</span>
+                                    }
+                                    
+<span class="nc" id="L801">                                    skipSentryPartInstanceForDeleteIds.add(planItemSentryInstanceEntity.getId());</span>
+                                    
+<span class="nc bnc" id="L803" title="All 2 branches missed.">                                    if (!planItemSentryInstanceEntity.getOnPartId().equals(targetSentryOnPart.getId())) {</span>
+<span class="nc" id="L804">                                        planItemSentryInstanceEntity.setOnPartId(targetSentryOnPart.getId());</span>
+<span class="nc" id="L805">                                        sentryPartInstanceEntityManager.update(planItemSentryInstanceEntity);</span>
+                                    }
+                                }
+<span class="nc" id="L808">                            }</span>
+<span class="nc" id="L809">                        }</span>
+                    }
+<span class="nc" id="L811">                }</span>
+<span class="nc" id="L812">            }</span>
+        }
+<span class="nc" id="L814">    }</span>
+
+    protected void executeTerminatePlanItemInstances(CaseInstanceChangeState caseInstanceChangeState, CaseInstanceEntity caseInstance, CommandContext commandContext) {
+<span class="nc bnc" id="L817" title="All 4 branches missed.">        if (caseInstanceChangeState.getTerminatePlanItemDefinitions() == null || caseInstanceChangeState.getTerminatePlanItemDefinitions().isEmpty()) {</span>
+<span class="nc" id="L818">            return;</span>
+        }
+        
+<span class="nc" id="L821">        Map&lt;String, List&lt;PlanItemInstanceEntity&gt;&gt; currentPlanItemInstanceMap = caseInstanceChangeState.getCurrentPlanItemInstances();</span>
+<span class="nc bnc" id="L822" title="All 2 branches missed.">        for (TerminatePlanItemDefinitionMapping planItemDefinitionMapping : caseInstanceChangeState.getTerminatePlanItemDefinitions()) {</span>
+<span class="nc bnc" id="L823" title="All 2 branches missed.">            if (currentPlanItemInstanceMap.containsKey(planItemDefinitionMapping.getPlanItemDefinitionId())) {</span>
+<span class="nc" id="L824">                List&lt;PlanItemInstanceEntity&gt; currentPlanItemInstanceList = currentPlanItemInstanceMap.get(planItemDefinitionMapping.getPlanItemDefinitionId());</span>
+<span class="nc bnc" id="L825" title="All 2 branches missed.">                for (PlanItemInstanceEntity planItemInstance : currentPlanItemInstanceList) {</span>
+<span class="nc bnc" id="L826" title="All 2 branches missed.">                    if (!PlanItemInstanceState.TERMINAL_STATES.contains(planItemInstance.getState()) &amp;&amp; </span>
+<span class="nc bnc" id="L827" title="All 2 branches missed.">                            !PlanItemInstanceState.WAITING_FOR_REPETITION.equals(planItemInstance.getState()) &amp;&amp;</span>
+<span class="nc bnc" id="L828" title="All 2 branches missed.">                            evaluateCondition(planItemInstance, planItemDefinitionMapping)) {</span>
+                        
+<span class="nc" id="L830">                        terminatePlanItemInstance(planItemInstance, commandContext);</span>
+<span class="nc" id="L831">                        caseInstanceChangeState.addTerminatedPlanItemInstance(planItemInstance.getPlanItemDefinitionId(), planItemInstance);</span>
+                    }
+<span class="nc" id="L833">                }</span>
+            }
+<span class="nc" id="L835">        }</span>
+<span class="nc" id="L836">    }</span>
+    
+    protected abstract boolean isDirectPlanItemDefinitionMigration(PlanItemDefinition currentPlanItemDefinition, PlanItemDefinition newPlanItemDefinition);
+
+    protected Map&lt;String, List&lt;PlanItemInstanceEntity&gt;&gt; retrievePlanItemInstances(String caseInstanceId) {
+<span class="nc" id="L841">        PlanItemInstanceEntityManager planItemInstanceEntityManager = cmmnEngineConfiguration.getPlanItemInstanceEntityManager();</span>
+<span class="nc" id="L842">        List&lt;PlanItemInstanceEntity&gt; planItemInstances = planItemInstanceEntityManager.findByCaseInstanceId(caseInstanceId);</span>
+        
+<span class="nc" id="L844">        Map&lt;String, List&lt;PlanItemInstanceEntity&gt;&gt; stagesByPlanItemDefinitionId = planItemInstances.stream()</span>
+<span class="nc" id="L845">            .collect(Collectors.groupingBy(PlanItemInstance::getPlanItemDefinitionId));</span>
+<span class="nc" id="L846">        return stagesByPlanItemDefinitionId;</span>
+    }
+    
+    protected void setCaseDefinitionIdForPlanItemInstances(Map&lt;String, List&lt;PlanItemInstanceEntity&gt;&gt; stagesByPlanItemDefinitionId, CaseDefinition caseDefinition) {
+<span class="nc bnc" id="L850" title="All 2 branches missed.">        if (caseDefinition != null) {</span>
+<span class="nc bnc" id="L851" title="All 2 branches missed.">            for (List&lt;PlanItemInstanceEntity&gt; planItemInstances : stagesByPlanItemDefinitionId.values()) {</span>
+<span class="nc bnc" id="L852" title="All 2 branches missed.">                for (PlanItemInstanceEntity planItemInstance : planItemInstances) {</span>
+<span class="nc" id="L853">                    planItemInstance.setCaseDefinitionId(caseDefinition.getId());</span>
+<span class="nc" id="L854">                }</span>
+<span class="nc" id="L855">            }</span>
+        }
+<span class="nc" id="L857">    }</span>
+    
+    protected void navigatePlanItemInstances(Map&lt;String, List&lt;PlanItemInstanceEntity&gt;&gt; stagesByPlanItemDefinitionId, CaseDefinition caseDefinition) {
+<span class="nc bnc" id="L860" title="All 2 branches missed.">        if (caseDefinition != null) {</span>
+<span class="nc" id="L861">            TaskService taskService = cmmnEngineConfiguration.getTaskServiceConfiguration().getTaskService();</span>
+<span class="nc bnc" id="L862" title="All 2 branches missed.">            for (List&lt;PlanItemInstanceEntity&gt; planItemInstances : stagesByPlanItemDefinitionId.values()) {</span>
+<span class="nc bnc" id="L863" title="All 2 branches missed.">                for (PlanItemInstanceEntity planItemInstance : planItemInstances) {</span>
+                    
+<span class="nc bnc" id="L865" title="All 2 branches missed.">                    if (!PlanItemInstanceState.AVAILABLE.equals(planItemInstance.getState()) &amp;&amp; </span>
+<span class="nc bnc" id="L866" title="All 2 branches missed.">                            planItemInstance.getPlanItemDefinition() instanceof HumanTask) {</span>
+                        
+<span class="nc" id="L868">                        TaskEntityImpl task = (TaskEntityImpl) taskService.createTaskQuery(cmmnEngineConfiguration.getCommandExecutor(), cmmnEngineConfiguration)</span>
+<span class="nc" id="L869">                                .subScopeId(planItemInstance.getId()).scopeType(ScopeTypes.CMMN).singleResult();</span>
+<span class="nc bnc" id="L870" title="All 2 branches missed.">                        if (task != null) {</span>
+<span class="nc" id="L871">                            task.setScopeDefinitionId(caseDefinition.getId());</span>
+                        }
+                    }
+<span class="nc" id="L874">                }</span>
+<span class="nc" id="L875">            }</span>
+        }
+<span class="nc" id="L877">    }</span>
+
+    protected boolean isStageContainerOfAnyPlanItemDefinition(String stageId, Collection&lt;PlanItemMoveEntry&gt; moveToPlanItems) {
+<span class="nc" id="L880">        Optional&lt;Stage&gt; isUsed = moveToPlanItems.stream()</span>
+<span class="nc" id="L881">            .map(PlanItemMoveEntry::getNewPlanItem)</span>
+<span class="nc" id="L882">            .map(PlanItem::getPlanItemDefinition)</span>
+<span class="nc" id="L883">            .map(PlanItemDefinition::getParentStage)</span>
+<span class="nc" id="L884">            .filter(Objects::nonNull)</span>
+<span class="nc" id="L885">            .filter(elementStage -&gt; elementStage.getId().equals(stageId))</span>
+<span class="nc" id="L886">            .findAny();</span>
+
+<span class="nc" id="L888">        return isUsed.isPresent();</span>
+    }
+
+    protected PlanItemInstanceEntity resolveParentPlanItemInstanceToDelete(PlanItemInstanceEntity planItemInstance, List&lt;PlanItemMoveEntry&gt; moveToPlanItems) {
+<span class="nc bnc" id="L892" title="All 2 branches missed.">        if (planItemInstance.getStageInstanceId() == null) {</span>
+<span class="nc" id="L893">            return  null;</span>
+        }
+        
+<span class="nc" id="L896">        PlanItemInstanceEntity parentPlanItemInstance = planItemInstance.getStagePlanItemInstanceEntity();</span>
+
+<span class="nc bnc" id="L898" title="All 2 branches missed.">        if (!isStageContainerOfAnyPlanItemDefinition(parentPlanItemInstance.getPlanItemDefinitionId(), moveToPlanItems)) {</span>
+<span class="nc" id="L899">            PlanItemInstanceEntity stageParentExecution = resolveParentPlanItemInstanceToDelete(parentPlanItemInstance, moveToPlanItems);</span>
+<span class="nc bnc" id="L900" title="All 2 branches missed.">            if (stageParentExecution != null) {</span>
+<span class="nc" id="L901">                return stageParentExecution;</span>
+            } else {
+<span class="nc" id="L903">                return parentPlanItemInstance;</span>
+            }
+        }
+
+<span class="nc" id="L907">        return null;</span>
+    }
+    
+    protected PlanItemInstanceEntity createStagesAndPlanItemInstances(PlanItem planItem, CaseInstanceEntity caseInstance, 
+            CaseInstanceChangeState caseInstanceChangeState, ActivatePlanItemDefinitionMapping planItemDefinitionMapping, CommandContext commandContext) {
+        
+<span class="nc" id="L913">        PlanItemInstanceEntityManager planItemInstanceEntityManager = cmmnEngineConfiguration.getPlanItemInstanceEntityManager();</span>
+        
+<span class="nc" id="L915">        Map&lt;String, Stage&gt; stagesToCreate = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L916">        PlanItemDefinition planItemDefinition = planItem.getPlanItemDefinition();</span>
+<span class="nc" id="L917">        Stage stage = planItemDefinition.getParentStage();</span>
+            
+<span class="nc" id="L919">        Map&lt;String, List&lt;PlanItemInstanceEntity&gt;&gt; runtimePlanItemInstanceMap = caseInstanceChangeState.getRuntimePlanItemInstances();</span>
+<span class="nc" id="L920">        PlanItemInstanceEntity closestAncestorPlanItemInstance = null;</span>
+<span class="nc bnc" id="L921" title="All 2 branches missed.">        while (stage != null) {</span>
+<span class="nc bnc" id="L922" title="All 4 branches missed.">            if (!stage.isPlanModel() &amp;&amp; !caseInstanceChangeState.getCreatedStageInstances().containsKey(stage.getId())) {</span>
+<span class="nc" id="L923">                PlanItemInstanceEntity stageAncestorInstance = getStageAncestorOfAnyPlanItemInstance(stage.getId(), runtimePlanItemInstanceMap);</span>
+<span class="nc bnc" id="L924" title="All 2 branches missed.">                if (stageAncestorInstance == null) {</span>
+<span class="nc" id="L925">                    stagesToCreate.put(stage.getId(), stage);</span>
+<span class="nc bnc" id="L926" title="All 2 branches missed.">                } else if (closestAncestorPlanItemInstance == null) {</span>
+<span class="nc" id="L927">                    closestAncestorPlanItemInstance = stageAncestorInstance;</span>
+                }
+            }
+<span class="nc" id="L930">            stage = stage.getParentStage();</span>
+        }
+
+<span class="nc bnc" id="L933" title="All 2 branches missed.">        if (closestAncestorPlanItemInstance == null) {</span>
+<span class="nc bnc" id="L934" title="All 2 branches missed.">            if (!evaluateCondition(caseInstance, planItemDefinitionMapping)) {</span>
+<span class="nc" id="L935">                return null;</span>
+            }
+        } else {
+<span class="nc bnc" id="L938" title="All 2 branches missed.">            if (!evaluateCondition(closestAncestorPlanItemInstance, planItemDefinitionMapping)) {</span>
+<span class="nc" id="L939">                return null;</span>
+            }
+        }
+
+        // Build the stage hierarchy
+<span class="nc bnc" id="L944" title="All 2 branches missed.">        for (Stage stageToCreate : stagesToCreate.values()) {</span>
+<span class="nc bnc" id="L945" title="All 2 branches missed.">            if (!caseInstanceChangeState.getCreatedStageInstances().containsKey(stageToCreate.getId())) {</span>
+<span class="nc" id="L946">                PlanItemInstanceEntity stageInstance = createStageHierarchy(stageToCreate, null, stagesToCreate, </span>
+                        caseInstanceChangeState, caseInstance, commandContext);
+<span class="nc" id="L948">                caseInstanceChangeState.addCreatedStageInstance(stageToCreate.getId(), stageInstance);</span>
+            }
+<span class="nc" id="L950">        }</span>
+        
+        // Adds the plan item instance (leaf) to the stage instance
+<span class="nc" id="L953">        PlanItemInstanceEntity parentPlanItemInstance = null;</span>
+<span class="nc bnc" id="L954" title="All 2 branches missed.">        if (planItemDefinition.getParentStage() != null) {</span>
+<span class="nc" id="L955">            String parentStageId = planItemDefinition.getParentStage().getId();</span>
+<span class="nc bnc" id="L956" title="All 2 branches missed.">            if (caseInstanceChangeState.getCreatedStageInstances().containsKey(parentStageId)) {</span>
+<span class="nc" id="L957">                parentPlanItemInstance = caseInstanceChangeState.getCreatedStageInstances().get(parentStageId);</span>
+            
+            } else {
+<span class="nc" id="L960">                PlanItemInstanceEntity possibleParentPlanItemInstance = caseInstanceChangeState.getRuntimePlanItemInstance(parentStageId);</span>
+<span class="nc bnc" id="L961" title="All 2 branches missed.">                if (possibleParentPlanItemInstance != null) {</span>
+<span class="nc" id="L962">                    parentPlanItemInstance = possibleParentPlanItemInstance;</span>
+<span class="nc bnc" id="L963" title="All 2 branches missed.">                    if (PlanItemInstanceState.AVAILABLE.equals(parentPlanItemInstance.getState())) {</span>
+<span class="nc" id="L964">                        parentPlanItemInstance.setState(PlanItemInstanceState.ACTIVE);</span>
+<span class="nc" id="L965">                        planItemInstanceEntityManager.update(parentPlanItemInstance);</span>
+                        
+<span class="nc bnc" id="L967" title="All 4 branches missed.">                        if (!parentPlanItemInstance.getPlanItem().getEntryCriteria().isEmpty() &amp;&amp; hasRepetitionRule(parentPlanItemInstance)) {</span>
+<span class="nc bnc" id="L968" title="All 2 branches missed.">                            if (evaluateRepetitionRule(parentPlanItemInstance, commandContext)) {</span>
+<span class="nc" id="L969">                                createPlanItemInstanceDuplicateForRepetition(parentPlanItemInstance, commandContext);</span>
+                            }
+                        }
+                    }
+                }
+            }
+        }
+            
+<span class="nc" id="L977">        PlanItemInstanceEntity newPlanItemInstance = null;</span>
+<span class="nc bnc" id="L978" title="All 2 branches missed.">        for (List&lt;PlanItemInstanceEntity&gt; existingPlanItemInstances : runtimePlanItemInstanceMap.values()) {</span>
+<span class="nc bnc" id="L979" title="All 2 branches missed.">            for (PlanItemInstanceEntity existingPlanItemInstance : existingPlanItemInstances) {</span>
+<span class="nc bnc" id="L980" title="All 2 branches missed.">                if (existingPlanItemInstance.getPlanItemDefinitionId().equals(planItemDefinition.getId()) &amp;&amp;</span>
+<span class="nc bnc" id="L981" title="All 2 branches missed.">                        PlanItemInstanceState.AVAILABLE.equals(existingPlanItemInstance.getState())) {</span>
+                    
+<span class="nc" id="L983">                    newPlanItemInstance = existingPlanItemInstance;</span>
+                }
+<span class="nc" id="L985">            }</span>
+<span class="nc" id="L986">        }</span>
+            
+<span class="nc bnc" id="L988" title="All 2 branches missed.">        if (newPlanItemInstance == null) {</span>
+<span class="nc" id="L989">            newPlanItemInstance = planItemInstanceEntityManager.createPlanItemInstanceEntityBuilder()</span>
+<span class="nc" id="L990">                .planItem(planItem)</span>
+<span class="nc" id="L991">                .caseDefinitionId(caseInstance.getCaseDefinitionId())</span>
+<span class="nc" id="L992">                .caseInstanceId(caseInstance.getId())</span>
+<span class="nc" id="L993">                .stagePlanItemInstance(parentPlanItemInstance)</span>
+<span class="nc" id="L994">                .tenantId(caseInstance.getTenantId())</span>
+<span class="nc" id="L995">                .addToParent(true)</span>
+<span class="nc" id="L996">                .create();</span>
+            
+<span class="nc" id="L998">            CmmnHistoryManager cmmnHistoryManager = cmmnEngineConfiguration.getCmmnHistoryManager();</span>
+<span class="nc" id="L999">            cmmnHistoryManager.recordPlanItemInstanceCreated(newPlanItemInstance);</span>
+
+<span class="nc" id="L1001">            createChildPlanItemInstancesForStage(Collections.singletonList(newPlanItemInstance), runtimePlanItemInstanceMap,</span>
+<span class="nc" id="L1002">                    caseInstanceChangeState.getTerminatedPlanItemInstances(), Collections.singleton(planItem.getId()), </span>
+                    caseInstanceChangeState, commandContext);
+        }
+
+<span class="nc" id="L1006">        return newPlanItemInstance;</span>
+    }
+
+    protected void createChildPlanItemInstancesForStage(List&lt;PlanItemInstanceEntity&gt; newPlanItemInstances, Map&lt;String, List&lt;PlanItemInstanceEntity&gt;&gt; runtimePlanItemInstanceMap,
+            Map&lt;String, PlanItemInstanceEntity&gt; terminatedPlanItemInstances, Set&lt;String&gt; newPlanItemInstanceIds, 
+            CaseInstanceChangeState caseInstanceChangeState, CommandContext commandContext) {
+        
+<span class="nc bnc" id="L1013" title="All 2 branches missed.">        if (newPlanItemInstances.size() == 0) {</span>
+<span class="nc" id="L1014">            return;</span>
+        }
+        
+<span class="nc" id="L1017">        PlanItemInstanceEntity newPlanItemInstance = newPlanItemInstances.get(0);</span>
+<span class="nc" id="L1018">        PlanItem planItem = newPlanItemInstance.getPlanItem();</span>
+<span class="nc bnc" id="L1019" title="All 4 branches missed.">        if (planItem != null &amp;&amp; planItem.getParentStage() != null) {</span>
+<span class="nc bnc" id="L1020" title="All 2 branches missed.">            for (PlanItem stagePlanItem : planItem.getParentStage().getPlanItems()) {</span>
+<span class="nc bnc" id="L1021" title="All 4 branches missed.">                if (!newPlanItemInstanceIds.contains(stagePlanItem.getId()) &amp;&amp; !runtimePlanItemInstanceMap.containsKey(stagePlanItem.getPlanItemDefinition().getId()) </span>
+<span class="nc bnc" id="L1022" title="All 2 branches missed.">                        &amp;&amp; !terminatedPlanItemInstances.containsKey(stagePlanItem.getPlanItemDefinition().getId())</span>
+<span class="nc bnc" id="L1023" title="All 2 branches missed.">                        &amp;&amp; !caseInstanceChangeState.getCurrentPlanItemInstances().containsKey(stagePlanItem.getPlanItemDefinition().getId())) {</span>
+                    
+<span class="nc" id="L1025">                    PlanItemInstance parentStagePlanItem = newPlanItemInstance.getStagePlanItemInstanceEntity();</span>
+<span class="nc bnc" id="L1026" title="All 4 branches missed.">                    if (parentStagePlanItem == null &amp;&amp; newPlanItemInstance.getStageInstanceId() != null) {</span>
+<span class="nc" id="L1027">                        parentStagePlanItem = CommandContextUtil.getPlanItemInstanceEntityManager(commandContext).findById(newPlanItemInstance.getStageInstanceId());</span>
+                    }
+                    
+<span class="nc bnc" id="L1030" title="All 2 branches missed.">                    if (stagePlanItem.getPlanItemDefinition() instanceof Stage) {</span>
+<span class="nc" id="L1031">                        PlanItemInstanceEntity childStagePlanItemInstance = cmmnEngineConfiguration.getPlanItemInstanceEntityManager()</span>
+<span class="nc" id="L1032">                            .createPlanItemInstanceEntityBuilder()</span>
+<span class="nc" id="L1033">                            .planItem(stagePlanItem)</span>
+<span class="nc" id="L1034">                            .caseDefinitionId(newPlanItemInstance.getCaseDefinitionId())</span>
+<span class="nc" id="L1035">                            .caseInstanceId(newPlanItemInstance.getCaseInstanceId())</span>
+<span class="nc" id="L1036">                            .stagePlanItemInstance(parentStagePlanItem)</span>
+<span class="nc" id="L1037">                            .tenantId(newPlanItemInstance.getTenantId())</span>
+<span class="nc" id="L1038">                            .addToParent(true)</span>
+<span class="nc" id="L1039">                            .create();</span>
+    
+<span class="nc" id="L1041">                        CommandContextUtil.getAgenda(commandContext).planCreatePlanItemInstanceOperation(childStagePlanItemInstance);</span>
+                    }
+                }
+<span class="nc" id="L1044">            }</span>
+        }
+<span class="nc" id="L1046">    }</span>
+
+    protected PlanItemInstanceEntity getStageAncestorOfAnyPlanItemInstance(String stageId, Map&lt;String, List&lt;PlanItemInstanceEntity&gt;&gt; planItemInstanceMap) {
+<span class="nc bnc" id="L1049" title="All 2 branches missed.">        for (List&lt;PlanItemInstanceEntity&gt; planItemInstanceList : planItemInstanceMap.values()) {</span>
+<span class="nc bnc" id="L1050" title="All 2 branches missed.">            for (PlanItemInstanceEntity planItemInstance : planItemInstanceList) {</span>
+<span class="nc bnc" id="L1051" title="All 2 branches missed.">                if (planItemInstance.getPlanItem() != null) {</span>
+<span class="nc" id="L1052">                    PlanItemDefinition planItemDefinition = planItemInstance.getPlanItem().getPlanItemDefinition();</span>
+
+<span class="nc bnc" id="L1054" title="All 2 branches missed.">                    if (planItemDefinition.getId().equals(stageId)) {</span>
+<span class="nc" id="L1055">                        return planItemInstance;</span>
+                    }
+
+<span class="nc bnc" id="L1058" title="All 2 branches missed.">                    if (isStageAncestor(stageId, planItemDefinition)) {</span>
+<span class="nc" id="L1059">                        return planItemInstance;</span>
+                    }
+                }
+<span class="nc" id="L1062">            }</span>
+<span class="nc" id="L1063">        }</span>
+<span class="nc" id="L1064">        return null;</span>
+    }
+
+    protected boolean isStageAncestor(String stageId, PlanItemDefinition planItemDefinition) {
+<span class="nc bnc" id="L1068" title="All 2 branches missed.">        while (planItemDefinition.getParentStage() != null) {</span>
+<span class="nc" id="L1069">            String currentStageId = planItemDefinition.getParentStage().getId();</span>
+<span class="nc bnc" id="L1070" title="All 4 branches missed.">            if (currentStageId != null &amp;&amp; currentStageId.equals(stageId)) {</span>
+<span class="nc" id="L1071">                return true;</span>
+            }
+<span class="nc" id="L1073">            planItemDefinition = planItemDefinition.getParentStage();</span>
+<span class="nc" id="L1074">        }</span>
+<span class="nc" id="L1075">        return false;</span>
+    }
+
+    protected PlanItemInstanceEntity createStageHierarchy(Stage stage, PlanItemInstanceEntity defaultParentPlanItemInstance, 
+            Map&lt;String, Stage&gt; stagesToCreate, CaseInstanceChangeState caseInstanceChangeState, 
+            CaseInstanceEntity caseInstance, CommandContext commandContext) {
+        
+<span class="nc" id="L1082">        Map&lt;String, List&lt;PlanItemInstanceEntity&gt;&gt; runtimePlanItemInstanceMap = caseInstanceChangeState.getRuntimePlanItemInstances();</span>
+<span class="nc bnc" id="L1083" title="All 2 branches missed.">        if (runtimePlanItemInstanceMap.containsKey(stage.getId())) {</span>
+<span class="nc" id="L1084">            return (PlanItemInstanceEntity) runtimePlanItemInstanceMap.get(stage.getId()).get(0);</span>
+        }
+
+<span class="nc bnc" id="L1087" title="All 2 branches missed.">        if (caseInstanceChangeState.getCreatedStageInstances().containsKey(stage.getId())) {</span>
+<span class="nc" id="L1088">            return caseInstanceChangeState.getCreatedStageInstances().get(stage.getId());</span>
+        }
+
+        // Create the parent, if needed
+<span class="nc" id="L1092">        PlanItemInstanceEntity parentStageInstance = defaultParentPlanItemInstance;</span>
+<span class="nc bnc" id="L1093" title="All 4 branches missed.">        if (stage.getParentStage() != null &amp;&amp; !stage.getParentStage().isPlanModel()) {</span>
+<span class="nc" id="L1094">            parentStageInstance = createStageHierarchy(stage.getParentStage(), defaultParentPlanItemInstance, stagesToCreate, </span>
+                            caseInstanceChangeState, caseInstance, commandContext);
+<span class="nc" id="L1096">            caseInstanceChangeState.getCreatedStageInstances().put(stage.getParentStage().getId(), parentStageInstance);</span>
+        }
+        
+<span class="nc" id="L1099">        PlanItemInstanceEntityManager planItemInstanceEntityManager = cmmnEngineConfiguration.getPlanItemInstanceEntityManager();</span>
+<span class="nc" id="L1100">        PlanItemInstanceEntity newPlanItemInstance = planItemInstanceEntityManager.createPlanItemInstanceEntityBuilder()</span>
+<span class="nc" id="L1101">                .planItem(stage.getPlanItem())</span>
+<span class="nc" id="L1102">                .caseDefinitionId(caseInstance.getCaseDefinitionId())</span>
+<span class="nc" id="L1103">                .caseInstanceId(caseInstance.getId())</span>
+<span class="nc" id="L1104">                .stagePlanItemInstance(parentStageInstance)</span>
+<span class="nc" id="L1105">                .tenantId(caseInstance.getTenantId())</span>
+<span class="nc" id="L1106">                .addToParent(true)</span>
+<span class="nc" id="L1107">                .create();</span>
+        
+        // Special care needed in case the plan item instance is repeating
+<span class="nc bnc" id="L1110" title="All 4 branches missed.">        if (!newPlanItemInstance.getPlanItem().getEntryCriteria().isEmpty() &amp;&amp; hasRepetitionRule(newPlanItemInstance)) {</span>
+<span class="nc bnc" id="L1111" title="All 2 branches missed.">            if (evaluateRepetitionRule(newPlanItemInstance, commandContext)) {</span>
+<span class="nc" id="L1112">                createPlanItemInstanceDuplicateForRepetition(newPlanItemInstance, commandContext);</span>
+            }
+        }
+        
+<span class="nc" id="L1116">        CommandContextUtil.getAgenda(commandContext).planStartPlanItemInstanceOperation(newPlanItemInstance, null);</span>
+
+<span class="nc" id="L1118">        return newPlanItemInstance;</span>
+    }
+    
+    protected void terminatePlanItemInstance(PlanItemInstanceEntity planItemInstance, CommandContext commandContext) {
+<span class="nc" id="L1122">        String currentPlanItemInstanceState = planItemInstance.getState();</span>
+        
+<span class="nc" id="L1124">        Date currentTime = cmmnEngineConfiguration.getClock().getCurrentTime();</span>
+<span class="nc" id="L1125">        planItemInstance.setEndedTime(currentTime);</span>
+<span class="nc" id="L1126">        planItemInstance.setTerminatedTime(currentTime);</span>
+<span class="nc" id="L1127">        planItemInstance.setState(PlanItemInstanceState.TERMINATED);</span>
+        
+<span class="nc" id="L1129">        CommandContextUtil.getCmmnHistoryManager(commandContext).recordPlanItemInstanceTerminated(planItemInstance);</span>
+        
+<span class="nc" id="L1131">        cmmnEngineConfiguration.getListenerNotificationHelper().executeLifecycleListeners(</span>
+<span class="nc" id="L1132">                commandContext, planItemInstance, currentPlanItemInstanceState, planItemInstance.getState());</span>
+        
+<span class="nc bnc" id="L1134" title="All 2 branches missed.">        if (planItemInstance.getPlanItem() != null) {</span>
+<span class="nc" id="L1135">            PlanItemDefinition planItemDefinition = planItemInstance.getPlanItem().getPlanItemDefinition();</span>
+<span class="nc bnc" id="L1136" title="All 2 branches missed.">            if (planItemDefinition instanceof HumanTask) {</span>
+<span class="nc bnc" id="L1137" title="All 2 branches missed.">                if (PlanItemInstanceState.ACTIVE.equals(currentPlanItemInstanceState)) {</span>
+<span class="nc" id="L1138">                    TaskService taskService = cmmnEngineConfiguration.getTaskServiceConfiguration().getTaskService();</span>
+<span class="nc" id="L1139">                    List&lt;TaskEntity&gt; taskEntities = taskService.findTasksBySubScopeIdScopeType(planItemInstance.getId(), ScopeTypes.CMMN);</span>
+<span class="nc bnc" id="L1140" title="All 4 branches missed.">                    if (taskEntities == null || taskEntities.isEmpty()) {</span>
+<span class="nc" id="L1141">                        throw new FlowableException(&quot;No task entity found for plan item instance &quot; + planItemInstance.getId());</span>
+                    }
+        
+                    // Should be only one
+<span class="nc bnc" id="L1145" title="All 2 branches missed.">                    for (TaskEntity taskEntity : taskEntities) {</span>
+<span class="nc bnc" id="L1146" title="All 2 branches missed.">                        if (!taskEntity.isDeleted()) {</span>
+<span class="nc" id="L1147">                            TaskHelper.deleteTask(taskEntity, &quot;Change plan item state&quot;, false, false, cmmnEngineConfiguration);</span>
+                        }
+<span class="nc" id="L1149">                    }</span>
+<span class="nc" id="L1150">                }</span>
+                
+<span class="nc bnc" id="L1152" title="All 2 branches missed.">            } else if (planItemDefinition instanceof Stage) {</span>
+<span class="nc" id="L1153">                deleteChildPlanItemInstances(planItemInstance, commandContext);</span>
+            
+<span class="nc bnc" id="L1155" title="All 2 branches missed.">            } else if (planItemDefinition instanceof ProcessTask) {</span>
+<span class="nc bnc" id="L1156" title="All 2 branches missed.">                if (planItemInstance.getReferenceId() != null) {</span>
+<span class="nc" id="L1157">                    cmmnEngineConfiguration.getProcessInstanceService().deleteProcessInstance(planItemInstance.getReferenceId());</span>
+                }
+
+<span class="nc bnc" id="L1160" title="All 2 branches missed.">            } else if (planItemDefinition instanceof EventListener) {</span>
+                
+<span class="nc bnc" id="L1162" title="All 2 branches missed.">                if (planItemDefinition instanceof TimerEventListener) {</span>
+<span class="nc" id="L1163">                    JobService jobService = cmmnEngineConfiguration.getJobServiceConfiguration().getJobService();</span>
+<span class="nc" id="L1164">                    List&lt;Job&gt; timerJobs = jobService.createTimerJobQuery()</span>
+<span class="nc" id="L1165">                        .caseInstanceId(planItemInstance.getCaseInstanceId())</span>
+<span class="nc" id="L1166">                        .planItemInstanceId(planItemInstance.getId())</span>
+<span class="nc" id="L1167">                        .elementId(planItemInstance.getPlanItemDefinitionId())</span>
+<span class="nc" id="L1168">                        .list();</span>
+                    
+<span class="nc bnc" id="L1170" title="All 4 branches missed.">                    if (timerJobs != null &amp;&amp; !timerJobs.isEmpty()) {</span>
+<span class="nc bnc" id="L1171" title="All 2 branches missed.">                        for (Job job : timerJobs) {</span>
+<span class="nc" id="L1172">                            cmmnEngineConfiguration.getJobServiceConfiguration().getTimerJobEntityManager().delete(job.getId());</span>
+<span class="nc" id="L1173">                        }</span>
+                    }
+                
+<span class="nc bnc" id="L1176" title="All 2 branches missed.">                } else if (!(planItemDefinition instanceof UserEventListener)) {</span>
+<span class="nc" id="L1177">                    EventSubscriptionService eventSubscriptionService = cmmnEngineConfiguration.getEventSubscriptionServiceConfiguration().getEventSubscriptionService();</span>
+<span class="nc" id="L1178">                    List&lt;EventSubscriptionEntity&gt; eventSubscriptions = eventSubscriptionService.findEventSubscriptionsBySubScopeId(planItemInstance.getId());</span>
+                    
+<span class="nc bnc" id="L1180" title="All 4 branches missed.">                    if (eventSubscriptions != null &amp;&amp; !eventSubscriptions.isEmpty()) {</span>
+<span class="nc bnc" id="L1181" title="All 2 branches missed.">                        for (EventSubscriptionEntity eventSubscription : eventSubscriptions) {</span>
+<span class="nc" id="L1182">                            eventSubscriptionService.deleteEventSubscription(eventSubscription);</span>
+<span class="nc" id="L1183">                        }</span>
+                    }
+<span class="nc" id="L1185">                }</span>
+<span class="nc bnc" id="L1186" title="All 2 branches missed.">            } else if (planItemDefinition instanceof CaseTask) {</span>
+<span class="nc bnc" id="L1187" title="All 2 branches missed.">                if (planItemInstance.getReferenceId() != null) {</span>
+<span class="nc" id="L1188">                    cmmnEngineConfiguration.getCmmnRuntimeService().deleteCaseInstance(planItemInstance.getReferenceId());</span>
+                }
+            }
+        }
+<span class="nc" id="L1192">    }</span>
+    
+    protected void deleteChildPlanItemInstances(PlanItemInstanceEntity planItemInstance, CommandContext commandContext) {
+<span class="nc" id="L1195">        List&lt;PlanItemInstanceEntity&gt; childPlanItemInstances = planItemInstance.getChildPlanItemInstances();</span>
+<span class="nc bnc" id="L1196" title="All 2 branches missed.">        if (childPlanItemInstances != null) {</span>
+<span class="nc bnc" id="L1197" title="All 2 branches missed.">            for (PlanItemInstanceEntity childPlanItemInstance : childPlanItemInstances) {</span>
+<span class="nc" id="L1198">                deleteChildPlanItemInstances(childPlanItemInstance, commandContext);</span>
+<span class="nc" id="L1199">                terminatePlanItemInstance(childPlanItemInstance, commandContext);</span>
+<span class="nc" id="L1200">            }</span>
+        }
+<span class="nc" id="L1202">    }</span>
+
+    protected void handleHumanTaskNewAssignee(PlanItemInstanceEntity taskPlanItemInstance, String newAssigneeId, CommandContext commandContext) {
+<span class="nc" id="L1205">        TaskService taskService = cmmnEngineConfiguration.getTaskServiceConfiguration().getTaskService();</span>
+<span class="nc" id="L1206">        TaskEntityImpl task = (TaskEntityImpl) taskService.createTaskQuery(cmmnEngineConfiguration.getCommandExecutor(), cmmnEngineConfiguration)</span>
+<span class="nc" id="L1207">                .subScopeId(taskPlanItemInstance.getId()).scopeType(ScopeTypes.CMMN).singleResult();</span>
+<span class="nc" id="L1208">        TaskHelper.changeTaskAssignee(task, newAssigneeId, cmmnEngineConfiguration);</span>
+<span class="nc" id="L1209">    }</span>
+
+    protected boolean hasRepetitionRule(PlanItemInstanceEntity planItemInstanceEntity) {
+<span class="nc bnc" id="L1212" title="All 4 branches missed.">        if (planItemInstanceEntity != null &amp;&amp; planItemInstanceEntity.getPlanItem() != null) {</span>
+<span class="nc bnc" id="L1213" title="All 2 branches missed.">            return planItemInstanceEntity.getPlanItem().getItemControl() != null &amp;&amp; </span>
+<span class="nc bnc" id="L1214" title="All 2 branches missed.">                            planItemInstanceEntity.getPlanItem().getItemControl().getRepetitionRule() != null;</span>
+        }
+<span class="nc" id="L1216">        return false;</span>
+    }
+    
+    protected boolean evaluateRepetitionRule(PlanItemInstanceEntity planItemInstanceEntity, CommandContext commandContext) {
+<span class="nc bnc" id="L1220" title="All 2 branches missed.">        if (hasRepetitionRule(planItemInstanceEntity)) {</span>
+<span class="nc" id="L1221">            String repetitionCondition = planItemInstanceEntity.getPlanItem().getItemControl().getRepetitionRule().getCondition();</span>
+<span class="nc" id="L1222">            return evaluateRepetitionRule(planItemInstanceEntity, repetitionCondition, commandContext);</span>
+        }
+<span class="nc" id="L1224">        return false;</span>
+    }
+
+    protected boolean evaluateRepetitionRule(VariableContainer variableContainer, String repetitionCondition, CommandContext commandContext) {
+<span class="nc bnc" id="L1228" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(repetitionCondition)) {</span>
+<span class="nc" id="L1229">            return ExpressionUtil.evaluateBooleanExpression(commandContext, variableContainer, repetitionCondition);</span>
+        } else {
+<span class="nc" id="L1231">            return true; // no condition set, but a repetition rule defined is assumed to be defaulting to true</span>
+        }
+    }
+    
+    protected PlanItemInstanceEntity createPlanItemInstanceDuplicateForRepetition(PlanItemInstanceEntity planItemInstanceEntity, CommandContext commandContext) {
+<span class="nc" id="L1236">        PlanItemInstanceEntity childPlanItemInstanceEntity = copyAndInsertPlanItemInstance(commandContext, planItemInstanceEntity, false);</span>
+
+<span class="nc" id="L1238">        String oldState = childPlanItemInstanceEntity.getState();</span>
+<span class="nc" id="L1239">        String newState = PlanItemInstanceState.WAITING_FOR_REPETITION;</span>
+<span class="nc" id="L1240">        childPlanItemInstanceEntity.setState(newState);</span>
+<span class="nc" id="L1241">        cmmnEngineConfiguration.getListenerNotificationHelper().executeLifecycleListeners(commandContext, planItemInstanceEntity, oldState, newState);</span>
+
+        // createPlanItemInstance operations will also sync planItemInstance history
+<span class="nc" id="L1244">        CommandContextUtil.getAgenda(commandContext).planCreatePlanItemInstanceForRepetitionOperation(childPlanItemInstanceEntity);</span>
+<span class="nc" id="L1245">        return childPlanItemInstanceEntity;</span>
+    }
+    
+    protected PlanItemInstanceEntity copyAndInsertPlanItemInstance(CommandContext commandContext, PlanItemInstanceEntity planItemInstanceEntityToCopy, boolean addToParent) {
+<span class="nc" id="L1249">        PlanItemInstance stagePlanItem = planItemInstanceEntityToCopy.getStagePlanItemInstanceEntity();</span>
+<span class="nc bnc" id="L1250" title="All 4 branches missed.">        if (stagePlanItem == null &amp;&amp; planItemInstanceEntityToCopy.getStageInstanceId() != null) {</span>
+<span class="nc" id="L1251">            stagePlanItem = cmmnEngineConfiguration.getPlanItemInstanceEntityManager().findById(planItemInstanceEntityToCopy.getStageInstanceId());</span>
+        }
+
+<span class="nc" id="L1254">        PlanItemInstanceEntity planItemInstanceEntity = CommandContextUtil.getPlanItemInstanceEntityManager(commandContext).createPlanItemInstanceEntityBuilder()</span>
+<span class="nc" id="L1255">            .planItem(planItemInstanceEntityToCopy.getPlanItem())</span>
+<span class="nc" id="L1256">            .caseDefinitionId(planItemInstanceEntityToCopy.getCaseDefinitionId())</span>
+<span class="nc" id="L1257">            .caseInstanceId(planItemInstanceEntityToCopy.getCaseInstanceId())</span>
+<span class="nc" id="L1258">            .stagePlanItemInstance(stagePlanItem)</span>
+<span class="nc" id="L1259">            .tenantId(planItemInstanceEntityToCopy.getTenantId())</span>
+<span class="nc" id="L1260">            .addToParent(addToParent)</span>
+<span class="nc" id="L1261">            .create();</span>
+
+<span class="nc bnc" id="L1263" title="All 2 branches missed.">        if (hasRepetitionRule(planItemInstanceEntityToCopy)) {</span>
+<span class="nc" id="L1264">            RepetitionRule repetitionRule = planItemInstanceEntity.getPlanItem().getItemControl().getRepetitionRule();</span>
+<span class="nc bnc" id="L1265" title="All 4 branches missed.">            if (repetitionRule.getAggregations() != null || !repetitionRule.isIgnoreRepetitionCounterVariable()) {</span>
+<span class="nc" id="L1266">                int counter = getRepetitionCounter(planItemInstanceEntityToCopy);</span>
+<span class="nc" id="L1267">                setRepetitionCounter(planItemInstanceEntity, counter);</span>
+            }
+        }
+
+<span class="nc" id="L1271">        return planItemInstanceEntity;</span>
+    }
+    
+    protected int getRepetitionCounter(PlanItemInstanceEntity repeatingPlanItemInstanceEntity) {
+<span class="nc" id="L1275">        Integer counter = (Integer) repeatingPlanItemInstanceEntity.getVariableLocal(getCounterVariable(repeatingPlanItemInstanceEntity));</span>
+<span class="nc bnc" id="L1276" title="All 2 branches missed.">        if (counter == null) {</span>
+<span class="nc" id="L1277">            return 0;</span>
+        } else {
+<span class="nc" id="L1279">            return counter.intValue();</span>
+        }
+    }
+    
+    protected void setRepetitionCounter(PlanItemInstanceEntity repeatingPlanItemInstanceEntity, int counterValue) {
+<span class="nc" id="L1284">        repeatingPlanItemInstanceEntity.setVariableLocal(getCounterVariable(repeatingPlanItemInstanceEntity), counterValue);</span>
+<span class="nc" id="L1285">    }</span>
+
+    protected String getCounterVariable(PlanItemInstanceEntity repeatingPlanItemInstanceEntity) {
+<span class="nc" id="L1288">        String repetitionCounterVariableName = repeatingPlanItemInstanceEntity.getPlanItem().getItemControl().getRepetitionRule().getRepetitionCounterVariableName();</span>
+<span class="nc" id="L1289">        return repetitionCounterVariableName;</span>
+    }
+    
+    protected boolean isExpression(String variableName) {
+<span class="nc bnc" id="L1293" title="All 4 branches missed.">        return variableName.startsWith(&quot;${&quot;) || variableName.startsWith(&quot;#{&quot;);</span>
+    }
+
+    protected CaseDefinition resolveCaseDefinition(String caseDefinitionKey, Integer caseDefinitionVersion, String tenantId, CommandContext commandContext) {
+<span class="nc" id="L1297">        CaseDefinitionEntityManager caseDefinitionEntityManager = CommandContextUtil.getCaseDefinitionEntityManager(commandContext);</span>
+<span class="nc" id="L1298">        CaseDefinition caseDefinition = null;</span>
+<span class="nc bnc" id="L1299" title="All 2 branches missed.">        if (caseDefinitionVersion != null) {</span>
+<span class="nc" id="L1300">            caseDefinition = caseDefinitionEntityManager.findCaseDefinitionByKeyAndVersionAndTenantId(caseDefinitionKey, caseDefinitionVersion, tenantId);</span>
+        } else {
+<span class="nc bnc" id="L1302" title="All 4 branches missed.">            if (tenantId == null || CmmnEngineConfiguration.NO_TENANT_ID.equals(tenantId)) {</span>
+<span class="nc" id="L1303">                caseDefinition = caseDefinitionEntityManager.findLatestCaseDefinitionByKey(caseDefinitionKey);</span>
+            } else {
+<span class="nc" id="L1305">                caseDefinition = caseDefinitionEntityManager.findLatestCaseDefinitionByKeyAndTenantId(caseDefinitionKey, tenantId);</span>
+            }
+        }
+
+<span class="nc bnc" id="L1309" title="All 2 branches missed.">        if (caseDefinition == null) {</span>
+<span class="nc" id="L1310">            CmmnDeploymentManager deploymentManager = CommandContextUtil.getCmmnEngineConfiguration(commandContext).getDeploymentManager();</span>
+<span class="nc bnc" id="L1311" title="All 4 branches missed.">            if (tenantId == null || CmmnEngineConfiguration.NO_TENANT_ID.equals(tenantId)) {</span>
+<span class="nc" id="L1312">                caseDefinition = deploymentManager.findDeployedLatestCaseDefinitionByKey(caseDefinitionKey);</span>
+            } else {
+<span class="nc" id="L1314">                caseDefinition = deploymentManager.findDeployedLatestCaseDefinitionByKeyAndTenantId(caseDefinitionKey, tenantId);</span>
+            }
+        }
+<span class="nc" id="L1317">        return caseDefinition;</span>
+    }
+
+    protected String getCaseDefinitionIdToMigrateTo(CaseInstanceChangeState caseInstanceChangeState) {
+<span class="nc" id="L1321">        String caseDefinitionIdToMigrateTo = null;</span>
+<span class="nc bnc" id="L1322" title="All 2 branches missed.">        if (caseInstanceChangeState.getCaseDefinitionToMigrateTo() != null) {</span>
+<span class="nc" id="L1323">            caseDefinitionIdToMigrateTo = caseInstanceChangeState.getCaseDefinitionToMigrateTo().getId();</span>
+        }
+<span class="nc" id="L1325">        return caseDefinitionIdToMigrateTo;</span>
+    }
+
+    protected &lt;T extends PlanItemDefinitionMapping&gt; boolean evaluateCondition(VariableContainer variableContainer, T planItemDefinitionMapping) {
+<span class="nc bnc" id="L1329" title="All 2 branches missed.">        if (planItemDefinitionMapping.getCondition() != null) {</span>
+<span class="nc" id="L1330">            Object conditionResult = cmmnEngineConfiguration.getExpressionManager().createExpression(planItemDefinitionMapping.getCondition())</span>
+<span class="nc" id="L1331">                    .getValue(variableContainer);</span>
+<span class="nc bnc" id="L1332" title="All 4 branches missed.">            return conditionResult instanceof Boolean condition &amp;&amp; condition;</span>
+        }
+<span class="nc" id="L1334">        return true;</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

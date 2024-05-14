@@ -1,0 +1,724 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ServiceTaskWithFuturesTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.bpmn.servicetask</a> &gt; <span class="el_source">ServiceTaskWithFuturesTest.java</span></div><h1>ServiceTaskWithFuturesTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.test.bpmn.servicetask;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.entry;
+import static org.assertj.core.api.InstanceOfAssertFactories.STRING;
+
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
+
+import org.flowable.bpmn.model.ServiceTask;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.async.AsyncTaskExecutor;
+import org.flowable.common.engine.impl.agenda.AgendaFutureMaxWaitTimeoutProvider;
+import org.flowable.common.engine.impl.history.HistoryLevel;
+import org.flowable.common.engine.impl.javax.el.ELException;
+import org.flowable.engine.delegate.DelegateExecution;
+import org.flowable.engine.delegate.FlowableFutureJavaDelegate;
+import org.flowable.engine.delegate.JavaDelegate;
+import org.flowable.engine.delegate.MapBasedFlowableFutureJavaDelegate;
+import org.flowable.engine.delegate.ReadOnlyDelegateExecution;
+import org.flowable.engine.history.HistoricProcessInstance;
+import org.flowable.engine.impl.test.HistoryTestHelper;
+import org.flowable.engine.impl.test.PluggableFlowableTestCase;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.test.Deployment;
+import org.flowable.variable.api.history.HistoricVariableInstance;
+import org.junit.jupiter.api.Test;
+
+/**
+ * @author Filip Hrisafov
+ */
+<span class="nc" id="L56">class ServiceTaskWithFuturesTest extends PluggableFlowableTestCase {</span>
+
+    @Test
+    @Deployment
+    void testExpressionReturnsFuture() {
+
+<span class="nc" id="L62">        CountDownLatch latch = new CountDownLatch(2);</span>
+<span class="nc" id="L63">        TestBeanReturnsFuture testBean = new TestBeanReturnsFuture(latch, processEngineConfiguration.getAsyncTaskExecutor());</span>
+<span class="nc" id="L64">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L65">                .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L66">                .transientVariable(&quot;bean&quot;, testBean)</span>
+<span class="nc" id="L67">                .start();</span>
+
+<span class="nc" id="L69">        assertProcessEnded(processInstance.getId());</span>
+
+<span class="nc bnc" id="L71" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.AUDIT, processEngineConfiguration)) {</span>
+<span class="nc" id="L72">            HistoricProcessInstance historicProcessInstance = historyService.createHistoricProcessInstanceQuery().processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L73">                    .singleResult();</span>
+
+            // Every service task sleeps for 1s, but when we use futures it should take less then 2s.
+<span class="nc" id="L76">            assertThat(historicProcessInstance.getDurationInMillis()).isLessThan(1500);</span>
+        }
+<span class="nc" id="L78">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/bpmn/servicetask/ServiceTaskWithFuturesTest.testExpressionReturnsFuture.bpmn20.xml&quot;)
+    public void testAgendaFutureMaxWaitTimeoutOperationProvider() {
+
+<span class="nc" id="L84">        AgendaFutureMaxWaitTimeoutProvider originalTimeoutProvider = processEngineConfiguration.getAgendaFutureMaxWaitTimeoutProvider();</span>
+        try {
+<span class="nc" id="L86">            processEngineConfiguration.setAgendaFutureMaxWaitTimeoutProvider(commandContext -&gt; Duration.ofMillis(500));</span>
+<span class="nc" id="L87">            CountDownLatch latch = new CountDownLatch(3);</span>
+<span class="nc" id="L88">            TestBeanReturnsFuture testBean = new TestBeanReturnsFuture(latch, processEngineConfiguration.getAsyncTaskExecutor());</span>
+<span class="nc" id="L89">            assertThatThrownBy(() -&gt; {</span>
+<span class="nc" id="L90">                runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L91">                        .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L92">                        .transientVariable(&quot;bean&quot;, testBean)</span>
+<span class="nc" id="L93">                        .start();</span>
+<span class="nc" id="L94">            })</span>
+<span class="nc" id="L95">                    .isExactlyInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L96">                    .hasMessage(&quot;None of the available futures completed within the max timeout of PT0.5S&quot;)</span>
+<span class="nc" id="L97">                    .cause()</span>
+<span class="nc" id="L98">                    .isInstanceOf(TimeoutException.class);</span>
+        } finally {
+<span class="nc" id="L100">            processEngineConfiguration.setAgendaFutureMaxWaitTimeoutProvider(originalTimeoutProvider);</span>
+        }
+<span class="nc" id="L102">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/bpmn/servicetask/ServiceTaskWithFuturesTest.testParallelAndSequentialExpression.bpmn20.xml&quot;)
+    void testParallelAndSequentialExpressionDoesNotReturnFuture() {
+        // when the expression doesn't return a future then the execution order should be the following (same as the planned order):
+        // serviceTask1 -&gt; serviceTask2 -&gt; serviceTask1_2 -&gt; serviceTask2_2
+<span class="nc" id="L109">        Object bean = new Object() {</span>
+
+            public Integer invoke(AtomicInteger counter) {
+<span class="nc" id="L112">                return counter.incrementAndGet();</span>
+            }
+        };
+<span class="nc" id="L115">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L116">                .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L117">                .transientVariable(&quot;counter&quot;, new AtomicInteger(0))</span>
+<span class="nc" id="L118">                .transientVariable(&quot;bean1&quot;, bean)</span>
+<span class="nc" id="L119">                .transientVariable(&quot;bean2&quot;, bean)</span>
+<span class="nc" id="L120">                .start();</span>
+
+<span class="nc" id="L122">        assertProcessEnded(processInstance.getId());</span>
+
+<span class="nc" id="L124">        assertThat(processInstance.getProcessVariables())</span>
+<span class="nc" id="L125">                .contains(</span>
+<span class="nc" id="L126">                        entry(&quot;service1_1Var&quot;, 1),</span>
+<span class="nc" id="L127">                        entry(&quot;service1_2Var&quot;, 3),</span>
+<span class="nc" id="L128">                        entry(&quot;service2_1Var&quot;, 2),</span>
+<span class="nc" id="L129">                        entry(&quot;service2_2Var&quot;, 4)</span>
+                );
+<span class="nc" id="L131">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/bpmn/servicetask/ServiceTaskWithFuturesTest.testParallelAndSequentialExpression.bpmn20.xml&quot;)
+    void testParallelAndSequentialExpressionReturnsCompletedFuture() {
+        // when the expression returns a completed future then the execution order should be the same as when it doesn't return a future.
+        // The order should be the following (same as the planned order):
+        // serviceTask1 -&gt; serviceTask2 -&gt; serviceTask1_2 -&gt; serviceTask2_2
+<span class="nc" id="L139">        Object bean = new Object() {</span>
+
+            public CompletableFuture&lt;Integer&gt; invoke(AtomicInteger counter) {
+<span class="nc" id="L142">                return CompletableFuture.completedFuture(counter.incrementAndGet());</span>
+            }
+        };
+<span class="nc" id="L145">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L146">                .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L147">                .transientVariable(&quot;counter&quot;, new AtomicInteger(0))</span>
+<span class="nc" id="L148">                .transientVariable(&quot;bean1&quot;, bean)</span>
+<span class="nc" id="L149">                .transientVariable(&quot;bean2&quot;, bean)</span>
+<span class="nc" id="L150">                .start();</span>
+
+<span class="nc" id="L152">        assertProcessEnded(processInstance.getId());</span>
+
+<span class="nc" id="L154">        assertThat(processInstance.getProcessVariables())</span>
+<span class="nc" id="L155">                .contains(</span>
+<span class="nc" id="L156">                        entry(&quot;service1_1Var&quot;, 1),</span>
+<span class="nc" id="L157">                        entry(&quot;service1_2Var&quot;, 3),</span>
+<span class="nc" id="L158">                        entry(&quot;service2_1Var&quot;, 2),</span>
+<span class="nc" id="L159">                        entry(&quot;service2_2Var&quot;, 4)</span>
+                );
+<span class="nc" id="L161">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/bpmn/servicetask/ServiceTaskWithFuturesTest.testParallelAndSequentialExpression.bpmn20.xml&quot;)
+    void testParallelAndSequentialExpressionReturnsNotCompletedFuture() {
+        // This test has the most complex setup.
+        // The idea is to show that when a future is completed its action will immediately be executed.
+        // With this setup bean1 cannot continue until bean2 has started executing.
+<span class="nc" id="L169">        CountDownLatch bean1Enter = new CountDownLatch(1);</span>
+<span class="nc" id="L170">        CountDownLatch bean2Enter = new CountDownLatch(1);</span>
+<span class="nc" id="L171">        CountDownLatch commonLatch = new CountDownLatch(2);</span>
+
+<span class="nc" id="L173">        Object bean1 = new Object() {</span>
+
+            public CompletableFuture&lt;Integer&gt; invoke(AtomicInteger counter) {
+<span class="nc" id="L176">                return processEngineConfiguration.getAsyncTaskExecutor().submit(() -&gt; {</span>
+<span class="nc" id="L177">                    commonLatch.countDown();</span>
+<span class="nc" id="L178">                    bean1Enter.countDown();</span>
+                    // Now wait for bean2 to be entered
+                    try {
+<span class="nc bnc" id="L181" title="All 2 branches missed.">                        if (!bean2Enter.await(2, TimeUnit.SECONDS)) {</span>
+<span class="nc" id="L182">                            throw new FlowableException(&quot;Bean2 did not hit its latch&quot;);</span>
+                        }
+
+<span class="nc bnc" id="L185" title="All 2 branches missed.">                        if (commonLatch.await(2, TimeUnit.SECONDS)) {</span>
+<span class="nc" id="L186">                            Thread.sleep(100); // Thread sleep to slower the execution a bit</span>
+<span class="nc" id="L187">                            return counter.incrementAndGet();</span>
+                        } else {
+<span class="nc" id="L189">                            throw new FlowableException(&quot;Countdown latch did not reach 0&quot;);</span>
+                        }
+<span class="nc" id="L191">                    } catch (InterruptedException e) {</span>
+<span class="nc" id="L192">                        Thread.currentThread().interrupt();</span>
+                    }
+<span class="nc" id="L194">                    return counter.incrementAndGet();</span>
+                });
+
+            }
+        };
+
+<span class="nc" id="L200">        Object bean2 = new Object() {</span>
+
+            public CompletableFuture&lt;Integer&gt; invoke(AtomicInteger counter) {
+<span class="nc" id="L203">                return processEngineConfiguration.getAsyncTaskExecutor().submit(() -&gt; {</span>
+                    try {
+<span class="nc bnc" id="L205" title="All 2 branches missed.">                        if (!bean1Enter.await(2, TimeUnit.SECONDS)) {</span>
+<span class="nc" id="L206">                            throw new FlowableException(&quot;Bean1 did not hit its latch&quot;);</span>
+                        }
+<span class="nc" id="L208">                        bean2Enter.countDown();</span>
+<span class="nc" id="L209">                        return counter.incrementAndGet();</span>
+<span class="nc" id="L210">                    } catch (InterruptedException e) {</span>
+<span class="nc" id="L211">                        Thread.currentThread().interrupt();</span>
+                    } finally {
+<span class="nc" id="L213">                        commonLatch.countDown();</span>
+                    }
+<span class="nc" id="L215">                    return counter.incrementAndGet();</span>
+                });
+
+            }
+        };
+
+<span class="nc" id="L221">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L222">                .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L223">                .transientVariable(&quot;counter&quot;, new AtomicInteger(0))</span>
+<span class="nc" id="L224">                .transientVariable(&quot;bean1&quot;, bean1)</span>
+<span class="nc" id="L225">                .transientVariable(&quot;bean2&quot;, bean2)</span>
+<span class="nc" id="L226">                .start();</span>
+
+<span class="nc" id="L228">        assertProcessEnded(processInstance.getId());</span>
+
+<span class="nc" id="L230">        assertThat(processInstance.getProcessVariables())</span>
+<span class="nc" id="L231">                .contains(</span>
+<span class="nc" id="L232">                        entry(&quot;service1_1Var&quot;, 3),</span>
+<span class="nc" id="L233">                        entry(&quot;service1_2Var&quot;, 4),</span>
+<span class="nc" id="L234">                        entry(&quot;service2_1Var&quot;, 1),</span>
+<span class="nc" id="L235">                        entry(&quot;service2_2Var&quot;, 2)</span>
+                );
+<span class="nc" id="L237">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/bpmn/servicetask/ServiceTaskWithFuturesTest.testExpressionReturnsFuture.bpmn20.xml&quot;)
+    void testExpressionDoesNotReturnFuture() {
+
+<span class="nc" id="L243">        assertThatThrownBy(() -&gt; {</span>
+<span class="nc" id="L244">            CountDownLatch latch = new CountDownLatch(2);</span>
+<span class="nc" id="L245">            TestBean testBean = new TestBean(latch);</span>
+<span class="nc" id="L246">            ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L247">                    .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L248">                    .transientVariable(&quot;bean&quot;, testBean)</span>
+<span class="nc" id="L249">                    .start();</span>
+<span class="nc" id="L250">        })</span>
+<span class="nc" id="L251">                .isExactlyInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L252">                .cause()</span>
+<span class="nc" id="L253">                .isInstanceOf(ELException.class)</span>
+<span class="nc" id="L254">                .cause()</span>
+<span class="nc" id="L255">                .isExactlyInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L256">                .hasMessage(&quot;Countdown latch did not reach 0&quot;);</span>
+<span class="nc" id="L257">    }</span>
+
+    @Test
+    @Deployment
+    void testDelegateExpressionWithFutureJavaDelegate() {
+
+<span class="nc" id="L263">        String currentThreadName = Thread.currentThread().getName();</span>
+
+        // When using a normal JavaDelegate this process cannot complete
+        // because the latch needs to be decreased twice before every task returns a result
+        // Try changing TestFutureJavaDelegate to implement JavaDelegate instead
+<span class="nc" id="L268">        CountDownLatch latch = new CountDownLatch(2);</span>
+<span class="nc" id="L269">        TestFutureJavaDelegate testBean = new TestFutureJavaDelegate(latch);</span>
+<span class="nc" id="L270">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L271">                .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L272">                .transientVariable(&quot;bean&quot;, testBean)</span>
+<span class="nc" id="L273">                .transientVariable(&quot;counter&quot;, new AtomicInteger(0))</span>
+<span class="nc" id="L274">                .start();</span>
+
+<span class="nc" id="L276">        assertProcessEnded(processInstance.getId());</span>
+
+<span class="nc bnc" id="L278" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.AUDIT, processEngineConfiguration)) {</span>
+<span class="nc" id="L279">            List&lt;HistoricVariableInstance&gt; historicVariableInstances = historyService.createHistoricVariableInstanceQuery().list();</span>
+<span class="nc" id="L280">            Map&lt;String, Object&gt; historicVariables = historicVariableInstances.stream()</span>
+<span class="nc bnc" id="L281" title="All 2 branches missed.">                    .filter(variable -&gt; !&quot;initiator&quot;.equals(variable.getVariableName()))</span>
+<span class="nc" id="L282">                    .collect(Collectors.toMap(HistoricVariableInstance::getVariableName, HistoricVariableInstance::getValue));</span>
+
+<span class="nc" id="L284">            assertThat(historicVariables)</span>
+<span class="nc" id="L285">                    .containsOnlyKeys(</span>
+                            &quot;counter1&quot;, &quot;beforeExecutionThreadName1&quot;, &quot;executionThreadName1&quot;, &quot;afterExecutionThreadName1&quot;,
+                            &quot;counter2&quot;, &quot;beforeExecutionThreadName2&quot;, &quot;executionThreadName2&quot;, &quot;afterExecutionThreadName2&quot;
+                    )
+<span class="nc" id="L289">                    .contains(</span>
+<span class="nc" id="L290">                            entry(&quot;counter1&quot;, 1),</span>
+<span class="nc" id="L291">                            entry(&quot;beforeExecutionThreadName1&quot;, currentThreadName),</span>
+<span class="nc" id="L292">                            entry(&quot;afterExecutionThreadName1&quot;, currentThreadName),</span>
+<span class="nc" id="L293">                            entry(&quot;counter2&quot;, 2),</span>
+<span class="nc" id="L294">                            entry(&quot;beforeExecutionThreadName2&quot;, currentThreadName),</span>
+<span class="nc" id="L295">                            entry(&quot;afterExecutionThreadName2&quot;, currentThreadName)</span>
+                    );
+
+<span class="nc" id="L298">            assertThat(historicVariables.get(&quot;executionThreadName1&quot;))</span>
+<span class="nc" id="L299">                    .asInstanceOf(STRING)</span>
+<span class="nc" id="L300">                    .isNotEqualTo(currentThreadName)</span>
+<span class="nc" id="L301">                    .startsWith(&quot;flowable-async-task-invoker-thread-&quot;);</span>
+
+<span class="nc" id="L303">            assertThat(historicVariables.get(&quot;executionThreadName2&quot;))</span>
+<span class="nc" id="L304">                    .asInstanceOf(STRING)</span>
+<span class="nc" id="L305">                    .isNotEqualTo(currentThreadName)</span>
+                    // The executions should be done on different threads
+<span class="nc" id="L307">                    .isNotEqualTo(historicVariables.get(&quot;executionThreadName1&quot;))</span>
+<span class="nc" id="L308">                    .startsWith(&quot;flowable-async-task-invoker-thread-&quot;);</span>
+        }
+<span class="nc" id="L310">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/bpmn/servicetask/ServiceTaskWithFuturesTest.testDelegateExpressionWithFutureJavaDelegate.bpmn20.xml&quot;, tenantId = &quot;flowable&quot;)
+    void testDelegateExpressionWithMapBasedFutureJavaDelegate() {
+<span class="nc" id="L315">        List&lt;ReadOnlyDelegateExecution&gt; delegateExecutions = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L316">        MapBasedFlowableFutureJavaDelegate bean = inputData -&gt; {</span>
+<span class="nc" id="L317">            delegateExecutions.add(inputData);</span>
+<span class="nc" id="L318">            return Collections.singletonMap(inputData.getCurrentActivityId(), &quot;done&quot;);</span>
+        };
+<span class="nc" id="L320">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L321">                .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L322">                .tenantId(&quot;flowable&quot;)</span>
+<span class="nc" id="L323">                .businessKey(&quot;test-key&quot;)</span>
+<span class="nc" id="L324">                .name(&quot;Process name&quot;)</span>
+<span class="nc" id="L325">                .variable(&quot;testVar&quot;, &quot;test&quot;)</span>
+<span class="nc" id="L326">                .transientVariable(&quot;bean&quot;, bean)</span>
+<span class="nc" id="L327">                .transientVariable(&quot;counter&quot;, new AtomicInteger(0))</span>
+<span class="nc" id="L328">                .start();</span>
+
+<span class="nc" id="L330">        assertThat(processInstance.getProcessVariables())</span>
+<span class="nc" id="L331">                .contains(</span>
+<span class="nc" id="L332">                        entry(&quot;serviceTask1&quot;, &quot;done&quot;),</span>
+<span class="nc" id="L333">                        entry(&quot;serviceTask2&quot;, &quot;done&quot;)</span>
+                );
+
+<span class="nc" id="L336">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L337">        assertThat(delegateExecutions)</span>
+<span class="nc" id="L338">                .extracting(ReadOnlyDelegateExecution::getCurrentActivityId)</span>
+<span class="nc" id="L339">                .containsExactly(&quot;serviceTask1&quot;, &quot;serviceTask2&quot;);</span>
+
+<span class="nc" id="L341">        ReadOnlyDelegateExecution task1Delegate = delegateExecutions.get(0);</span>
+<span class="nc" id="L342">        assertThat(task1Delegate.getId()).isNotNull();</span>
+<span class="nc" id="L343">        assertThat(task1Delegate.getProcessInstanceId()).isEqualTo(processInstance.getId());</span>
+<span class="nc" id="L344">        assertThat(task1Delegate.getRootProcessInstanceId()).isEqualTo(processInstance.getId());</span>
+<span class="nc" id="L345">        assertThat(task1Delegate.getProcessInstanceBusinessKey()).isEqualTo(&quot;test-key&quot;);</span>
+<span class="nc" id="L346">        assertThat(task1Delegate.getProcessDefinitionId()).isNotNull();</span>
+<span class="nc" id="L347">        assertThat(task1Delegate.getTenantId()).isEqualTo(&quot;flowable&quot;);</span>
+<span class="nc" id="L348">        assertThat(task1Delegate.isActive()).isTrue();</span>
+<span class="nc" id="L349">        assertThat(task1Delegate.hasVariable(&quot;serviceTask1&quot;)).isFalse();</span>
+<span class="nc" id="L350">        assertThat(task1Delegate.hasVariable(&quot;serviceTask2&quot;)).isFalse();</span>
+<span class="nc" id="L351">        assertThat(task1Delegate.getVariable(&quot;testVar&quot;)).isEqualTo(&quot;test&quot;);</span>
+<span class="nc" id="L352">        assertThat(task1Delegate.getCurrentFlowElement()).isInstanceOf(ServiceTask.class);</span>
+<span class="nc" id="L353">        ServiceTask serviceTask1 = (ServiceTask) task1Delegate.getCurrentFlowElement();</span>
+<span class="nc" id="L354">        assertThat(serviceTask1.getId()).isEqualTo(&quot;serviceTask1&quot;);</span>
+
+<span class="nc" id="L356">        ReadOnlyDelegateExecution task2Delegate = delegateExecutions.get(1);</span>
+<span class="nc" id="L357">        assertThat(task2Delegate.getId()).isNotNull();</span>
+<span class="nc" id="L358">        assertThat(task2Delegate.getProcessInstanceId()).isEqualTo(processInstance.getId());</span>
+<span class="nc" id="L359">        assertThat(task2Delegate.getRootProcessInstanceId()).isEqualTo(processInstance.getId());</span>
+<span class="nc" id="L360">        assertThat(task2Delegate.getProcessInstanceBusinessKey()).isEqualTo(&quot;test-key&quot;);</span>
+<span class="nc" id="L361">        assertThat(task2Delegate.getProcessDefinitionId()).isNotNull();</span>
+<span class="nc" id="L362">        assertThat(task2Delegate.getTenantId()).isEqualTo(&quot;flowable&quot;);</span>
+<span class="nc" id="L363">        assertThat(task2Delegate.isActive()).isTrue();</span>
+<span class="nc" id="L364">        assertThat(task2Delegate.hasVariable(&quot;serviceTask1&quot;)).isFalse();</span>
+<span class="nc" id="L365">        assertThat(task2Delegate.hasVariable(&quot;serviceTask2&quot;)).isFalse();</span>
+<span class="nc" id="L366">        assertThat(task2Delegate.getVariable(&quot;testVar&quot;)).isEqualTo(&quot;test&quot;);</span>
+<span class="nc" id="L367">        assertThat(task2Delegate.getCurrentFlowElement()).isInstanceOf(ServiceTask.class);</span>
+<span class="nc" id="L368">        ServiceTask serviceTask2 = (ServiceTask) task2Delegate.getCurrentFlowElement();</span>
+<span class="nc" id="L369">        assertThat(serviceTask2.getId()).isEqualTo(&quot;serviceTask2&quot;);</span>
+<span class="nc" id="L370">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/bpmn/servicetask/ServiceTaskWithFuturesTest.testDelegateExpressionWithFutureJavaDelegate.bpmn20.xml&quot;)
+    void testDelegateExpressionWithJavaDelegate() {
+
+        // This is using a normal JavaDelegate and thus the process cannot complete
+        // because the latch needs to be decreased twice before every task returns a result
+<span class="nc" id="L378">        CountDownLatch latch = new CountDownLatch(2);</span>
+<span class="nc" id="L379">        TestJavaDelegate testBean = new TestJavaDelegate(latch);</span>
+<span class="nc" id="L380">        assertThatThrownBy(() -&gt; {</span>
+<span class="nc" id="L381">            runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L382">                    .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L383">                    .transientVariable(&quot;bean&quot;, testBean)</span>
+<span class="nc" id="L384">                    .start();</span>
+<span class="nc" id="L385">        })</span>
+<span class="nc" id="L386">                .isExactlyInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L387">                .hasNoCause()</span>
+<span class="nc" id="L388">                .hasMessage(&quot;Countdown latch did not reach 0&quot;);</span>
+
+<span class="nc" id="L390">    }</span>
+
+    @Test
+    @Deployment
+    void testDelegateExpressionParallelAndSequentialFutureJavaDelegates() {
+        // the setup of the test is the following:
+        // there are 3 delegate executions:
+        // delegate1_1 -&gt; delegate1_2
+        // delegate2_1
+        // for delegate 1_1 to complete delegate2_1 should start executing
+        // for delegate 1_2 to complete delegate2_1 should start executing and 1_1 should be done
+        // for delegate2_1 to complete delegate1_2 should complete
+
+<span class="nc" id="L403">        CountDownLatch delegate1_1Done = new CountDownLatch(1);</span>
+<span class="nc" id="L404">        CountDownLatch delegate1_2Done = new CountDownLatch(1);</span>
+<span class="nc" id="L405">        CountDownLatch delegate2_1Done = new CountDownLatch(1);</span>
+<span class="nc" id="L406">        CountDownLatch delegate2_1Start = new CountDownLatch(1);</span>
+
+<span class="nc" id="L408">        MapBasedFlowableFutureJavaDelegate futureDelegate1_1 = new MapBasedFlowableFutureJavaDelegate() {</span>
+
+            @Override
+            public Map&lt;String, Object&gt; execute(ReadOnlyDelegateExecution inputData) {
+
+                try {
+
+<span class="nc bnc" id="L415" title="All 2 branches missed.">                    if (delegate2_1Start.await(2, TimeUnit.SECONDS)) {</span>
+<span class="nc" id="L416">                        AtomicInteger counter = (AtomicInteger) inputData.getVariable(&quot;counter&quot;);</span>
+<span class="nc" id="L417">                        return Collections.singletonMap(&quot;counterDelegate1_1&quot;, counter.incrementAndGet());</span>
+                    }
+
+<span class="nc" id="L420">                    throw new FlowableException(&quot;Delegate 2_1 did not start&quot;);</span>
+<span class="nc" id="L421">                } catch (InterruptedException e) {</span>
+<span class="nc" id="L422">                    Thread.currentThread().interrupt();</span>
+<span class="nc" id="L423">                    throw new FlowableException(&quot;Thread was interrupted&quot;);</span>
+                }
+            }
+
+            @Override
+            public void afterExecution(DelegateExecution execution, Map&lt;String, Object&gt; executionData) {
+<span class="nc" id="L429">                MapBasedFlowableFutureJavaDelegate.super.afterExecution(execution, executionData);</span>
+<span class="nc" id="L430">                delegate1_1Done.countDown();</span>
+<span class="nc" id="L431">            }</span>
+        };
+
+<span class="nc" id="L434">        MapBasedFlowableFutureJavaDelegate futureDelegate1_2 = new MapBasedFlowableFutureJavaDelegate() {</span>
+
+            @Override
+            public Map&lt;String, Object&gt; execute(ReadOnlyDelegateExecution inputData) {
+<span class="nc" id="L438">                assertThat(inputData.getVariable(&quot;counterDelegate1_1&quot;)).isEqualTo(1);</span>
+<span class="nc" id="L439">                assertThat(inputData.hasVariable(&quot;counterDelegate1_2&quot;)).isFalse();</span>
+<span class="nc" id="L440">                assertThat(inputData.hasVariable(&quot;counterDelegate2_1&quot;)).isFalse();</span>
+<span class="nc" id="L441">                AtomicInteger counter = (AtomicInteger) inputData.getVariable(&quot;counter&quot;);</span>
+<span class="nc" id="L442">                return Collections.singletonMap(&quot;counterDelegate1_2&quot;, counter.incrementAndGet());</span>
+            }
+
+            @Override
+            public void afterExecution(DelegateExecution execution, Map&lt;String, Object&gt; executionData) {
+<span class="nc" id="L447">                MapBasedFlowableFutureJavaDelegate.super.afterExecution(execution, executionData);</span>
+<span class="nc" id="L448">                delegate1_2Done.countDown();</span>
+<span class="nc" id="L449">            }</span>
+        };
+
+<span class="nc" id="L452">        MapBasedFlowableFutureJavaDelegate futureDelegate2_1 = new MapBasedFlowableFutureJavaDelegate() {</span>
+
+            @Override
+            public Map&lt;String, Object&gt; execute(ReadOnlyDelegateExecution inputData) {
+<span class="nc" id="L456">                delegate2_1Start.countDown();</span>
+
+                try {
+<span class="nc bnc" id="L459" title="All 2 branches missed.">                    if (delegate1_2Done.await(2, TimeUnit.SECONDS)) {</span>
+<span class="nc" id="L460">                        AtomicInteger counter = (AtomicInteger) inputData.getVariable(&quot;counter&quot;);</span>
+<span class="nc" id="L461">                        return Collections.singletonMap(&quot;counterDelegate2_1&quot;, counter.incrementAndGet());</span>
+                    }
+
+<span class="nc" id="L464">                    throw new FlowableException(&quot;Delegate 1_2 did not complete&quot;);</span>
+<span class="nc" id="L465">                } catch (InterruptedException e) {</span>
+<span class="nc" id="L466">                    Thread.currentThread().interrupt();</span>
+<span class="nc" id="L467">                    throw new FlowableException(&quot;Thread was interrupted&quot;);</span>
+                }
+            }
+
+            @Override
+            public void afterExecution(DelegateExecution execution, Map&lt;String, Object&gt; executionData) {
+<span class="nc" id="L473">                assertThat(execution.getVariables())</span>
+<span class="nc" id="L474">                        .contains(</span>
+<span class="nc" id="L475">                                entry(&quot;counterDelegate1_1&quot;, 1),</span>
+<span class="nc" id="L476">                                entry(&quot;counterDelegate1_2&quot;, 2)</span>
+                        )
+<span class="nc" id="L478">                        .doesNotContainKeys(&quot;counterDelegate2_1&quot;);</span>
+<span class="nc" id="L479">                MapBasedFlowableFutureJavaDelegate.super.afterExecution(execution, executionData);</span>
+<span class="nc" id="L480">                delegate2_1Done.countDown();</span>
+<span class="nc" id="L481">            }</span>
+        };
+        
+<span class="nc" id="L484">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L485">                .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L486">                .transientVariable(&quot;futureDelegate1_1&quot;, futureDelegate1_1)</span>
+<span class="nc" id="L487">                .transientVariable(&quot;futureDelegate1_2&quot;, futureDelegate1_2)</span>
+<span class="nc" id="L488">                .transientVariable(&quot;futureDelegate2_1&quot;, futureDelegate2_1)</span>
+<span class="nc" id="L489">                .transientVariable(&quot;counter&quot;, new AtomicInteger(0))</span>
+<span class="nc" id="L490">                .start();</span>
+
+<span class="nc" id="L492">        assertProcessEnded(processInstance.getId());</span>
+
+<span class="nc bnc" id="L494" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.AUDIT, processEngineConfiguration)) {</span>
+<span class="nc" id="L495">            List&lt;HistoricVariableInstance&gt; historicVariableInstances = historyService.createHistoricVariableInstanceQuery().list();</span>
+<span class="nc" id="L496">            Map&lt;String, Object&gt; historicVariables = historicVariableInstances.stream()</span>
+<span class="nc bnc" id="L497" title="All 2 branches missed.">                    .filter(variable -&gt; !&quot;initiator&quot;.equals(variable.getVariableName()))</span>
+<span class="nc" id="L498">                    .collect(Collectors.toMap(HistoricVariableInstance::getVariableName, HistoricVariableInstance::getValue));</span>
+
+<span class="nc" id="L500">            assertThat(historicVariables)</span>
+<span class="nc" id="L501">                    .containsOnly(</span>
+<span class="nc" id="L502">                            entry(&quot;counterDelegate1_1&quot;, 1),</span>
+<span class="nc" id="L503">                            entry(&quot;counterDelegate1_2&quot;, 2),</span>
+<span class="nc" id="L504">                            entry(&quot;counterDelegate2_1&quot;, 3)</span>
+                    );
+        }
+<span class="nc" id="L507">    }</span>
+
+    @Test
+    @Deployment
+    void testClassWithFutureJavaDelegate() {
+
+<span class="nc" id="L513">        String currentThreadName = Thread.currentThread().getName();</span>
+
+        // When using a normal JavaDelegate this process cannot complete
+        // because the latch needs to be decreased twice before every task returns a result
+        // Try changing TestFutureJavaDelegate to implement JavaDelegate instead
+<span class="nc" id="L518">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L519">                .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L520">                .transientVariable(&quot;counter&quot;, new AtomicInteger(0))</span>
+<span class="nc" id="L521">                .transientVariable(&quot;countDownLatch&quot;, new CountDownLatch(2))</span>
+<span class="nc" id="L522">                .start();</span>
+
+<span class="nc" id="L524">        assertProcessEnded(processInstance.getId());</span>
+
+<span class="nc bnc" id="L526" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.AUDIT, processEngineConfiguration)) {</span>
+<span class="nc" id="L527">            List&lt;HistoricVariableInstance&gt; historicVariableInstances = historyService.createHistoricVariableInstanceQuery().list();</span>
+<span class="nc" id="L528">            Map&lt;String, Object&gt; historicVariables = historicVariableInstances.stream()</span>
+<span class="nc bnc" id="L529" title="All 2 branches missed.">                    .filter(variable -&gt; !&quot;initiator&quot;.equals(variable.getVariableName()))</span>
+<span class="nc" id="L530">                    .collect(Collectors.toMap(HistoricVariableInstance::getVariableName, HistoricVariableInstance::getValue));</span>
+
+<span class="nc" id="L532">            assertThat(historicVariables)</span>
+<span class="nc" id="L533">                    .containsOnlyKeys(</span>
+                            &quot;counter1&quot;, &quot;beforeExecutionThreadName1&quot;, &quot;executionThreadName1&quot;, &quot;afterExecutionThreadName1&quot;,
+                            &quot;counter2&quot;, &quot;beforeExecutionThreadName2&quot;, &quot;executionThreadName2&quot;, &quot;afterExecutionThreadName2&quot;
+                    )
+<span class="nc" id="L537">                    .contains(</span>
+<span class="nc" id="L538">                            entry(&quot;counter1&quot;, 1),</span>
+<span class="nc" id="L539">                            entry(&quot;beforeExecutionThreadName1&quot;, currentThreadName),</span>
+<span class="nc" id="L540">                            entry(&quot;afterExecutionThreadName1&quot;, currentThreadName),</span>
+<span class="nc" id="L541">                            entry(&quot;counter2&quot;, 2),</span>
+<span class="nc" id="L542">                            entry(&quot;beforeExecutionThreadName2&quot;, currentThreadName),</span>
+<span class="nc" id="L543">                            entry(&quot;afterExecutionThreadName2&quot;, currentThreadName)</span>
+                    );
+
+<span class="nc" id="L546">            assertThat(historicVariables.get(&quot;executionThreadName1&quot;))</span>
+<span class="nc" id="L547">                    .asInstanceOf(STRING)</span>
+<span class="nc" id="L548">                    .isNotEqualTo(currentThreadName)</span>
+<span class="nc" id="L549">                    .startsWith(&quot;flowable-async-task-invoker-thread-&quot;);</span>
+
+<span class="nc" id="L551">            assertThat(historicVariables.get(&quot;executionThreadName2&quot;))</span>
+<span class="nc" id="L552">                    .asInstanceOf(STRING)</span>
+<span class="nc" id="L553">                    .isNotEqualTo(currentThreadName)</span>
+                    // The executions should be done on different threads
+<span class="nc" id="L555">                    .isNotEqualTo(historicVariables.get(&quot;executionThreadName1&quot;))</span>
+<span class="nc" id="L556">                    .startsWith(&quot;flowable-async-task-invoker-thread-&quot;);</span>
+        }
+<span class="nc" id="L558">    }</span>
+
+    @Test
+    @Deployment
+    void testClassWithJavaDelegate() {
+
+        // This is using a normal JavaDelegate and thus the process cannot complete
+        // because the latch needs to be decreased twice before every task returns a result
+<span class="nc" id="L566">        assertThatThrownBy(() -&gt; {</span>
+<span class="nc" id="L567">            runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L568">                    .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L569">                    .transientVariable(&quot;countDownLatch&quot;, new CountDownLatch(2))</span>
+<span class="nc" id="L570">                    .start();</span>
+<span class="nc" id="L571">        })</span>
+<span class="nc" id="L572">                .isExactlyInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L573">                .hasNoCause()</span>
+<span class="nc" id="L574">                .hasMessage(&quot;Countdown latch did not reach 0&quot;);</span>
+
+<span class="nc" id="L576">    }</span>
+
+    protected static class TestFutureJavaDelegate implements FlowableFutureJavaDelegate&lt;Map&lt;String, Object&gt;, Map&lt;String, Object&gt;&gt; {
+
+        protected final CountDownLatch countDownLatch;
+
+        @SuppressWarnings(&quot;unused&quot;) // used by the class delegate
+        public TestFutureJavaDelegate() {
+<span class="nc" id="L584">            this(null);</span>
+<span class="nc" id="L585">        }</span>
+
+<span class="nc" id="L587">        public TestFutureJavaDelegate(CountDownLatch countDownLatch) {</span>
+<span class="nc" id="L588">            this.countDownLatch = countDownLatch;</span>
+<span class="nc" id="L589">        }</span>
+
+        @Override
+        public Map&lt;String, Object&gt; prepareExecutionData(DelegateExecution execution) {
+<span class="nc" id="L593">            Map&lt;String, Object&gt; inputData = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L594">            inputData.put(&quot;beforeExecutionThreadName&quot;, Thread.currentThread().getName());</span>
+<span class="nc" id="L595">            AtomicInteger counter = (AtomicInteger) execution.getTransientVariable(&quot;counter&quot;);</span>
+<span class="nc" id="L596">            inputData.put(&quot;counter&quot;, counter.incrementAndGet());</span>
+<span class="nc" id="L597">            inputData.put(&quot;countDownLatch&quot;, execution.getTransientVariable(&quot;countDownLatch&quot;));</span>
+<span class="nc" id="L598">            return inputData;</span>
+        }
+
+        @Override
+        public Map&lt;String, Object&gt; execute(Map&lt;String, Object&gt; inputData) {
+<span class="nc" id="L603">            CountDownLatch countDownLatch = this.countDownLatch;</span>
+<span class="nc bnc" id="L604" title="All 2 branches missed.">            if (countDownLatch == null) {</span>
+<span class="nc" id="L605">                countDownLatch = (CountDownLatch) inputData.get(&quot;countDownLatch&quot;);</span>
+            }
+<span class="nc" id="L607">            countDownLatch.countDown();</span>
+            try {
+<span class="nc bnc" id="L609" title="All 2 branches missed.">                if (countDownLatch.await(2, TimeUnit.SECONDS)) {</span>
+<span class="nc" id="L610">                    int counter = (int) inputData.get(&quot;counter&quot;);</span>
+<span class="nc" id="L611">                    Map&lt;String, Object&gt; outputData = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L612">                    outputData.put(&quot;executionThreadName&quot; + counter, Thread.currentThread().getName());</span>
+<span class="nc" id="L613">                    outputData.put(&quot;counter&quot; + counter, counter);</span>
+<span class="nc" id="L614">                    outputData.put(&quot;beforeExecutionThreadName&quot; + counter, inputData.get(&quot;beforeExecutionThreadName&quot;));</span>
+<span class="nc" id="L615">                    return outputData;</span>
+                } else {
+<span class="nc" id="L617">                    throw new FlowableException(&quot;Countdown latch did not reach 0&quot;);</span>
+                }
+<span class="nc" id="L619">            } catch (InterruptedException e) {</span>
+<span class="nc" id="L620">                Thread.currentThread().interrupt();</span>
+            }
+
+<span class="nc" id="L623">            return null;</span>
+        }
+
+        @Override
+        public void afterExecution(DelegateExecution execution, Map&lt;String, Object&gt; executionData) {
+<span class="nc bnc" id="L628" title="All 2 branches missed.">            if (executionData != null) {</span>
+<span class="nc bnc" id="L629" title="All 2 branches missed.">                for (Map.Entry&lt;String, Object&gt; entry : executionData.entrySet()) {</span>
+<span class="nc" id="L630">                    String key = entry.getKey();</span>
+<span class="nc" id="L631">                    execution.setVariable(key, entry.getValue());</span>
+
+<span class="nc bnc" id="L633" title="All 2 branches missed.">                    if (key.startsWith(&quot;counter&quot;)) {</span>
+<span class="nc" id="L634">                        execution.setVariable(&quot;afterExecutionThreadName&quot; + key.substring(7), Thread.currentThread().getName());</span>
+                    }
+<span class="nc" id="L636">                }</span>
+            }
+<span class="nc" id="L638">        }</span>
+    }
+
+    protected static class TestJavaDelegate implements JavaDelegate {
+
+        protected final CountDownLatch countDownLatch;
+
+        @SuppressWarnings(&quot;unused&quot;) // used from the class delegate
+        public TestJavaDelegate() {
+<span class="nc" id="L647">            this(null);</span>
+<span class="nc" id="L648">        }</span>
+
+<span class="nc" id="L650">        public TestJavaDelegate(CountDownLatch countDownLatch) {</span>
+<span class="nc" id="L651">            this.countDownLatch = countDownLatch;</span>
+<span class="nc" id="L652">        }</span>
+
+        @Override
+        public void execute(DelegateExecution execution) {
+<span class="nc" id="L656">            CountDownLatch countDownLatch = this.countDownLatch;</span>
+<span class="nc bnc" id="L657" title="All 2 branches missed.">            if (countDownLatch == null) {</span>
+<span class="nc" id="L658">                countDownLatch = (CountDownLatch) execution.getTransientVariable(&quot;countDownLatch&quot;);</span>
+            }
+<span class="nc" id="L660">            countDownLatch.countDown();</span>
+            try {
+<span class="nc bnc" id="L662" title="All 2 branches missed.">                if (countDownLatch.await(2, TimeUnit.SECONDS)) {</span>
+                    // Nothing to do
+                } else {
+<span class="nc" id="L665">                    throw new FlowableException(&quot;Countdown latch did not reach 0&quot;);</span>
+                }
+<span class="nc" id="L667">            } catch (InterruptedException e) {</span>
+<span class="nc" id="L668">                Thread.currentThread().interrupt();</span>
+<span class="nc" id="L669">            }</span>
+<span class="nc" id="L670">        }</span>
+    }
+
+    protected static class TestBeanReturnsFuture {
+
+<span class="nc" id="L675">        protected final AtomicInteger counter = new AtomicInteger(0);</span>
+        protected final CountDownLatch countDownLatch;
+        protected final AsyncTaskExecutor asyncTaskExecutor;
+
+<span class="nc" id="L679">        public TestBeanReturnsFuture(CountDownLatch countDownLatch, AsyncTaskExecutor asyncTaskExecutor) {</span>
+<span class="nc" id="L680">            this.countDownLatch = countDownLatch;</span>
+<span class="nc" id="L681">            this.asyncTaskExecutor = asyncTaskExecutor;</span>
+<span class="nc" id="L682">        }</span>
+
+        public Future&lt;Integer&gt; invoke() {
+<span class="nc" id="L685">            return asyncTaskExecutor.submit(() -&gt; {</span>
+<span class="nc" id="L686">                countDownLatch.countDown();</span>
+                try {
+<span class="nc bnc" id="L688" title="All 2 branches missed.">                    if (countDownLatch.await(2, TimeUnit.SECONDS)) {</span>
+<span class="nc" id="L689">                        return counter.incrementAndGet();</span>
+                    } else {
+<span class="nc" id="L691">                        throw new FlowableException(&quot;Countdown latch did not reach 0&quot;);</span>
+                    }
+<span class="nc" id="L693">                } catch (InterruptedException e) {</span>
+<span class="nc" id="L694">                    Thread.currentThread().interrupt();</span>
+                }
+<span class="nc" id="L696">                return counter.incrementAndGet();</span>
+            });
+        }
+    }
+
+    protected static class TestBean {
+
+        protected final CountDownLatch countDownLatch;
+
+<span class="nc" id="L705">        public TestBean(CountDownLatch countDownLatch) {</span>
+<span class="nc" id="L706">            this.countDownLatch = countDownLatch;</span>
+<span class="nc" id="L707">        }</span>
+
+        public String invoke() {
+<span class="nc" id="L710">            countDownLatch.countDown();</span>
+            try {
+<span class="nc bnc" id="L712" title="All 2 branches missed.">                if (countDownLatch.await(3, TimeUnit.SECONDS)) {</span>
+<span class="nc" id="L713">                    return null;</span>
+                } else {
+<span class="nc" id="L715">                    throw new FlowableException(&quot;Countdown latch did not reach 0&quot;);</span>
+                }
+<span class="nc" id="L717">            } catch (InterruptedException e) {</span>
+<span class="nc" id="L718">                Thread.currentThread().interrupt();</span>
+            }
+<span class="nc" id="L720">            return null;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,1074 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BoundaryTimerEventTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.bpmn.event.timer</a> &gt; <span class="el_source">BoundaryTimerEventTest.java</span></div><h1>BoundaryTimerEventTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.flowable.engine.test.bpmn.event.timer;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.impl.history.HistoryLevel;
+import org.flowable.engine.delegate.DelegateExecution;
+import org.flowable.engine.delegate.ExecutionListener;
+import org.flowable.engine.impl.test.HistoryTestHelper;
+import org.flowable.engine.impl.test.JobTestHelper;
+import org.flowable.engine.impl.test.PluggableFlowableTestCase;
+import org.flowable.engine.runtime.ActivityInstance;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.test.Deployment;
+import org.flowable.job.api.Job;
+import org.flowable.job.api.TimerJobQuery;
+import org.flowable.task.api.Task;
+import org.junit.jupiter.api.Test;
+
+/**
+ * @author Joram Barrez
+ */
+<span class="nc" id="L49">public class BoundaryTimerEventTest extends PluggableFlowableTestCase {</span>
+
+    private static boolean listenerExecutedStartEvent;
+    private static boolean listenerExecutedEndEvent;
+<span class="nc" id="L53">    private SimpleDateFormat sdf = new SimpleDateFormat(&quot;yyyy-MM-dd'T'HH:mm:ss&quot;);</span>
+
+<span class="nc" id="L55">    public static class MyExecutionListener implements ExecutionListener {</span>
+        private static final long serialVersionUID = 1L;
+
+        @Override
+        public void notify(DelegateExecution execution) {
+<span class="nc bnc" id="L60" title="All 2 branches missed.">            if (&quot;end&quot;.equals(execution.getEventName())) {</span>
+<span class="nc" id="L61">                listenerExecutedEndEvent = true;</span>
+<span class="nc bnc" id="L62" title="All 2 branches missed.">            } else if (&quot;start&quot;.equals(execution.getEventName())) {</span>
+<span class="nc" id="L63">                listenerExecutedStartEvent = true;</span>
+            }
+<span class="nc" id="L65">        }</span>
+    }
+
+    /*
+     * Test for when multiple boundary timer events are defined on the same user task
+     *
+     * Configuration: - timer 1 -&gt; 2 hours -&gt; secondTask - timer 2 -&gt; 1 hour -&gt; thirdTask - timer 3 -&gt; 3 hours -&gt; fourthTask
+     *
+     * See process image next to the process xml resource
+     */
+    @Test
+    @Deployment
+    public void testMultipleTimersOnUserTask() {
+
+        // Set the clock fixed
+<span class="nc" id="L80">        Date startTime = new Date();</span>
+
+        // After process start, there should be 3 timers created
+<span class="nc" id="L83">        ProcessInstance pi = runtimeService.startProcessInstanceByKey(&quot;multipleTimersOnUserTask&quot;);</span>
+<span class="nc" id="L84">        TimerJobQuery jobQuery = managementService.createTimerJobQuery().processInstanceId(pi.getId());</span>
+<span class="nc" id="L85">        List&lt;Job&gt; jobs = jobQuery.list();</span>
+<span class="nc" id="L86">        assertThat(jobs).hasSize(3);</span>
+
+        // After setting the clock to time '1 hour and 5 seconds', the second
+        // timer should fire
+<span class="nc" id="L90">        processEngineConfiguration.getClock().setCurrentTime(new Date(startTime.getTime() + ((60 * 60 * 1000) + 5000)));</span>
+<span class="nc" id="L91">        waitForJobExecutorToProcessAllJobsAndExecutableTimerJobs(7000L, 25L);</span>
+<span class="nc" id="L92">        assertThat(jobQuery.count()).isZero();</span>
+
+        // which means that the third task is reached
+<span class="nc" id="L95">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L96">        assertThat(task.getName()).isEqualTo(&quot;Third Task&quot;);</span>
+<span class="nc" id="L97">    }</span>
+
+    @Test
+    @Deployment
+    public void testTimerOnNestingOfSubprocesses() {
+
+<span class="nc" id="L103">        Date testStartTime = processEngineConfiguration.getClock().getCurrentTime();</span>
+
+<span class="nc" id="L105">        runtimeService.startProcessInstanceByKey(&quot;timerOnNestedSubprocesses&quot;);</span>
+<span class="nc" id="L106">        List&lt;org.flowable.task.api.Task&gt; tasks = taskService.createTaskQuery().orderByTaskName().asc().list();</span>
+<span class="nc" id="L107">        assertThat(tasks)</span>
+<span class="nc" id="L108">                .extracting(Task::getName)</span>
+<span class="nc" id="L109">                .containsExactly(&quot;Inner subprocess task 1&quot;, &quot;Inner subprocess task 2&quot;);</span>
+
+        // Timer will fire in 2 hours
+<span class="nc" id="L112">        processEngineConfiguration.getClock().setCurrentTime(new Date(testStartTime.getTime() + ((2 * 60 * 60 * 1000) + 5000)));</span>
+<span class="nc" id="L113">        Job timer = managementService.createTimerJobQuery().singleResult();</span>
+<span class="nc" id="L114">        managementService.moveTimerToExecutableJob(timer.getId());</span>
+<span class="nc" id="L115">        managementService.executeJob(timer.getId());</span>
+
+<span class="nc" id="L117">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L118">        assertThat(task.getName()).isEqualTo(&quot;task outside subprocess&quot;);</span>
+<span class="nc" id="L119">    }</span>
+
+    @Test
+    @Deployment
+    public void testTimerOnSyncMultiInstanceActivity() {
+
+        // Timer doesn't fire
+<span class="nc" id="L126">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;myProcess&quot;);</span>
+
+<span class="nc" id="L128">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L129">        assertThat(tasks).hasSize(3);</span>
+
+<span class="nc" id="L131">        assertThat(managementService.createTimerJobQuery().count()).isEqualTo(1);</span>
+
+<span class="nc" id="L133">        taskService.complete(tasks.get(0).getId());</span>
+<span class="nc" id="L134">        assertThat(managementService.createTimerJobQuery().count()).isEqualTo(1);</span>
+
+<span class="nc" id="L136">        taskService.complete(tasks.get(1).getId());</span>
+<span class="nc" id="L137">        assertThat(managementService.createTimerJobQuery().count()).isEqualTo(1);</span>
+
+<span class="nc" id="L139">        taskService.complete(tasks.get(2).getId());</span>
+<span class="nc" id="L140">        assertThat(managementService.createTimerJobQuery().count()).isEqualTo(0);</span>
+
+
+        // Timer does fire
+<span class="nc" id="L144">        processInstance = runtimeService.startProcessInstanceByKey(&quot;myProcess&quot;);</span>
+<span class="nc" id="L145">        Job job = managementService.moveTimerToExecutableJob(managementService.createTimerJobQuery().singleResult().getId());</span>
+<span class="nc" id="L146">        managementService.executeJob(job.getId());</span>
+
+<span class="nc" id="L148">        assertThat(taskService.createTaskQuery().processInstanceId(processInstance.getId()).list()).hasSize(0);</span>
+<span class="nc" id="L149">        assertThat(managementService.createTimerJobQuery().count()).isEqualTo(0);</span>
+<span class="nc" id="L150">    }</span>
+
+    @Test
+    @Deployment
+    public void testTimerOnAsyncMultiInstanceActivity() {
+<span class="nc" id="L155">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;testTimerOnAsyncMultiInstanceActivity&quot;);</span>
+<span class="nc" id="L156">        assertThat(managementService.createTimerJobQuery().count()).isEqualTo(1);</span>
+
+        // async-continuation into the async multi-instance activity
+<span class="nc bnc" id="L159" title="All 2 branches missed.">        for (Job job : managementService.createJobQuery().list()) {</span>
+<span class="nc" id="L160">            managementService.executeJob(job.getId());</span>
+<span class="nc" id="L161">        }</span>
+
+<span class="nc" id="L163">        assertThat(managementService.createTimerJobQuery().count()).isEqualTo(1);</span>
+
+<span class="nc" id="L165">        Job job = managementService.moveTimerToExecutableJob(managementService.createTimerJobQuery().singleResult().getId());</span>
+<span class="nc" id="L166">        managementService.executeJob(job.getId());</span>
+
+<span class="nc" id="L168">        assertThat(taskService.createTaskQuery().processInstanceId(processInstance.getId()).list()).hasSize(0);</span>
+<span class="nc" id="L169">        assertThat(managementService.createTimerJobQuery().count()).isEqualTo(0);</span>
+<span class="nc" id="L170">    }</span>
+    
+    @Test
+    @Deployment
+    public void testExpressionOnTimer() {
+        // Set the clock fixed
+<span class="nc" id="L176">        Date startTime = new Date();</span>
+
+<span class="nc" id="L178">        HashMap&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L179">        variables.put(&quot;duration&quot;, &quot;PT1H&quot;);</span>
+
+        // After process start, there should be a timer created
+<span class="nc" id="L182">        ProcessInstance pi = runtimeService.startProcessInstanceByKey(&quot;testExpressionOnTimer&quot;, variables);</span>
+
+<span class="nc" id="L184">        TimerJobQuery jobQuery = managementService.createTimerJobQuery().processInstanceId(pi.getId());</span>
+<span class="nc" id="L185">        List&lt;Job&gt; jobs = jobQuery.list();</span>
+<span class="nc" id="L186">        assertThat(jobs).hasSize(1);</span>
+
+        // After setting the clock to time '1 hour and 5 seconds', the second
+        // timer should fire
+<span class="nc" id="L190">        processEngineConfiguration.getClock().setCurrentTime(new Date(startTime.getTime() + ((60 * 60 * 1000) + 5000)));</span>
+<span class="nc" id="L191">        waitForJobExecutorToProcessAllJobsAndExecutableTimerJobs(7000L, 25L);</span>
+<span class="nc" id="L192">        assertThat(jobQuery.count()).isZero();</span>
+
+        // start execution listener is not executed
+<span class="nc" id="L195">        assertThat(listenerExecutedStartEvent).isTrue();</span>
+<span class="nc" id="L196">        assertThat(listenerExecutedEndEvent).isTrue();</span>
+
+        // which means the process has ended
+<span class="nc" id="L199">        assertProcessEnded(pi.getId());</span>
+
+<span class="nc bnc" id="L201" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.AUDIT, processEngineConfiguration)) {</span>
+<span class="nc" id="L202">            assertThat(historyService.createHistoricActivityInstanceQuery().processInstanceId(pi.getId()).activityId(&quot;boundaryTimer&quot;).singleResult()).isNotNull();</span>
+        }
+<span class="nc" id="L204">    }</span>
+
+    @Test
+    @Deployment
+    public void testExpressionWithJavaDurationOnTimer() {
+        // Set the clock fixed
+<span class="nc" id="L210">        Date startTime = new Date();</span>
+
+<span class="nc" id="L212">        HashMap&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L213">        variables.put(&quot;duration&quot;, Duration.ofHours(1));</span>
+
+        // After process start, there should be a timer created
+<span class="nc" id="L216">        ProcessInstance pi = runtimeService.startProcessInstanceByKey(&quot;testExpressionOnTimer&quot;, variables);</span>
+
+<span class="nc" id="L218">        TimerJobQuery jobQuery = managementService.createTimerJobQuery().processInstanceId(pi.getId());</span>
+<span class="nc" id="L219">        List&lt;Job&gt; jobs = jobQuery.list();</span>
+<span class="nc" id="L220">        assertThat(jobs).hasSize(1);</span>
+
+        // After setting the clock to time '1 hour and 5 seconds', the second
+        // timer should fire
+<span class="nc" id="L224">        processEngineConfiguration.getClock().setCurrentTime(new Date(startTime.getTime() + ((60 * 60 * 1000) + 5000)));</span>
+<span class="nc" id="L225">        waitForJobExecutorToProcessAllJobsAndExecutableTimerJobs(7000L, 25L);</span>
+<span class="nc" id="L226">        assertThat(jobQuery.count()).isZero();</span>
+
+        // start execution listener is not executed
+<span class="nc" id="L229">        assertThat(listenerExecutedStartEvent).isTrue();</span>
+<span class="nc" id="L230">        assertThat(listenerExecutedEndEvent).isTrue();</span>
+
+        // which means the process has ended
+<span class="nc" id="L233">        assertProcessEnded(pi.getId());</span>
+
+<span class="nc bnc" id="L235" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.AUDIT, processEngineConfiguration)) {</span>
+<span class="nc" id="L236">            assertThat(historyService.createHistoricActivityInstanceQuery().processInstanceId(pi.getId()).activityId(&quot;boundaryTimer&quot;).singleResult()).isNotNull();</span>
+        }
+<span class="nc" id="L238">    }</span>
+
+    @Test
+    @Deployment
+    public void testNullExpressionOnTimer() {
+
+<span class="nc" id="L244">        HashMap&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L245">        variables.put(&quot;duration&quot;, null);</span>
+
+        // After process start, there should be a timer created
+<span class="nc" id="L248">        assertThatThrownBy(() -&gt; runtimeService.startProcessInstanceByKey(&quot;testNullExpressionOnTimer&quot;, variables))</span>
+<span class="nc" id="L249">                .as(&quot;Expected wrong due date exception&quot;)</span>
+<span class="nc" id="L250">                .isInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L251">                .hasMessageStartingWith(&quot;Due date could not be determined for timer job null for Execution[&quot;)</span>
+<span class="nc" id="L252">                .hasMessageContainingAll(&quot; - definition 'testNullExpressionOnTimer:1:&quot;, &quot; - activity 'boundaryTimer'&quot;);</span>
+<span class="nc" id="L253">    }</span>
+    
+    @Test
+    @Deployment
+    public void testNullDueDateWithRepetition() {
+
+<span class="nc" id="L259">        Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L260">        variables.put(&quot;initiator&quot;, &quot;1&quot;);</span>
+<span class="nc" id="L261">        variables.put(&quot;userId&quot;, &quot;2&quot;);</span>
+<span class="nc" id="L262">        variables.put(&quot;dueDate&quot;, new Date(new Date().getTime() + 6 * 60 * 60 * 1000)); // 6 hours later</span>
+<span class="nc" id="L263">        variables.put(&quot;reminderTimeCycle&quot;, &quot;0 0 0 1 1 ?&quot;);</span>
+
+<span class="nc" id="L265">        String processInstanceId = runtimeService.startProcessInstanceByKey(&quot;test-timers&quot;, variables).getProcessInstanceId();</span>
+<span class="nc" id="L266">        assertThat(processInstanceId).isNotNull();</span>
+
+<span class="nc" id="L268">        TimerJobQuery jobQuery = managementService.createTimerJobQuery().processInstanceId(processInstanceId);</span>
+<span class="nc" id="L269">        List&lt;Job&gt; jobs = jobQuery.list();</span>
+<span class="nc" id="L270">        assertThat(jobs).hasSize(1);</span>
+<span class="nc" id="L271">    }</span>
+    
+    @Test
+    @Deployment
+    public void testNullDueDateWithWrongRepetition() {
+
+<span class="nc" id="L277">        Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L278">        variables.put(&quot;initiator&quot;, &quot;1&quot;);</span>
+<span class="nc" id="L279">        variables.put(&quot;userId&quot;, &quot;2&quot;);</span>
+<span class="nc" id="L280">        variables.put(&quot;dueDate&quot;, new Date(new Date().getTime() + 6 * 60 * 60 * 1000)); // 6 hours later</span>
+<span class="nc" id="L281">        variables.put(&quot;reminderTimeCycle&quot;, &quot;0 0 0 1 1 ? 2000&quot;);</span>
+
+<span class="nc" id="L283">        assertThatThrownBy(() -&gt; runtimeService.startProcessInstanceByKey(&quot;test-timers&quot;, variables).getProcessInstanceId())</span>
+<span class="nc" id="L284">                .as(&quot;Expected wrong due date exception&quot;)</span>
+<span class="nc" id="L285">                .isInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L286">                .hasMessageStartingWith(&quot;Due date could not be determined for timer job 0 0 0 1 1 ? 2000 for Execution[&quot;)</span>
+<span class="nc" id="L287">                .hasMessageContainingAll(&quot; - definition 'test-timers:1:&quot;, &quot; - activity 'remind-reviewer-event'&quot;);</span>
+<span class="nc" id="L288">    }</span>
+
+    @Test
+    @Deployment
+    public void testTimerInSingleTransactionProcess() {
+        // make sure that if a PI completes in single transaction, JobEntities
+        // associated with the execution are deleted.
+        // broken before 5.10, see ACT-1133
+<span class="nc" id="L296">        runtimeService.startProcessInstanceByKey(&quot;timerOnSubprocesses&quot;);</span>
+<span class="nc" id="L297">        assertThat(managementService.createJobQuery().count()).isZero();</span>
+<span class="nc" id="L298">    }</span>
+
+    @Test
+    @Deployment
+    public void testRepeatingTimerWithCancelActivity() {
+<span class="nc" id="L303">        runtimeService.startProcessInstanceByKey(&quot;repeatingTimerAndCallActivity&quot;);</span>
+<span class="nc" id="L304">        assertThat(managementService.createTimerJobQuery().count()).isEqualTo(1);</span>
+<span class="nc" id="L305">        assertThat(taskService.createTaskQuery().count()).isEqualTo(1);</span>
+
+        // Firing job should cancel the user task, destroy the scope,
+        // re-enter the task and recreate the task. A new timer should also be
+        // created.
+        // This didn't happen before 5.11 (new jobs kept being created). See
+        // ACT-1427
+<span class="nc" id="L312">        Job job = managementService.createTimerJobQuery().singleResult();</span>
+<span class="nc" id="L313">        managementService.moveTimerToExecutableJob(job.getId());</span>
+<span class="nc" id="L314">        managementService.executeJob(job.getId());</span>
+<span class="nc" id="L315">        assertThat(managementService.createTimerJobQuery().count()).isEqualTo(1);</span>
+<span class="nc" id="L316">        assertThat(taskService.createTaskQuery().count()).isEqualTo(1);</span>
+<span class="nc" id="L317">    }</span>
+
+    @Test
+    @Deployment
+    public void testInfiniteRepeatingTimer() throws Exception {
+
+<span class="nc" id="L323">        SimpleDateFormat simpleDateFormat = new SimpleDateFormat(&quot;yyyyy.MM.dd hh:mm&quot;);</span>
+<span class="nc" id="L324">        Date currentTime = simpleDateFormat.parse(&quot;2015.10.01 11:01&quot;);</span>
+<span class="nc" id="L325">        processEngineConfiguration.getClock().setCurrentTime(currentTime);</span>
+
+<span class="nc" id="L327">        Map&lt;String, Object&gt; vars = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L328">        vars.put(&quot;timerString&quot;, &quot;R/2015-10-01T11:00:00/PT24H&quot;);</span>
+<span class="nc" id="L329">        runtimeService.startProcessInstanceByKey(&quot;testTimerErrors&quot;, vars);</span>
+
+<span class="nc" id="L331">        long twentyFourHours = 24L * 60L * 60L * 1000L;</span>
+
+<span class="nc" id="L333">        Date previousDueDate = null;</span>
+
+        // Move clock, job should fire
+<span class="nc bnc" id="L336" title="All 2 branches missed.">        for (int i = 0; i &lt; 30; i++) {</span>
+<span class="nc" id="L337">            Job job = managementService.createTimerJobQuery().singleResult();</span>
+
+            // Verify due date
+<span class="nc bnc" id="L340" title="All 2 branches missed.">            if (previousDueDate != null) {</span>
+<span class="nc" id="L341">                assertThat(job.getDuedate().getTime() - previousDueDate.getTime()).isGreaterThanOrEqualTo(twentyFourHours);</span>
+            }
+<span class="nc" id="L343">            previousDueDate = job.getDuedate();</span>
+
+<span class="nc" id="L345">            currentTime = new Date(currentTime.getTime() + twentyFourHours + (60 * 1000));</span>
+<span class="nc" id="L346">            processEngineConfiguration.getClock().setCurrentTime(currentTime);</span>
+<span class="nc" id="L347">            String jobId = managementService.createTimerJobQuery().singleResult().getId();</span>
+<span class="nc" id="L348">            managementService.moveTimerToExecutableJob(jobId);</span>
+<span class="nc" id="L349">            managementService.executeJob(jobId);</span>
+        }
+
+<span class="nc" id="L352">    }</span>
+
+    @Test
+    @Deployment
+    public void testRepeatTimerDuration() throws Exception {
+
+<span class="nc" id="L358">        SimpleDateFormat simpleDateFormat = new SimpleDateFormat(&quot;yyyyy.MM.dd hh:mm&quot;);</span>
+<span class="nc" id="L359">        Date currentTime = simpleDateFormat.parse(&quot;2015.10.01 11:01&quot;);</span>
+<span class="nc" id="L360">        processEngineConfiguration.getClock().setCurrentTime(currentTime);</span>
+
+<span class="nc" id="L362">        runtimeService.startProcessInstanceByKey(&quot;repeattimertest&quot;);</span>
+
+<span class="nc" id="L364">        long twentyFourHours = 24L * 60L * 60L * 1000L;</span>
+
+<span class="nc" id="L366">        Date previousDueDate = null;</span>
+
+        // Move clock, job should fire
+<span class="nc bnc" id="L369" title="All 2 branches missed.">        for (int i = 0; i &lt; 3; i++) {</span>
+<span class="nc" id="L370">            Job job = managementService.createTimerJobQuery().singleResult();</span>
+
+            // Verify due date
+<span class="nc bnc" id="L373" title="All 2 branches missed.">            if (previousDueDate != null) {</span>
+<span class="nc" id="L374">                assertThat(job.getDuedate().getTime() - previousDueDate.getTime()).isGreaterThanOrEqualTo(twentyFourHours);</span>
+            }
+<span class="nc" id="L376">            previousDueDate = job.getDuedate();</span>
+
+<span class="nc" id="L378">            currentTime = new Date(currentTime.getTime() + twentyFourHours + (60 * 1000));</span>
+<span class="nc" id="L379">            processEngineConfiguration.getClock().setCurrentTime(currentTime);</span>
+<span class="nc" id="L380">            managementService.moveTimerToExecutableJob(job.getId());</span>
+<span class="nc" id="L381">            managementService.executeJob(job.getId());</span>
+        }
+
+<span class="nc" id="L384">    }</span>
+
+    @Test
+    @Deployment
+    public void testBoundaryTimerEvent() throws Exception {
+<span class="nc" id="L389">        SimpleDateFormat simpleDateFormat = new SimpleDateFormat(&quot;yyyyy.MM.dd hh:mm&quot;);</span>
+<span class="nc" id="L390">        Date currentTime = simpleDateFormat.parse(&quot;2015.10.01 11:01&quot;);</span>
+<span class="nc" id="L391">        processEngineConfiguration.getClock().setCurrentTime(currentTime);</span>
+
+<span class="nc" id="L393">        Map&lt;String, Object&gt; vars = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L394">        vars.put(&quot;patient&quot;, &quot;kermit&quot;);</span>
+<span class="nc" id="L395">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;process1&quot;, vars);</span>
+
+<span class="nc" id="L397">        List&lt;ActivityInstance&gt; activityInstances = runtimeService.createActivityInstanceQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L398">        assertThat(activityInstances).hasSize(4);</span>
+<span class="nc" id="L399">        assertThat(activityInstances)</span>
+<span class="nc" id="L400">                .extracting(ActivityInstance::getActivityId)</span>
+<span class="nc" id="L401">                .contains(&quot;startEvent&quot;, &quot;first_task&quot;, &quot;boundaryTimerEvent&quot;);</span>
+
+        // just wait for 2 seconds to run any job if it's the case
+        try {
+<span class="nc" id="L405">            waitForJobExecutorToProcessAllJobsAndExecutableTimerJobs(2000, 200);</span>
+<span class="nc" id="L406">        } catch (Exception ex) {</span>
+            // expected exception because the boundary timer event created a timer job to be executed after 10 minutes
+<span class="nc" id="L408">        }</span>
+
+        // there should be a userTask waiting for user input
+<span class="nc" id="L411">        List&lt;Task&gt; tasks = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L412">        assertThat(tasks)</span>
+<span class="nc" id="L413">                .extracting(Task::getName)</span>
+<span class="nc" id="L414">                .containsExactly(&quot;First Task&quot;);</span>
+<span class="nc" id="L415">        List&lt;Job&gt; jobList = managementService.createTimerJobQuery().list();</span>
+<span class="nc" id="L416">        assertThat(jobList).hasSize(1);</span>
+
+        // let's see what's happening after 2 minutes
+        // nothing should change since the timer have to executed after 10 minutes
+<span class="nc" id="L420">        long twoMinutes = 2L * 60L * 1000L;</span>
+
+<span class="nc" id="L422">        currentTime = new Date(currentTime.getTime() + twoMinutes + 1000L);</span>
+<span class="nc" id="L423">        processEngineConfiguration.getClock().setCurrentTime(currentTime);</span>
+
+        try {
+<span class="nc" id="L426">            waitForJobExecutorToProcessAllJobsAndExecutableTimerJobs(2000, 200);</span>
+<span class="nc" id="L427">        } catch (Exception ex) {</span>
+            // expected exception because the boundary timer event created a timer job to be executed after 10 minutes
+<span class="nc" id="L429">        }</span>
+
+<span class="nc" id="L431">        tasks = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L432">        assertThat(tasks)</span>
+<span class="nc" id="L433">                .extracting(Task::getName)</span>
+<span class="nc" id="L434">                .containsExactly(&quot;First Task&quot;);</span>
+
+<span class="nc" id="L436">        jobList = managementService.createTimerJobQuery().list();</span>
+<span class="nc" id="L437">        assertThat(jobList).hasSize(1);</span>
+
+<span class="nc" id="L439">        Job job = managementService.createTimerJobQuery().singleResult();</span>
+<span class="nc" id="L440">        assertThat(job.getElementId()).isEqualTo(&quot;boundaryTimerEvent&quot;);</span>
+<span class="nc" id="L441">        assertThat(job.getElementName()).isEqualTo(&quot;Timer event&quot;);</span>
+
+        // after another 8 minutes (the timer will have to execute because it wasa set to be executed @ 10 minutes after process start)
+<span class="nc" id="L444">        long tenMinutes = 8L * 60L * 1000L;</span>
+<span class="nc" id="L445">        currentTime = new Date(currentTime.getTime() + tenMinutes);</span>
+<span class="nc" id="L446">        processEngineConfiguration.getClock().setCurrentTime(currentTime);</span>
+
+        try {
+<span class="nc" id="L449">            waitForJobExecutorToProcessAllJobsAndExecutableTimerJobs(2000, 200);</span>
+<span class="nc" id="L450">        } catch (Exception ex) {</span>
+<span class="nc" id="L451">            ex.getCause();</span>
+            // expected exception because a new job is prepared
+<span class="nc" id="L453">        }</span>
+
+        // there should be only one userTask and it should be the one triggered by the boundary timer event.
+        // after the boundary event is triggered there should be no active job.
+<span class="nc" id="L457">        tasks = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L458">        assertThat(tasks)</span>
+<span class="nc" id="L459">                .extracting(Task::getName)</span>
+<span class="nc" id="L460">                .containsExactly(&quot;Second Task&quot;);</span>
+
+<span class="nc" id="L462">        activityInstances = runtimeService.createActivityInstanceQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L463">        assertThat(activityInstances).hasSize(6);</span>
+<span class="nc" id="L464">        Map&lt;String, ActivityInstance&gt; activityInstanceMap = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L465" title="All 2 branches missed.">        for (ActivityInstance activityInstance : activityInstances) {</span>
+<span class="nc" id="L466">            activityInstanceMap.put(activityInstance.getActivityId(), activityInstance);</span>
+<span class="nc" id="L467">        }</span>
+<span class="nc" id="L468">        assertThat(activityInstanceMap.get(&quot;startEvent&quot;).getEndTime()).isNotNull();</span>
+<span class="nc" id="L469">        assertThat(activityInstanceMap.get(&quot;first_task&quot;).getEndTime()).isNotNull();</span>
+<span class="nc" id="L470">        assertThat(activityInstanceMap.get(&quot;boundaryTimerEvent&quot;).getEndTime()).isNotNull();</span>
+<span class="nc" id="L471">        assertThat(activityInstanceMap.get(&quot;second_task&quot;).getEndTime()).isNull();</span>
+
+<span class="nc" id="L473">        jobList = managementService.createJobQuery().list();</span>
+<span class="nc" id="L474">        assertThat(jobList).isEmpty();</span>
+<span class="nc" id="L475">        jobList = managementService.createTimerJobQuery().list();</span>
+<span class="nc" id="L476">        assertThat(jobList).isEmpty();</span>
+<span class="nc" id="L477">    }</span>
+
+    @Test
+    @Deployment
+    public void testBoundaryTimerEvent2() throws Exception {
+
+<span class="nc" id="L483">        SimpleDateFormat simpleDateFormat = new SimpleDateFormat(&quot;yyyyy.MM.dd hh:mm&quot;);</span>
+<span class="nc" id="L484">        Date currentTime = simpleDateFormat.parse(&quot;2015.10.01 11:01&quot;);</span>
+<span class="nc" id="L485">        processEngineConfiguration.getClock().setCurrentTime(currentTime);</span>
+
+<span class="nc" id="L487">        runtimeService.startProcessInstanceByKey(&quot;timerprocess&quot;);</span>
+
+        // just wait for 2 seconds to run any job if it's the case
+        try {
+<span class="nc" id="L491">            waitForJobExecutorToProcessAllJobsAndExecutableTimerJobs(2000, 200);</span>
+<span class="nc" id="L492">        } catch (Exception ex) {</span>
+            // expected exception because the boundary timer event created a timer job to be executed after 10 minutes
+<span class="nc" id="L494">        }</span>
+
+        // there should be a userTask waiting for user input
+<span class="nc" id="L497">        List&lt;org.flowable.task.api.Task&gt; tasks = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L498">        assertThat(tasks)</span>
+<span class="nc" id="L499">                .extracting(Task::getName)</span>
+<span class="nc" id="L500">                .containsExactly(&quot;Start&quot;);</span>
+<span class="nc" id="L501">        List&lt;Job&gt; jobList = managementService.createTimerJobQuery().list();</span>
+<span class="nc" id="L502">        assertThat(jobList).hasSize(1);</span>
+
+        // after another 2 minutes
+<span class="nc" id="L505">        long tenMinutes = 2L * 60L * 1000L;</span>
+<span class="nc" id="L506">        currentTime = new Date(currentTime.getTime() + tenMinutes);</span>
+<span class="nc" id="L507">        processEngineConfiguration.getClock().setCurrentTime(currentTime);</span>
+
+        try {
+<span class="nc" id="L510">            waitForJobExecutorToProcessAllJobsAndExecutableTimerJobs(2000, 200);</span>
+<span class="nc" id="L511">        } catch (Exception ex) {</span>
+<span class="nc" id="L512">            ex.getCause();</span>
+            // expected exception because a new job is prepared
+<span class="nc" id="L514">        }</span>
+
+        // there should be no userTask
+<span class="nc" id="L517">        tasks = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L518">        assertThat(tasks).isEmpty();</span>
+<span class="nc" id="L519">        jobList = managementService.createJobQuery().list();</span>
+<span class="nc" id="L520">        assertThat(jobList).isEmpty();</span>
+<span class="nc" id="L521">        jobList = managementService.createTimerJobQuery().list();</span>
+<span class="nc" id="L522">        assertThat(jobList).isEmpty();</span>
+<span class="nc" id="L523">    }</span>
+
+    @Test
+    @Deployment
+    public void testRescheduleBoundaryTimerOnUserTask() {
+        // startDate variable set to one hour from now
+<span class="nc" id="L529">        Calendar calendar = Calendar.getInstance();</span>
+<span class="nc" id="L530">        calendar.add(Calendar.HOUR, 1);</span>
+<span class="nc" id="L531">        long startTimeInMillis = calendar.getTime().getTime();</span>
+
+<span class="nc" id="L533">        Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L534">        variables.put(&quot;startDate&quot;, calendar.getTime());</span>
+<span class="nc" id="L535">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;rescheduleTimer&quot;, variables);</span>
+
+<span class="nc" id="L537">        List&lt;org.flowable.task.api.Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L538">        assertThat(tasks)</span>
+<span class="nc" id="L539">                .extracting(Task::getName)</span>
+<span class="nc" id="L540">                .containsExactly(&quot;Task 1&quot;);</span>
+<span class="nc" id="L541">        Job timerJob = managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L542">        assertThat(timerJob).isNotNull();</span>
+<span class="nc" id="L543">        long diffInMilliseconds = Math.abs(startTimeInMillis - timerJob.getDuedate().getTime());</span>
+<span class="nc" id="L544">        assertThat(diffInMilliseconds).isLessThan(100);</span>
+
+        // reschedule timer for two hours from now
+<span class="nc" id="L547">        calendar = Calendar.getInstance();</span>
+<span class="nc" id="L548">        calendar.add(Calendar.HOUR, 2);</span>
+<span class="nc" id="L549">        Job rescheduledTimerJob = managementService.rescheduleTimeDateJob(timerJob.getId(), sdf.format(calendar.getTime()));</span>
+<span class="nc" id="L550">        assertThat(rescheduledTimerJob).isNotNull();</span>
+<span class="nc" id="L551">        assertThat(rescheduledTimerJob.getId()).isNotSameAs(timerJob.getId());</span>
+
+<span class="nc" id="L553">        timerJob = managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L554">        assertThat(rescheduledTimerJob.getId()).isEqualTo(timerJob.getId());</span>
+<span class="nc" id="L555">        diffInMilliseconds = Math.abs(startTimeInMillis - timerJob.getDuedate().getTime());</span>
+<span class="nc" id="L556">        assertThat(diffInMilliseconds).isGreaterThan(59 * 60 * 1000);</span>
+
+        // Move clock forward 1 hour from now
+<span class="nc" id="L559">        calendar = Calendar.getInstance();</span>
+<span class="nc" id="L560">        calendar.add(Calendar.HOUR, 1);</span>
+<span class="nc" id="L561">        calendar.add(Calendar.MINUTE, 5);</span>
+<span class="nc" id="L562">        processEngineConfiguration.getClock().setCurrentTime(calendar.getTime());</span>
+<span class="nc" id="L563">        JobTestHelper.executeJobExecutorForTime(processEngineConfiguration, 1000, 100);</span>
+
+        // Confirm timer has not run
+<span class="nc" id="L566">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L567">        assertThat(tasks)</span>
+<span class="nc" id="L568">                .extracting(Task::getName)</span>
+<span class="nc" id="L569">                .containsExactly(&quot;Task 1&quot;);</span>
+<span class="nc" id="L570">        timerJob = managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L571">        assertThat(timerJob).isNotNull();</span>
+
+        // Move clock forward 2 hours from now
+<span class="nc" id="L574">        calendar = Calendar.getInstance();</span>
+<span class="nc" id="L575">        calendar.add(Calendar.HOUR, 2);</span>
+<span class="nc" id="L576">        processEngineConfiguration.getClock().setCurrentTime(calendar.getTime());</span>
+<span class="nc" id="L577">        waitForJobExecutorToProcessAllJobsAndExecutableTimerJobs(2000, 100);</span>
+
+        // Confirm timer has run
+<span class="nc" id="L580">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L581">        assertThat(tasks)</span>
+<span class="nc" id="L582">                .extracting(Task::getName)</span>
+<span class="nc" id="L583">                .containsExactly(&quot;Task 3&quot;);</span>
+<span class="nc" id="L584">        timerJob = managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L585">        assertThat(timerJob).isNull();</span>
+<span class="nc" id="L586">    }</span>
+    
+    @Test
+    @Deployment
+    public void testBoundaryTimerEventWithCategory() throws Exception {
+<span class="nc" id="L591">        SimpleDateFormat simpleDateFormat = new SimpleDateFormat(&quot;yyyyy.MM.dd hh:mm&quot;);</span>
+<span class="nc" id="L592">        Date currentTime = simpleDateFormat.parse(&quot;2015.10.01 11:01&quot;);</span>
+<span class="nc" id="L593">        processEngineConfiguration.getClock().setCurrentTime(currentTime);</span>
+
+<span class="nc" id="L595">        Map&lt;String, Object&gt; vars = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L596">        vars.put(&quot;myVar&quot;, &quot;yes&quot;);</span>
+<span class="nc" id="L597">        runtimeService.startProcessInstanceByKey(&quot;timerProcess&quot;, vars);</span>
+
+        // there should be a userTask waiting for user input
+<span class="nc" id="L600">        List&lt;Task&gt; tasks = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L601">        assertThat(tasks).hasSize(1);</span>
+        
+<span class="nc" id="L603">        List&lt;Job&gt; jobList = managementService.createTimerJobQuery().list();</span>
+<span class="nc" id="L604">        assertThat(jobList)</span>
+<span class="nc" id="L605">                .extracting(Job::getCategory)</span>
+<span class="nc" id="L606">                .containsExactly(&quot;myCategory&quot;);</span>
+
+        // after another 8 minutes (the timer will have to execute because it was set to be executed @ 10 minutes after process start)
+<span class="nc" id="L609">        long afterTenMinutes = 12L * 60L * 1000L;</span>
+<span class="nc" id="L610">        currentTime = new Date(currentTime.getTime() + afterTenMinutes);</span>
+<span class="nc" id="L611">        processEngineConfiguration.getClock().setCurrentTime(currentTime);</span>
+
+<span class="nc" id="L613">        waitForJobExecutorToProcessAllJobsAndExecutableTimerJobs(4000, 200);</span>
+
+<span class="nc" id="L615">        tasks = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L616">        assertThat(tasks)</span>
+<span class="nc" id="L617">                .extracting(Task::getName)</span>
+<span class="nc" id="L618">                .containsExactly(&quot;Second Task&quot;);</span>
+
+<span class="nc" id="L620">        assertThat(managementService.createJobQuery().list()).isEmpty();</span>
+<span class="nc" id="L621">        assertThat(managementService.createTimerJobQuery().list()).isEmpty();</span>
+<span class="nc" id="L622">    }</span>
+    
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/bpmn/event/timer/BoundaryTimerEventTest.testBoundaryTimerEventWithCategory.bpmn20.xml&quot;)
+    public void testBoundaryTimerEventWithCategoryEnabledConfigurationSet() throws Exception {
+        try {
+<span class="nc" id="L628">            processEngineConfiguration.getJobServiceConfiguration().addEnabledJobCategory(&quot;wrongValue&quot;);</span>
+<span class="nc" id="L629">            SimpleDateFormat simpleDateFormat = new SimpleDateFormat(&quot;yyyyy.MM.dd hh:mm&quot;);</span>
+<span class="nc" id="L630">            Date currentTime = simpleDateFormat.parse(&quot;2015.10.01 11:01&quot;);</span>
+<span class="nc" id="L631">            processEngineConfiguration.getClock().setCurrentTime(currentTime);</span>
+
+<span class="nc" id="L633">            runtimeService.startProcessInstanceByKey(&quot;timerProcess&quot;);</span>
+    
+            // after another 8 minutes (the timer will have to execute because it was set to be executed @ 10 minutes after process start)
+<span class="nc" id="L636">            long afterTenMinutes = 12L * 60L * 1000L;</span>
+<span class="nc" id="L637">            currentTime = new Date(currentTime.getTime() + afterTenMinutes);</span>
+<span class="nc" id="L638">            processEngineConfiguration.getClock().setCurrentTime(currentTime);</span>
+    
+<span class="nc" id="L640">            assertThatThrownBy(() -&gt; waitForJobExecutorToProcessAllJobsAndExecutableTimerJobs(4000, 200))</span>
+<span class="nc" id="L641">                    .as(&quot;job should still be there&quot;)</span>
+<span class="nc" id="L642">                    .isInstanceOf(Exception.class);</span>
+
+<span class="nc" id="L644">            assertThat(managementService.createTimerJobQuery().list()).hasSize(1);</span>
+    
+<span class="nc" id="L646">            Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L647">            assertThat(task.getName()).isEqualTo(&quot;First Task&quot;);</span>
+            
+<span class="nc" id="L649">            processEngineConfiguration.getJobServiceConfiguration().addEnabledJobCategory(&quot;myCategory&quot;);</span>
+            
+<span class="nc" id="L651">            waitForJobExecutorToProcessAllJobsAndExecutableTimerJobs(4000, 200);</span>
+            
+<span class="nc" id="L653">            task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L654">            assertThat(task.getName()).isEqualTo(&quot;Second Task&quot;);</span>
+            
+<span class="nc" id="L656">            assertThat(managementService.createJobQuery().list()).isEmpty();</span>
+<span class="nc" id="L657">            assertThat(managementService.createTimerJobQuery().list()).isEmpty();</span>
+        } finally {
+<span class="nc" id="L659">            processEngineConfiguration.getJobServiceConfiguration().setEnabledJobCategories(null);</span>
+        }
+<span class="nc" id="L661">    }</span>
+    
+    @Test
+    @Deployment
+    public void testBoundaryTimerEventWithCategoryExpression() throws Exception {
+<span class="nc" id="L666">        SimpleDateFormat simpleDateFormat = new SimpleDateFormat(&quot;yyyyy.MM.dd hh:mm&quot;);</span>
+<span class="nc" id="L667">        Date currentTime = simpleDateFormat.parse(&quot;2015.10.01 11:01&quot;);</span>
+<span class="nc" id="L668">        processEngineConfiguration.getClock().setCurrentTime(currentTime);</span>
+
+<span class="nc" id="L670">        Map&lt;String, Object&gt; vars = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L671">        vars.put(&quot;myVar&quot;, &quot;yes&quot;);</span>
+<span class="nc" id="L672">        vars.put(&quot;categoryValue&quot;, &quot;testValue&quot;);</span>
+<span class="nc" id="L673">        runtimeService.startProcessInstanceByKey(&quot;timerProcess&quot;, vars);</span>
+        
+<span class="nc" id="L675">        List&lt;Job&gt; jobList = managementService.createTimerJobQuery().list();</span>
+<span class="nc" id="L676">        assertThat(jobList)</span>
+<span class="nc" id="L677">                .extracting(Job::getCategory)</span>
+<span class="nc" id="L678">                .containsExactly(&quot;testValue&quot;);</span>
+
+        // after another 8 minutes (the timer will have to execute because it was set to be executed @ 10 minutes after process start)
+<span class="nc" id="L681">        long afterTenMinutes = 12L * 60L * 1000L;</span>
+<span class="nc" id="L682">        currentTime = new Date(currentTime.getTime() + afterTenMinutes);</span>
+<span class="nc" id="L683">        processEngineConfiguration.getClock().setCurrentTime(currentTime);</span>
+
+<span class="nc" id="L685">        waitForJobExecutorToProcessAllJobsAndExecutableTimerJobs(4000, 200);</span>
+
+<span class="nc" id="L687">        List&lt;Task&gt; tasks = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L688">        assertThat(tasks)</span>
+<span class="nc" id="L689">                .extracting(Task::getName)</span>
+<span class="nc" id="L690">                .containsExactly(&quot;Second Task&quot;);</span>
+<span class="nc" id="L691">    }</span>
+    
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/bpmn/event/timer/BoundaryTimerEventTest.testBoundaryTimerEventWithCategoryExpression.bpmn20.xml&quot;)
+    public void testBoundaryTimerEventWithCategoryExpressionEnabledConfigurationSet() throws Exception {
+        try {
+<span class="nc" id="L697">            processEngineConfiguration.getJobServiceConfiguration().addEnabledJobCategory(&quot;testValue&quot;);</span>
+<span class="nc" id="L698">            SimpleDateFormat simpleDateFormat = new SimpleDateFormat(&quot;yyyyy.MM.dd hh:mm&quot;);</span>
+<span class="nc" id="L699">            Date currentTime = simpleDateFormat.parse(&quot;2015.10.01 11:01&quot;);</span>
+<span class="nc" id="L700">            processEngineConfiguration.getClock().setCurrentTime(currentTime);</span>
+
+<span class="nc" id="L702">            Map&lt;String, Object&gt; vars = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L703">            vars.put(&quot;categoryValue&quot;, &quot;testValue&quot;);</span>
+<span class="nc" id="L704">            runtimeService.startProcessInstanceByKey(&quot;timerProcess&quot;, vars);</span>
+    
+            // after another 8 minutes (the timer will have to execute because it was set to be executed @ 10 minutes after process start)
+<span class="nc" id="L707">            long afterTenMinutes = 12L * 60L * 1000L;</span>
+<span class="nc" id="L708">            currentTime = new Date(currentTime.getTime() + afterTenMinutes);</span>
+<span class="nc" id="L709">            processEngineConfiguration.getClock().setCurrentTime(currentTime);</span>
+    
+<span class="nc" id="L711">            waitForJobExecutorToProcessAllJobsAndExecutableTimerJobs(4000, 200);</span>
+            
+<span class="nc" id="L713">            Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L714">            assertThat(task.getName()).isEqualTo(&quot;Second Task&quot;);</span>
+            
+<span class="nc" id="L716">            assertThat(managementService.createJobQuery().list()).isEmpty();</span>
+<span class="nc" id="L717">            assertThat(managementService.createTimerJobQuery().list()).isEmpty();</span>
+        } finally {
+<span class="nc" id="L719">            processEngineConfiguration.getJobServiceConfiguration().setEnabledJobCategories(null);</span>
+        }
+<span class="nc" id="L721">    }</span>
+
+    @Test
+    @Deployment
+    public void testRescheduleRepeatBoundaryTimer() {
+        // startDate variable set to one hour from now
+<span class="nc" id="L727">        Calendar calendar = Calendar.getInstance();</span>
+<span class="nc" id="L728">        calendar.add(Calendar.HOUR, 1);</span>
+<span class="nc" id="L729">        long startTimeInMillis = calendar.getTime().getTime();</span>
+
+<span class="nc" id="L731">        Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L732">        variables.put(&quot;startDate&quot;, calendar.getTime());</span>
+<span class="nc" id="L733">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;rescheduleTimer&quot;, variables);</span>
+
+<span class="nc" id="L735">        List&lt;org.flowable.task.api.Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L736">        assertThat(tasks)</span>
+<span class="nc" id="L737">                .extracting(Task::getName)</span>
+<span class="nc" id="L738">                .containsExactly(&quot;Task 1&quot;);</span>
+<span class="nc" id="L739">        Job timerJob = managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L740">        assertThat(timerJob).isNotNull();</span>
+<span class="nc" id="L741">        long diffInMilliseconds = Math.abs(startTimeInMillis - timerJob.getDuedate().getTime());</span>
+<span class="nc" id="L742">        assertThat(diffInMilliseconds).isLessThan(100);</span>
+
+        // reschedule timer for two hours from now
+<span class="nc" id="L745">        calendar = Calendar.getInstance();</span>
+<span class="nc" id="L746">        calendar.add(Calendar.HOUR, 2);</span>
+<span class="nc" id="L747">        String timeCycle = &quot;R/PT2H&quot;;</span>
+<span class="nc" id="L748">        Job rescheduledTimerJob = managementService.rescheduleTimerJob(timerJob.getId(), null, null, timeCycle, null, null);</span>
+<span class="nc" id="L749">        assertThat(rescheduledTimerJob).isNotNull();</span>
+<span class="nc" id="L750">        assertThat(rescheduledTimerJob.getId()).isNotSameAs(timerJob.getId());</span>
+
+<span class="nc" id="L752">        timerJob = managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L753">        assertThat(rescheduledTimerJob.getId()).isEqualTo(timerJob.getId());</span>
+<span class="nc" id="L754">        diffInMilliseconds = Math.abs(startTimeInMillis - timerJob.getDuedate().getTime());</span>
+<span class="nc" id="L755">        assertThat(diffInMilliseconds).isGreaterThan(59 * 60 * 1000);</span>
+
+        // Move clock forward 1 hour from now
+<span class="nc" id="L758">        calendar = Calendar.getInstance();</span>
+<span class="nc" id="L759">        calendar.add(Calendar.HOUR, 1);</span>
+<span class="nc" id="L760">        calendar.add(Calendar.MINUTE, 5);</span>
+<span class="nc" id="L761">        processEngineConfiguration.getClock().setCurrentTime(calendar.getTime());</span>
+<span class="nc" id="L762">        JobTestHelper.executeJobExecutorForTime(processEngineConfiguration, 1000, 100);</span>
+
+        // Confirm timer has not run
+<span class="nc" id="L765">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L766">        assertThat(tasks)</span>
+<span class="nc" id="L767">                .extracting(Task::getName)</span>
+<span class="nc" id="L768">                .containsExactly(&quot;Task 1&quot;);</span>
+<span class="nc" id="L769">        timerJob = managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L770">        assertThat(timerJob).isNotNull();</span>
+
+        // Move clock forward 2 hours from now
+<span class="nc" id="L773">        calendar = Calendar.getInstance();</span>
+<span class="nc" id="L774">        calendar.add(Calendar.HOUR, 2);</span>
+<span class="nc" id="L775">        processEngineConfiguration.getClock().setCurrentTime(calendar.getTime());</span>
+<span class="nc" id="L776">        waitForJobExecutorToProcessAllJobsAndExecutableTimerJobs(2000, 100);</span>
+
+        // Confirm timer has run
+<span class="nc" id="L779">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L780">        assertThat(tasks)</span>
+<span class="nc" id="L781">                .extracting(Task::getName)</span>
+<span class="nc" id="L782">                .containsExactly(&quot;Task 3&quot;);</span>
+<span class="nc" id="L783">        timerJob = managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L784">        assertThat(timerJob).isNull();</span>
+<span class="nc" id="L785">    }</span>
+
+    @Test
+    @Deployment
+    public void testRescheduleBoundaryTimerOnSubProcess() {
+        // startDate variable set to one hour from now
+<span class="nc" id="L791">        Calendar calendar = Calendar.getInstance();</span>
+<span class="nc" id="L792">        calendar.add(Calendar.HOUR, 1);</span>
+<span class="nc" id="L793">        long startTimeInMillis = calendar.getTime().getTime();</span>
+
+<span class="nc" id="L795">        Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L796">        variables.put(&quot;startDate&quot;, calendar.getTime());</span>
+<span class="nc" id="L797">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;rescheduleTimer&quot;, variables);</span>
+
+<span class="nc" id="L799">        List&lt;org.flowable.task.api.Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L800">        assertThat(tasks)</span>
+<span class="nc" id="L801">                .extracting(Task::getName)</span>
+<span class="nc" id="L802">                .containsExactly(&quot;Task 1&quot;);</span>
+<span class="nc" id="L803">        Job timerJob = managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L804">        assertThat(timerJob).isNotNull();</span>
+<span class="nc" id="L805">        long diffInMilliseconds = Math.abs(startTimeInMillis - timerJob.getDuedate().getTime());</span>
+<span class="nc" id="L806">        assertThat(diffInMilliseconds).isLessThan(100);</span>
+
+        // reschedule timer for two hours from now
+<span class="nc" id="L809">        calendar = Calendar.getInstance();</span>
+<span class="nc" id="L810">        calendar.add(Calendar.HOUR, 2);</span>
+
+<span class="nc" id="L812">        managementService.rescheduleTimeDateJob(timerJob.getId(), sdf.format(calendar.getTime()));</span>
+
+<span class="nc" id="L814">        timerJob = managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L815">        diffInMilliseconds = Math.abs(startTimeInMillis - timerJob.getDuedate().getTime());</span>
+<span class="nc" id="L816">        assertThat(diffInMilliseconds).isGreaterThan(59 * 60 * 1000);</span>
+
+        // Move clock forward 1 hour from now
+<span class="nc" id="L819">        calendar = Calendar.getInstance();</span>
+<span class="nc" id="L820">        calendar.add(Calendar.HOUR, 1);</span>
+<span class="nc" id="L821">        calendar.add(Calendar.MINUTE, 5);</span>
+<span class="nc" id="L822">        processEngineConfiguration.getClock().setCurrentTime(calendar.getTime());</span>
+<span class="nc" id="L823">        JobTestHelper.executeJobExecutorForTime(processEngineConfiguration, 1000, 100);</span>
+
+        // Confirm timer has not run
+<span class="nc" id="L826">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L827">        assertThat(tasks)</span>
+<span class="nc" id="L828">                .extracting(Task::getName)</span>
+<span class="nc" id="L829">                .containsExactly(&quot;Task 1&quot;);</span>
+<span class="nc" id="L830">        timerJob = managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L831">        assertThat(timerJob).isNotNull();</span>
+
+        // Move clock forward 2 hours from now
+<span class="nc" id="L834">        calendar = Calendar.getInstance();</span>
+<span class="nc" id="L835">        calendar.add(Calendar.HOUR, 2);</span>
+<span class="nc" id="L836">        processEngineConfiguration.getClock().setCurrentTime(calendar.getTime());</span>
+<span class="nc" id="L837">        waitForJobExecutorToProcessAllJobsAndExecutableTimerJobs(2000, 100);</span>
+
+        // Confirm timer has run
+<span class="nc" id="L840">        tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L841">        assertThat(tasks)</span>
+<span class="nc" id="L842">                .extracting(Task::getName)</span>
+<span class="nc" id="L843">                .containsExactly(&quot;Task 3&quot;);</span>
+<span class="nc" id="L844">        timerJob = managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L845">        assertThat(timerJob).isNull();</span>
+<span class="nc" id="L846">    }</span>
+
+    @Test
+    @Deployment
+    public void test3BoundaryTimerEvents() throws Exception {
+
+<span class="nc" id="L852">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;threeTimersProcess&quot;);</span>
+<span class="nc" id="L853">        assertThat(managementService.createJobQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+<span class="nc" id="L854">        assertThat(managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(2);</span>
+<span class="nc" id="L855">        assertThat(managementService.createTimerJobQuery().executable().processInstanceId(processInstance.getId()).count()).isZero();</span>
+        
+        // there should be a userTask waiting for user input
+<span class="nc" id="L858">        List&lt;org.flowable.task.api.Task&gt; tasks = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L859">        assertThat(tasks)</span>
+<span class="nc" id="L860">                .extracting(Task::getName)</span>
+<span class="nc" id="L861">                .containsExactly(&quot;First Task&quot;);</span>
+
+        
+        // first job fires after 1 hour
+<span class="nc" id="L865">        Calendar currentCal = processEngineConfiguration.getClock().getCurrentCalendar();</span>
+<span class="nc" id="L866">        currentCal.add(Calendar.MINUTE, 61);</span>
+<span class="nc" id="L867">        processEngineConfiguration.getClock().setCurrentCalendar(currentCal);</span>
+        
+<span class="nc" id="L869">        assertThat(managementService.createTimerJobQuery().executable().processInstanceId(processInstance.getId()).count()).isEqualTo(1);</span>
+        
+<span class="nc" id="L871">        Job timerJob = managementService.createTimerJobQuery().executable().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L872">        managementService.moveTimerToExecutableJob(timerJob.getId());</span>
+        
+<span class="nc" id="L874">        assertThat(managementService.createJobQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(1);</span>
+<span class="nc" id="L875">        assertThat(managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(1);</span>
+        
+<span class="nc" id="L877">        timerJob = managementService.createJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+        
+<span class="nc" id="L879">        managementService.executeJob(timerJob.getId());</span>
+        
+<span class="nc" id="L881">        tasks = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L882">        assertThat(tasks).hasSize(2);</span>
+<span class="nc" id="L883">        assertThat(managementService.createJobQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+<span class="nc" id="L884">        assertThat(managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(2);</span>
+<span class="nc" id="L885">        assertThat(managementService.createTimerJobQuery().executable().processInstanceId(processInstance.getId()).count()).isZero();</span>
+        
+        // second job fires after 1 hour
+<span class="nc" id="L888">        currentCal.add(Calendar.MINUTE, 61);</span>
+<span class="nc" id="L889">        processEngineConfiguration.getClock().setCurrentCalendar(currentCal);</span>
+        
+<span class="nc" id="L891">        assertThat(managementService.createTimerJobQuery().executable().processInstanceId(processInstance.getId()).count()).isEqualTo(1);</span>
+        
+<span class="nc" id="L893">        timerJob = managementService.createTimerJobQuery().executable().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L894">        managementService.moveTimerToExecutableJob(timerJob.getId());</span>
+        
+<span class="nc" id="L896">        assertThat(managementService.createJobQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(1);</span>
+<span class="nc" id="L897">        assertThat(managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(1);</span>
+
+<span class="nc" id="L899">        timerJob = managementService.createJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+        
+<span class="nc" id="L901">        managementService.executeJob(timerJob.getId());</span>
+        
+<span class="nc" id="L903">        tasks = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L904">        assertThat(tasks)</span>
+<span class="nc" id="L905">                .extracting(Task::getName)</span>
+<span class="nc" id="L906">                .containsExactly(&quot;First Task&quot;);</span>
+
+        // last timer fires after another 2 hours
+<span class="nc" id="L909">        currentCal.add(Calendar.MINUTE, 121);</span>
+<span class="nc" id="L910">        processEngineConfiguration.getClock().setCurrentCalendar(currentCal);</span>
+        
+<span class="nc" id="L912">        assertThat(managementService.createTimerJobQuery().executable().processInstanceId(processInstance.getId()).count()).isEqualTo(1);</span>
+        
+<span class="nc" id="L914">        timerJob = managementService.createTimerJobQuery().executable().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L915">        managementService.moveTimerToExecutableJob(timerJob.getId());</span>
+        
+<span class="nc" id="L917">        assertThat(managementService.createJobQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(1);</span>
+<span class="nc" id="L918">        assertThat(managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+        
+<span class="nc" id="L920">        timerJob = managementService.createJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+        
+<span class="nc" id="L922">        managementService.executeJob(timerJob.getId());</span>
+        
+<span class="nc" id="L924">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+        
+<span class="nc" id="L926">        processEngineConfiguration.getClock().reset();</span>
+<span class="nc" id="L927">    }</span>
+
+    @Test
+    @Deployment
+    public void test2Boundary1IntermediateTimerEvents() throws Exception {
+
+<span class="nc" id="L933">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;threeTimersProcess&quot;);</span>
+
+<span class="nc" id="L935">        assertThat(managementService.createJobQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+<span class="nc" id="L936">        assertThat(managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(2);</span>
+<span class="nc" id="L937">        assertThat(managementService.createTimerJobQuery().executable().processInstanceId(processInstance.getId()).count()).isZero();</span>
+
+        // there should be a userTask waiting for user input
+<span class="nc" id="L940">        List&lt;org.flowable.task.api.Task&gt; tasks = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L941">        assertThat(tasks)</span>
+<span class="nc" id="L942">                .extracting(Task::getName)</span>
+<span class="nc" id="L943">                .containsExactly(&quot;First Task&quot;);</span>
+
+        // first job fires after 1 hour
+<span class="nc" id="L946">        Calendar currentCal = processEngineConfiguration.getClock().getCurrentCalendar();</span>
+<span class="nc" id="L947">        currentCal.add(Calendar.MINUTE, 61);</span>
+<span class="nc" id="L948">        processEngineConfiguration.getClock().setCurrentCalendar(currentCal);</span>
+        
+<span class="nc" id="L950">        assertThat(managementService.createTimerJobQuery().executable().processInstanceId(processInstance.getId()).count()).isEqualTo(1);</span>
+        
+<span class="nc" id="L952">        Job timerJob = managementService.createTimerJobQuery().executable().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L953">        managementService.moveTimerToExecutableJob(timerJob.getId());</span>
+        
+<span class="nc" id="L955">        assertThat(managementService.createJobQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(1);</span>
+<span class="nc" id="L956">        assertThat(managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(1);</span>
+        
+<span class="nc" id="L958">        timerJob = managementService.createJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+        
+<span class="nc" id="L960">        managementService.executeJob(timerJob.getId());</span>
+
+<span class="nc" id="L962">        tasks = taskService.createTaskQuery().taskName(&quot;Reminder Task&quot;).list();</span>
+<span class="nc" id="L963">        assertThat(tasks).hasSize(1);</span>
+<span class="nc" id="L964">        taskService.complete(tasks.get(0).getId());</span>
+        
+<span class="nc" id="L966">        assertThat(managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(2);</span>
+
+        // intermediate timer catch event job fires after 1 hour
+<span class="nc" id="L969">        currentCal.add(Calendar.MINUTE, 61);</span>
+<span class="nc" id="L970">        processEngineConfiguration.getClock().setCurrentCalendar(currentCal);</span>
+        
+<span class="nc" id="L972">        assertThat(managementService.createTimerJobQuery().executable().processInstanceId(processInstance.getId()).count()).isEqualTo(1);</span>
+        
+<span class="nc" id="L974">        timerJob = managementService.createTimerJobQuery().executable().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L975">        managementService.moveTimerToExecutableJob(timerJob.getId());</span>
+        
+<span class="nc" id="L977">        assertThat(managementService.createJobQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(1);</span>
+<span class="nc" id="L978">        assertThat(managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(1);</span>
+        
+<span class="nc" id="L980">        timerJob = managementService.createJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+        
+<span class="nc" id="L982">        managementService.executeJob(timerJob.getId());</span>
+        
+<span class="nc" id="L984">        tasks = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L985">        assertThat(tasks)</span>
+<span class="nc" id="L986">                .extracting(Task::getName)</span>
+<span class="nc" id="L987">                .containsExactly(&quot;First Task&quot;);</span>
+        
+        // last timer fires after another 2 hours
+<span class="nc" id="L990">        currentCal.add(Calendar.MINUTE, 121);</span>
+<span class="nc" id="L991">        processEngineConfiguration.getClock().setCurrentCalendar(currentCal);</span>
+        
+<span class="nc" id="L993">        assertThat(managementService.createTimerJobQuery().executable().processInstanceId(processInstance.getId()).count()).isEqualTo(1);</span>
+        
+<span class="nc" id="L995">        timerJob = managementService.createTimerJobQuery().executable().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L996">        managementService.moveTimerToExecutableJob(timerJob.getId());</span>
+        
+<span class="nc" id="L998">        assertThat(managementService.createJobQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(1);</span>
+<span class="nc" id="L999">        assertThat(managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+        
+<span class="nc" id="L1001">        timerJob = managementService.createJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+        
+<span class="nc" id="L1003">        managementService.executeJob(timerJob.getId());</span>
+        
+<span class="nc" id="L1005">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+        
+<span class="nc" id="L1007">        processEngineConfiguration.getClock().reset();</span>
+<span class="nc" id="L1008">    }</span>
+
+    @Test
+    @Deployment
+    public void testDateTypes() throws ParseException {
+<span class="nc" id="L1013">        Date date = new SimpleDateFormat(&quot;dd-MM-yyyy hh:mm:ss XXX&quot;).parse(&quot;30-01-2024 10:28:00 +01:00&quot;);</span>
+<span class="nc" id="L1014">        Instant instant = date.toInstant();</span>
+<span class="nc" id="L1015">        LocalDate localDate = LocalDate.of(2024, 1, 30);</span>
+<span class="nc" id="L1016">        LocalDateTime localDateTime = LocalDateTime.of(2024, 1, 30, 10, 2);</span>
+<span class="nc" id="L1017">        String dateString = &quot;2024-01-30T10:28:00+01:00&quot;;</span>
+
+<span class="nc" id="L1019">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L1020">                .processDefinitionKey(&quot;testTimerEventDateTypes&quot;)</span>
+<span class="nc" id="L1021">                .variable(&quot;taskDate&quot;, date)</span>
+<span class="nc" id="L1022">                .variable(&quot;taskInstant&quot;, instant)</span>
+<span class="nc" id="L1023">                .variable(&quot;taskDateString&quot;, localDate)</span>
+<span class="nc" id="L1024">                .variable(&quot;taskLocalDateTime&quot;, localDateTime)</span>
+<span class="nc" id="L1025">                .variable(&quot;taskLocalDate&quot;, dateString)</span>
+<span class="nc" id="L1026">                .start();</span>
+
+<span class="nc" id="L1028">        List&lt;Job&gt; timers = managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1029">        assertThat(timers).hasSize(5);</span>
+<span class="nc" id="L1030">        timers.forEach(t -&gt; managementService.moveTimerToExecutableJob(t.getId()));</span>
+
+<span class="nc" id="L1032">        List&lt;Job&gt; jobs = managementService.createJobQuery().list();</span>
+<span class="nc" id="L1033">        assertThat(jobs).hasSize(5);</span>
+<span class="nc" id="L1034">        jobs.forEach(j -&gt; managementService.executeJob(j.getId()));</span>
+
+        // There is one user task, on which 4 boundary timer events are attached, each timer event going to a task with a specific name.
+        // Each timer configuration uses a different type to test the date conversion.
+        // If the task exists, it means the date variable was parsed correctly
+
+<span class="nc" id="L1040">        assertThat(taskService.createTaskQuery().processInstanceId(processInstance.getId()).taskName(&quot;dateTask&quot;).singleResult()).isNotNull();</span>
+<span class="nc" id="L1041">        assertThat(taskService.createTaskQuery().processInstanceId(processInstance.getId()).taskName(&quot;instantTask&quot;).singleResult()).isNotNull();</span>
+<span class="nc" id="L1042">        assertThat(taskService.createTaskQuery().processInstanceId(processInstance.getId()).taskName(&quot;dateStringTask&quot;).singleResult()).isNotNull();</span>
+<span class="nc" id="L1043">        assertThat(taskService.createTaskQuery().processInstanceId(processInstance.getId()).taskName(&quot;localDateTask&quot;).singleResult()).isNotNull();</span>
+<span class="nc" id="L1044">        assertThat(taskService.createTaskQuery().processInstanceId(processInstance.getId()).taskName(&quot;localDateTimeTask&quot;).singleResult()).isNotNull();</span>
+
+        // After the user task, there's a parallel gateway with 4 intermediary timer events,
+        // each again using a different type of date variable.
+
+        // The actual values don't matter, the important thing is that the date type is supported to be parsed
+<span class="nc" id="L1050">        Map&lt;String, Object&gt; taskVariables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L1051">        taskVariables.put(&quot;eventDate&quot;, date);</span>
+<span class="nc" id="L1052">        taskVariables.put(&quot;eventInstant&quot;, instant);</span>
+<span class="nc" id="L1053">        taskVariables.put(&quot;eventDateString&quot;, dateString);</span>
+<span class="nc" id="L1054">        taskVariables.put(&quot;eventLocalDate&quot;, localDate);</span>
+<span class="nc" id="L1055">        taskVariables.put(&quot;eventLocalDateTime&quot;, localDateTime);</span>
+<span class="nc" id="L1056">        taskService.complete(taskService.createTaskQuery().processInstanceId(processInstance.getId()).taskName(&quot;User task&quot;).singleResult().getId(), taskVariables); // this is the task with the boundary events</span>
+
+<span class="nc" id="L1058">        timers = managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1059">        assertThat(timers).hasSize(5);</span>
+<span class="nc" id="L1060">        timers.forEach(t -&gt; managementService.moveTimerToExecutableJob(t.getId()));</span>
+
+<span class="nc" id="L1062">        jobs = managementService.createJobQuery().list();</span>
+<span class="nc" id="L1063">        assertThat(jobs).hasSize(5);</span>
+<span class="nc" id="L1064">        jobs.forEach(j -&gt; managementService.executeJob(j.getId()));</span>
+
+<span class="nc" id="L1066">        List&lt;Task&gt; tasks = taskService.createTaskQuery().processInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L1067">        assertThat(tasks.stream().filter(t -&gt; t.getName().startsWith(&quot;event&quot;))).extracting(Task::getName).containsExactlyInAnyOrder(</span>
+                &quot;eventDate&quot;, &quot;eventInstant&quot;, &quot;eventDateString&quot;, &quot;eventLocalDate&quot;, &quot;eventLocalDateTime&quot;
+        );
+
+<span class="nc" id="L1071">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

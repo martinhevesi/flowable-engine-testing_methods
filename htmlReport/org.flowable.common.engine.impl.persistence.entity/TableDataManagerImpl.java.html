@@ -1,0 +1,214 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TableDataManagerImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.common.engine.impl.persistence.entity</a> &gt; <span class="el_source">TableDataManagerImpl.java</span></div><h1>TableDataManagerImpl.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.flowable.common.engine.impl.persistence.entity;
+
+import java.sql.Connection;
+import java.sql.DatabaseMetaData;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+
+import org.apache.ibatis.session.RowBounds;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.management.TableMetaData;
+import org.flowable.common.engine.api.management.TablePage;
+import org.flowable.common.engine.impl.AbstractEngineConfiguration;
+import org.flowable.common.engine.impl.context.Context;
+import org.flowable.common.engine.impl.db.DbSqlSession;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * @author Tom Baeyens
+ */
+public class TableDataManagerImpl implements TableDataManager {
+
+<span class="nc" id="L42">    private static final Logger LOGGER = LoggerFactory.getLogger(TableDataManagerImpl.class);</span>
+    
+    protected AbstractEngineConfiguration engineConfiguration;
+    
+<span class="nc" id="L46">    public TableDataManagerImpl(AbstractEngineConfiguration engineConfiguration) {</span>
+<span class="nc" id="L47">        this.engineConfiguration = engineConfiguration;</span>
+<span class="nc" id="L48">    }</span>
+
+    @Override
+    public Map&lt;String, Long&gt; getTableCount() {
+<span class="nc" id="L52">        Map&lt;String, Long&gt; tableCount = new HashMap&lt;&gt;();</span>
+        try {
+<span class="nc bnc" id="L54" title="All 2 branches missed.">            for (String tableName : getTablesPresentInDatabase()) {</span>
+<span class="nc" id="L55">                tableCount.put(tableName, getTableCount(tableName));</span>
+<span class="nc" id="L56">            }</span>
+<span class="nc" id="L57">            LOGGER.debug(&quot;Number of rows per flowable table: {}&quot;, tableCount);</span>
+<span class="nc" id="L58">        } catch (Exception e) {</span>
+<span class="nc" id="L59">            throw new FlowableException(&quot;couldn't get table counts&quot;, e);</span>
+<span class="nc" id="L60">        }</span>
+<span class="nc" id="L61">        return tableCount;</span>
+    }
+
+    @Override
+    public List&lt;String&gt; getTablesPresentInDatabase() {
+<span class="nc" id="L66">        List&lt;String&gt; tableNames = new ArrayList&lt;&gt;();</span>
+        try {
+<span class="nc" id="L68">            Connection connection = getDbSqlSession().getSqlSession().getConnection();</span>
+<span class="nc" id="L69">            DatabaseMetaData databaseMetaData = connection.getMetaData();</span>
+<span class="nc" id="L70">            LOGGER.debug(&quot;retrieving flowable tables from jdbc metadata&quot;);</span>
+<span class="nc" id="L71">            String databaseTablePrefix = getDbSqlSession().getDbSqlSessionFactory().getDatabaseTablePrefix();</span>
+<span class="nc" id="L72">            String actTableNameFilter = getTableNameFilter(databaseMetaData, databaseTablePrefix, &quot;ACT&quot;);</span>
+<span class="nc" id="L73">            String flwTableNameFilter = getTableNameFilter(databaseMetaData, databaseTablePrefix, &quot;FLW&quot;);</span>
+
+<span class="nc" id="L75">            String catalog = getDatabaseCatalog();</span>
+
+<span class="nc" id="L77">            String schema = getDatabaseSchema();</span>
+
+<span class="nc" id="L79">            tableNames.addAll(getTableNames(databaseMetaData, catalog, schema, actTableNameFilter));</span>
+<span class="nc" id="L80">            tableNames.addAll(getTableNames(databaseMetaData, catalog, schema, flwTableNameFilter));</span>
+<span class="nc" id="L81">        } catch (Exception e) {</span>
+<span class="nc" id="L82">            throw new FlowableException(&quot;couldn't get flowable table names using metadata: &quot; + e.getMessage(), e);</span>
+<span class="nc" id="L83">        }</span>
+<span class="nc" id="L84">        return tableNames;</span>
+    }
+
+    protected String getTableNameFilter(DatabaseMetaData databaseMetaData, String databaseTablePrefix, String flowableTablePrefix) throws SQLException {
+        // We are using the search string escape for the filter since the underscore character (_) means match any character when used in LIKE.
+        // However, we want to get the tables that do have that charactery literally
+        String tableNameFilter;
+<span class="nc bnc" id="L91" title="All 2 branches missed.">        if (&quot;postgres&quot;.equals(getDbSqlSession().getDbSqlSessionFactory().getDatabaseType())</span>
+<span class="nc bnc" id="L92" title="All 2 branches missed.">                || &quot;cockroachdb&quot;.equals(getDbSqlSession().getDbSqlSessionFactory().getDatabaseType())) {</span>
+<span class="nc" id="L93">            tableNameFilter = databaseTablePrefix + flowableTablePrefix.toLowerCase(Locale.ROOT) + databaseMetaData.getSearchStringEscape() + &quot;_%&quot;;</span>
+        } else {
+<span class="nc" id="L95">            tableNameFilter = databaseTablePrefix + flowableTablePrefix + databaseMetaData.getSearchStringEscape() + &quot;_%&quot;;</span>
+        }
+
+<span class="nc" id="L98">        return tableNameFilter;</span>
+    }
+
+    protected List&lt;String&gt; getTableNames(DatabaseMetaData databaseMetaData, String catalog, String schema, String tableNameFilter) throws SQLException {
+<span class="nc" id="L102">        List&lt;String&gt; tableNames = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L103">        try (ResultSet tables = databaseMetaData.getTables(catalog, schema, tableNameFilter, DbSqlSession.JDBC_METADATA_TABLE_TYPES)) {</span>
+<span class="nc bnc" id="L104" title="All 2 branches missed.">            while (tables.next()) {</span>
+<span class="nc" id="L105">                String tableName = tables.getString(&quot;TABLE_NAME&quot;);</span>
+<span class="nc" id="L106">                tableName = tableName.toUpperCase(Locale.ROOT);</span>
+<span class="nc" id="L107">                tableNames.add(tableName);</span>
+<span class="nc" id="L108">                LOGGER.debug(&quot;retrieved flowable table name {}&quot;, tableName);</span>
+<span class="nc" id="L109">            }</span>
+        }
+
+<span class="nc" id="L112">        return tableNames;</span>
+    }
+
+    protected String getDatabaseCatalog() {
+<span class="nc" id="L116">        String catalog = null;</span>
+<span class="nc bnc" id="L117" title="All 4 branches missed.">        if (engineConfiguration.getDatabaseCatalog() != null &amp;&amp; engineConfiguration.getDatabaseCatalog().length() &gt; 0) {</span>
+<span class="nc" id="L118">            catalog = engineConfiguration.getDatabaseCatalog();</span>
+        }
+
+<span class="nc" id="L121">        return catalog;</span>
+    }
+
+    protected String getDatabaseSchema() {
+<span class="nc" id="L125">        String schema = null;</span>
+<span class="nc bnc" id="L126" title="All 4 branches missed.">        if (engineConfiguration.getDatabaseSchema() != null &amp;&amp; engineConfiguration.getDatabaseSchema().length() &gt; 0) {</span>
+<span class="nc bnc" id="L127" title="All 2 branches missed.">            if (&quot;oracle&quot;.equals(getDbSqlSession().getDbSqlSessionFactory().getDatabaseType())) {</span>
+<span class="nc" id="L128">                schema = engineConfiguration.getDatabaseSchema().toUpperCase(Locale.ROOT);</span>
+            } else {
+<span class="nc" id="L130">                schema = engineConfiguration.getDatabaseSchema();</span>
+            }
+        }
+
+<span class="nc" id="L134">        return schema;</span>
+    }
+
+    protected long getTableCount(String tableName) {
+<span class="nc" id="L138">        LOGGER.debug(&quot;selecting table count for {}&quot;, tableName);</span>
+<span class="nc" id="L139">        Long count = (Long) getDbSqlSession().selectOne(&quot;org.flowable.common.engine.impl.TablePageMap.selectTableCount&quot;, Collections.singletonMap(&quot;tableName&quot;, tableName));</span>
+<span class="nc" id="L140">        return count;</span>
+    }
+
+    @Override
+    @SuppressWarnings(&quot;unchecked&quot;)
+    public TablePage getTablePage(TablePageQueryImpl tablePageQuery, int firstResult, int maxResults) {
+
+<span class="nc" id="L147">        TablePage tablePage = new TablePage();</span>
+
+        @SuppressWarnings(&quot;rawtypes&quot;)
+<span class="nc" id="L150">        List tableData = getDbSqlSession().getSqlSession().selectList(&quot;org.flowable.common.engine.impl.TablePageMap.selectTableData&quot;, tablePageQuery, new RowBounds(firstResult, maxResults));</span>
+
+<span class="nc" id="L152">        tablePage.setTableName(tablePageQuery.getTableName());</span>
+<span class="nc" id="L153">        tablePage.setTotal(getTableCount(tablePageQuery.getTableName()));</span>
+<span class="nc" id="L154">        tablePage.setRows((List&lt;Map&lt;String, Object&gt;&gt;) tableData);</span>
+<span class="nc" id="L155">        tablePage.setFirstResult(firstResult);</span>
+
+<span class="nc" id="L157">        return tablePage;</span>
+    }
+
+    @Override
+    public TableMetaData getTableMetaData(String tableName) {
+<span class="nc" id="L162">        TableMetaData result = new TableMetaData();</span>
+        try {
+<span class="nc" id="L164">            result.setTableName(tableName);</span>
+<span class="nc" id="L165">            DatabaseMetaData metaData = getDbSqlSession().getSqlSession().getConnection().getMetaData();</span>
+
+<span class="nc bnc" id="L167" title="All 2 branches missed.">            if (&quot;postgres&quot;.equals(getDbSqlSession().getDbSqlSessionFactory().getDatabaseType())</span>
+<span class="nc bnc" id="L168" title="All 2 branches missed.">                    || &quot;cockroachdb&quot;.equals(getDbSqlSession().getDbSqlSessionFactory().getDatabaseType())) {</span>
+<span class="nc" id="L169">                tableName = tableName.toLowerCase(Locale.ROOT);</span>
+            }
+
+<span class="nc" id="L172">            String catalog = getDatabaseCatalog();</span>
+
+<span class="nc" id="L174">            String schema = getDatabaseSchema();</span>
+
+<span class="nc" id="L176">            ResultSet resultSet = metaData.getColumns(catalog, schema, tableName, null);</span>
+<span class="nc bnc" id="L177" title="All 2 branches missed.">            while (resultSet.next()) {</span>
+<span class="nc" id="L178">                boolean wrongSchema = false;</span>
+<span class="nc bnc" id="L179" title="All 4 branches missed.">                if (schema != null &amp;&amp; schema.length() &gt; 0) {</span>
+<span class="nc bnc" id="L180" title="All 2 branches missed.">                    for (int i = 0; i &lt; resultSet.getMetaData().getColumnCount(); i++) {</span>
+<span class="nc" id="L181">                        String columnName = resultSet.getMetaData().getColumnName(i + 1);</span>
+<span class="nc bnc" id="L182" title="All 4 branches missed.">                        if (&quot;TABLE_SCHEM&quot;.equalsIgnoreCase(columnName) || &quot;TABLE_SCHEMA&quot;.equalsIgnoreCase(columnName)) {</span>
+<span class="nc bnc" id="L183" title="All 2 branches missed.">                            if (!schema.equalsIgnoreCase(resultSet.getString(resultSet.getMetaData().getColumnName(i + 1)))) {</span>
+<span class="nc" id="L184">                                wrongSchema = true;</span>
+                            }
+                            break;
+                        }
+                    }
+                }
+
+<span class="nc bnc" id="L191" title="All 2 branches missed.">                if (!wrongSchema) {</span>
+<span class="nc" id="L192">                    String name = resultSet.getString(&quot;COLUMN_NAME&quot;).toUpperCase(Locale.ROOT);</span>
+<span class="nc" id="L193">                    String type = resultSet.getString(&quot;TYPE_NAME&quot;).toUpperCase(Locale.ROOT);</span>
+<span class="nc" id="L194">                    result.addColumnMetaData(name, type);</span>
+                }
+<span class="nc" id="L196">            }</span>
+
+<span class="nc" id="L198">        } catch (SQLException e) {</span>
+<span class="nc" id="L199">            throw new FlowableException(&quot;Could not retrieve database metadata: &quot; + e.getMessage());</span>
+<span class="nc" id="L200">        }</span>
+
+<span class="nc bnc" id="L202" title="All 2 branches missed.">        if (result.getColumnNames().isEmpty()) {</span>
+            // According to API, when a table doesn't exist, null should be returned
+<span class="nc" id="L204">            result = null;</span>
+        }
+<span class="nc" id="L206">        return result;</span>
+    }
+    
+    protected DbSqlSession getDbSqlSession() {
+<span class="nc" id="L210">        return Context.getCommandContext().getSession(DbSqlSession.class);</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

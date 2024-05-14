@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Builder.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.common.engine.impl.de.odysseus.el.tree.impl</a> &gt; <span class="el_source">Builder.java</span></div><h1>Builder.java</h1><pre class="source lang-java linenums">/*
+ * Copyright 2006-2009 Odysseus Software GmbH
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */ 
+package org.flowable.common.engine.impl.de.odysseus.el.tree.impl;
+
+import java.io.PrintWriter;
+import java.util.EnumSet;
+
+import org.flowable.common.engine.impl.de.odysseus.el.tree.Bindings;
+import org.flowable.common.engine.impl.de.odysseus.el.tree.NodePrinter;
+import org.flowable.common.engine.impl.de.odysseus.el.tree.Tree;
+import org.flowable.common.engine.impl.de.odysseus.el.tree.TreeBuilder;
+import org.flowable.common.engine.impl.de.odysseus.el.tree.TreeBuilderException;
+import org.flowable.common.engine.impl.de.odysseus.el.tree.impl.Parser.ParseException;
+import org.flowable.common.engine.impl.de.odysseus.el.tree.impl.Scanner.ScanException;
+import org.flowable.common.engine.impl.javax.el.ELContext;
+import org.flowable.common.engine.impl.javax.el.ELException;
+import org.flowable.common.engine.impl.javax.el.ELResolver;
+import org.flowable.common.engine.impl.javax.el.ExpressionFactory;
+import org.flowable.common.engine.impl.javax.el.FunctionMapper;
+import org.flowable.common.engine.impl.javax.el.VariableMapper;
+
+/**
+ * Tree builder.
+ * 
+ * @author Christoph Beck
+ */
+public class Builder implements TreeBuilder {
+	private static final long serialVersionUID = 1L;
+
+	/**
+	 * Feature enumeration type.
+	 */
+<span class="nc" id="L46">	public enum Feature {</span>
+		/**
+		 * Method invocations as in &lt;code&gt;${foo.bar(1)}&lt;/code&gt; as specified in JSR 245,
+		 * maintenance release 2.
+		 * The method to be invoked is resolved at evaluation time by calling
+		 * {@link ELResolver#invoke(org.flowable.common.engine.impl.javax.el.ELContext, Object, Object, Class[], Object[])}.
+		 */
+<span class="nc" id="L53">		METHOD_INVOCATIONS,</span>
+		/**
+		 * For some reason we don't understand, the specification does not allow to resolve
+		 * &lt;code&gt;null&lt;/code&gt; property values. E.g. &lt;code&gt;${map[key]}&lt;/code&gt; will always
+		 * return &lt;code&gt;null&lt;/code&gt; if &lt;code&gt;key&lt;/code&gt; evaluates to &lt;code&gt;null&lt;/code&gt;.
+		 * Enabling this feature will allow &lt;em&gt;JUEL&lt;/em&gt; to pass &lt;code&gt;null&lt;/code&gt; to
+		 * the property resolvers just like any other property value.
+		 */
+<span class="nc" id="L61">		NULL_PROPERTIES,</span>
+		/**
+		 * Allow for use of Java 5 varargs in function calls.
+		 */
+<span class="nc" id="L65">		VARARGS,</span>
+		/**
+		 * Do not verify that a method's return type matches the expected return type passed to
+		 * {@link ExpressionFactory#createMethodExpression(ELContext, String, Class, Class[])}. 
+		 */
+<span class="nc" id="L70">		IGNORE_RETURN_TYPE</span>
+	}
+	
+	protected final EnumSet&lt;Feature&gt; features;
+
+<span class="nc" id="L75">	public Builder() {</span>
+<span class="nc" id="L76">		this.features = EnumSet.noneOf(Feature.class);</span>
+<span class="nc" id="L77">	}</span>
+
+<span class="nc" id="L79">	public Builder(Feature... features) {</span>
+<span class="nc bnc" id="L80" title="All 4 branches missed.">		if (features == null || features.length == 0) {</span>
+<span class="nc" id="L81">			this.features = EnumSet.noneOf(Feature.class);</span>
+<span class="nc bnc" id="L82" title="All 2 branches missed.">		} else if (features.length == 1) {</span>
+<span class="nc" id="L83">			this.features = EnumSet.of(features[0]);</span>
+		} else {
+<span class="nc" id="L85">			Feature[] rest = new Feature[features.length-1];</span>
+<span class="nc bnc" id="L86" title="All 2 branches missed.">			for (int i = 1; i &lt; features.length; i++) {</span>
+<span class="nc" id="L87">				rest[i-1] = features[i];</span>
+			}
+<span class="nc" id="L89">			this.features = EnumSet.of(features[0], rest);</span>
+		}
+<span class="nc" id="L91">	}</span>
+	
+	/**
+	 * @return &lt;code&gt;true&lt;/code&gt; iff the specified feature is supported.
+	 */
+	public boolean isEnabled(Feature feature) {
+<span class="nc" id="L97">		return features.contains(feature);</span>
+	}
+	
+	/**
+	 * Parse expression.
+	 */
+    @Override
+	public Tree build(String expression) throws TreeBuilderException {
+		try {
+<span class="nc" id="L106">			return createParser(expression).tree();</span>
+<span class="nc" id="L107">		} catch (ScanException e) {</span>
+<span class="nc" id="L108">			throw new TreeBuilderException(expression, e.position, e.encountered, e.expected, e.getMessage());</span>
+<span class="nc" id="L109">		} catch (ParseException e) {</span>
+<span class="nc" id="L110">			throw new TreeBuilderException(expression, e.position, e.encountered, e.expected, e.getMessage());</span>
+		}
+	}
+
+	protected Parser createParser(String expression) {
+<span class="nc" id="L115">		return new Parser(this, expression);</span>
+	}	
+	
+	@Override
+	public boolean equals(Object obj) {
+<span class="nc bnc" id="L120" title="All 4 branches missed.">		if (obj == null || obj.getClass() != getClass()) {</span>
+<span class="nc" id="L121">			return false;</span>
+		}
+<span class="nc" id="L123">		return features.equals(((Builder)obj).features);</span>
+	}
+	
+	@Override
+	public int hashCode() {
+<span class="nc" id="L128">		return getClass().hashCode();</span>
+	}
+
+	/**
+	 * Dump out abstract syntax tree for a given expression
+	 * 
+	 * @param args array with one element, containing the expression string
+	 */
+	public static void main(String[] args) {
+<span class="nc bnc" id="L137" title="All 2 branches missed.">		if (args.length != 1) {</span>
+<span class="nc" id="L138">			System.err.println(&quot;usage: java &quot; + Builder.class.getName() + &quot; &lt;expression string&gt;&quot;);</span>
+<span class="nc" id="L139">			System.exit(1);</span>
+		}
+<span class="nc" id="L141">		PrintWriter out = new PrintWriter(System.out);</span>
+<span class="nc" id="L142">		Tree tree = null;</span>
+		try {
+<span class="nc" id="L144">			tree = new Builder(Feature.METHOD_INVOCATIONS).build(args[0]);</span>
+<span class="nc" id="L145">		} catch (TreeBuilderException e) {</span>
+<span class="nc" id="L146">			System.out.println(e.getMessage());</span>
+<span class="nc" id="L147">			System.exit(0);</span>
+<span class="nc" id="L148">		}</span>
+<span class="nc" id="L149">		NodePrinter.dump(out, tree.getRoot());</span>
+<span class="nc bnc" id="L150" title="All 4 branches missed.">		if (!tree.getFunctionNodes().iterator().hasNext() &amp;&amp; !tree.getIdentifierNodes().iterator().hasNext()) {</span>
+<span class="nc" id="L151">			ELContext context = new ELContext() {</span>
+				@Override
+				public VariableMapper getVariableMapper() {
+<span class="nc" id="L154">					return null;</span>
+				}
+				@Override
+				public FunctionMapper getFunctionMapper() {
+<span class="nc" id="L158">					return null;</span>
+				}
+				@Override
+				public ELResolver getELResolver() {
+<span class="nc" id="L162">					return null;</span>
+				}
+			};
+<span class="nc" id="L165">			out.print(&quot;&gt;&gt; &quot;);</span>
+			try {
+<span class="nc" id="L167">				out.println(tree.getRoot().getValue(new Bindings(null, null), context, null));</span>
+<span class="nc" id="L168">			} catch (ELException e) {</span>
+<span class="nc" id="L169">				out.println(e.getMessage());</span>
+<span class="nc" id="L170">			}</span>
+		}
+<span class="nc" id="L172">		out.flush();</span>
+<span class="nc" id="L173">	}</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

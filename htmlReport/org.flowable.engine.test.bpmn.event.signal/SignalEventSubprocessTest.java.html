@@ -1,0 +1,692 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SignalEventSubprocessTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.bpmn.event.signal</a> &gt; <span class="el_source">SignalEventSubprocessTest.java</span></div><h1>SignalEventSubprocessTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.flowable.engine.test.bpmn.event.signal;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
+
+import java.util.List;
+
+import org.flowable.common.engine.impl.history.HistoryLevel;
+import org.flowable.engine.history.HistoricActivityInstance;
+import org.flowable.engine.history.HistoricProcessInstance;
+import org.flowable.engine.impl.test.HistoryTestHelper;
+import org.flowable.engine.impl.test.PluggableFlowableTestCase;
+import org.flowable.engine.runtime.ActivityInstance;
+import org.flowable.engine.runtime.Execution;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.test.Deployment;
+import org.flowable.eventsubscription.service.impl.EventSubscriptionQueryImpl;
+import org.flowable.task.api.Task;
+import org.junit.jupiter.api.Test;
+
+/**
+ * @author Tijs Rademakers
+ * @author Filip Hrisafov
+ */
+<span class="nc" id="L38">public class SignalEventSubprocessTest extends PluggableFlowableTestCase {</span>
+
+    @Test
+    @Deployment
+    public void testInterruptingUnderProcessDefinition() {
+<span class="nc" id="L43">        testInterruptingUnderProcessDefinition(1, 3);</span>
+<span class="nc" id="L44">    }</span>
+
+    /**
+     * Checks if unused event subscriptions are properly deleted.
+     */
+    @Test
+    @Deployment
+    public void testTwoInterruptingUnderProcessDefinition() {
+<span class="nc" id="L52">        testInterruptingUnderProcessDefinition(2, 4);</span>
+<span class="nc" id="L53">    }</span>
+
+    private void testInterruptingUnderProcessDefinition(int expectedNumberOfEventSubscriptions, int numberOfExecutions) {
+<span class="nc" id="L56">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;process&quot;);</span>
+
+        // the process instance must have a message event subscription:
+<span class="nc" id="L59">        Execution execution = runtimeService.createExecutionQuery().signalEventSubscriptionName(&quot;newSignal&quot;).singleResult();</span>
+<span class="nc" id="L60">        assertThat(execution).isNotNull();</span>
+<span class="nc" id="L61">        assertThat(createEventSubscriptionQuery().count()).isEqualTo(expectedNumberOfEventSubscriptions);</span>
+<span class="nc" id="L62">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(numberOfExecutions);</span>
+
+        // if we trigger the usertask, the process terminates and the event subscription is removed:
+<span class="nc" id="L65">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L66">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;task&quot;);</span>
+<span class="nc" id="L67">        taskService.complete(task.getId());</span>
+<span class="nc" id="L68">        assertThat(createEventSubscriptionQuery().count()).isZero();</span>
+<span class="nc" id="L69">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+<span class="nc" id="L70">        assertProcessEnded(processInstance.getId());</span>
+
+        // now we start a new instance but this time we trigger the event subprocess:
+<span class="nc" id="L73">        processInstance = runtimeService.startProcessInstanceByKey(&quot;process&quot;);</span>
+<span class="nc" id="L74">        execution = runtimeService.createExecutionQuery().signalEventSubscriptionName(&quot;newSignal&quot;).singleResult();</span>
+<span class="nc" id="L75">        assertThat(execution).isNotNull();</span>
+<span class="nc" id="L76">        runtimeService.signalEventReceived(&quot;newSignal&quot;);</span>
+
+<span class="nc" id="L78">        task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L79">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;eventSubProcessTask&quot;);</span>
+<span class="nc" id="L80">        taskService.complete(task.getId());</span>
+<span class="nc" id="L81">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L82">        assertThat(createEventSubscriptionQuery().count()).isZero();</span>
+<span class="nc" id="L83">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+<span class="nc" id="L84">    }</span>
+
+    @Test
+    @Deployment
+    public void testNonInterruptingUnderProcessDefinition() {
+
+<span class="nc" id="L90">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;process&quot;);</span>
+
+        // the process instance must have a message event subscription:
+<span class="nc" id="L93">        Execution execution = runtimeService.createExecutionQuery()</span>
+<span class="nc" id="L94">                .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L95">                .signalEventSubscriptionName(&quot;newSignal&quot;)</span>
+<span class="nc" id="L96">                .singleResult();</span>
+
+<span class="nc" id="L98">        assertThat(execution).isNotNull();</span>
+<span class="nc" id="L99">        assertThat(createEventSubscriptionQuery().count()).isEqualTo(1);</span>
+<span class="nc" id="L100">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(3);</span>
+
+        // if we trigger the usertask, the process terminates and the event subscription is removed:
+<span class="nc" id="L103">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L104">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;task&quot;);</span>
+<span class="nc" id="L105">        taskService.complete(task.getId());</span>
+<span class="nc" id="L106">        assertThat(createEventSubscriptionQuery().count()).isZero();</span>
+<span class="nc" id="L107">        assertThat(runtimeService.createExecutionQuery().count()).isZero();</span>
+
+        // now we start a new instance but this time we trigger the event subprocess:
+<span class="nc" id="L110">        processInstance = runtimeService.startProcessInstanceByKey(&quot;process&quot;);</span>
+<span class="nc" id="L111">        execution = runtimeService.createExecutionQuery()</span>
+<span class="nc" id="L112">                .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L113">                .signalEventSubscriptionName(&quot;newSignal&quot;)</span>
+<span class="nc" id="L114">                .singleResult();</span>
+
+<span class="nc" id="L116">        runtimeService.signalEventReceived(&quot;newSignal&quot;);</span>
+
+<span class="nc" id="L118">        assertThat(taskService.createTaskQuery().count()).isEqualTo(2);</span>
+
+        // now let's first complete the task in the main flow:
+<span class="nc" id="L121">        task = taskService.createTaskQuery().taskDefinitionKey(&quot;task&quot;).singleResult();</span>
+<span class="nc" id="L122">        taskService.complete(task.getId());</span>
+
+        // we still have 3 executions:
+<span class="nc" id="L125">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(3);</span>
+
+        // now let's complete the task in the event subprocess
+<span class="nc" id="L128">        task = taskService.createTaskQuery().taskDefinitionKey(&quot;eventSubProcessTask&quot;).singleResult();</span>
+<span class="nc" id="L129">        taskService.complete(task.getId());</span>
+
+        // done!
+<span class="nc" id="L132">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+
+        // #################### again, the other way around:
+
+<span class="nc" id="L136">        processInstance = runtimeService.startProcessInstanceByKey(&quot;process&quot;);</span>
+<span class="nc" id="L137">        execution = runtimeService.createExecutionQuery()</span>
+<span class="nc" id="L138">                .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L139">                .signalEventSubscriptionName(&quot;newSignal&quot;)</span>
+<span class="nc" id="L140">                .singleResult();</span>
+<span class="nc" id="L141">        assertThat(execution).isNotNull();</span>
+
+<span class="nc" id="L143">        runtimeService.signalEventReceived(&quot;newSignal&quot;);</span>
+
+<span class="nc" id="L145">        assertThat(taskService.createTaskQuery().count()).isEqualTo(2);</span>
+
+<span class="nc" id="L147">        task = taskService.createTaskQuery().taskDefinitionKey(&quot;eventSubProcessTask&quot;).singleResult();</span>
+<span class="nc" id="L148">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L150">        assertThat(createEventSubscriptionQuery().count()).isEqualTo(1);</span>
+
+        // we still have 3 executions:
+<span class="nc" id="L153">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(3);</span>
+
+<span class="nc" id="L155">        task = taskService.createTaskQuery().taskDefinitionKey(&quot;task&quot;).singleResult();</span>
+<span class="nc" id="L156">        taskService.complete(task.getId());</span>
+
+        // done!
+<span class="nc" id="L159">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+<span class="nc" id="L160">    }</span>
+
+    @Test
+    @Deployment
+    public void testNonInterruptingMultipleInstances() {
+<span class="nc" id="L165">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;process&quot;);</span>
+<span class="nc" id="L166">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(3);</span>
+
+<span class="nc" id="L168">        Execution execution = runtimeService.createExecutionQuery()</span>
+<span class="nc" id="L169">                .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L170">                .signalEventSubscriptionName(&quot;newSignal&quot;)</span>
+<span class="nc" id="L171">                .singleResult();</span>
+
+<span class="nc" id="L173">        runtimeService.signalEventReceived(&quot;newSignal&quot;, execution.getId());</span>
+<span class="nc" id="L174">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(5);</span>
+
+<span class="nc" id="L176">        assertThat(taskService.createTaskQuery().count()).isEqualTo(2);</span>
+<span class="nc" id="L177">        assertThat(createEventSubscriptionQuery().count()).isEqualTo(1);</span>
+
+<span class="nc" id="L179">        runtimeService.signalEventReceived(&quot;newSignal&quot;, execution.getId());</span>
+<span class="nc" id="L180">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(7);</span>
+
+<span class="nc" id="L182">        assertThat(taskService.createTaskQuery().count()).isEqualTo(3);</span>
+<span class="nc" id="L183">        assertThat(createEventSubscriptionQuery().count()).isEqualTo(1);</span>
+
+        // now let's first complete the task in the main flow:
+<span class="nc" id="L186">        org.flowable.task.api.Task task = taskService.createTaskQuery().taskDefinitionKey(&quot;task&quot;).singleResult();</span>
+<span class="nc" id="L187">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L189">        assertThat(createEventSubscriptionQuery().count()).isZero();</span>
+
+        // we still have 6 executions:
+<span class="nc" id="L192">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(5);</span>
+
+        // now let's complete the first task in the event subprocess
+<span class="nc" id="L195">        task = taskService.createTaskQuery().taskDefinitionKey(&quot;eventSubProcessTask&quot;).list().get(0);</span>
+<span class="nc" id="L196">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L198">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(3);</span>
+
+        // complete the second task in the event subprocess
+<span class="nc" id="L201">        task = taskService.createTaskQuery().taskDefinitionKey(&quot;eventSubProcessTask&quot;).singleResult();</span>
+<span class="nc" id="L202">        taskService.complete(task.getId());</span>
+
+        // done!
+<span class="nc" id="L205">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+<span class="nc" id="L206">    }</span>
+
+    @Test
+    @Deployment
+    public void testNonInterruptingSubProcess() {
+<span class="nc" id="L211">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;process&quot;);</span>
+<span class="nc" id="L212">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(3);</span>
+
+<span class="nc" id="L214">        Execution execution = runtimeService.createExecutionQuery()</span>
+<span class="nc" id="L215">                .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L216">                .signalEventSubscriptionName(&quot;newSignal&quot;)</span>
+<span class="nc" id="L217">                .singleResult();</span>
+
+<span class="nc" id="L219">        runtimeService.signalEventReceived(&quot;newSignal&quot;, execution.getId());</span>
+<span class="nc" id="L220">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(6);</span>
+
+<span class="nc" id="L222">        assertThat(taskService.createTaskQuery().count()).isEqualTo(2);</span>
+<span class="nc" id="L223">        assertThat(createEventSubscriptionQuery().count()).isEqualTo(1);</span>
+
+<span class="nc" id="L225">        runtimeService.signalEventReceived(&quot;newSignal&quot;, execution.getId());</span>
+<span class="nc" id="L226">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(9);</span>
+
+<span class="nc" id="L228">        assertThat(taskService.createTaskQuery().count()).isEqualTo(3);</span>
+<span class="nc" id="L229">        assertThat(createEventSubscriptionQuery().count()).isEqualTo(1);</span>
+
+        // now let's first complete the task in the main flow:
+<span class="nc" id="L232">        org.flowable.task.api.Task task = taskService.createTaskQuery().taskDefinitionKey(&quot;task&quot;).singleResult();</span>
+<span class="nc" id="L233">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L235">        assertThat(createEventSubscriptionQuery().count()).isZero();</span>
+
+        // we still have 7 executions:
+<span class="nc" id="L238">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(7);</span>
+
+        // now let's complete the first task in the event subprocess
+<span class="nc" id="L241">        task = taskService.createTaskQuery().taskDefinitionKey(&quot;eventSubProcessTask&quot;).list().get(0);</span>
+<span class="nc" id="L242">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L244">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(4);</span>
+
+        // complete the second task in the event subprocess
+<span class="nc" id="L247">        task = taskService.createTaskQuery().taskDefinitionKey(&quot;eventSubProcessTask&quot;).singleResult();</span>
+<span class="nc" id="L248">        taskService.complete(task.getId());</span>
+
+        // done!
+<span class="nc" id="L251">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+<span class="nc" id="L252">    }</span>
+
+    @Test
+    @Deployment
+    public void testInterruptingSubProcess() {
+<span class="nc" id="L257">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;process&quot;);</span>
+<span class="nc" id="L258">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(3);</span>
+
+<span class="nc" id="L260">        Execution execution = runtimeService.createExecutionQuery()</span>
+<span class="nc" id="L261">                .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L262">                .signalEventSubscriptionName(&quot;eventSignal&quot;)</span>
+<span class="nc" id="L263">                .singleResult();</span>
+
+<span class="nc" id="L265">        runtimeService.signalEventReceived(&quot;eventSignal&quot;, execution.getId());</span>
+<span class="nc" id="L266">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(5);</span>
+
+<span class="nc" id="L268">        assertThat(taskService.createTaskQuery().count()).isEqualTo(1);</span>
+<span class="nc" id="L269">        assertThat(createEventSubscriptionQuery().count()).isZero();</span>
+
+        // now let's complete the task in the event subprocess
+<span class="nc" id="L272">        org.flowable.task.api.Task task = taskService.createTaskQuery().taskDefinitionKey(&quot;eventSubProcessTask&quot;).list().get(0);</span>
+<span class="nc" id="L273">        taskService.complete(task.getId());</span>
+
+        // done!
+<span class="nc" id="L276">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+<span class="nc" id="L277">    }</span>
+    
+    @Test
+    @Deployment
+    public void testStartingAdditionalTasks() {
+<span class="nc" id="L282">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;startingAdditionalTasks&quot;);</span>
+<span class="nc" id="L283">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(3);</span>
+
+<span class="nc" id="L285">        Execution execution = runtimeService.createExecutionQuery()</span>
+<span class="nc" id="L286">                .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L287">                .signalEventSubscriptionName(&quot;Start another task&quot;)</span>
+<span class="nc" id="L288">                .singleResult();</span>
+        
+<span class="nc" id="L290">        assertThat(execution).isNotNull();</span>
+
+<span class="nc" id="L292">        assertThat(taskService.createTaskQuery().count()).isEqualTo(1);</span>
+<span class="nc" id="L293">        assertThat(createEventSubscriptionQuery().count()).isEqualTo(1);</span>
+
+        // now let's first complete the task in the main flow:
+<span class="nc" id="L296">        org.flowable.task.api.Task task = taskService.createTaskQuery().taskDefinitionKey(&quot;task1&quot;).singleResult();</span>
+<span class="nc" id="L297">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L299">        assertThat(createEventSubscriptionQuery().count()).isEqualTo(2);</span>
+
+<span class="nc" id="L301">        execution = runtimeService.createExecutionQuery()</span>
+<span class="nc" id="L302">                .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L303">                .signalEventSubscriptionName(&quot;Start another sub task&quot;)</span>
+<span class="nc" id="L304">                .singleResult();</span>
+
+<span class="nc" id="L306">        runtimeService.signalEventReceived(&quot;Start another sub task&quot;, execution.getId());</span>
+        
+<span class="nc" id="L308">        assertThat(taskService.createTaskQuery().count()).isEqualTo(2);</span>
+        
+<span class="nc" id="L310">        execution = runtimeService.createExecutionQuery()</span>
+<span class="nc" id="L311">                .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L312">                .signalEventSubscriptionName(&quot;Start another task&quot;)</span>
+<span class="nc" id="L313">                .singleResult();</span>
+        
+<span class="nc" id="L315">        runtimeService.signalEventReceived(&quot;Start another task&quot;, execution.getId());</span>
+        
+<span class="nc" id="L317">        assertThat(taskService.createTaskQuery().count()).isEqualTo(3);</span>
+        
+<span class="nc" id="L319">        task = taskService.createTaskQuery().taskDefinitionKey(&quot;additionalTask&quot;).singleResult();</span>
+<span class="nc" id="L320">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L322">        assertThat(taskService.createTaskQuery().count()).isEqualTo(2);</span>
+        
+<span class="nc" id="L324">        task = taskService.createTaskQuery().taskDefinitionKey(&quot;subTask1&quot;).singleResult();</span>
+<span class="nc" id="L325">        taskService.complete(task.getId());</span>
+        
+<span class="nc" id="L327">        assertThat(taskService.createTaskQuery().count()).isEqualTo(1);</span>
+        
+<span class="nc" id="L329">        task = taskService.createTaskQuery().taskDefinitionKey(&quot;additionalSubTask&quot;).singleResult();</span>
+<span class="nc" id="L330">        taskService.complete(task.getId());</span>
+        
+<span class="nc" id="L332">        assertThat(taskService.createTaskQuery().count()).isEqualTo(1);</span>
+        
+<span class="nc" id="L334">        task = taskService.createTaskQuery().taskDefinitionKey(&quot;task2&quot;).singleResult();</span>
+<span class="nc" id="L335">        taskService.complete(task.getId());</span>
+
+        // done!
+<span class="nc" id="L338">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+<span class="nc" id="L339">    }</span>
+    
+    @Test
+    @Deployment(resources=&quot;org/flowable/engine/test/bpmn/event/signal/SignalEventSubprocessTest.testStartingAdditionalTasks.bpmn20.xml&quot;)
+    public void testStartingAdditionalTasksNoNestedEventSubProcess() {
+<span class="nc" id="L344">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;startingAdditionalTasks&quot;);</span>
+<span class="nc" id="L345">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(3);</span>
+
+<span class="nc" id="L347">        Execution execution = runtimeService.createExecutionQuery()</span>
+<span class="nc" id="L348">                .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L349">                .signalEventSubscriptionName(&quot;Start another task&quot;)</span>
+<span class="nc" id="L350">                .singleResult();</span>
+        
+<span class="nc" id="L352">        assertThat(execution).isNotNull();</span>
+
+<span class="nc" id="L354">        assertThat(taskService.createTaskQuery().count()).isEqualTo(1);</span>
+<span class="nc" id="L355">        assertThat(createEventSubscriptionQuery().count()).isEqualTo(1);</span>
+
+        // now let's first complete the task in the main flow:
+<span class="nc" id="L358">        org.flowable.task.api.Task task = taskService.createTaskQuery().taskDefinitionKey(&quot;task1&quot;).singleResult();</span>
+<span class="nc" id="L359">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L361">        assertThat(createEventSubscriptionQuery().count()).isEqualTo(2);</span>
+<span class="nc" id="L362">        assertThat(taskService.createTaskQuery().count()).isEqualTo(1);</span>
+        
+<span class="nc" id="L364">        task = taskService.createTaskQuery().taskDefinitionKey(&quot;subTask1&quot;).singleResult();</span>
+<span class="nc" id="L365">        taskService.complete(task.getId());</span>
+        
+<span class="nc" id="L367">        assertThat(createEventSubscriptionQuery().count()).isEqualTo(1);</span>
+<span class="nc" id="L368">        assertThat(taskService.createTaskQuery().count()).isEqualTo(1);</span>
+        
+<span class="nc" id="L370">        task = taskService.createTaskQuery().taskDefinitionKey(&quot;task2&quot;).singleResult();</span>
+<span class="nc" id="L371">        taskService.complete(task.getId());</span>
+
+        // done!
+<span class="nc" id="L374">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+<span class="nc" id="L375">    }</span>
+    
+    @Test
+    @Deployment(resources=&quot;org/flowable/engine/test/bpmn/event/signal/SignalEventSubprocessTest.testStartingAdditionalTasks.bpmn20.xml&quot;)
+    public void testStartingAdditionalTasksWithNestedEventSubProcess() {
+<span class="nc" id="L380">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;startingAdditionalTasks&quot;);</span>
+        
+<span class="nc" id="L382">        assertThat(taskService.createTaskQuery().count()).isEqualTo(1);</span>
+<span class="nc" id="L383">        assertThat(createEventSubscriptionQuery().count()).isEqualTo(1);</span>
+
+        // now let's first complete the task in the main flow:
+<span class="nc" id="L386">        org.flowable.task.api.Task task = taskService.createTaskQuery().taskDefinitionKey(&quot;task1&quot;).singleResult();</span>
+<span class="nc" id="L387">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L389">        assertThat(createEventSubscriptionQuery().count()).isEqualTo(2);</span>
+<span class="nc" id="L390">        assertThat(taskService.createTaskQuery().count()).isEqualTo(1);</span>
+        
+<span class="nc" id="L392">        Execution execution = runtimeService.createExecutionQuery()</span>
+<span class="nc" id="L393">                .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L394">                .signalEventSubscriptionName(&quot;Start another sub task&quot;)</span>
+<span class="nc" id="L395">                .singleResult();</span>
+
+<span class="nc" id="L397">        runtimeService.signalEventReceived(&quot;Start another sub task&quot;, execution.getId());</span>
+        
+<span class="nc" id="L399">        assertThat(createEventSubscriptionQuery().count()).isEqualTo(2);</span>
+<span class="nc" id="L400">        assertThat(taskService.createTaskQuery().count()).isEqualTo(2);</span>
+        
+<span class="nc" id="L402">        task = taskService.createTaskQuery().taskDefinitionKey(&quot;subTask1&quot;).singleResult();</span>
+<span class="nc" id="L403">        taskService.complete(task.getId());</span>
+        
+<span class="nc" id="L405">        assertThat(createEventSubscriptionQuery().count()).isEqualTo(1);</span>
+<span class="nc" id="L406">        assertThat(taskService.createTaskQuery().count()).isEqualTo(1);</span>
+        
+<span class="nc" id="L408">        task = taskService.createTaskQuery().taskDefinitionKey(&quot;additionalSubTask&quot;).singleResult();</span>
+<span class="nc" id="L409">        taskService.complete(task.getId());</span>
+        
+<span class="nc" id="L411">        assertThat(createEventSubscriptionQuery().count()).isEqualTo(1);</span>
+<span class="nc" id="L412">        assertThat(taskService.createTaskQuery().count()).isEqualTo(1);</span>
+        
+<span class="nc" id="L414">        execution = runtimeService.createExecutionQuery()</span>
+<span class="nc" id="L415">                .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L416">                .signalEventSubscriptionName(&quot;Start another task&quot;)</span>
+<span class="nc" id="L417">                .singleResult();</span>
+        
+<span class="nc" id="L419">        runtimeService.signalEventReceived(&quot;Start another task&quot;, execution.getId());</span>
+        
+<span class="nc" id="L421">        assertThat(createEventSubscriptionQuery().count()).isEqualTo(1);</span>
+<span class="nc" id="L422">        assertThat(taskService.createTaskQuery().count()).isEqualTo(2);</span>
+        
+<span class="nc" id="L424">        execution = runtimeService.createExecutionQuery()</span>
+<span class="nc" id="L425">                .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L426">                .signalEventSubscriptionName(&quot;Start another task&quot;)</span>
+<span class="nc" id="L427">                .singleResult();</span>
+        
+<span class="nc" id="L429">        runtimeService.signalEventReceived(&quot;Start another task&quot;, execution.getId());</span>
+        
+<span class="nc" id="L431">        assertThat(createEventSubscriptionQuery().count()).isEqualTo(1);</span>
+<span class="nc" id="L432">        assertThat(taskService.createTaskQuery().count()).isEqualTo(3);</span>
+        
+<span class="nc" id="L434">        task = taskService.createTaskQuery().taskDefinitionKey(&quot;task2&quot;).singleResult();</span>
+<span class="nc" id="L435">        taskService.complete(task.getId());</span>
+        
+<span class="nc" id="L437">        assertThat(createEventSubscriptionQuery().count()).isZero();</span>
+        
+<span class="nc" id="L439">        List&lt;org.flowable.task.api.Task&gt; tasks = taskService.createTaskQuery().taskDefinitionKey(&quot;additionalTask&quot;).list();</span>
+<span class="nc" id="L440">        assertThat(tasks).hasSize(2);</span>
+        
+<span class="nc" id="L442">        taskService.complete(tasks.get(0).getId());</span>
+        
+<span class="nc" id="L444">        assertThat(createEventSubscriptionQuery().count()).isZero();</span>
+        
+<span class="nc" id="L446">        task = taskService.createTaskQuery().taskDefinitionKey(&quot;additionalTask&quot;).singleResult();</span>
+<span class="nc" id="L447">        taskService.complete(task.getId());</span>
+
+        // done!
+<span class="nc" id="L450">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+<span class="nc" id="L451">    }</span>
+    
+    @Test
+    @Deployment
+    public void testStartingAdditionalTasksInterrupting() {
+<span class="nc" id="L456">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;startingAdditionalTasks&quot;);</span>
+<span class="nc" id="L457">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(3);</span>
+
+<span class="nc" id="L459">        Execution execution = runtimeService.createExecutionQuery()</span>
+<span class="nc" id="L460">                .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L461">                .signalEventSubscriptionName(&quot;Start another task&quot;)</span>
+<span class="nc" id="L462">                .singleResult();</span>
+        
+<span class="nc" id="L464">        assertThat(execution).isNotNull();</span>
+
+<span class="nc" id="L466">        assertThat(taskService.createTaskQuery().count()).isEqualTo(1);</span>
+<span class="nc" id="L467">        assertThat(createEventSubscriptionQuery().count()).isEqualTo(1);</span>
+
+        // now let's first complete the task in the main flow:
+<span class="nc" id="L470">        org.flowable.task.api.Task task = taskService.createTaskQuery().taskDefinitionKey(&quot;task1&quot;).singleResult();</span>
+<span class="nc" id="L471">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L473">        assertThat(createEventSubscriptionQuery().count()).isEqualTo(2);</span>
+
+<span class="nc" id="L475">        execution = runtimeService.createExecutionQuery()</span>
+<span class="nc" id="L476">                .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L477">                .signalEventSubscriptionName(&quot;Start another sub task&quot;)</span>
+<span class="nc" id="L478">                .singleResult();</span>
+
+<span class="nc" id="L480">        runtimeService.signalEventReceived(&quot;Start another sub task&quot;, execution.getId());</span>
+        
+<span class="nc" id="L482">        assertThat(taskService.createTaskQuery().count()).isEqualTo(1);</span>
+        
+<span class="nc" id="L484">        task = taskService.createTaskQuery().taskDefinitionKey(&quot;additionalSubTask&quot;).singleResult();</span>
+<span class="nc" id="L485">        taskService.complete(task.getId());</span>
+        
+<span class="nc" id="L487">        assertThat(taskService.createTaskQuery().count()).isEqualTo(1);</span>
+        
+<span class="nc" id="L489">        task = taskService.createTaskQuery().taskDefinitionKey(&quot;task2&quot;).singleResult();</span>
+<span class="nc" id="L490">        taskService.complete(task.getId());</span>
+
+        // done!
+<span class="nc" id="L493">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+<span class="nc" id="L494">    }</span>
+    
+    @Test
+    @Deployment(resources=&quot;org/flowable/engine/test/bpmn/event/signal/SignalEventSubprocessTest.testStartingAdditionalTasksInterrupting.bpmn20.xml&quot;)
+    public void testStartingAdditionalTasksInterruptingWithMainEventSubProcessInterrupt() {
+<span class="nc" id="L499">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;startingAdditionalTasks&quot;);</span>
+<span class="nc" id="L500">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isEqualTo(3);</span>
+
+<span class="nc" id="L502">        Execution execution = runtimeService.createExecutionQuery()</span>
+<span class="nc" id="L503">                .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L504">                .signalEventSubscriptionName(&quot;Start another task&quot;)</span>
+<span class="nc" id="L505">                .singleResult();</span>
+        
+<span class="nc" id="L507">        assertThat(execution).isNotNull();</span>
+
+<span class="nc" id="L509">        assertThat(taskService.createTaskQuery().count()).isEqualTo(1);</span>
+<span class="nc" id="L510">        assertThat(createEventSubscriptionQuery().count()).isEqualTo(1);</span>
+
+        // now let's first complete the task in the main flow:
+<span class="nc" id="L513">        org.flowable.task.api.Task task = taskService.createTaskQuery().taskDefinitionKey(&quot;task1&quot;).singleResult();</span>
+<span class="nc" id="L514">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L516">        assertThat(createEventSubscriptionQuery().count()).isEqualTo(2);</span>
+
+<span class="nc" id="L518">        execution = runtimeService.createExecutionQuery()</span>
+<span class="nc" id="L519">                .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L520">                .signalEventSubscriptionName(&quot;Start another sub task&quot;)</span>
+<span class="nc" id="L521">                .singleResult();</span>
+
+<span class="nc" id="L523">        runtimeService.signalEventReceived(&quot;Start another sub task&quot;, execution.getId());</span>
+        
+<span class="nc" id="L525">        assertThat(taskService.createTaskQuery().count()).isEqualTo(1);</span>
+        
+<span class="nc" id="L527">        execution = runtimeService.createExecutionQuery()</span>
+<span class="nc" id="L528">                .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L529">                .signalEventSubscriptionName(&quot;Start another task&quot;)</span>
+<span class="nc" id="L530">                .singleResult();</span>
+        
+<span class="nc" id="L532">        runtimeService.signalEventReceived(&quot;Start another task&quot;, execution.getId());</span>
+        
+<span class="nc" id="L534">        assertThat(taskService.createTaskQuery().count()).isEqualTo(1);</span>
+        
+<span class="nc" id="L536">        task = taskService.createTaskQuery().taskDefinitionKey(&quot;additionalTask&quot;).singleResult();</span>
+<span class="nc" id="L537">        taskService.complete(task.getId());</span>
+
+        // done!
+<span class="nc" id="L540">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+<span class="nc" id="L541">    }</span>
+
+    @Test
+    @Deployment
+    public void testNonInterruptingSimpleActivities() {
+<span class="nc" id="L546">        runtimeService.startProcessInstanceByKey(&quot;testSimpleSignalEventSubProcess&quot;);</span>
+
+<span class="nc" id="L548">        assertThat(runtimeService.createActivityInstanceQuery().list())</span>
+<span class="nc" id="L549">            .extracting(ActivityInstance::getActivityType, ActivityInstance::getActivityId)</span>
+<span class="nc" id="L550">            .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L551">                tuple(&quot;startEvent&quot;, &quot;start&quot;),</span>
+<span class="nc" id="L552">                tuple(&quot;sequenceFlow&quot;, &quot;flow1&quot;),</span>
+<span class="nc" id="L553">                tuple(&quot;userTask&quot;, &quot;task&quot;)</span>
+            );
+
+        // Signal the Event sub process
+<span class="nc" id="L557">        runtimeService.signalEventReceived(&quot;eventSignal&quot;);</span>
+
+<span class="nc" id="L559">        assertThat(runtimeService.createActivityInstanceQuery().list())</span>
+<span class="nc" id="L560">            .extracting(ActivityInstance::getActivityType, ActivityInstance::getActivityId)</span>
+<span class="nc" id="L561">            .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L562">                tuple(&quot;startEvent&quot;, &quot;start&quot;),</span>
+<span class="nc" id="L563">                tuple(&quot;sequenceFlow&quot;, &quot;flow1&quot;),</span>
+<span class="nc" id="L564">                tuple(&quot;userTask&quot;, &quot;task&quot;),</span>
+<span class="nc" id="L565">                tuple(&quot;eventSubProcess&quot;, &quot;signalEventSubProcess&quot;),</span>
+<span class="nc" id="L566">                tuple(&quot;startEvent&quot;, &quot;eventSubProcessSignalStart&quot;),</span>
+<span class="nc" id="L567">                tuple(&quot;sequenceFlow&quot;, &quot;eventSubProcessFlow1&quot;),</span>
+<span class="nc" id="L568">                tuple(&quot;userTask&quot;, &quot;eventSubProcessTask1&quot;)</span>
+            );
+
+        // Complete the user task in the event sub process
+<span class="nc" id="L572">        Task eventSubProcessTask = taskService.createTaskQuery().taskDefinitionKey(&quot;eventSubProcessTask1&quot;).singleResult();</span>
+<span class="nc" id="L573">        assertThat(eventSubProcessTask).isNotNull();</span>
+<span class="nc" id="L574">        taskService.complete(eventSubProcessTask.getId());</span>
+
+<span class="nc" id="L576">        assertThat(runtimeService.createActivityInstanceQuery().list())</span>
+<span class="nc" id="L577">            .extracting(ActivityInstance::getActivityType, ActivityInstance::getActivityId)</span>
+<span class="nc" id="L578">            .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L579">                tuple(&quot;startEvent&quot;, &quot;start&quot;),</span>
+<span class="nc" id="L580">                tuple(&quot;sequenceFlow&quot;, &quot;flow1&quot;),</span>
+<span class="nc" id="L581">                tuple(&quot;userTask&quot;, &quot;task&quot;),</span>
+<span class="nc" id="L582">                tuple(&quot;eventSubProcess&quot;, &quot;signalEventSubProcess&quot;),</span>
+<span class="nc" id="L583">                tuple(&quot;startEvent&quot;, &quot;eventSubProcessSignalStart&quot;),</span>
+<span class="nc" id="L584">                tuple(&quot;sequenceFlow&quot;, &quot;eventSubProcessFlow1&quot;),</span>
+<span class="nc" id="L585">                tuple(&quot;userTask&quot;, &quot;eventSubProcessTask1&quot;),</span>
+<span class="nc" id="L586">                tuple(&quot;sequenceFlow&quot;, &quot;eventSubProcessFlow2&quot;),</span>
+<span class="nc" id="L587">                tuple(&quot;endEvent&quot;, &quot;eventSubProcessEnd&quot;)</span>
+            );
+
+<span class="nc" id="L590">        ActivityInstance eventSubProcessActivity = runtimeService.createActivityInstanceQuery()</span>
+<span class="nc" id="L591">            .activityType(&quot;eventSubProcess&quot;)</span>
+<span class="nc" id="L592">            .activityId(&quot;signalEventSubProcess&quot;)</span>
+<span class="nc" id="L593">            .singleResult();</span>
+<span class="nc" id="L594">        assertThat(eventSubProcessActivity).isNotNull();</span>
+<span class="nc" id="L595">        assertThat(eventSubProcessActivity.getEndTime()).isNotNull();</span>
+
+<span class="nc bnc" id="L597" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L598">            assertThat(historyService.createHistoricActivityInstanceQuery().list())</span>
+<span class="nc" id="L599">                .extracting(HistoricActivityInstance::getActivityType, HistoricActivityInstance::getActivityId)</span>
+<span class="nc" id="L600">                .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L601">                    tuple(&quot;startEvent&quot;, &quot;start&quot;),</span>
+<span class="nc" id="L602">                    tuple(&quot;sequenceFlow&quot;, &quot;flow1&quot;),</span>
+<span class="nc" id="L603">                    tuple(&quot;userTask&quot;, &quot;task&quot;),</span>
+<span class="nc" id="L604">                    tuple(&quot;eventSubProcess&quot;, &quot;signalEventSubProcess&quot;),</span>
+<span class="nc" id="L605">                    tuple(&quot;startEvent&quot;, &quot;eventSubProcessSignalStart&quot;),</span>
+<span class="nc" id="L606">                    tuple(&quot;sequenceFlow&quot;, &quot;eventSubProcessFlow1&quot;),</span>
+<span class="nc" id="L607">                    tuple(&quot;userTask&quot;, &quot;eventSubProcessTask1&quot;),</span>
+<span class="nc" id="L608">                    tuple(&quot;sequenceFlow&quot;, &quot;eventSubProcessFlow2&quot;),</span>
+<span class="nc" id="L609">                    tuple(&quot;endEvent&quot;, &quot;eventSubProcessEnd&quot;)</span>
+                );
+        }
+<span class="nc" id="L612">    }</span>
+
+    @Test
+    @Deployment
+    public void testInterruptingSimpleActivities() {
+<span class="nc" id="L617">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;testSimpleSignalEventSubProcess&quot;);</span>
+
+<span class="nc" id="L619">        assertThat(runtimeService.createActivityInstanceQuery().list())</span>
+<span class="nc" id="L620">            .extracting(ActivityInstance::getActivityType, ActivityInstance::getActivityId)</span>
+<span class="nc" id="L621">            .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L622">                tuple(&quot;startEvent&quot;, &quot;start&quot;),</span>
+<span class="nc" id="L623">                tuple(&quot;sequenceFlow&quot;, &quot;flow1&quot;),</span>
+<span class="nc" id="L624">                tuple(&quot;userTask&quot;, &quot;task&quot;)</span>
+            );
+
+        // Signal the Event sub process
+<span class="nc" id="L628">        runtimeService.signalEventReceived(&quot;eventSignal&quot;);</span>
+
+<span class="nc" id="L630">        assertThat(runtimeService.createActivityInstanceQuery().list())</span>
+<span class="nc" id="L631">            .extracting(ActivityInstance::getActivityType, ActivityInstance::getActivityId)</span>
+<span class="nc" id="L632">            .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L633">                tuple(&quot;startEvent&quot;, &quot;start&quot;),</span>
+<span class="nc" id="L634">                tuple(&quot;sequenceFlow&quot;, &quot;flow1&quot;),</span>
+<span class="nc" id="L635">                tuple(&quot;userTask&quot;, &quot;task&quot;),</span>
+<span class="nc" id="L636">                tuple(&quot;eventSubProcess&quot;, &quot;signalEventSubProcess&quot;),</span>
+<span class="nc" id="L637">                tuple(&quot;startEvent&quot;, &quot;eventSubProcessSignalStart&quot;),</span>
+<span class="nc" id="L638">                tuple(&quot;sequenceFlow&quot;, &quot;eventSubProcessFlow1&quot;),</span>
+<span class="nc" id="L639">                tuple(&quot;userTask&quot;, &quot;eventSubProcessTask1&quot;)</span>
+            );
+
+        // Complete the user task in the event sub process
+<span class="nc" id="L643">        Task eventSubProcessTask = taskService.createTaskQuery().taskDefinitionKey(&quot;eventSubProcessTask1&quot;).singleResult();</span>
+<span class="nc" id="L644">        assertThat(eventSubProcessTask).isNotNull();</span>
+<span class="nc" id="L645">        taskService.complete(eventSubProcessTask.getId());</span>
+
+<span class="nc bnc" id="L647" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L648">            assertThat(historyService.createHistoricActivityInstanceQuery().list())</span>
+<span class="nc" id="L649">                .extracting(HistoricActivityInstance::getActivityType, HistoricActivityInstance::getActivityId)</span>
+<span class="nc" id="L650">                .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L651">                    tuple(&quot;startEvent&quot;, &quot;start&quot;),</span>
+<span class="nc" id="L652">                    tuple(&quot;sequenceFlow&quot;, &quot;flow1&quot;),</span>
+<span class="nc" id="L653">                    tuple(&quot;userTask&quot;, &quot;task&quot;),</span>
+<span class="nc" id="L654">                    tuple(&quot;eventSubProcess&quot;, &quot;signalEventSubProcess&quot;),</span>
+<span class="nc" id="L655">                    tuple(&quot;startEvent&quot;, &quot;eventSubProcessSignalStart&quot;),</span>
+<span class="nc" id="L656">                    tuple(&quot;sequenceFlow&quot;, &quot;eventSubProcessFlow1&quot;),</span>
+<span class="nc" id="L657">                    tuple(&quot;userTask&quot;, &quot;eventSubProcessTask1&quot;),</span>
+<span class="nc" id="L658">                    tuple(&quot;sequenceFlow&quot;, &quot;eventSubProcessFlow2&quot;),</span>
+<span class="nc" id="L659">                    tuple(&quot;endEvent&quot;, &quot;eventSubProcessEnd&quot;)</span>
+                );
+        }
+
+<span class="nc" id="L663">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L664">    }</span>
+
+    @Test
+    @Deployment(resources = {
+            &quot;org/flowable/engine/test/bpmn/event/signal/SignalEventSubprocessTest.SignalEventSubprocessAndCallActivity.bpmn20.xml&quot;,
+            &quot;org/flowable/engine/test/bpmn/event/signal/SignalEventSubprocessTest.SignalThrowProcess.bpmn20.xml&quot;
+    })
+    public void testInterruptSubprocessOfCallActivity() {
+<span class="nc" id="L672">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;SignalEventSubprocessAndCallActivityProcess&quot;);</span>
+
+<span class="nc bnc" id="L674" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.INSTANCE, processEngineConfiguration)) {</span>
+<span class="nc" id="L675">            HistoricProcessInstance parentProcess = historyService.createHistoricProcessInstanceQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+
+<span class="nc" id="L677">            assertThat(parentProcess.getEndTime()).isNotNull();</span>
+
+<span class="nc" id="L679">            HistoricProcessInstance throwProcess = historyService.createHistoricProcessInstanceQuery().processDefinitionKey(&quot;signalThrowProcess&quot;).singleResult();</span>
+
+<span class="nc" id="L681">            assertThat(throwProcess).isNotNull();</span>
+<span class="nc" id="L682">            assertThat(throwProcess.getEndTime()).isNotNull();</span>
+<span class="nc" id="L683">            assertThat(throwProcess.getEndActivityId()).isEqualTo(&quot;startSignalEvent1&quot;);</span>
+        }
+<span class="nc" id="L685">    }</span>
+
+    private EventSubscriptionQueryImpl createEventSubscriptionQuery() {
+<span class="nc" id="L688">        return new EventSubscriptionQueryImpl(processEngineConfiguration.getCommandExecutor(), processEngineConfiguration.getEventSubscriptionServiceConfiguration());</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

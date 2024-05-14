@@ -1,0 +1,406 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AbstractMovePlanItemInstanceToTerminalStateOperation.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.cmmn.engine.impl.agenda.operation</a> &gt; <span class="el_source">AbstractMovePlanItemInstanceToTerminalStateOperation.java</span></div><h1>AbstractMovePlanItemInstanceToTerminalStateOperation.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.cmmn.engine.impl.agenda.operation;
+
+import static org.flowable.cmmn.engine.impl.variable.CmmnAggregation.COUNTER_VAR_PREFIX;
+import static org.flowable.cmmn.engine.impl.variable.CmmnAggregation.COUNTER_VAR_VALUE_SEPARATOR;
+import static org.flowable.cmmn.engine.impl.variable.CmmnAggregation.aggregateComplete;
+import static org.flowable.cmmn.engine.impl.variable.CmmnAggregation.createScopedVariableAggregationVariableInstance;
+import static org.flowable.cmmn.engine.impl.variable.CmmnAggregation.groupAggregationsByTarget;
+import static org.flowable.cmmn.engine.impl.variable.CmmnAggregation.groupVariableInstancesByName;
+import static org.flowable.cmmn.engine.impl.variable.CmmnAggregation.resolveVariableAggregator;
+import static org.flowable.cmmn.engine.impl.variable.CmmnAggregation.sortVariablesByCounter;
+
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.cmmn.api.delegate.PlanItemVariableAggregator;
+import org.flowable.cmmn.api.runtime.CaseInstanceState;
+import org.flowable.cmmn.api.runtime.PlanItemInstanceState;
+import org.flowable.cmmn.engine.CmmnEngineConfiguration;
+import org.flowable.cmmn.engine.impl.agenda.CmmnEngineAgenda;
+import org.flowable.cmmn.engine.impl.behavior.OnParentEndDependantActivityBehavior;
+import org.flowable.cmmn.engine.impl.delegate.BaseVariableAggregatorContext;
+import org.flowable.cmmn.engine.impl.persistence.entity.CaseInstanceEntity;
+import org.flowable.cmmn.engine.impl.persistence.entity.PlanItemInstanceEntity;
+import org.flowable.cmmn.engine.impl.runtime.StateTransition;
+import org.flowable.cmmn.engine.impl.util.CommandContextUtil;
+import org.flowable.cmmn.engine.impl.util.ExpressionUtil;
+import org.flowable.cmmn.engine.impl.util.PlanItemInstanceUtil;
+import org.flowable.cmmn.model.EventListener;
+import org.flowable.cmmn.model.PlanItem;
+import org.flowable.cmmn.model.PlanItemDefinition;
+import org.flowable.cmmn.model.PlanItemTransition;
+import org.flowable.cmmn.model.ReactivateEventListener;
+import org.flowable.cmmn.model.RepetitionRule;
+import org.flowable.cmmn.model.Task;
+import org.flowable.cmmn.model.TimerEventListener;
+import org.flowable.cmmn.model.VariableAggregationDefinition;
+import org.flowable.cmmn.model.VariableAggregationDefinitions;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.variable.api.persistence.entity.VariableInstance;
+import org.flowable.variable.service.VariableService;
+import org.flowable.variable.service.VariableServiceConfiguration;
+import org.flowable.variable.service.impl.persistence.entity.VariableInstanceEntity;
+
+/**
+ * Operation that moves a given {@link org.flowable.cmmn.api.runtime.PlanItemInstance} to a terminal state (completed, terminated or failed).
+ *
+ * @author Joram Barrez
+ * @author Filip Hrisafov
+ * @author Micha Kiener
+ */
+public abstract class AbstractMovePlanItemInstanceToTerminalStateOperation extends AbstractChangePlanItemInstanceStateOperation {
+
+    public AbstractMovePlanItemInstanceToTerminalStateOperation(CommandContext commandContext, PlanItemInstanceEntity planItemInstanceEntity) {
+<span class="nc" id="L71">        super(commandContext, planItemInstanceEntity);</span>
+<span class="nc" id="L72">    }</span>
+
+    @Override
+    public void run() {
+
+        // Need to capture the original state before the super.run() will change it
+<span class="nc" id="L78">        String originalState = planItemInstanceEntity.getState();</span>
+
+<span class="nc" id="L80">        PlanItemDefinition planItemDefinition = null;</span>
+<span class="nc bnc" id="L81" title="All 4 branches missed.">        if (planItemInstanceEntity.getPlanItem() != null &amp;&amp; planItemInstanceEntity.getPlanItem().getPlanItemDefinition() != null) {</span>
+<span class="nc" id="L82">            planItemDefinition = planItemInstanceEntity.getPlanItem().getPlanItemDefinition();</span>
+        }
+<span class="nc bnc" id="L84" title="All 2 branches missed.">        if (isAsyncLeave(planItemInstanceEntity, planItemDefinition)) {</span>
+<span class="nc" id="L85">            CommandContextUtil.getAgenda(commandContext)</span>
+<span class="nc" id="L86">                    .planAsyncLeaveActivePlanItemInstanceOperation(planItemInstanceEntity, getLifeCycleTransition(), getAsyncLeaveTransitionMetadata());</span>
+<span class="nc" id="L87">            return;</span>
+        }
+
+        // Not overriding the internalExecute, as that's meant for subclasses of this operation.
+<span class="nc" id="L91">        super.run();</span>
+
+<span class="nc" id="L93">        VariableAggregationDefinitions aggregations = getVariableAggregations();</span>
+        // There is a fake plan item instance created for waiting for repetition
+        // This instance does not follow the same lifecycle and thus we should not aggregate variables for it
+<span class="nc bnc" id="L96" title="All 4 branches missed.">        boolean shouldAggregate = aggregations != null &amp;&amp; PlanItemInstanceState.ACTIVE_STATES.contains(originalState);</span>
+<span class="nc bnc" id="L97" title="All 4 branches missed.">        if (shouldAggregate &amp;&amp; shouldAggregateForSingleInstance()) {</span>
+<span class="nc" id="L98">            aggregateVariablesForSingleInstance(planItemInstanceEntity, aggregations);</span>
+        }
+
+<span class="nc bnc" id="L101" title="All 2 branches missed.">        if (!isNoop) {  // The super.run() could have marked this as a no-op. No point in continuing.</span>
+
+<span class="nc" id="L103">            String plannedNewState = getNewState();</span>
+
+<span class="nc" id="L105">            boolean isRepeatingOnDelete = isRepeatingOnDelete(originalState, plannedNewState);</span>
+<span class="nc" id="L106">            boolean isWaitingForRepetitionPlanItemInstanceExists = isWaitingForRepetitionPlanItemInstanceExists(planItemInstanceEntity);</span>
+<span class="nc" id="L107">            CmmnEngineConfiguration cmmnEngineConfiguration = CommandContextUtil.getCmmnEngineConfiguration(commandContext);</span>
+<span class="nc" id="L108">            CmmnEngineAgenda agenda = CommandContextUtil.getAgenda(commandContext);</span>
+<span class="nc bnc" id="L109" title="All 4 branches missed.">            if (isRepeatingOnDelete &amp;&amp; !isWaitingForRepetitionPlanItemInstanceExists) {</span>
+
+<span class="nc bnc" id="L111" title="All 6 branches missed.">                if (planItemDefinition != null &amp;&amp; (planItemDefinition instanceof TimerEventListener || !(planItemDefinition instanceof EventListener))) {</span>
+                
+                    // Create new repeating instance
+<span class="nc" id="L114">                    PlanItemInstanceEntity newPlanItemInstanceEntity = PlanItemInstanceUtil.copyAndInsertPlanItemInstance(commandContext, planItemInstanceEntity, true, false);</span>
+    
+<span class="nc bnc" id="L116" title="All 4 branches missed.">                    if (planItemDefinition instanceof TimerEventListener || planItemDefinition instanceof ReactivateEventListener) {</span>
+<span class="nc" id="L117">                        agenda.planCreatePlanItemInstanceOperation(newPlanItemInstanceEntity);</span>
+                        
+                    } else {
+<span class="nc" id="L120">                        String oldState = newPlanItemInstanceEntity.getState();</span>
+<span class="nc" id="L121">                        String newState = PlanItemInstanceState.WAITING_FOR_REPETITION;</span>
+<span class="nc" id="L122">                        newPlanItemInstanceEntity.setState(newState);</span>
+<span class="nc" id="L123">                        cmmnEngineConfiguration.getListenerNotificationHelper()</span>
+<span class="nc" id="L124">                            .executeLifecycleListeners(commandContext, newPlanItemInstanceEntity, oldState, newState);</span>
+        
+                        // Plan item creation &quot;for Repetition&quot;
+<span class="nc" id="L127">                        agenda.planCreatePlanItemInstanceForRepetitionOperation(newPlanItemInstanceEntity);</span>
+        
+                        // Plan item doesn't have entry criteria (checked in the if condition) and immediately goes to ACTIVE
+<span class="nc bnc" id="L130" title="All 2 branches missed.">                        if (hasRepetitionRuleAndNoEntryCriteria(planItemInstanceEntity.getPlanItem())) {</span>
+<span class="nc" id="L131">                            agenda.planActivatePlanItemInstanceOperation(newPlanItemInstanceEntity, null);</span>
+                        }
+                    }
+<span class="nc" id="L134">                }</span>
+
+<span class="nc bnc" id="L136" title="All 2 branches missed.">            } else if (shouldAggregate) {</span>
+<span class="nc" id="L137">                aggregateVariablesForAllInstances(planItemInstanceEntity, aggregations);</span>
+            }
+            
+<span class="nc" id="L140">            removeSentryRelatedData();</span>
+        }
+<span class="nc" id="L142">    }</span>
+
+    protected boolean isAsyncLeave(PlanItemInstanceEntity planItemInstanceEntity, PlanItemDefinition planItemDefinition) {
+<span class="nc bnc" id="L145" title="All 2 branches missed.">        return !PlanItemInstanceState.ASYNC_ACTIVE_LEAVE.equals(planItemInstanceEntity.getState())</span>
+<span class="nc bnc" id="L146" title="All 4 branches missed.">                &amp;&amp; StateTransition.isPossible(planItemInstanceEntity, PlanItemTransition.ASYNC_LEAVE_ACTIVE)</span>
+<span class="nc bnc" id="L147" title="All 2 branches missed.">                &amp;&amp; planItemDefinition instanceof Task &amp;&amp; ((Task) planItemDefinition).isAsyncLeave();</span>
+    }
+
+    protected VariableAggregationDefinitions getVariableAggregations() {
+<span class="nc" id="L151">        RepetitionRule repetitionRule = ExpressionUtil.getRepetitionRule(planItemInstanceEntity);</span>
+<span class="nc bnc" id="L152" title="All 2 branches missed.">        return repetitionRule != null ? repetitionRule.getAggregations() : null;</span>
+    }
+    
+    protected String resolveEventDefinitionKey(String eventType, PlanItemInstanceEntity planItemInstanceEntity, CmmnEngineConfiguration cmmnEngineConfiguration) {
+<span class="nc" id="L156">        Object key = cmmnEngineConfiguration.getExpressionManager().createExpression(eventType).getValue(planItemInstanceEntity);</span>
+
+<span class="nc bnc" id="L158" title="All 2 branches missed.">        if (key == null) {</span>
+<span class="nc" id="L159">            throw new FlowableException(&quot;Could not resolve key from expression: &quot; + eventType);</span>
+        }
+
+<span class="nc" id="L162">        return key.toString();</span>
+    }
+
+    /**
+     * Implementing classes should be aware that unlike extending from AbstractChangePlanItemInstanceStateOperation, this
+     * method will be executed just before the deleting the entity
+     */
+    @Override
+    protected abstract void internalExecute();
+    
+    public boolean isRepeatingOnDelete(String originalState, String newState) {
+        
+        // If there are no entry criteria and the repetition rule evaluates to true: a new instance needs to be created.
+
+<span class="nc" id="L176">        CaseInstanceEntity caseInstance = CommandContextUtil.getCaseInstanceEntityManager(commandContext).findById(planItemInstanceEntity.getCaseInstanceId());</span>
+<span class="nc bnc" id="L177" title="All 2 branches missed.">        if (CaseInstanceState.isInTerminalState(caseInstance)) {</span>
+<span class="nc" id="L178">            return false;</span>
+        }
+        
+<span class="nc" id="L181">        PlanItem planItem = planItemInstanceEntity.getPlanItem();</span>
+<span class="nc bnc" id="L182" title="All 4 branches missed.">        if (isEvaluateRepetitionRule() &amp;&amp; hasRepetitionRuleAndNoEntryCriteria(planItem)) {</span>
+<span class="nc" id="L183">            return ExpressionUtil.evaluateRepetitionRule(commandContext, planItemInstanceEntity, planItemInstanceEntity.getStagePlanItemInstanceEntity());</span>
+        }
+
+        // If the plan item instance is in AVAILABLE (and the new state is terminated), and it's repeatable and it gets terminated
+        // this means it has never moved away from available.
+        // This means there never was a wait_for_repetition instance created (because the plan item instance
+        // never goes back to available but to wait_for_repetition).
+        // In this specific case, we need to create the wait_for_repetition for future repetitions
+<span class="nc bnc" id="L191" title="All 2 branches missed.">        if (PlanItemInstanceState.AVAILABLE.equals(originalState)</span>
+<span class="nc bnc" id="L192" title="All 2 branches missed.">                &amp;&amp; PlanItemInstanceState.TERMINATED.equals(newState)</span>
+<span class="nc bnc" id="L193" title="All 2 branches missed.">                &amp;&amp; hasRepetitionRuleEntryCriteria(planItem)</span>
+<span class="nc bnc" id="L194" title="All 2 branches missed.">                &amp;&amp; !hasRepetitionOnCollection(planItem)</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">                &amp;&amp; isWithoutStageOrParentIsNotTerminated(planItemInstanceEntity)) { // only when the parent is not yet terminated, a new instance should be created</span>
+<span class="nc" id="L196">            return true; // the repetition rule doesn't matter, as it can happen on any entry condition that becomes true</span>
+        }
+
+<span class="nc" id="L199">        return false;</span>
+    }
+
+    public boolean isWithoutStageOrParentIsNotTerminated(PlanItemInstanceEntity planItemInstanceEntity) {
+<span class="nc bnc" id="L203" title="All 2 branches missed.">        return planItemInstanceEntity.getStagePlanItemInstanceEntity() == null</span>
+<span class="nc bnc" id="L204" title="All 2 branches missed.">                || !PlanItemInstanceState.isInTerminalState(planItemInstanceEntity.getStagePlanItemInstanceEntity());</span>
+    }
+
+    /**
+     * Returns true, if the given plan item has a repetition rule, but no entry criteria to be satisfied and no collection based repetition. A collection
+     * based repetition is similar to entry criteria as it needs to be available in order to repeat the plan item.
+     *
+     * @param planItem the plan item to test
+     * @return true, if the plan item has a repetition rule without any conditions like entry criteria or a collection to be based on for repetition
+     */
+    public boolean hasRepetitionRuleAndNoEntryCriteria(PlanItem planItem) {
+<span class="nc bnc" id="L215" title="All 2 branches missed.">        return planItem != null</span>
+<span class="nc bnc" id="L216" title="All 2 branches missed.">            &amp;&amp; planItem.getEntryCriteria().isEmpty()</span>
+<span class="nc bnc" id="L217" title="All 2 branches missed.">            &amp;&amp; planItem.getItemControl() != null</span>
+<span class="nc bnc" id="L218" title="All 2 branches missed.">            &amp;&amp; planItem.getItemControl().getRepetitionRule() != null</span>
+<span class="nc bnc" id="L219" title="All 2 branches missed.">            &amp;&amp; !planItem.getItemControl().getRepetitionRule().hasCollectionVariable();</span>
+    }
+
+    public boolean hasRepetitionOnCollection(PlanItem planItem) {
+<span class="nc bnc" id="L223" title="All 2 branches missed.">        return planItem != null</span>
+<span class="nc bnc" id="L224" title="All 2 branches missed.">            &amp;&amp; planItem.getItemControl() != null</span>
+<span class="nc bnc" id="L225" title="All 2 branches missed.">            &amp;&amp; planItem.getItemControl().getRepetitionRule() != null</span>
+<span class="nc bnc" id="L226" title="All 2 branches missed.">            &amp;&amp; planItem.getItemControl().getRepetitionRule().hasCollectionVariable();</span>
+    }
+    
+    public boolean hasMaxInstanceCount(PlanItem planItem) {
+<span class="nc bnc" id="L230" title="All 2 branches missed.">        return planItem != null</span>
+<span class="nc bnc" id="L231" title="All 2 branches missed.">            &amp;&amp; planItem.getItemControl() != null</span>
+<span class="nc bnc" id="L232" title="All 2 branches missed.">            &amp;&amp; planItem.getItemControl().getRepetitionRule() != null</span>
+<span class="nc bnc" id="L233" title="All 2 branches missed.">            &amp;&amp; planItem.getItemControl().getRepetitionRule().getMaxInstanceCount() != null;</span>
+    }
+
+    public boolean hasRepetitionRuleEntryCriteria(PlanItem planItem) {
+<span class="nc bnc" id="L237" title="All 2 branches missed.">        return planItem != null</span>
+<span class="nc bnc" id="L238" title="All 2 branches missed.">            &amp;&amp; !planItem.getEntryCriteria().isEmpty()</span>
+<span class="nc bnc" id="L239" title="All 2 branches missed.">            &amp;&amp; planItem.getItemControl() != null</span>
+<span class="nc bnc" id="L240" title="All 2 branches missed.">            &amp;&amp; planItem.getItemControl().getRepetitionRule() != null;</span>
+    }
+    
+    public boolean hasRepetitionRule(PlanItem planItem) {
+<span class="nc bnc" id="L244" title="All 2 branches missed.">        return planItem != null</span>
+<span class="nc bnc" id="L245" title="All 2 branches missed.">            &amp;&amp; planItem.getItemControl() != null</span>
+<span class="nc bnc" id="L246" title="All 2 branches missed.">            &amp;&amp; planItem.getItemControl().getRepetitionRule() != null;</span>
+    }
+
+    public boolean isWaitingForRepetitionPlanItemInstanceExists(PlanItemInstanceEntity planItemInstanceEntity) {
+<span class="nc" id="L250">        PlanItemInstanceEntity stagePlanItemInstanceEntity = planItemInstanceEntity.getStagePlanItemInstanceEntity();</span>
+<span class="nc bnc" id="L251" title="All 2 branches missed.">        if (stagePlanItemInstanceEntity != null) {</span>
+<span class="nc" id="L252">            List&lt;PlanItemInstanceEntity&gt; childPlanItemInstances = stagePlanItemInstanceEntity.getChildPlanItemInstances();</span>
+<span class="nc bnc" id="L253" title="All 4 branches missed.">            if (childPlanItemInstances != null &amp;&amp; !childPlanItemInstances.isEmpty()) {</span>
+<span class="nc" id="L254">                return childPlanItemInstances.stream()</span>
+<span class="nc bnc" id="L255" title="All 2 branches missed.">                    .anyMatch(p -&gt; Objects.equals(p.getPlanItem().getId(), planItemInstanceEntity.getPlanItem().getId())</span>
+<span class="nc bnc" id="L256" title="All 2 branches missed.">                        &amp;&amp; PlanItemInstanceState.WAITING_FOR_REPETITION.equals(p.getState()));</span>
+            }
+        }
+<span class="nc" id="L259">        return false;</span>
+    }
+
+    /**
+     * Exits (terminates) all child plan items of the current one (e.g. if the current one is a stage or plan model) on a terminate or complete transition of
+     * the parent as in this case, child plan items not being in an ending state must also be terminated.
+     * Depending on the plan item behavior, it might be delegated to the behavior or the default one is to simply exit the child plan item as well.
+     *
+     * @param parentTransition the transition of the parent plan item to an ending state as it might have an impact on how to end the child plan item
+     * @param exitCriterionId the optional exit criterion being triggered on the parent to end it, might be null
+     * @param exitEventType the optional exit event type, if an exit sentry was triggered, as it might have an impact on the child ending as well
+     */
+    protected void exitChildPlanItemInstances(String parentTransition, String exitCriterionId, String exitEventType) {
+<span class="nc bnc" id="L272" title="All 2 branches missed.">        for (PlanItemInstanceEntity child : planItemInstanceEntity.getChildPlanItemInstances()) {</span>
+            // if the plan item implements the specific behavior interface for ending, invoke it, otherwise use the default one which is terminate, regardless,
+            // if the case got completed or terminated
+<span class="nc" id="L275">            Object behavior = child.getPlanItem().getBehavior();</span>
+<span class="nc bnc" id="L276" title="All 2 branches missed.">            if (behavior instanceof OnParentEndDependantActivityBehavior) {</span>
+                // if the specific behavior is implemented, invoke it
+<span class="nc" id="L278">                ((OnParentEndDependantActivityBehavior) behavior).onParentEnd(commandContext, child, parentTransition, exitEventType);</span>
+            } else {
+                // use default behavior, if the interface is not implemented
+<span class="nc bnc" id="L281" title="All 2 branches missed.">                if (StateTransition.isPossible(child, PlanItemTransition.EXIT)) {</span>
+                    // don't propagate the exit event type and exit type to child plan items, it only has an impact where it was set using the exit sentry
+<span class="nc" id="L283">                    CommandContextUtil.getAgenda(commandContext).planExitPlanItemInstanceOperation(child, exitCriterionId, null, null);</span>
+                }
+            }
+<span class="nc" id="L286">        }</span>
+<span class="nc" id="L287">    }</span>
+
+    protected void aggregateVariablesForSingleInstance(PlanItemInstanceEntity planItemInstanceEntity, VariableAggregationDefinitions aggregations) {
+<span class="nc" id="L290">        CmmnEngineConfiguration cmmnEngineConfiguration = CommandContextUtil.getCmmnEngineConfiguration(commandContext);</span>
+
+        // Gathered variables are stored on the finished plan item instances
+<span class="nc" id="L293">        VariableServiceConfiguration variableServiceConfiguration = cmmnEngineConfiguration.getVariableServiceConfiguration();</span>
+<span class="nc" id="L294">        VariableService variableService = variableServiceConfiguration.getVariableService();</span>
+
+<span class="nc bnc" id="L296" title="All 2 branches missed.">        for (VariableAggregationDefinition aggregation : aggregations.getAggregations()) {</span>
+
+<span class="nc" id="L298">            VariableInstanceEntity aggregatedVarInstance = aggregateComplete(planItemInstanceEntity, aggregation, cmmnEngineConfiguration);</span>
+<span class="nc bnc" id="L299" title="All 2 branches missed.">            if (aggregatedVarInstance != null) {</span>
+<span class="nc" id="L300">                variableService.insertVariableInstance(aggregatedVarInstance);</span>
+
+<span class="nc" id="L302">                String targetVarName = aggregatedVarInstance.getName();</span>
+
+<span class="nc" id="L304">                int repetitionCounter = PlanItemInstanceUtil.getRepetitionCounter(planItemInstanceEntity);</span>
+<span class="nc" id="L305">                String repetitionValue = aggregatedVarInstance.getId() + COUNTER_VAR_VALUE_SEPARATOR + repetitionCounter;</span>
+<span class="nc" id="L306">                VariableInstanceEntity counterVarInstance = createScopedVariableAggregationVariableInstance(planItemInstanceEntity.getTenantId(), COUNTER_VAR_PREFIX + targetVarName,</span>
+<span class="nc" id="L307">                        aggregatedVarInstance.getScopeId(), aggregatedVarInstance.getSubScopeId(), repetitionValue, variableServiceConfiguration);</span>
+<span class="nc" id="L308">                variableService.insertVariableInstance(counterVarInstance);</span>
+            }
+<span class="nc" id="L310">        }</span>
+
+<span class="nc" id="L312">    }</span>
+
+    protected void aggregateVariablesForAllInstances(PlanItemInstanceEntity planItemInstanceEntity, VariableAggregationDefinitions aggregations) {
+
+<span class="nc" id="L316">        CmmnEngineConfiguration cmmnEngineConfiguration = CommandContextUtil.getCmmnEngineConfiguration(commandContext);</span>
+
+        List&lt;PlanItemInstanceEntity&gt; planItemInstances;
+
+<span class="nc bnc" id="L320" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(planItemInstanceEntity.getStageInstanceId())) {</span>
+<span class="nc" id="L321">            planItemInstances = cmmnEngineConfiguration.getPlanItemInstanceEntityManager()</span>
+<span class="nc" id="L322">                    .findByStageInstanceIdAndPlanItemId(planItemInstanceEntity.getStageInstanceId(), planItemInstanceEntity.getPlanItem().getId());</span>
+        } else {
+<span class="nc" id="L324">            planItemInstances = cmmnEngineConfiguration.getPlanItemInstanceEntityManager()</span>
+<span class="nc" id="L325">                    .findByCaseInstanceIdAndPlanItemId(planItemInstanceEntity.getCaseInstanceId(), planItemInstanceEntity.getPlanItem().getId());</span>
+        }
+
+<span class="nc bnc" id="L328" title="All 4 branches missed.">        if (planItemInstances == null || planItemInstances.isEmpty()) {</span>
+<span class="nc" id="L329">            return;</span>
+        }
+
+        // All instances should be in the terminal state to apply the variable gathering
+<span class="nc bnc" id="L333" title="All 2 branches missed.">        for (PlanItemInstanceEntity planItemInstance : planItemInstances) {</span>
+<span class="nc bnc" id="L334" title="All 2 branches missed.">            if (!PlanItemInstanceState.TERMINAL_STATES.contains(planItemInstance.getState())) {</span>
+<span class="nc" id="L335">                return;</span>
+            }
+<span class="nc" id="L337">        }</span>
+
+<span class="nc" id="L339">        String subScopeId = planItemInstanceEntity.getStageInstanceId();</span>
+<span class="nc bnc" id="L340" title="All 2 branches missed.">        if (subScopeId == null) {</span>
+<span class="nc" id="L341">            subScopeId = planItemInstanceEntity.getCaseInstanceId();</span>
+        }
+
+        // Gathered variables are stored on finished the plan item instances
+<span class="nc" id="L345">        VariableService variableService = cmmnEngineConfiguration.getVariableServiceConfiguration().getVariableService();</span>
+<span class="nc" id="L346">        List&lt;VariableInstanceEntity&gt; variableInstances = variableService.createInternalVariableInstanceQuery()</span>
+<span class="nc" id="L347">                .subScopeId(subScopeId)</span>
+<span class="nc" id="L348">                .scopeType(ScopeTypes.CMMN_VARIABLE_AGGREGATION)</span>
+<span class="nc" id="L349">                .list();</span>
+
+<span class="nc" id="L351">        Map&lt;String, VariableAggregationDefinition&gt; aggregationsByTarget = groupAggregationsByTarget(planItemInstanceEntity, aggregations.getAggregations(), cmmnEngineConfiguration);</span>
+
+<span class="nc" id="L353">        Map&lt;String, List&lt;VariableInstance&gt;&gt; instancesByName = groupVariableInstancesByName(variableInstances);</span>
+
+<span class="nc" id="L355">        boolean aggregateMulti = shouldAggregateForMultipleInstances();</span>
+
+<span class="nc bnc" id="L357" title="All 2 branches missed.">        for (Map.Entry&lt;String, VariableAggregationDefinition&gt; entry : aggregationsByTarget.entrySet()) {</span>
+<span class="nc" id="L358">            String varName = entry.getKey();</span>
+<span class="nc bnc" id="L359" title="All 2 branches missed.">            if (aggregateMulti) {</span>
+
+<span class="nc" id="L361">                VariableAggregationDefinition aggregation = aggregationsByTarget.get(varName);</span>
+<span class="nc" id="L362">                PlanItemVariableAggregator aggregator = resolveVariableAggregator(aggregation, planItemInstanceEntity);</span>
+
+<span class="nc" id="L364">                List&lt;VariableInstance&gt; counterVariables = instancesByName.getOrDefault(COUNTER_VAR_PREFIX + varName, Collections.emptyList());</span>
+<span class="nc" id="L365">                List&lt;VariableInstance&gt; varValues = instancesByName.getOrDefault(varName, Collections.emptyList());</span>
+
+<span class="nc" id="L367">                sortVariablesByCounter(varValues, counterVariables);</span>
+
+<span class="nc" id="L369">                Object value = aggregator.aggregateMultiVariables(planItemInstanceEntity, varValues, BaseVariableAggregatorContext.complete(aggregation));</span>
+
+<span class="nc bnc" id="L371" title="All 2 branches missed.">                if (aggregation.isStoreAsTransientVariable()) {</span>
+<span class="nc" id="L372">                    planItemInstanceEntity.getParentVariableScope().setTransientVariable(varName, value);</span>
+                } else {
+<span class="nc" id="L374">                    planItemInstanceEntity.getParentVariableScope().setVariable(varName, value);</span>
+                }
+<span class="nc" id="L376">            } else {</span>
+<span class="nc" id="L377">                planItemInstanceEntity.getParentVariableScope().removeVariable(varName);</span>
+            }
+
+<span class="nc" id="L380">        }</span>
+
+<span class="nc" id="L382">        variableInstances.forEach(variableService::deleteVariableInstance);</span>
+<span class="nc" id="L383">    }</span>
+
+    /**
+     * Whether variable aggregation should be done when a single instance completes.
+     * This does not need to check whether the plan item instance has variable aggregations,
+     * that is the same for all instances.
+     * e.g. When an instance completes normally we should aggregate the data, but if it terminates we shouldn't
+     */
+    protected abstract boolean shouldAggregateForSingleInstance();
+
+    /**
+     * Whether multi aggregation needs to be done.
+     * This does not need to check whether the plan item instance has variable aggregations,
+     * that is the same for all instances.
+     * e.g. Multi aggregation needs to be done when we do a normal completion, but not when the plan items are terminated
+     */
+    protected abstract boolean shouldAggregateForMultipleInstances();
+
+    public abstract boolean isEvaluateRepetitionRule();
+
+    protected abstract Map&lt;String, String&gt; getAsyncLeaveTransitionMetadata();
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

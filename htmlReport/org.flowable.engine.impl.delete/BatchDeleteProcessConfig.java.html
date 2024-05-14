@@ -1,0 +1,562 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BatchDeleteProcessConfig.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.delete</a> &gt; <span class="el_source">BatchDeleteProcessConfig.java</span></div><h1>BatchDeleteProcessConfig.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.impl.delete;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.commons.lang3.exception.ExceptionUtils;
+import org.flowable.batch.api.Batch;
+import org.flowable.batch.api.BatchPart;
+import org.flowable.batch.api.BatchService;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.FlowableIllegalArgumentException;
+import org.flowable.common.engine.impl.interceptor.EngineConfigurationConstants;
+import org.flowable.common.engine.impl.util.ExceptionUtil;
+import org.flowable.engine.history.HistoricProcessInstanceQuery;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.job.service.impl.history.async.AsyncHistoryDateUtil;
+import org.flowable.variable.api.types.ValueFields;
+import org.flowable.variable.api.types.VariableType;
+import org.flowable.variable.service.impl.QueryOperator;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+/**
+ * @author Filip Hrisafov
+ */
+public class BatchDeleteProcessConfig {
+
+    protected final Batch batch;
+    protected final BatchPart batchPart;
+    protected final String error;
+    protected final boolean sequentialExecution;
+    protected int batchSize;
+    protected HistoricProcessInstanceQuery query;
+
+<span class="nc" id="L53">    protected BatchDeleteProcessConfig(Batch batch, BatchPart batchPart, String error, boolean sequentialExecution) {</span>
+<span class="nc" id="L54">        this.batch = batch;</span>
+<span class="nc" id="L55">        this.batchPart = batchPart;</span>
+<span class="nc" id="L56">        this.error = error;</span>
+<span class="nc" id="L57">        this.sequentialExecution = sequentialExecution;</span>
+<span class="nc" id="L58">    }</span>
+
+    public Batch getBatch() {
+<span class="nc" id="L61">        return batch;</span>
+    }
+
+    public BatchPart getBatchPart() {
+<span class="nc" id="L65">        return batchPart;</span>
+    }
+
+    public String getError() {
+<span class="nc" id="L69">        return error;</span>
+    }
+
+    public boolean hasError() {
+<span class="nc bnc" id="L73" title="All 2 branches missed.">        return error != null;</span>
+    }
+
+    public boolean isSequentialExecution() {
+<span class="nc" id="L77">        return sequentialExecution;</span>
+    }
+
+    public int getBatchSize() {
+<span class="nc" id="L81">        return batchSize;</span>
+    }
+
+    public HistoricProcessInstanceQuery getQuery() {
+<span class="nc" id="L85">        return query;</span>
+    }
+
+    public static BatchDeleteProcessConfig create(String batchPartId, ProcessEngineConfigurationImpl engineConfiguration) {
+<span class="nc" id="L89">        BatchService batchService = engineConfiguration.getBatchServiceConfiguration().getBatchService();</span>
+<span class="nc" id="L90">        BatchPart batchPart = batchService.getBatchPart(batchPartId);</span>
+<span class="nc bnc" id="L91" title="All 2 branches missed.">        if (batchPart == null) {</span>
+<span class="nc" id="L92">            throw new FlowableIllegalArgumentException(&quot;There is no batch part with the id &quot; + batchPartId);</span>
+        }
+
+<span class="nc" id="L95">        Batch batch = batchService.getBatch(batchPart.getBatchId());</span>
+<span class="nc" id="L96">        JsonNode batchConfiguration = getBatchConfiguration(batch, engineConfiguration);</span>
+<span class="nc" id="L97">        boolean sequentialExecution = batchConfiguration.path(&quot;sequential&quot;).booleanValue();</span>
+
+<span class="nc" id="L99">        JsonNode queryNode = batchConfiguration.path(&quot;query&quot;);</span>
+<span class="nc bnc" id="L100" title="All 2 branches missed.">        if (queryNode.isMissingNode()) {</span>
+<span class="nc" id="L101">            return new BatchDeleteProcessConfig(batch, batchPart,</span>
+<span class="nc" id="L102">                    prepareFailedResultAsJsonString(&quot;Batch configuration has no query definition&quot;, engineConfiguration), sequentialExecution);</span>
+        }
+
+<span class="nc" id="L105">        JsonNode batchSizeNode = batchConfiguration.path(&quot;batchSize&quot;);</span>
+<span class="nc bnc" id="L106" title="All 2 branches missed.">        if (batchSizeNode.isMissingNode()) {</span>
+<span class="nc" id="L107">            return new BatchDeleteProcessConfig(batch, batchPart, prepareFailedResultAsJsonString(&quot;Batch configuration has no batch size&quot;, engineConfiguration),</span>
+                    sequentialExecution);
+        }
+
+        HistoricProcessInstanceQuery query;
+
+        try {
+<span class="nc" id="L114">            query = createQuery(queryNode, engineConfiguration);</span>
+<span class="nc" id="L115">        } catch (FlowableException exception) {</span>
+<span class="nc" id="L116">            return new BatchDeleteProcessConfig(batch, batchPart, prepareFailedResultAsJsonString(&quot;Failed to create query&quot;, exception, engineConfiguration),</span>
+                    sequentialExecution);
+<span class="nc" id="L118">        }</span>
+
+<span class="nc" id="L120">        BatchDeleteProcessConfig config = new BatchDeleteProcessConfig(batch, batchPart, null, sequentialExecution);</span>
+<span class="nc" id="L121">        config.batchSize = batchSizeNode.intValue();</span>
+<span class="nc" id="L122">        config.query = query;</span>
+
+<span class="nc" id="L124">        return config;</span>
+    }
+
+    protected static HistoricProcessInstanceQuery createQuery(JsonNode queryNode, ProcessEngineConfigurationImpl engineConfiguration) {
+<span class="nc" id="L128">        HistoricProcessInstanceQuery query = engineConfiguration.getHistoryService()</span>
+<span class="nc" id="L129">                .createHistoricProcessInstanceQuery();</span>
+
+<span class="nc" id="L131">        populateQuery(queryNode, query, engineConfiguration);</span>
+
+<span class="nc bnc" id="L133" title="All 6 branches missed.">        if (queryNode.hasNonNull(&quot;finishedBefore&quot;) || queryNode.hasNonNull(&quot;finishedAfter&quot;) || queryNode.path(&quot;finished&quot;).asBoolean(false)) {</span>
+            // When the query has finishedBefore, finishedAfter or finished then we need to order by the process instance end time
+            // This is done in order to improve the performance when getting pages with large offsets.
+            // When the properties are not set we cannot order on the end time
+            // because we are not guaranteed a consistent order since the end time might be null
+<span class="nc" id="L138">            query.orderByProcessInstanceEndTime().asc();</span>
+        }
+
+<span class="nc" id="L141">        return query;</span>
+    }
+
+    protected static void populateQuery(JsonNode queryNode, HistoricProcessInstanceQuery query, ProcessEngineConfigurationImpl engineConfiguration) {
+<span class="nc" id="L145">        Iterator&lt;Map.Entry&lt;String, JsonNode&gt;&gt; fieldIterator = queryNode.fields();</span>
+<span class="nc bnc" id="L146" title="All 2 branches missed.">        while (fieldIterator.hasNext()) {</span>
+<span class="nc" id="L147">            Map.Entry&lt;String, JsonNode&gt; field = fieldIterator.next();</span>
+<span class="nc" id="L148">            String property = field.getKey();</span>
+<span class="nc" id="L149">            JsonNode value = field.getValue();</span>
+<span class="nc bnc" id="L150" title="All 49 branches missed.">            switch (property) {</span>
+                case &quot;processInstanceId&quot;:
+<span class="nc" id="L152">                    query.processInstanceId(value.textValue());</span>
+<span class="nc" id="L153">                    break;</span>
+                case &quot;processDefinitionId&quot;:
+<span class="nc" id="L155">                    query.processDefinitionId(value.textValue());</span>
+<span class="nc" id="L156">                    break;</span>
+                case &quot;businessKey&quot;:
+<span class="nc" id="L158">                    query.processInstanceBusinessKey(value.textValue());</span>
+<span class="nc" id="L159">                    break;</span>
+                case &quot;businessKeyLike&quot;:
+<span class="nc" id="L161">                    query.processInstanceBusinessKeyLike(value.textValue());</span>
+<span class="nc" id="L162">                    break;</span>
+                case &quot;businessStatus&quot;:
+<span class="nc" id="L164">                    query.processInstanceBusinessStatus(value.textValue());</span>
+<span class="nc" id="L165">                    break;</span>
+                case &quot;businessStatusLike&quot;:
+<span class="nc" id="L167">                    query.processInstanceBusinessStatusLike(value.textValue());</span>
+<span class="nc" id="L168">                    break;</span>
+                case &quot;deploymentId&quot;:
+<span class="nc" id="L170">                    query.deploymentId(value.textValue());</span>
+<span class="nc" id="L171">                    break;</span>
+                case &quot;deploymentIds&quot;:
+<span class="nc" id="L173">                    query.deploymentIdIn(asStringList(value));</span>
+<span class="nc" id="L174">                    break;</span>
+                case &quot;finished&quot;:
+<span class="nc bnc" id="L176" title="All 2 branches missed.">                    if (value.booleanValue()) {</span>
+<span class="nc" id="L177">                        query.finished();</span>
+                    }
+                    break;
+                case &quot;unfinished&quot;:
+<span class="nc bnc" id="L181" title="All 2 branches missed.">                    if (value.booleanValue()) {</span>
+<span class="nc" id="L182">                        query.unfinished();</span>
+                    }
+                    break;
+                case &quot;deleted&quot;:
+<span class="nc bnc" id="L186" title="All 2 branches missed.">                    if (value.booleanValue()) {</span>
+<span class="nc" id="L187">                        query.deleted();</span>
+                    }
+                    break;
+                case &quot;notDeleted&quot;:
+<span class="nc bnc" id="L191" title="All 2 branches missed.">                    if (value.booleanValue()) {</span>
+<span class="nc" id="L192">                        query.notDeleted();</span>
+                    }
+                    break;
+                case &quot;startedBy&quot;:
+<span class="nc" id="L196">                    query.startedBy(value.textValue());</span>
+<span class="nc" id="L197">                    break;</span>
+                case &quot;superProcessInstanceId&quot;:
+<span class="nc" id="L199">                    query.superProcessInstanceId(value.textValue());</span>
+<span class="nc" id="L200">                    break;</span>
+                case &quot;excludeSubprocesses&quot;:
+<span class="nc bnc" id="L202" title="All 2 branches missed.">                    if (value.booleanValue()) {</span>
+<span class="nc" id="L203">                        query.excludeSubprocesses(true);</span>
+                    }
+                    break;
+                case &quot;processDefinitionKeyIn&quot;:
+<span class="nc" id="L207">                    query.processDefinitionKeyIn(asStringList(value));</span>
+<span class="nc" id="L208">                    break;</span>
+                case &quot;processKeyNotIn&quot;:
+<span class="nc" id="L210">                    query.processDefinitionKeyNotIn(asStringList(value));</span>
+<span class="nc" id="L211">                    break;</span>
+                case &quot;startedBefore&quot;:
+<span class="nc" id="L213">                    query.startedBefore(AsyncHistoryDateUtil.parseDate(value.textValue()));</span>
+<span class="nc" id="L214">                    break;</span>
+                case &quot;startedAfter&quot;:
+<span class="nc" id="L216">                    query.startedAfter(AsyncHistoryDateUtil.parseDate(value.textValue()));</span>
+<span class="nc" id="L217">                    break;</span>
+                case &quot;finishedBefore&quot;:
+<span class="nc" id="L219">                    query.finishedBefore(AsyncHistoryDateUtil.parseDate(value.textValue()));</span>
+<span class="nc" id="L220">                    break;</span>
+                case &quot;finishedAfter&quot;:
+<span class="nc" id="L222">                    query.finishedAfter(AsyncHistoryDateUtil.parseDate(value.textValue()));</span>
+<span class="nc" id="L223">                    break;</span>
+                case &quot;processDefinitionKey&quot;:
+<span class="nc" id="L225">                    query.processDefinitionKey(value.textValue());</span>
+<span class="nc" id="L226">                    break;</span>
+                case &quot;processDefinitionCategory&quot;:
+<span class="nc" id="L228">                    query.processDefinitionCategory(value.textValue());</span>
+<span class="nc" id="L229">                    break;</span>
+                case &quot;processDefinitionName&quot;:
+<span class="nc" id="L231">                    query.processDefinitionName(value.textValue());</span>
+<span class="nc" id="L232">                    break;</span>
+                case &quot;processDefinitionVersion&quot;:
+<span class="nc" id="L234">                    query.processDefinitionVersion(value.intValue());</span>
+<span class="nc" id="L235">                    break;</span>
+                case &quot;processInstanceIds&quot;:
+<span class="nc" id="L237">                    query.processInstanceIds(asStringSet(value));</span>
+<span class="nc" id="L238">                    break;</span>
+                case &quot;activeActivityId&quot;:
+<span class="nc" id="L240">                    query.activeActivityId(value.textValue());</span>
+<span class="nc" id="L241">                    break;</span>
+                case &quot;activeActivityIds&quot;:
+<span class="nc" id="L243">                    query.activeActivityIds(asStringSet(value));</span>
+<span class="nc" id="L244">                    break;</span>
+                case &quot;involvedUser&quot;:
+<span class="nc" id="L246">                    query.involvedUser(value.textValue());</span>
+<span class="nc" id="L247">                    break;</span>
+                case &quot;involvedUserIdentityLink&quot;:
+<span class="nc" id="L249">                    query.involvedUser(value.path(&quot;userId&quot;).textValue(), value.path(&quot;type&quot;).textValue());</span>
+<span class="nc" id="L250">                    break;</span>
+                case &quot;involvedGroups&quot;:
+<span class="nc" id="L252">                    query.involvedGroups(asStringSet(value));</span>
+<span class="nc" id="L253">                    break;</span>
+                case &quot;involvedGroupIdentityLink&quot;:
+<span class="nc" id="L255">                    query.involvedUser(value.path(&quot;groupId&quot;).textValue(), value.path(&quot;type&quot;).textValue());</span>
+<span class="nc" id="L256">                    break;</span>
+                case &quot;withJobException&quot;:
+<span class="nc bnc" id="L258" title="All 2 branches missed.">                    if (value.booleanValue()) {</span>
+<span class="nc" id="L259">                        query.withJobException();</span>
+                    }
+                    break;
+                case &quot;tenantId&quot;:
+<span class="nc" id="L263">                    query.processInstanceTenantId(value.textValue());</span>
+<span class="nc" id="L264">                    break;</span>
+                case &quot;tenantIdLike&quot;:
+<span class="nc" id="L266">                    query.processInstanceTenantIdLike(value.textValue());</span>
+<span class="nc" id="L267">                    break;</span>
+                case &quot;withoutTenantId&quot;:
+<span class="nc bnc" id="L269" title="All 2 branches missed.">                    if (value.booleanValue()) {</span>
+<span class="nc" id="L270">                        query.processInstanceWithoutTenantId();</span>
+                    }
+                    break;
+                case &quot;name&quot;:
+<span class="nc" id="L274">                    query.processInstanceName(value.textValue());</span>
+<span class="nc" id="L275">                    break;</span>
+                case &quot;nameLike&quot;:
+<span class="nc" id="L277">                    query.processInstanceNameLike(value.textValue());</span>
+<span class="nc" id="L278">                    break;</span>
+                case &quot;nameLikeIgnoreCase&quot;:
+<span class="nc" id="L280">                    query.processInstanceNameLikeIgnoreCase(value.textValue());</span>
+<span class="nc" id="L281">                    break;</span>
+                case &quot;callbackId&quot;:
+<span class="nc" id="L283">                    query.processInstanceCallbackId(value.textValue());</span>
+<span class="nc" id="L284">                    break;</span>
+                case &quot;callbackType&quot;:
+<span class="nc" id="L286">                    query.processInstanceCallbackType(value.textValue());</span>
+<span class="nc" id="L287">                    break;</span>
+                case &quot;withoutCallbackId&quot;:
+<span class="nc bnc" id="L289" title="All 2 branches missed.">                    if (value.booleanValue()) {</span>
+<span class="nc" id="L290">                        query.withoutProcessInstanceCallbackId();</span>
+                    }
+                    break;
+                case &quot;referenceId&quot;:
+<span class="nc" id="L294">                    query.processInstanceReferenceId(value.textValue());</span>
+<span class="nc" id="L295">                    break;</span>
+                case &quot;referenceType&quot;:
+<span class="nc" id="L297">                    query.processInstanceReferenceType(value.textValue());</span>
+<span class="nc" id="L298">                    break;</span>
+                case &quot;queryVariableValues&quot;:
+<span class="nc" id="L300">                    populateQueryVariableValues(value, query, engineConfiguration);</span>
+<span class="nc" id="L301">                    break;</span>
+                case &quot;orQueryObjects&quot;:
+<span class="nc" id="L303">                    populateOrQueryObjects(value, query, engineConfiguration);</span>
+<span class="nc" id="L304">                    break;</span>
+                case &quot;processInstanceRootScopeId&quot;:
+<span class="nc" id="L306">                    query.processInstanceRootScopeId(value.textValue());</span>
+<span class="nc" id="L307">                    break;</span>
+                case &quot;processInstanceParentScopeId&quot;:
+<span class="nc" id="L309">                    query.processInstanceParentScopeId(value.textValue());</span>
+<span class="nc" id="L310">                    break;</span>
+                default:
+<span class="nc" id="L312">                    throw new FlowableIllegalArgumentException(&quot;Query property &quot; + property + &quot; is not supported&quot;);</span>
+            }
+<span class="nc" id="L314">        }</span>
+<span class="nc" id="L315">    }</span>
+
+    protected static void populateOrQueryObjects(JsonNode orQueryObjectsNode, HistoricProcessInstanceQuery query,
+            ProcessEngineConfigurationImpl engineConfiguration) {
+<span class="nc bnc" id="L319" title="All 2 branches missed.">        if (orQueryObjectsNode.isArray()) {</span>
+<span class="nc bnc" id="L320" title="All 2 branches missed.">            for (JsonNode orQueryObjectNode : orQueryObjectsNode) {</span>
+<span class="nc" id="L321">                HistoricProcessInstanceQuery orQuery = query.or();</span>
+<span class="nc" id="L322">                populateQuery(orQueryObjectNode, orQuery, engineConfiguration);</span>
+<span class="nc" id="L323">                query.endOr();</span>
+<span class="nc" id="L324">            }</span>
+        }
+<span class="nc" id="L326">    }</span>
+
+    protected static void populateQueryVariableValues(JsonNode variableValuesNode, HistoricProcessInstanceQuery query,
+            ProcessEngineConfigurationImpl engineConfiguration) {
+<span class="nc bnc" id="L330" title="All 2 branches missed.">        if (variableValuesNode.isArray()) {</span>
+<span class="nc bnc" id="L331" title="All 2 branches missed.">            for (JsonNode variableValue : variableValuesNode) {</span>
+<span class="nc" id="L332">                String operatorString = variableValue.path(&quot;operator&quot;).asText(null);</span>
+<span class="nc bnc" id="L333" title="All 2 branches missed.">                if (operatorString == null) {</span>
+<span class="nc" id="L334">                    throw new FlowableIllegalArgumentException(&quot;The variable value does not contain an operator value&quot;);</span>
+                }
+
+<span class="nc" id="L337">                QueryOperator operator = QueryOperator.valueOf(operatorString);</span>
+<span class="nc" id="L338">                String variableName = variableValue.path(&quot;name&quot;).textValue();</span>
+<span class="nc bnc" id="L339" title="All 12 branches missed.">                switch (operator) {</span>
+                    case EQUALS:
+<span class="nc bnc" id="L341" title="All 2 branches missed.">                        if (variableName != null) {</span>
+<span class="nc" id="L342">                            query.variableValueEquals(variableName, extractVariableValue(variableValue, engineConfiguration));</span>
+                        } else {
+<span class="nc" id="L344">                            query.variableValueEquals(extractVariableValue(variableValue, engineConfiguration));</span>
+                        }
+<span class="nc" id="L346">                        break;</span>
+                    case NOT_EQUALS:
+<span class="nc" id="L348">                        query.variableValueNotEquals(variableName, extractVariableValue(variableValue, engineConfiguration));</span>
+<span class="nc" id="L349">                        break;</span>
+                    case GREATER_THAN:
+<span class="nc" id="L351">                        query.variableValueGreaterThan(variableName, extractVariableValue(variableValue, engineConfiguration));</span>
+<span class="nc" id="L352">                        break;</span>
+                    case GREATER_THAN_OR_EQUAL:
+<span class="nc" id="L354">                        query.variableValueGreaterThanOrEqual(variableName, extractVariableValue(variableValue, engineConfiguration));</span>
+<span class="nc" id="L355">                        break;</span>
+                    case LESS_THAN:
+<span class="nc" id="L357">                        query.variableValueLessThan(variableName, extractVariableValue(variableValue, engineConfiguration));</span>
+<span class="nc" id="L358">                        break;</span>
+                    case LESS_THAN_OR_EQUAL:
+<span class="nc" id="L360">                        query.variableValueLessThanOrEqual(variableName, extractVariableValue(variableValue, engineConfiguration));</span>
+<span class="nc" id="L361">                        break;</span>
+                    case LIKE:
+<span class="nc" id="L363">                        query.variableValueLike(variableName, (String) extractVariableValue(variableValue, engineConfiguration));</span>
+<span class="nc" id="L364">                        break;</span>
+                    case LIKE_IGNORE_CASE:
+<span class="nc" id="L366">                        query.variableValueLikeIgnoreCase(variableName, (String) extractVariableValue(variableValue, engineConfiguration));</span>
+<span class="nc" id="L367">                        break;</span>
+                    case EQUALS_IGNORE_CASE:
+<span class="nc" id="L369">                        query.variableValueEqualsIgnoreCase(variableName, (String) extractVariableValue(variableValue, engineConfiguration));</span>
+<span class="nc" id="L370">                        break;</span>
+                    case EXISTS:
+<span class="nc" id="L372">                        query.variableExists(variableName);</span>
+<span class="nc" id="L373">                        break;</span>
+                    case NOT_EXISTS:
+<span class="nc" id="L375">                        query.variableNotExists(variableName);</span>
+<span class="nc" id="L376">                        break;</span>
+                    case NOT_EQUALS_IGNORE_CASE:
+                        //Not exposed on the public API
+                        //query.variableValueNotEqualsIgnoreCase(variableName, (String) extractVariableValue(variableValue, engineConfiguration));
+                        //break
+                    default:
+<span class="nc" id="L382">                        throw new FlowableIllegalArgumentException(&quot;Operator &quot; + operator + &quot; is not supported for the variable value&quot;);</span>
+                }
+<span class="nc" id="L384">            }</span>
+
+        }
+
+<span class="nc" id="L388">    }</span>
+
+    protected static Object extractVariableValue(JsonNode variableValueNode, ProcessEngineConfigurationImpl engineConfiguration) {
+<span class="nc" id="L391">        String type = variableValueNode.path(&quot;type&quot;).asText(null);</span>
+<span class="nc bnc" id="L392" title="All 2 branches missed.">        if (type == null) {</span>
+<span class="nc" id="L393">            throw new FlowableIllegalArgumentException(&quot;The variable value does not have a type&quot;);</span>
+        }
+
+<span class="nc" id="L396">        VariableType variableType = engineConfiguration.getVariableTypes()</span>
+<span class="nc" id="L397">                .getVariableType(type);</span>
+<span class="nc" id="L398">        return variableType.getValue(new VariableValueJsonNodeValueFields(variableValueNode));</span>
+    }
+
+    protected static List&lt;String&gt; asStringList(JsonNode node) {
+<span class="nc bnc" id="L402" title="All 6 branches missed.">        if (node != null &amp;&amp; node.isArray() &amp;&amp; node.size() &gt; 0) {</span>
+<span class="nc" id="L403">            List&lt;String&gt; values = new ArrayList&lt;&gt;(node.size());</span>
+<span class="nc bnc" id="L404" title="All 2 branches missed.">            for (JsonNode element : node) {</span>
+<span class="nc" id="L405">                values.add(element.textValue());</span>
+<span class="nc" id="L406">            }</span>
+<span class="nc" id="L407">            return values;</span>
+        }
+
+<span class="nc" id="L410">        return null;</span>
+    }
+
+    protected static Set&lt;String&gt; asStringSet(JsonNode node) {
+<span class="nc bnc" id="L414" title="All 6 branches missed.">        if (node != null &amp;&amp; node.isArray() &amp;&amp; node.size() &gt; 0) {</span>
+<span class="nc" id="L415">            List&lt;String&gt; values = new ArrayList&lt;&gt;(node.size());</span>
+<span class="nc bnc" id="L416" title="All 2 branches missed.">            for (JsonNode element : node) {</span>
+<span class="nc" id="L417">                values.add(element.textValue());</span>
+<span class="nc" id="L418">            }</span>
+<span class="nc" id="L419">            return new HashSet&lt;&gt;(values);</span>
+        }
+
+<span class="nc" id="L422">        return null;</span>
+    }
+
+    protected static JsonNode getBatchConfiguration(Batch batch, ProcessEngineConfigurationImpl engineConfiguration) {
+        try {
+<span class="nc" id="L427">            return engineConfiguration.getObjectMapper()</span>
+<span class="nc" id="L428">                    .readTree(batch.getBatchDocumentJson(EngineConfigurationConstants.KEY_PROCESS_ENGINE_CONFIG));</span>
+<span class="nc" id="L429">        } catch (JsonProcessingException e) {</span>
+<span class="nc" id="L430">            ExceptionUtil.sneakyThrow(e);</span>
+<span class="nc" id="L431">            return null;</span>
+        }
+    }
+
+    protected static String prepareFailedResultAsJsonString(String errorMessage, ProcessEngineConfigurationImpl engineConfiguration) {
+<span class="nc" id="L436">        return prepareFailedResultAsJsonString(errorMessage, null, engineConfiguration);</span>
+    }
+
+    protected static String prepareFailedResultAsJsonString(String errorMessage, FlowableException exception,
+            ProcessEngineConfigurationImpl engineConfiguration) {
+<span class="nc" id="L441">        ObjectNode resultNode = engineConfiguration.getObjectMapper()</span>
+<span class="nc" id="L442">                .createObjectNode();</span>
+<span class="nc" id="L443">        resultNode.put(&quot;errorMessage&quot;, errorMessage);</span>
+<span class="nc bnc" id="L444" title="All 2 branches missed.">        if (exception != null) {</span>
+<span class="nc" id="L445">            resultNode.put(&quot;errorStacktrace&quot;, ExceptionUtils.getStackTrace(exception));</span>
+        }
+<span class="nc" id="L447">        return resultNode.toString();</span>
+    }
+
+    protected static class VariableValueJsonNodeValueFields implements ValueFields {
+
+        protected final JsonNode node;
+
+<span class="nc" id="L454">        public VariableValueJsonNodeValueFields(JsonNode node) {</span>
+<span class="nc" id="L455">            this.node = node;</span>
+<span class="nc" id="L456">        }</span>
+
+        @Override
+        public String getName() {
+<span class="nc" id="L460">            return node.path(&quot;name&quot;).textValue();</span>
+        }
+
+        @Override
+        public String getProcessInstanceId() {
+<span class="nc" id="L465">            throw new UnsupportedOperationException(&quot;Not supported to get process instance id&quot;);</span>
+        }
+
+        @Override
+        public String getExecutionId() {
+<span class="nc" id="L470">            throw new UnsupportedOperationException(&quot;Not supported to get execution id&quot;);</span>
+        }
+
+        @Override
+        public String getScopeId() {
+<span class="nc" id="L475">            throw new UnsupportedOperationException(&quot;Not supported to get scope id&quot;);</span>
+        }
+
+        @Override
+        public String getSubScopeId() {
+<span class="nc" id="L480">            throw new UnsupportedOperationException(&quot;Not supported to get sub scope id&quot;);</span>
+        }
+
+        @Override
+        public String getScopeType() {
+<span class="nc" id="L485">            throw new UnsupportedOperationException(&quot;Not supported to scope type&quot;);</span>
+        }
+
+        @Override
+        public String getTaskId() {
+<span class="nc" id="L490">            throw new UnsupportedOperationException(&quot;Not supported to get task id&quot;);</span>
+        }
+
+        @Override
+        public String getTextValue() {
+<span class="nc" id="L495">            return node.path(&quot;textValue&quot;).textValue();</span>
+        }
+
+        @Override
+        public void setTextValue(String textValue) {
+<span class="nc" id="L500">            throw new UnsupportedOperationException(&quot;Not supported to set text value&quot;);</span>
+        }
+
+        @Override
+        public String getTextValue2() {
+<span class="nc" id="L505">            return node.path(&quot;textValues&quot;).textValue();</span>
+        }
+
+        @Override
+        public void setTextValue2(String textValue2) {
+<span class="nc" id="L510">            throw new UnsupportedOperationException(&quot;Not supported to set text value2&quot;);</span>
+        }
+
+        @Override
+        public Long getLongValue() {
+<span class="nc" id="L515">            JsonNode longNode = node.path(&quot;longValue&quot;);</span>
+<span class="nc bnc" id="L516" title="All 2 branches missed.">            if (longNode.isNumber()) {</span>
+<span class="nc" id="L517">                return longNode.longValue();</span>
+            }
+<span class="nc" id="L519">            return null;</span>
+        }
+
+        @Override
+        public void setLongValue(Long longValue) {
+<span class="nc" id="L524">            throw new UnsupportedOperationException(&quot;Not supported to set long value&quot;);</span>
+        }
+
+        @Override
+        public Double getDoubleValue() {
+<span class="nc" id="L529">            JsonNode doubleNode = node.path(&quot;doubleValue&quot;);</span>
+<span class="nc bnc" id="L530" title="All 2 branches missed.">            if (doubleNode.isNumber()) {</span>
+<span class="nc" id="L531">                return doubleNode.doubleValue();</span>
+            }
+<span class="nc" id="L533">            return null;</span>
+        }
+
+        @Override
+        public void setDoubleValue(Double doubleValue) {
+<span class="nc" id="L538">            throw new UnsupportedOperationException(&quot;Not supported to set double value&quot;);</span>
+        }
+
+        @Override
+        public byte[] getBytes() {
+<span class="nc" id="L543">            throw new UnsupportedOperationException(&quot;Not supported to get bytes&quot;);</span>
+        }
+
+        @Override
+        public void setBytes(byte[] bytes) {
+<span class="nc" id="L548">            throw new UnsupportedOperationException(&quot;Not supported to set bytes&quot;);</span>
+        }
+
+        @Override
+        public Object getCachedValue() {
+<span class="nc" id="L553">            throw new UnsupportedOperationException(&quot;Not supported to set get cached value&quot;);</span>
+        }
+
+        @Override
+        public void setCachedValue(Object cachedValue) {
+<span class="nc" id="L558">            throw new UnsupportedOperationException(&quot;Not supported to set cached value&quot;);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -16,10 +16,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import org.flowable.idm.api.PasswordEncoder;
 import org.flowable.idm.api.PasswordSalt;
+import org.flowable.idm.api.PasswordSaltProvider;
 import org.flowable.idm.api.User;
-import org.flowable.idm.engine.impl.authentication.ApacheDigester;
+import org.flowable.idm.engine.impl.authentication.*;
 import org.flowable.idm.engine.impl.authentication.ApacheDigester.Digester;
-import org.flowable.idm.engine.impl.authentication.PasswordSaltImpl;
 import org.flowable.idm.engine.test.PluggableFlowableIdmTestCase;
 import org.flowable.idm.engine.test.api.identity.authentication.JasyptPasswordEncryptor;
 import org.flowable.idm.engine.test.api.identity.authentication.jBCryptHashing;
@@ -116,6 +116,28 @@ public class PasswordEncoderTest extends PluggableFlowableIdmTestCase {
         assertThat(customPasswordEncoder).isInstanceOf(CustomPasswordEncoder.class);
 
         idmEngineConfiguration.setPasswordEncoder(passwordEncoder);
+    }
+
+    @Test
+    public void testPasswordSaltCreation(){
+        PasswordSaltProvider passwordSaltProvider = new TextSaltProvider("");
+        PasswordSalt passwordSalt = new PasswordSaltImpl(passwordSaltProvider);
+
+        assertThat(passwordSalt.getSource()).isEqualTo(passwordSaltProvider);
+
+        PasswordSaltProvider passwordSaltProvider2 = BlankSaltProvider.getInstance();
+        passwordSalt.setSource(passwordSaltProvider2);
+        assertThat(passwordSalt.getSource()).isEqualTo(passwordSaltProvider2);
+    }
+
+    @Test
+    public void testClearTestPasswordEncoder(){
+        PasswordSaltProvider passwordSaltProvider = new TextSaltProvider("");
+        PasswordSalt passwordSalt = new PasswordSaltImpl(passwordSaltProvider);
+        String rawPassword = "raw";
+        PasswordEncoder passwordEncoder = ClearTextPasswordEncoder.getInstance();
+        String hashedPassword = passwordEncoder.encode(rawPassword, passwordSalt);
+        assertThat(passwordEncoder.isMatches(rawPassword, hashedPassword, passwordSalt)).isTrue();
     }
 
     class CustomPasswordEncoder implements PasswordEncoder {

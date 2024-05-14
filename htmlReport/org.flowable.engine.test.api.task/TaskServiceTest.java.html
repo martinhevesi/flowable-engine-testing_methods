@@ -1,0 +1,2230 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TaskServiceTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.api.task</a> &gt; <span class="el_source">TaskServiceTest.java</span></div><h1>TaskServiceTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.flowable.engine.test.api.task;
+
+import static java.util.stream.Collectors.toSet;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.entry;
+import static org.assertj.core.api.Assertions.fail;
+import static org.assertj.core.api.Assertions.tuple;
+import static org.flowable.engine.impl.test.HistoryTestHelper.isHistoryLevelAtLeast;
+
+import java.text.SimpleDateFormat;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import org.apache.ibatis.exceptions.PersistenceException;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.FlowableIllegalArgumentException;
+import org.flowable.common.engine.api.FlowableObjectNotFoundException;
+import org.flowable.common.engine.api.FlowableOptimisticLockingException;
+import org.flowable.common.engine.api.FlowableTaskAlreadyClaimedException;
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.impl.history.HistoryLevel;
+import org.flowable.common.engine.impl.interceptor.EngineConfigurationConstants;
+import org.flowable.common.engine.impl.util.CollectionUtil;
+import org.flowable.engine.history.HistoricActivityInstance;
+import org.flowable.engine.history.HistoricDetail;
+import org.flowable.engine.history.HistoricVariableUpdate;
+import org.flowable.engine.impl.TaskServiceImpl;
+import org.flowable.engine.impl.persistence.entity.CommentEntity;
+import org.flowable.engine.impl.persistence.entity.HistoricDetailVariableInstanceUpdateEntity;
+import org.flowable.engine.impl.test.PluggableFlowableTestCase;
+import org.flowable.engine.runtime.ActivityInstance;
+import org.flowable.engine.runtime.Execution;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.task.Attachment;
+import org.flowable.engine.task.Comment;
+import org.flowable.engine.task.Event;
+import org.flowable.engine.test.Deployment;
+import org.flowable.identitylink.api.IdentityLink;
+import org.flowable.identitylink.api.IdentityLinkType;
+import org.flowable.identitylink.service.impl.persistence.entity.IdentityLinkEntityImpl;
+import org.flowable.idm.api.Group;
+import org.flowable.idm.api.User;
+import org.flowable.task.api.DelegationState;
+import org.flowable.task.api.Task;
+import org.flowable.task.api.TaskCompletionBuilder;
+import org.flowable.task.api.history.HistoricTaskInstance;
+import org.flowable.task.service.TaskPostProcessor;
+import org.flowable.task.service.TaskServiceConfiguration;
+import org.flowable.task.service.impl.persistence.CountingTaskEntity;
+import org.flowable.variable.api.history.HistoricVariableInstance;
+import org.flowable.variable.api.persistence.entity.VariableInstance;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+
+/**
+ * @author Frederik Heremans
+ * @author Joram Barrez
+ * @author Falko Menge
+ * @author Christopher Welsch
+ */
+<span class="nc" id="L86">public class TaskServiceTest extends PluggableFlowableTestCase {</span>
+
+<span class="nc" id="L88">    private Task task = null;</span>
+<span class="nc" id="L89">    private SimpleDateFormat simpleDateFormat = new SimpleDateFormat(&quot;yyyy-MM-dd HH:mm&quot;);</span>
+
+    @AfterEach
+    public void tearDown() throws Exception {
+<span class="nc bnc" id="L93" title="All 2 branches missed.">        if (task != null) {</span>
+<span class="nc" id="L94">            taskService.deleteTask(task.getId(), true);</span>
+        }
+<span class="nc" id="L96">    }</span>
+
+    @Test
+    public void testCreateTaskWithBuilder() {
+        // We need to make sure the time ends on .000, .003 or .007 due to SQL Server rounding to that
+<span class="nc" id="L101">        Date todayDate = Date.from(Instant.now().plus(1, ChronoUnit.SECONDS).plusMillis(133));</span>
+<span class="nc" id="L102">        task = taskService.createTaskBuilder().</span>
+<span class="nc" id="L103">                name(&quot;testName&quot;).</span>
+<span class="nc" id="L104">                description(&quot;testDescription&quot;).</span>
+<span class="nc" id="L105">                priority(35).</span>
+<span class="nc" id="L106">                owner(&quot;testOwner&quot;).</span>
+<span class="nc" id="L107">                assignee(&quot;testAssignee&quot;).</span>
+<span class="nc" id="L108">                dueDate(todayDate).</span>
+<span class="nc" id="L109">                category(&quot;testCategory&quot;).</span>
+<span class="nc" id="L110">                parentTaskId(&quot;testParentTaskId&quot;).</span>
+<span class="nc" id="L111">                tenantId(&quot;testTenantId&quot;).</span>
+<span class="nc" id="L112">                formKey(&quot;testFormKey&quot;).</span>
+<span class="nc" id="L113">                taskDefinitionId(&quot;testDefinitionId&quot;).</span>
+<span class="nc" id="L114">                taskDefinitionKey(&quot;testDefinitionKey&quot;).</span>
+<span class="nc" id="L115">                scopeType(ScopeTypes.TASK).</span>
+<span class="nc" id="L116">                scopeId(&quot;scopeIdValue&quot;).</span>
+<span class="nc" id="L117">                create();</span>
+<span class="nc" id="L118">        Task updatedTask = taskService.createTaskQuery().taskId(task.getId()).singleResult();</span>
+<span class="nc" id="L119">        assertThat(updatedTask).isNotNull();</span>
+<span class="nc" id="L120">        assertThat(updatedTask.getName()).isEqualTo(&quot;testName&quot;);</span>
+<span class="nc" id="L121">        assertThat(updatedTask.getDescription()).isEqualTo(&quot;testDescription&quot;);</span>
+<span class="nc" id="L122">        assertThat(updatedTask.getPriority()).isEqualTo(35);</span>
+<span class="nc" id="L123">        assertThat(updatedTask.getOwner()).isEqualTo(&quot;testOwner&quot;);</span>
+<span class="nc" id="L124">        assertThat(updatedTask.getAssignee()).isEqualTo(&quot;testAssignee&quot;);</span>
+<span class="nc" id="L125">        assertThat(simpleDateFormat.format(updatedTask.getDueDate())).isEqualTo(simpleDateFormat.format(todayDate));</span>
+<span class="nc" id="L126">        assertThat(updatedTask.getCategory()).isEqualTo(&quot;testCategory&quot;);</span>
+<span class="nc" id="L127">        assertThat(updatedTask.getParentTaskId()).isEqualTo(&quot;testParentTaskId&quot;);</span>
+<span class="nc" id="L128">        assertThat(updatedTask.getTenantId()).isEqualTo(&quot;testTenantId&quot;);</span>
+<span class="nc" id="L129">        assertThat(updatedTask.getFormKey()).isEqualTo(&quot;testFormKey&quot;);</span>
+<span class="nc" id="L130">        assertThat(updatedTask.getTaskDefinitionId()).isEqualTo(&quot;testDefinitionId&quot;);</span>
+<span class="nc" id="L131">        assertThat(updatedTask.getTaskDefinitionKey()).isEqualTo(&quot;testDefinitionKey&quot;);</span>
+<span class="nc" id="L132">        assertThat(updatedTask.getScopeId()).isEqualTo(&quot;scopeIdValue&quot;);</span>
+<span class="nc" id="L133">        assertThat(updatedTask.getScopeType()).isEqualTo(ScopeTypes.TASK);</span>
+<span class="nc" id="L134">    }</span>
+
+    @Test
+    public void testBuilderCreateTaskWithParent() {
+<span class="nc" id="L138">        Task parentTask = taskService.newTask();</span>
+<span class="nc" id="L139">        taskService.saveTask(parentTask);</span>
+        try {
+<span class="nc" id="L141">            task = taskService.createTaskBuilder().</span>
+<span class="nc" id="L142">                    name(&quot;testName&quot;).</span>
+<span class="nc" id="L143">                    parentTaskId(parentTask.getId()).</span>
+<span class="nc" id="L144">                    identityLinks(getDefaultIdentityLinks()).</span>
+<span class="nc" id="L145">                    create();</span>
+<span class="nc" id="L146">            Task updatedParentTask = taskService.createTaskQuery().taskId(parentTask.getId()).singleResult();</span>
+<span class="nc" id="L147">            assertThat(((CountingTaskEntity) updatedParentTask).getSubTaskCount()).isEqualTo(1);</span>
+<span class="nc" id="L148">            Task updatedTask = taskService.createTaskQuery().taskId(task.getId()).includeIdentityLinks().singleResult();</span>
+<span class="nc" id="L149">            assertThat(((CountingTaskEntity) updatedTask).getIdentityLinkCount()).isEqualTo(2);</span>
+        } finally {
+<span class="nc" id="L151">            this.taskService.deleteTask(parentTask.getId(), true);</span>
+        }
+<span class="nc" id="L153">    }</span>
+
+    @Test
+    public void testCreateTaskWithOwnerAssigneeAndIdentityLinks() {
+<span class="nc" id="L157">        task = taskService.createTaskBuilder().</span>
+<span class="nc" id="L158">                name(&quot;testName&quot;).</span>
+<span class="nc" id="L159">                owner(&quot;testOwner&quot;).</span>
+<span class="nc" id="L160">                assignee(&quot;testAssignee&quot;).</span>
+<span class="nc" id="L161">                identityLinks(getDefaultIdentityLinks()).</span>
+<span class="nc" id="L162">                create();</span>
+<span class="nc" id="L163">        Task updatedTask = taskService.createTaskQuery().taskId(task.getId()).includeIdentityLinks().singleResult();</span>
+<span class="nc" id="L164">        assertThat(updatedTask).isNotNull();</span>
+<span class="nc" id="L165">        assertThat(updatedTask.getName()).isEqualTo(&quot;testName&quot;);</span>
+<span class="nc" id="L166">        assertThat(updatedTask.getAssignee()).isEqualTo(&quot;testAssignee&quot;);</span>
+<span class="nc" id="L167">        assertThat(updatedTask.getOwner()).isEqualTo(&quot;testOwner&quot;);</span>
+<span class="nc" id="L168">        assertThat(updatedTask.getIdentityLinks()).hasSize(2);</span>
+<span class="nc" id="L169">        assertThat(updatedTask.getPriority()).isEqualTo(Task.DEFAULT_PRIORITY);</span>
+
+<span class="nc bnc" id="L171" title="All 2 branches missed.">        if (isHistoryLevelAtLeast(HistoryLevel.AUDIT, processEngineConfiguration)) {</span>
+<span class="nc" id="L172">            HistoricTaskInstance historicTaskInstance = historyService.createHistoricTaskInstanceQuery().taskId(task.getId()).includeIdentityLinks()</span>
+<span class="nc" id="L173">                    .singleResult();</span>
+<span class="nc" id="L174">            assertThat(historicTaskInstance).isNotNull();</span>
+<span class="nc" id="L175">            assertThat(historicTaskInstance.getName()).isEqualTo(&quot;testName&quot;);</span>
+<span class="nc" id="L176">            assertThat(historicTaskInstance.getPriority()).isEqualTo(Task.DEFAULT_PRIORITY);</span>
+<span class="nc" id="L177">            assertThat(historicTaskInstance.getIdentityLinks()).hasSize(2);</span>
+        }
+
+<span class="nc" id="L180">        taskService.deleteUserIdentityLink(updatedTask.getId(), &quot;testUserBuilder&quot;, IdentityLinkType.CANDIDATE);</span>
+<span class="nc" id="L181">        taskService.deleteGroupIdentityLink(updatedTask.getId(), &quot;testGroupBuilder&quot;, IdentityLinkType.CANDIDATE);</span>
+<span class="nc" id="L182">    }</span>
+
+    @Test
+    public void testCreateTaskWithBuilderAndPostprocessor() {
+<span class="nc" id="L186">        TaskServiceConfiguration taskServiceConfiguration = (TaskServiceConfiguration) this.processEngineConfiguration.getServiceConfigurations().get(EngineConfigurationConstants.KEY_TASK_SERVICE_CONFIG);</span>
+<span class="nc" id="L187">        TaskPostProcessor previousTaskPostProcessor = taskServiceConfiguration.getTaskPostProcessor();</span>
+        try {
+<span class="nc" id="L189">            taskServiceConfiguration.setTaskPostProcessor(</span>
+                    taskEntity -&gt; {
+<span class="nc" id="L191">                        taskEntity.addUserIdentityLink(&quot;testUser&quot;, IdentityLinkType.CANDIDATE);</span>
+<span class="nc" id="L192">                        taskEntity.addGroupIdentityLink(&quot;testGroup&quot;, IdentityLinkType.CANDIDATE);</span>
+<span class="nc" id="L193">                        return taskEntity;</span>
+                    }
+            );
+<span class="nc" id="L196">            task = taskService.createTaskBuilder().</span>
+<span class="nc" id="L197">                    name(&quot;testName&quot;).</span>
+<span class="nc" id="L198">                    create();</span>
+<span class="nc" id="L199">            Task updatedTask = taskService.createTaskQuery().taskId(task.getId()).includeIdentityLinks().singleResult();</span>
+<span class="nc" id="L200">            assertThat(updatedTask).isNotNull();</span>
+<span class="nc" id="L201">            assertThat(updatedTask.getName()).isEqualTo(&quot;testName&quot;);</span>
+<span class="nc" id="L202">            assertThat(updatedTask.getIdentityLinks()).hasSize(2);</span>
+
+<span class="nc bnc" id="L204" title="All 2 branches missed.">            if (isHistoryLevelAtLeast(HistoryLevel.AUDIT, processEngineConfiguration)) {</span>
+<span class="nc" id="L205">                HistoricTaskInstance historicTaskInstance = historyService.createHistoricTaskInstanceQuery().taskId(task.getId()).includeIdentityLinks()</span>
+<span class="nc" id="L206">                        .singleResult();</span>
+<span class="nc" id="L207">                assertThat(historicTaskInstance).isNotNull();</span>
+<span class="nc" id="L208">                assertThat(historicTaskInstance.getName()).isEqualTo(&quot;testName&quot;);</span>
+<span class="nc" id="L209">                assertThat(historicTaskInstance.getIdentityLinks()).hasSize(2);</span>
+            }
+
+<span class="nc" id="L212">            taskService.deleteUserIdentityLink(updatedTask.getId(), &quot;testUser&quot;, IdentityLinkType.CANDIDATE);</span>
+<span class="nc" id="L213">            taskService.deleteGroupIdentityLink(updatedTask.getId(), &quot;testGroup&quot;, IdentityLinkType.CANDIDATE);</span>
+        } finally {
+<span class="nc" id="L215">            taskServiceConfiguration.setTaskPostProcessor(previousTaskPostProcessor);</span>
+        }
+<span class="nc" id="L217">    }</span>
+
+    @Test
+    public void testCreateTaskWithOwnerAssigneeAndIdentityLinksAndPostProcessor() {
+<span class="nc" id="L221">        TaskServiceConfiguration taskServiceConfiguration = (TaskServiceConfiguration) this.processEngineConfiguration.getServiceConfigurations().get(EngineConfigurationConstants.KEY_TASK_SERVICE_CONFIG);</span>
+<span class="nc" id="L222">        TaskPostProcessor previousTaskPostProcessor = taskServiceConfiguration.getTaskPostProcessor();</span>
+        try {
+<span class="nc" id="L224">            taskServiceConfiguration.setTaskPostProcessor(</span>
+                    taskEntity -&gt; {
+<span class="nc" id="L226">                        taskEntity.setName(&quot;testNameFromPostProcessor&quot;);</span>
+<span class="nc" id="L227">                        taskEntity.addUserIdentityLink(&quot;testUser&quot;, IdentityLinkType.CANDIDATE);</span>
+<span class="nc" id="L228">                        taskEntity.addGroupIdentityLink(&quot;testGroup&quot;, IdentityLinkType.CANDIDATE);</span>
+<span class="nc" id="L229">                        return taskEntity;</span>
+                    }
+            );
+
+<span class="nc" id="L233">            task = taskService.createTaskBuilder().</span>
+<span class="nc" id="L234">                    name(&quot;testName&quot;).</span>
+<span class="nc" id="L235">                    owner(&quot;testOwner&quot;).</span>
+<span class="nc" id="L236">                    assignee(&quot;testAssignee&quot;).</span>
+<span class="nc" id="L237">                    identityLinks(getDefaultIdentityLinks()).</span>
+<span class="nc" id="L238">                    create();</span>
+<span class="nc" id="L239">            Task updatedTask = taskService.createTaskQuery().taskId(task.getId()).includeIdentityLinks().singleResult();</span>
+<span class="nc" id="L240">            assertThat(updatedTask).isNotNull();</span>
+<span class="nc" id="L241">            assertThat(updatedTask.getName()).isEqualTo(&quot;testNameFromPostProcessor&quot;);</span>
+<span class="nc" id="L242">            assertThat(updatedTask.getAssignee()).isEqualTo(&quot;testAssignee&quot;);</span>
+<span class="nc" id="L243">            assertThat(updatedTask.getOwner()).isEqualTo(&quot;testOwner&quot;);</span>
+<span class="nc" id="L244">            assertThat(updatedTask.getIdentityLinks()).hasSize(4);</span>
+
+<span class="nc bnc" id="L246" title="All 2 branches missed.">            if (isHistoryLevelAtLeast(HistoryLevel.AUDIT, processEngineConfiguration)) {</span>
+<span class="nc" id="L247">                HistoricTaskInstance historicTaskInstance = historyService.createHistoricTaskInstanceQuery().taskId(task.getId()).includeIdentityLinks()</span>
+<span class="nc" id="L248">                        .singleResult();</span>
+<span class="nc" id="L249">                assertThat(historicTaskInstance).isNotNull();</span>
+<span class="nc" id="L250">                assertThat(historicTaskInstance.getName()).isEqualTo(&quot;testNameFromPostProcessor&quot;);</span>
+<span class="nc" id="L251">                assertThat(historicTaskInstance.getIdentityLinks()).hasSize(4);</span>
+            }
+
+<span class="nc" id="L254">            taskService.deleteUserIdentityLink(updatedTask.getId(), &quot;testUserBuilder&quot;, IdentityLinkType.CANDIDATE);</span>
+<span class="nc" id="L255">            taskService.deleteGroupIdentityLink(updatedTask.getId(), &quot;testGroupBuilder&quot;, IdentityLinkType.CANDIDATE);</span>
+<span class="nc" id="L256">            taskService.deleteUserIdentityLink(updatedTask.getId(), &quot;testUser&quot;, IdentityLinkType.CANDIDATE);</span>
+<span class="nc" id="L257">            taskService.deleteGroupIdentityLink(updatedTask.getId(), &quot;testGroup&quot;, IdentityLinkType.CANDIDATE);</span>
+        } finally {
+<span class="nc" id="L259">            taskServiceConfiguration.setTaskPostProcessor(previousTaskPostProcessor);</span>
+        }
+<span class="nc" id="L261">    }</span>
+
+    @Test
+    public void testSaveTaskUpdate() throws Exception {
+
+<span class="nc" id="L266">        SimpleDateFormat sdf = new SimpleDateFormat(&quot;dd/MM/yyyy hh:mm:ss&quot;);</span>
+<span class="nc" id="L267">        org.flowable.task.api.Task task = taskService.newTask();</span>
+<span class="nc" id="L268">        task.setDescription(&quot;description&quot;);</span>
+<span class="nc" id="L269">        task.setName(&quot;taskname&quot;);</span>
+<span class="nc" id="L270">        task.setPriority(0);</span>
+<span class="nc" id="L271">        task.setAssignee(&quot;taskassignee&quot;);</span>
+<span class="nc" id="L272">        task.setOwner(&quot;taskowner&quot;);</span>
+<span class="nc" id="L273">        Date dueDate = sdf.parse(&quot;01/02/2003 04:05:06&quot;);</span>
+<span class="nc" id="L274">        task.setDueDate(dueDate);</span>
+<span class="nc" id="L275">        taskService.saveTask(task);</span>
+
+        // Fetch the task again and update
+<span class="nc" id="L278">        task = taskService.createTaskQuery().taskId(task.getId()).singleResult();</span>
+<span class="nc" id="L279">        assertThat(task.getDescription()).isEqualTo(&quot;description&quot;);</span>
+<span class="nc" id="L280">        assertThat(task.getName()).isEqualTo(&quot;taskname&quot;);</span>
+<span class="nc" id="L281">        assertThat(task.getAssignee()).isEqualTo(&quot;taskassignee&quot;);</span>
+<span class="nc" id="L282">        assertThat(task.getOwner()).isEqualTo(&quot;taskowner&quot;);</span>
+<span class="nc" id="L283">        assertThat(task.getDueDate()).isEqualTo(dueDate);</span>
+<span class="nc" id="L284">        assertThat(task.getPriority()).isZero();</span>
+<span class="nc" id="L285">        assertThat(task.getScopeId()).isNull();</span>
+<span class="nc" id="L286">        assertThat(task.getScopeType()).isNull();</span>
+
+<span class="nc" id="L288">        task.setName(&quot;updatedtaskname&quot;);</span>
+<span class="nc" id="L289">        task.setDescription(&quot;updateddescription&quot;);</span>
+<span class="nc" id="L290">        task.setPriority(1);</span>
+<span class="nc" id="L291">        task.setAssignee(&quot;updatedassignee&quot;);</span>
+<span class="nc" id="L292">        task.setOwner(&quot;updatedowner&quot;);</span>
+<span class="nc" id="L293">        dueDate = sdf.parse(&quot;01/02/2003 04:05:06&quot;);</span>
+<span class="nc" id="L294">        task.setDueDate(dueDate);</span>
+<span class="nc" id="L295">        taskService.saveTask(task);</span>
+
+<span class="nc" id="L297">        task = taskService.createTaskQuery().taskId(task.getId()).singleResult();</span>
+<span class="nc" id="L298">        assertThat(task.getName()).isEqualTo(&quot;updatedtaskname&quot;);</span>
+<span class="nc" id="L299">        assertThat(task.getDescription()).isEqualTo(&quot;updateddescription&quot;);</span>
+<span class="nc" id="L300">        assertThat(task.getAssignee()).isEqualTo(&quot;updatedassignee&quot;);</span>
+<span class="nc" id="L301">        assertThat(task.getOwner()).isEqualTo(&quot;updatedowner&quot;);</span>
+<span class="nc" id="L302">        assertThat(task.getDueDate()).isEqualTo(dueDate);</span>
+<span class="nc" id="L303">        assertThat(task.getPriority()).isEqualTo(1);</span>
+
+<span class="nc bnc" id="L305" title="All 2 branches missed.">        if (isHistoryLevelAtLeast(HistoryLevel.AUDIT, processEngineConfiguration)) {</span>
+<span class="nc" id="L306">            HistoricTaskInstance historicTaskInstance = historyService.createHistoricTaskInstanceQuery().taskId(task.getId()).singleResult();</span>
+<span class="nc" id="L307">            assertThat(historicTaskInstance.getName()).isEqualTo(&quot;updatedtaskname&quot;);</span>
+<span class="nc" id="L308">            assertThat(historicTaskInstance.getDescription()).isEqualTo(&quot;updateddescription&quot;);</span>
+<span class="nc" id="L309">            assertThat(historicTaskInstance.getAssignee()).isEqualTo(&quot;updatedassignee&quot;);</span>
+<span class="nc" id="L310">            assertThat(historicTaskInstance.getOwner()).isEqualTo(&quot;updatedowner&quot;);</span>
+<span class="nc" id="L311">            assertThat(historicTaskInstance.getDueDate()).isEqualTo(dueDate);</span>
+<span class="nc" id="L312">            assertThat(historicTaskInstance.getPriority()).isEqualTo(1);</span>
+        }
+
+        // Finally, delete task
+<span class="nc" id="L316">        taskService.deleteTask(task.getId(), true);</span>
+<span class="nc" id="L317">    }</span>
+
+    @Test
+    public void testBulkUpdateTaskAssignee() {
+<span class="nc" id="L321">        List&lt;Task&gt; taskList = new ArrayList&lt;&gt;();</span>
+
+<span class="nc" id="L323">        taskList.add(taskService.createTaskBuilder().create());</span>
+<span class="nc" id="L324">        taskList.add(taskService.createTaskBuilder().create());</span>
+<span class="nc" id="L325">        taskList.add(taskService.createTaskBuilder().create());</span>
+<span class="nc" id="L326">        taskList.add(taskService.createTaskBuilder().create());</span>
+
+<span class="nc" id="L328">        taskList.forEach(task -&gt; assertThat(task.getAssignee()).isNull());</span>
+
+<span class="nc" id="L330">        taskList.forEach(task -&gt; task.setAssignee(&quot;johnDoe&quot;));</span>
+
+<span class="nc" id="L332">        taskService.bulkSaveTasks(taskList);</span>
+<span class="nc" id="L333">        List&lt;String&gt; taskIdList = taskList.stream().map(Task::getId).collect(Collectors.toList());</span>
+
+        //Fetch again to ensure updated tasks
+<span class="nc" id="L336">        taskList = taskService.createTaskQuery().taskIds(taskIdList).list();</span>
+<span class="nc" id="L337">        taskList.forEach(task -&gt; assertThat(task.getAssignee()).isEqualTo(&quot;johnDoe&quot;));</span>
+
+<span class="nc" id="L339">        taskService.deleteTasks(taskIdList, true);</span>
+<span class="nc" id="L340">    }</span>
+
+    @Test
+    public void testInvalidBulkUpdateTaskAssignee() {
+<span class="nc" id="L344">        assertThatThrownBy(() -&gt; taskService.bulkSaveTasks(null))</span>
+<span class="nc" id="L345">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class);</span>
+<span class="nc" id="L346">    }</span>
+
+    @Test
+    public void testTaskOwner() {
+<span class="nc" id="L350">        org.flowable.task.api.Task task = taskService.newTask();</span>
+<span class="nc" id="L351">        task.setOwner(&quot;johndoe&quot;);</span>
+<span class="nc" id="L352">        taskService.saveTask(task);</span>
+
+        // Fetch the task again and update
+<span class="nc" id="L355">        task = taskService.createTaskQuery().taskId(task.getId()).singleResult();</span>
+<span class="nc" id="L356">        assertThat(task.getOwner()).isEqualTo(&quot;johndoe&quot;);</span>
+
+<span class="nc" id="L358">        task.setOwner(&quot;joesmoe&quot;);</span>
+<span class="nc" id="L359">        taskService.saveTask(task);</span>
+
+<span class="nc" id="L361">        task = taskService.createTaskQuery().taskId(task.getId()).singleResult();</span>
+<span class="nc" id="L362">        assertThat(task.getOwner()).isEqualTo(&quot;joesmoe&quot;);</span>
+
+        // Finally, delete task
+<span class="nc" id="L365">        taskService.deleteTask(task.getId(), true);</span>
+<span class="nc" id="L366">    }</span>
+
+    @Test
+    public void testTaskComments() {
+<span class="nc bnc" id="L370" title="All 2 branches missed.">        if (isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L371">            org.flowable.task.api.Task task = taskService.newTask();</span>
+<span class="nc" id="L372">            task.setOwner(&quot;johndoe&quot;);</span>
+<span class="nc" id="L373">            taskService.saveTask(task);</span>
+<span class="nc" id="L374">            String taskId = task.getId();</span>
+
+<span class="nc" id="L376">            identityService.setAuthenticatedUserId(&quot;johndoe&quot;);</span>
+            // Fetch the task again and update
+<span class="nc" id="L378">            taskService</span>
+<span class="nc" id="L379">                    .addComment(</span>
+                            taskId,
+                            null,
+                            &quot;look at this \n       isn't this great? slkdjf sldkfjs ldkfjs ldkfjs ldkfj sldkfj sldkfj sldkjg laksfg sdfgsd;flgkj ksajdhf skjdfh ksjdhf skjdhf kalskjgh lskh dfialurhg kajsh dfuieqpgkja rzvkfnjviuqerhogiuvysbegkjz lkhf ais liasduh flaisduh ajiasudh vaisudhv nsfd&quot;);
+<span class="nc" id="L383">            Comment comment = taskService.getTaskComments(taskId).get(0);</span>
+<span class="nc" id="L384">            assertThat(comment.getUserId()).isEqualTo(&quot;johndoe&quot;);</span>
+<span class="nc" id="L385">            assertThat(comment.getTaskId()).isEqualTo(taskId);</span>
+<span class="nc" id="L386">            assertThat(comment.getProcessInstanceId()).isNull();</span>
+<span class="nc" id="L387">            assertThat(((Event) comment).getMessage()).isEqualTo(</span>
+                    &quot;look at this isn't this great? slkdjf sldkfjs ldkfjs ldkfjs ldkfj sldkfj sldkfj sldkjg laksfg sdfgsd;flgkj ksajdhf skjdfh ksjdhf skjdhf kalskjgh lskh dfialurhg ...&quot;);
+<span class="nc" id="L389">            assertThat(comment.getFullMessage()).isEqualTo(</span>
+                    &quot;look at this \n       isn't this great? slkdjf sldkfjs ldkfjs ldkfjs ldkfj sldkfj sldkfj sldkjg laksfg sdfgsd;flgkj ksajdhf skjdfh ksjdhf skjdhf kalskjgh lskh dfialurhg kajsh dfuieqpgkja rzvkfnjviuqerhogiuvysbegkjz lkhf ais liasduh flaisduh ajiasudh vaisudhv nsfd&quot;);
+<span class="nc" id="L391">            assertThat(comment.getTime()).isNotNull();</span>
+
+            // Finally, delete task
+<span class="nc" id="L394">            taskService.deleteTask(taskId, true);</span>
+        }
+<span class="nc" id="L396">    }</span>
+
+    @Test
+    public void testCustomTaskComments() {
+<span class="nc bnc" id="L400" title="All 2 branches missed.">        if (isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L401">            org.flowable.task.api.Task task = taskService.newTask();</span>
+<span class="nc" id="L402">            task.setOwner(&quot;johndoe&quot;);</span>
+<span class="nc" id="L403">            taskService.saveTask(task);</span>
+<span class="nc" id="L404">            String taskId = task.getId();</span>
+
+<span class="nc" id="L406">            identityService.setAuthenticatedUserId(&quot;johndoe&quot;);</span>
+<span class="nc" id="L407">            String customType1 = &quot;Type1&quot;;</span>
+<span class="nc" id="L408">            String customType2 = &quot;Type2&quot;;</span>
+
+<span class="nc" id="L410">            Comment comment = taskService.addComment(taskId, null, &quot;This is a regular comment&quot;);</span>
+<span class="nc" id="L411">            Comment customComment1 = taskService.addComment(taskId, null, customType1, &quot;This is a custom comment of type Type1&quot;);</span>
+<span class="nc" id="L412">            taskService.addComment(taskId, null, customType1, &quot;This is another Type1 comment&quot;);</span>
+<span class="nc" id="L413">            Comment customComment3 = taskService.addComment(taskId, null, customType2, &quot;This is another custom comment. Type2 this time!&quot;);</span>
+
+<span class="nc" id="L415">            assertThat(comment.getType()).isEqualTo(CommentEntity.TYPE_COMMENT);</span>
+<span class="nc" id="L416">            assertThat(customComment1.getType()).isEqualTo(customType1);</span>
+<span class="nc" id="L417">            assertThat(customComment3.getType()).isEqualTo(customType2);</span>
+
+<span class="nc" id="L419">            assertThat(taskService.getComment(comment.getId())).isNotNull();</span>
+<span class="nc" id="L420">            assertThat(taskService.getComment(customComment1.getId())).isNotNull();</span>
+
+<span class="nc" id="L422">            List&lt;Comment&gt; regularComments = taskService.getTaskComments(taskId);</span>
+<span class="nc" id="L423">            assertThat(regularComments)</span>
+<span class="nc" id="L424">                    .extracting(Comment::getFullMessage)</span>
+<span class="nc" id="L425">                    .containsExactly(&quot;This is a regular comment&quot;);</span>
+
+<span class="nc" id="L427">            List&lt;Event&gt; allComments = taskService.getTaskEvents(taskId);</span>
+<span class="nc" id="L428">            assertThat(allComments).hasSize(4);</span>
+
+<span class="nc" id="L430">            List&lt;Comment&gt; type2Comments = taskService.getCommentsByType(customType2);</span>
+<span class="nc" id="L431">            assertThat(type2Comments)</span>
+<span class="nc" id="L432">                    .extracting(Comment::getFullMessage)</span>
+<span class="nc" id="L433">                    .containsExactly(&quot;This is another custom comment. Type2 this time!&quot;);</span>
+
+<span class="nc" id="L435">            List&lt;Comment&gt; taskTypeComments = taskService.getTaskComments(taskId, customType1);</span>
+<span class="nc" id="L436">            assertThat(taskTypeComments).hasSize(2);</span>
+
+            // Clean up
+<span class="nc" id="L439">            taskService.deleteTask(taskId, true);</span>
+        }
+<span class="nc" id="L441">    }</span>
+    
+    @Test
+    public void testUpdateTaskComments() {
+<span class="nc bnc" id="L445" title="All 2 branches missed.">        if (isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L446">            org.flowable.task.api.Task task = taskService.newTask();</span>
+<span class="nc" id="L447">            task.setOwner(&quot;johndoe&quot;);</span>
+<span class="nc" id="L448">            taskService.saveTask(task);</span>
+<span class="nc" id="L449">            String taskId = task.getId();</span>
+
+<span class="nc" id="L451">            identityService.setAuthenticatedUserId(&quot;johndoe&quot;);</span>
+
+<span class="nc" id="L453">            Comment comment = taskService.addComment(taskId, null, &quot;This is a regular comment&quot;);</span>
+
+<span class="nc" id="L455">            assertThat(comment.getType()).isEqualTo(CommentEntity.TYPE_COMMENT);</span>
+<span class="nc" id="L456">            assertThat(taskService.getComment(comment.getId())).isNotNull();</span>
+
+<span class="nc" id="L458">            List&lt;Comment&gt; regularComments = taskService.getTaskComments(taskId);</span>
+<span class="nc" id="L459">            assertThat(regularComments)</span>
+<span class="nc" id="L460">                    .extracting(Comment::getFullMessage)</span>
+<span class="nc" id="L461">                    .containsExactly(&quot;This is a regular comment&quot;);</span>
+
+<span class="nc" id="L463">            comment.setFullMessage(&quot;Updated comment&quot;);</span>
+<span class="nc" id="L464">            taskService.saveComment(comment);</span>
+
+<span class="nc" id="L466">            regularComments = taskService.getTaskComments(taskId);</span>
+<span class="nc" id="L467">            assertThat(regularComments)</span>
+<span class="nc" id="L468">                    .extracting(Comment::getFullMessage)</span>
+<span class="nc" id="L469">                    .containsExactly(&quot;Updated comment&quot;);</span>
+
+            // Clean up
+<span class="nc" id="L472">            taskService.deleteTask(taskId, true);</span>
+        }
+<span class="nc" id="L474">    }</span>
+
+    @Test
+    public void testTaskAttachments() {
+<span class="nc bnc" id="L478" title="All 2 branches missed.">        if (isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L479">            org.flowable.task.api.Task task = taskService.newTask();</span>
+<span class="nc" id="L480">            task.setOwner(&quot;johndoe&quot;);</span>
+<span class="nc" id="L481">            taskService.saveTask(task);</span>
+<span class="nc" id="L482">            String taskId = task.getId();</span>
+<span class="nc" id="L483">            identityService.setAuthenticatedUserId(&quot;johndoe&quot;);</span>
+            // Fetch the task again and update
+<span class="nc" id="L485">            taskService.createAttachment(&quot;web page&quot;, taskId, null, &quot;weatherforcast&quot;, &quot;temperatures and more&quot;, &quot;http://weather.com&quot;);</span>
+<span class="nc" id="L486">            Attachment attachment = taskService.getTaskAttachments(taskId).get(0);</span>
+<span class="nc" id="L487">            assertThat(attachment.getName()).isEqualTo(&quot;weatherforcast&quot;);</span>
+<span class="nc" id="L488">            assertThat(attachment.getDescription()).isEqualTo(&quot;temperatures and more&quot;);</span>
+<span class="nc" id="L489">            assertThat(attachment.getType()).isEqualTo(&quot;web page&quot;);</span>
+<span class="nc" id="L490">            assertThat(attachment.getTaskId()).isEqualTo(taskId);</span>
+<span class="nc" id="L491">            assertThat(attachment.getProcessInstanceId()).isNull();</span>
+<span class="nc" id="L492">            assertThat(attachment.getUrl()).isEqualTo(&quot;http://weather.com&quot;);</span>
+<span class="nc" id="L493">            assertThat(taskService.getAttachmentContent(attachment.getId())).isNull();</span>
+
+            // Finally, clean up
+<span class="nc" id="L496">            taskService.deleteTask(taskId);</span>
+
+<span class="nc" id="L498">            assertThat(taskService.getTaskComments(taskId)).isEmpty();</span>
+
+<span class="nc" id="L500">            waitForHistoryJobExecutorToProcessAllJobs(7000, 100);</span>
+<span class="nc" id="L501">            assertThat(historyService.createHistoricTaskInstanceQuery().taskId(taskId).list()).hasSize(1);</span>
+
+<span class="nc" id="L503">            taskService.deleteTask(taskId, true);</span>
+        }
+<span class="nc" id="L505">    }</span>
+
+    @Test
+    public void testSaveTaskAttachment() {
+<span class="nc bnc" id="L509" title="All 2 branches missed.">        if (isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L510">            org.flowable.task.api.Task task = taskService.newTask();</span>
+<span class="nc" id="L511">            task.setOwner(&quot;johndoe&quot;);</span>
+<span class="nc" id="L512">            taskService.saveTask(task);</span>
+<span class="nc" id="L513">            String taskId = task.getId();</span>
+<span class="nc" id="L514">            identityService.setAuthenticatedUserId(&quot;johndoe&quot;);</span>
+
+            // Fetch attachment and update its name
+<span class="nc" id="L517">            taskService.createAttachment(&quot;web page&quot;, taskId, null, &quot;weatherforcast&quot;, &quot;temperatures and more&quot;, &quot;http://weather.com&quot;);</span>
+<span class="nc" id="L518">            Attachment attachment = taskService.getTaskAttachments(taskId).get(0);</span>
+<span class="nc" id="L519">            attachment.setName(&quot;UpdatedName&quot;);</span>
+<span class="nc" id="L520">            taskService.saveAttachment(attachment);</span>
+
+            // Refetch and verify
+<span class="nc" id="L523">            attachment = taskService.getTaskAttachments(taskId).get(0);</span>
+<span class="nc" id="L524">            assertThat(attachment.getName()).isEqualTo(&quot;UpdatedName&quot;);</span>
+
+            // Finally, clean up
+<span class="nc" id="L527">            taskService.deleteTask(taskId);</span>
+
+<span class="nc" id="L529">            assertThat(taskService.getTaskComments(taskId)).isEmpty();</span>
+
+<span class="nc" id="L531">            waitForHistoryJobExecutorToProcessAllJobs(7000, 100);</span>
+
+<span class="nc" id="L533">            assertThat(historyService.createHistoricTaskInstanceQuery().taskId(taskId).list()).hasSize(1);</span>
+
+<span class="nc" id="L535">            taskService.deleteTask(taskId, true);</span>
+        }
+<span class="nc" id="L537">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot; })
+    public void testTaskAttachmentWithProcessInstanceId() {
+<span class="nc bnc" id="L542" title="All 2 branches missed.">        if (isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+
+<span class="nc" id="L544">            ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+
+<span class="nc" id="L546">            String processInstanceId = processInstance.getId();</span>
+<span class="nc" id="L547">            taskService.createAttachment(&quot;web page&quot;, null, processInstanceId, &quot;weatherforcast&quot;, &quot;temperatures and more&quot;, &quot;http://weather.com&quot;);</span>
+<span class="nc" id="L548">            Attachment attachment = taskService.getProcessInstanceAttachments(processInstanceId).get(0);</span>
+<span class="nc" id="L549">            assertThat(attachment.getName()).isEqualTo(&quot;weatherforcast&quot;);</span>
+<span class="nc" id="L550">            assertThat(attachment.getDescription()).isEqualTo(&quot;temperatures and more&quot;);</span>
+<span class="nc" id="L551">            assertThat(attachment.getType()).isEqualTo(&quot;web page&quot;);</span>
+<span class="nc" id="L552">            assertThat(attachment.getProcessInstanceId()).isEqualTo(processInstanceId);</span>
+<span class="nc" id="L553">            assertThat(attachment.getTaskId()).isNull();</span>
+<span class="nc" id="L554">            assertThat(attachment.getUrl()).isEqualTo(&quot;http://weather.com&quot;);</span>
+<span class="nc" id="L555">            assertThat(taskService.getAttachmentContent(attachment.getId())).isNull();</span>
+
+            // Finally, clean up
+<span class="nc" id="L558">            taskService.deleteAttachment(attachment.getId());</span>
+
+            // TODO: Bad API design. Need to fix attachment/comment properly
+<span class="nc" id="L561">            ((TaskServiceImpl) taskService).deleteComments(null, processInstanceId);</span>
+        }
+<span class="nc" id="L563">    }</span>
+    
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot; })
+    public void saveUserTaskTest() {
+<span class="nc" id="L568">        Map&lt;String, Object&gt; startMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L569">        startMap.put(&quot;titleId&quot;, &quot;testTitleId&quot;);</span>
+<span class="nc" id="L570">        startMap.put(&quot;otherVariable&quot;, &quot;testOtherVariable&quot;);</span>
+
+<span class="nc" id="L572">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;, startMap);</span>
+<span class="nc" id="L573">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L574">            .includeIdentityLinks()</span>
+<span class="nc" id="L575">            .singleResult();</span>
+<span class="nc" id="L576">        task.setDueDate(new Date());</span>
+<span class="nc" id="L577">        task.setCategory(&quot;main&quot;);</span>
+<span class="nc" id="L578">        taskService.saveTask(task);</span>
+<span class="nc" id="L579">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot; })
+    public void testMultipleProcessesStarted() {
+
+        // Start a few process instances
+<span class="nc bnc" id="L586" title="All 2 branches missed.">        for (int i = 0; i &lt; 20; i++) {</span>
+<span class="nc" id="L587">            processEngine.getRuntimeService().startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+        }
+
+        // See if there are tasks for kermit
+<span class="nc" id="L591">        List&lt;org.flowable.task.api.Task&gt; tasks = processEngine.getTaskService().createTaskQuery().list();</span>
+<span class="nc" id="L592">        assertThat(tasks).hasSize(20);</span>
+<span class="nc" id="L593">    }</span>
+
+    @Test
+    public void testTaskDelegation() {
+<span class="nc" id="L597">        org.flowable.task.api.Task task = taskService.newTask();</span>
+<span class="nc" id="L598">        task.setOwner(&quot;johndoe&quot;);</span>
+<span class="nc" id="L599">        taskService.saveTask(task);</span>
+<span class="nc" id="L600">        taskService.delegateTask(task.getId(), &quot;joesmoe&quot;);</span>
+<span class="nc" id="L601">        String taskId = task.getId();</span>
+
+<span class="nc" id="L603">        task = taskService.createTaskQuery().taskId(taskId).singleResult();</span>
+<span class="nc" id="L604">        assertThat(task.getOwner()).isEqualTo(&quot;johndoe&quot;);</span>
+<span class="nc" id="L605">        assertThat(task.getAssignee()).isEqualTo(&quot;joesmoe&quot;);</span>
+<span class="nc" id="L606">        assertThat(task.getDelegationState()).isEqualTo(DelegationState.PENDING);</span>
+
+        // try to complete (should fail)
+<span class="nc" id="L609">        assertThatThrownBy(() -&gt; taskService.complete(taskId))</span>
+<span class="nc" id="L610">                .isExactlyInstanceOf(FlowableException.class);</span>
+
+<span class="nc" id="L612">        taskService.resolveTask(taskId);</span>
+<span class="nc" id="L613">        task = taskService.createTaskQuery().taskId(taskId).singleResult();</span>
+<span class="nc" id="L614">        assertThat(task.getOwner()).isEqualTo(&quot;johndoe&quot;);</span>
+<span class="nc" id="L615">        assertThat(task.getAssignee()).isEqualTo(&quot;johndoe&quot;);</span>
+<span class="nc" id="L616">        assertThat(task.getDelegationState()).isEqualTo(DelegationState.RESOLVED);</span>
+
+<span class="nc" id="L618">        task.setAssignee(null);</span>
+<span class="nc" id="L619">        task.setDelegationState(null);</span>
+<span class="nc" id="L620">        taskService.saveTask(task);</span>
+<span class="nc" id="L621">        task = taskService.createTaskQuery().taskId(taskId).singleResult();</span>
+<span class="nc" id="L622">        assertThat(task.getOwner()).isEqualTo(&quot;johndoe&quot;);</span>
+<span class="nc" id="L623">        assertThat(task.getAssignee()).isNull();</span>
+<span class="nc" id="L624">        assertThat(task.getDelegationState()).isNull();</span>
+
+<span class="nc" id="L626">        task.setAssignee(&quot;jackblack&quot;);</span>
+<span class="nc" id="L627">        task.setDelegationState(DelegationState.RESOLVED);</span>
+<span class="nc" id="L628">        taskService.saveTask(task);</span>
+<span class="nc" id="L629">        task = taskService.createTaskQuery().taskId(taskId).singleResult();</span>
+<span class="nc" id="L630">        assertThat(task.getOwner()).isEqualTo(&quot;johndoe&quot;);</span>
+<span class="nc" id="L631">        assertThat(task.getAssignee()).isEqualTo(&quot;jackblack&quot;);</span>
+<span class="nc" id="L632">        assertThat(task.getDelegationState()).isEqualTo(DelegationState.RESOLVED);</span>
+
+        // Finally, delete task
+<span class="nc" id="L635">        taskService.deleteTask(taskId, true);</span>
+<span class="nc" id="L636">    }</span>
+
+    @Test
+    public void testTaskDelegationThroughServiceCall() {
+<span class="nc" id="L640">        org.flowable.task.api.Task task = taskService.newTask();</span>
+<span class="nc" id="L641">        task.setOwner(&quot;johndoe&quot;);</span>
+<span class="nc" id="L642">        taskService.saveTask(task);</span>
+<span class="nc" id="L643">        String taskId = task.getId();</span>
+
+        // Fetch the task again and update
+<span class="nc" id="L646">        task = taskService.createTaskQuery().taskId(taskId).singleResult();</span>
+
+<span class="nc" id="L648">        taskService.delegateTask(task.getId(), &quot;joesmoe&quot;);</span>
+
+<span class="nc" id="L650">        task = taskService.createTaskQuery().taskId(taskId).singleResult();</span>
+<span class="nc" id="L651">        assertThat(task.getOwner()).isEqualTo(&quot;johndoe&quot;);</span>
+<span class="nc" id="L652">        assertThat(task.getAssignee()).isEqualTo(&quot;joesmoe&quot;);</span>
+<span class="nc" id="L653">        assertThat(task.getDelegationState()).isEqualTo(DelegationState.PENDING);</span>
+
+<span class="nc" id="L655">        taskService.resolveTask(taskId);</span>
+
+<span class="nc" id="L657">        task = taskService.createTaskQuery().taskId(taskId).singleResult();</span>
+<span class="nc" id="L658">        assertThat(task.getOwner()).isEqualTo(&quot;johndoe&quot;);</span>
+<span class="nc" id="L659">        assertThat(task.getAssignee()).isEqualTo(&quot;johndoe&quot;);</span>
+<span class="nc" id="L660">        assertThat(task.getDelegationState()).isEqualTo(DelegationState.RESOLVED);</span>
+
+        // Finally, delete task
+<span class="nc" id="L663">        taskService.deleteTask(taskId, true);</span>
+<span class="nc" id="L664">    }</span>
+
+    @Test
+    public void testTaskAssignee() {
+<span class="nc" id="L668">        org.flowable.task.api.Task task = taskService.newTask();</span>
+<span class="nc" id="L669">        task.setAssignee(&quot;johndoe&quot;);</span>
+<span class="nc" id="L670">        taskService.saveTask(task);</span>
+
+        // Fetch the task again and update
+<span class="nc" id="L673">        task = taskService.createTaskQuery().taskId(task.getId()).singleResult();</span>
+<span class="nc" id="L674">        assertThat(task.getAssignee()).isEqualTo(&quot;johndoe&quot;);</span>
+
+<span class="nc" id="L676">        task.setAssignee(&quot;joesmoe&quot;);</span>
+<span class="nc" id="L677">        taskService.saveTask(task);</span>
+
+<span class="nc" id="L679">        task = taskService.createTaskQuery().taskId(task.getId()).singleResult();</span>
+<span class="nc" id="L680">        assertThat(task.getAssignee()).isEqualTo(&quot;joesmoe&quot;);</span>
+
+        // Finally, delete task
+<span class="nc" id="L683">        taskService.deleteTask(task.getId(), true);</span>
+<span class="nc" id="L684">    }</span>
+
+    @Test
+    public void testSaveTaskNullTask() {
+<span class="nc" id="L688">        assertThatThrownBy(() -&gt; taskService.saveTask(null))</span>
+<span class="nc" id="L689">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L690">                .hasMessage(&quot;task is null&quot;);</span>
+<span class="nc" id="L691">    }</span>
+
+    @Test
+    public void testDeleteTaskNullTaskId() {
+<span class="nc" id="L695">        assertThatThrownBy(() -&gt; taskService.deleteTask(null))</span>
+<span class="nc" id="L696">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class);</span>
+<span class="nc" id="L697">    }</span>
+
+    @Test
+    public void testDeleteTaskUnexistingTaskId() {
+        // Deleting unexisting task should be silently ignored
+<span class="nc" id="L702">        taskService.deleteTask(&quot;unexistingtaskid&quot;);</span>
+<span class="nc" id="L703">    }</span>
+
+    @Test
+    public void testDeleteTasksNullTaskIds() {
+<span class="nc" id="L707">        assertThatThrownBy(() -&gt; taskService.deleteTasks(null))</span>
+<span class="nc" id="L708">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class);</span>
+<span class="nc" id="L709">    }</span>
+
+    @Test
+    public void testDeleteTasksTaskIdsUnexistingTaskId() {
+
+<span class="nc" id="L714">        org.flowable.task.api.Task existingTask = taskService.newTask();</span>
+<span class="nc" id="L715">        taskService.saveTask(existingTask);</span>
+
+        // The unexisting taskId's should be silently ignored. Existing task should have been deleted.
+<span class="nc" id="L718">        taskService.deleteTasks(Arrays.asList(&quot;unexistingtaskid1&quot;, existingTask.getId()), true);</span>
+
+<span class="nc" id="L720">        existingTask = taskService.createTaskQuery().taskId(existingTask.getId()).singleResult();</span>
+<span class="nc" id="L721">        assertThat(existingTask).isNull();</span>
+<span class="nc" id="L722">    }</span>
+
+    @Test
+    public void testDeleteTaskIdentityLink() {
+<span class="nc" id="L726">        org.flowable.task.api.Task task = null;</span>
+        try {
+<span class="nc" id="L728">            task = taskService.newTask();</span>
+<span class="nc" id="L729">            task.setName(&quot;test&quot;);</span>
+<span class="nc" id="L730">            taskService.saveTask(task);</span>
+
+<span class="nc" id="L732">            taskService.addCandidateGroup(task.getId(), &quot;sales&quot;);</span>
+<span class="nc" id="L733">            taskService.addCandidateUser(task.getId(), &quot;kermit&quot;);</span>
+
+<span class="nc" id="L735">            assertThat(taskService.createTaskQuery().taskCandidateGroup(&quot;sales&quot;).singleResult()).isNotNull();</span>
+<span class="nc" id="L736">            assertThat(taskService.createTaskQuery().taskCandidateUser(&quot;kermit&quot;).singleResult()).isNotNull();</span>
+
+            // Delete identity link for group
+<span class="nc" id="L739">            taskService.deleteGroupIdentityLink(task.getId(), &quot;sales&quot;, &quot;candidate&quot;);</span>
+
+            // Link should be removed
+<span class="nc" id="L742">            assertThat(taskService.createTaskQuery().taskCandidateGroup(&quot;sales&quot;).singleResult()).isNull();</span>
+
+            // User link should remain unaffected
+<span class="nc" id="L745">            assertThat(taskService.createTaskQuery().taskCandidateUser(&quot;kermit&quot;).singleResult()).isNotNull();</span>
+
+        } finally {
+            // Adhoc task not part of deployment, cleanup
+<span class="nc bnc" id="L749" title="All 4 branches missed.">            if (task != null &amp;&amp; task.getId() != null) {</span>
+<span class="nc" id="L750">                taskService.deleteTask(task.getId(), true);</span>
+            }
+        }
+<span class="nc" id="L753">    }</span>
+
+    @Test
+    public void testClaimNullArguments() {
+<span class="nc" id="L757">        assertThatThrownBy(() -&gt; taskService.claim(null, &quot;userid&quot;))</span>
+<span class="nc" id="L758">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L759">                .hasMessage(&quot;taskId is null&quot;);</span>
+<span class="nc" id="L760">    }</span>
+
+    @Test
+    public void testClaimUnexistingTaskId() {
+<span class="nc" id="L764">        User user = identityService.newUser(&quot;user&quot;);</span>
+<span class="nc" id="L765">        identityService.saveUser(user);</span>
+
+<span class="nc" id="L767">        assertThatThrownBy(() -&gt; taskService.claim(&quot;unexistingtaskid&quot;, user.getId()))</span>
+<span class="nc" id="L768">                .isExactlyInstanceOf(FlowableObjectNotFoundException.class)</span>
+<span class="nc" id="L769">                .hasMessage(&quot;Cannot find task with id unexistingtaskid&quot;);</span>
+
+<span class="nc" id="L771">        identityService.deleteUser(user.getId());</span>
+<span class="nc" id="L772">    }</span>
+
+    @Test
+    public void testClaimAlreadyClaimedTaskByOtherUser() {
+<span class="nc" id="L776">        org.flowable.task.api.Task task = taskService.newTask();</span>
+<span class="nc" id="L777">        taskService.saveTask(task);</span>
+<span class="nc" id="L778">        User user = identityService.newUser(&quot;user&quot;);</span>
+<span class="nc" id="L779">        identityService.saveUser(user);</span>
+<span class="nc" id="L780">        User secondUser = identityService.newUser(&quot;seconduser&quot;);</span>
+<span class="nc" id="L781">        identityService.saveUser(secondUser);</span>
+
+        // Claim task the first time
+<span class="nc" id="L784">        taskService.claim(task.getId(), user.getId());</span>
+
+<span class="nc" id="L786">        assertThatThrownBy(() -&gt; taskService.claim(task.getId(), secondUser.getId()))</span>
+<span class="nc" id="L787">                .isInstanceOf(FlowableTaskAlreadyClaimedException.class)</span>
+<span class="nc" id="L788">                .hasMessage(&quot;Task '&quot; + task.getId() + &quot;' is already claimed by someone else.&quot;);</span>
+
+<span class="nc" id="L790">        taskService.deleteTask(task.getId(), true);</span>
+<span class="nc" id="L791">        identityService.deleteUser(user.getId());</span>
+<span class="nc" id="L792">        identityService.deleteUser(secondUser.getId());</span>
+<span class="nc" id="L793">    }</span>
+
+    @Test
+    public void testClaimAlreadyClaimedTaskBySameUser() {
+<span class="nc" id="L797">        org.flowable.task.api.Task task = taskService.newTask();</span>
+<span class="nc" id="L798">        taskService.saveTask(task);</span>
+<span class="nc" id="L799">        User user = identityService.newUser(&quot;user&quot;);</span>
+<span class="nc" id="L800">        identityService.saveUser(user);</span>
+
+        // Claim task the first time
+<span class="nc" id="L803">        taskService.claim(task.getId(), user.getId());</span>
+<span class="nc" id="L804">        task = taskService.createTaskQuery().taskId(task.getId()).singleResult();</span>
+
+        // Claim the task again with the same user. No exception should be thrown
+<span class="nc" id="L807">        taskService.claim(task.getId(), user.getId());</span>
+
+<span class="nc" id="L809">        taskService.deleteTask(task.getId(), true);</span>
+<span class="nc" id="L810">        identityService.deleteUser(user.getId());</span>
+<span class="nc" id="L811">    }</span>
+
+    @Test
+    public void testUnClaimTask() {
+<span class="nc" id="L815">        org.flowable.task.api.Task task = taskService.newTask();</span>
+<span class="nc" id="L816">        taskService.saveTask(task);</span>
+<span class="nc" id="L817">        User user = identityService.newUser(&quot;user&quot;);</span>
+<span class="nc" id="L818">        identityService.saveUser(user);</span>
+
+        // Claim task the first time
+<span class="nc" id="L821">        taskService.claim(task.getId(), user.getId());</span>
+<span class="nc" id="L822">        task = taskService.createTaskQuery().taskId(task.getId()).singleResult();</span>
+<span class="nc" id="L823">        assertThat(task.getAssignee()).isEqualTo(user.getId());</span>
+
+        // Unclaim the task
+<span class="nc" id="L826">        taskService.unclaim(task.getId());</span>
+
+<span class="nc" id="L828">        task = taskService.createTaskQuery().taskId(task.getId()).singleResult();</span>
+<span class="nc" id="L829">        assertThat(task.getAssignee()).isNull();</span>
+
+<span class="nc" id="L831">        taskService.deleteTask(task.getId(), true);</span>
+<span class="nc" id="L832">        identityService.deleteUser(user.getId());</span>
+<span class="nc" id="L833">    }</span>
+
+    @Test
+    public void testCompleteTaskNullTaskId() {
+<span class="nc" id="L837">        assertThatThrownBy(() -&gt; taskService.complete(null))</span>
+<span class="nc" id="L838">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L839">                .hasMessage(&quot;taskId is null&quot;);</span>
+<span class="nc" id="L840">    }</span>
+
+    @Test
+    public void testCompleteTaskUnexistingTaskId() {
+<span class="nc" id="L844">        assertThatThrownBy(() -&gt; taskService.complete(&quot;unexistingtask&quot;))</span>
+<span class="nc" id="L845">                .isExactlyInstanceOf(FlowableObjectNotFoundException.class)</span>
+<span class="nc" id="L846">                .hasMessage(&quot;Cannot find task with id unexistingtask&quot;);</span>
+<span class="nc" id="L847">    }</span>
+
+    @Test
+    public void testCompleteTaskWithParametersNullTaskId() {
+<span class="nc" id="L851">        assertThatThrownBy(() -&gt; taskService.complete(null, new HashMap&lt;&gt;()))</span>
+<span class="nc" id="L852">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L853">                .hasMessage(&quot;taskId is null&quot;);</span>
+<span class="nc" id="L854">    }</span>
+
+    @Test
+    public void testCompleteTaskWithParametersUnexistingTaskId() {
+<span class="nc" id="L858">        assertThatThrownBy(() -&gt; taskService.complete(&quot;unexistingtask&quot;, new HashMap&lt;&gt;()))</span>
+<span class="nc" id="L859">                .isExactlyInstanceOf(FlowableObjectNotFoundException.class)</span>
+<span class="nc" id="L860">                .hasMessage(&quot;Cannot find task with id unexistingtask&quot;);</span>
+<span class="nc" id="L861">    }</span>
+
+    @Test
+    public void testCompleteTaskWithParametersNullParameters() {
+<span class="nc" id="L865">        org.flowable.task.api.Task task = taskService.newTask();</span>
+<span class="nc" id="L866">        taskService.saveTask(task);</span>
+
+<span class="nc" id="L868">        String taskId = task.getId();</span>
+<span class="nc" id="L869">        taskService.complete(taskId, (Map&lt;String, Object&gt;) null);</span>
+
+<span class="nc bnc" id="L871" title="All 2 branches missed.">        if (isHistoryLevelAtLeast(HistoryLevel.AUDIT, processEngineConfiguration)) {</span>
+<span class="nc" id="L872">            historyService.deleteHistoricTaskInstance(taskId);</span>
+        }
+
+        // Fetch the task again
+<span class="nc" id="L876">        task = taskService.createTaskQuery().taskId(taskId).singleResult();</span>
+<span class="nc" id="L877">        assertThat(task).isNull();</span>
+
+<span class="nc bnc" id="L879" title="All 2 branches missed.">        if (isHistoryLevelAtLeast(HistoryLevel.AUDIT, processEngineConfiguration)) {</span>
+<span class="nc" id="L880">            HistoricTaskInstance historicTaskInstance = historyService.createHistoricTaskInstanceQuery().taskId(taskId).singleResult();</span>
+<span class="nc" id="L881">            assertThat(historicTaskInstance).isNull();</span>
+        }
+<span class="nc" id="L883">    }</span>
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    @Test
+    public void testCompleteTaskWithParametersEmptyParameters() {
+<span class="nc" id="L888">        org.flowable.task.api.Task task = taskService.newTask();</span>
+<span class="nc" id="L889">        taskService.saveTask(task);</span>
+
+<span class="nc" id="L891">        String taskId = task.getId();</span>
+<span class="nc" id="L892">        taskService.complete(taskId, Collections.EMPTY_MAP);</span>
+
+<span class="nc bnc" id="L894" title="All 2 branches missed.">        if (isHistoryLevelAtLeast(HistoryLevel.AUDIT, processEngineConfiguration)) {</span>
+<span class="nc" id="L895">            historyService.deleteHistoricTaskInstance(taskId);</span>
+        }
+
+        // Fetch the task again
+<span class="nc" id="L899">        task = taskService.createTaskQuery().taskId(taskId).singleResult();</span>
+<span class="nc" id="L900">        assertThat(task).isNull();</span>
+
+<span class="nc bnc" id="L902" title="All 2 branches missed.">        if (isHistoryLevelAtLeast(HistoryLevel.AUDIT, processEngineConfiguration)) {</span>
+<span class="nc" id="L903">            HistoricTaskInstance historicTaskInstance = historyService.createHistoricTaskInstanceQuery().taskId(taskId).singleResult();</span>
+<span class="nc" id="L904">            assertThat(historicTaskInstance).isNull();</span>
+        }
+<span class="nc" id="L906">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/twoTasksProcess.bpmn20.xml&quot; })
+    public void testCompleteWithParametersTask() {
+<span class="nc" id="L911">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;twoTasksProcess&quot;);</span>
+
+        // Fetch first task
+<span class="nc" id="L914">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L915">        assertThat(task.getName()).isEqualTo(&quot;First task&quot;);</span>
+
+        // Complete first task
+<span class="nc" id="L918">        Map&lt;String, Object&gt; taskParams = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L919">        taskParams.put(&quot;myParam&quot;, &quot;myValue&quot;);</span>
+<span class="nc" id="L920">        taskService.complete(task.getId(), taskParams);</span>
+
+        // Fetch second task
+<span class="nc" id="L923">        task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L924">        assertThat(task.getName()).isEqualTo(&quot;Second task&quot;);</span>
+
+        // Verify task parameters set on execution
+<span class="nc" id="L927">        Map&lt;String, Object&gt; variables = runtimeService.getVariables(processInstance.getId());</span>
+<span class="nc" id="L928">        assertThat(variables)</span>
+<span class="nc" id="L929">                .containsOnly(entry(&quot;myParam&quot;, &quot;myValue&quot;));</span>
+<span class="nc" id="L930">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/twoTasksProcess.bpmn20.xml&quot; })
+    public void testCompleteWithParametersTask2() {
+<span class="nc" id="L935">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;twoTasksProcess&quot;);</span>
+
+        // Fetch first task
+<span class="nc" id="L938">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L939">        assertThat(task.getName()).isEqualTo(&quot;First task&quot;);</span>
+
+        // Complete first task
+<span class="nc" id="L942">        Map&lt;String, Object&gt; taskParams = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L943">        taskParams.put(&quot;myParam&quot;, &quot;myValue&quot;);</span>
+<span class="nc" id="L944">        taskService.complete(task.getId(), taskParams, false); // Only difference with previous test</span>
+
+        // Fetch second task
+<span class="nc" id="L947">        task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L948">        assertThat(task.getName()).isEqualTo(&quot;Second task&quot;);</span>
+
+        // Verify task parameters set on execution
+<span class="nc" id="L951">        Map&lt;String, Object&gt; variables = runtimeService.getVariables(processInstance.getId());</span>
+<span class="nc" id="L952">        assertThat(variables)</span>
+<span class="nc" id="L953">                .containsOnly(entry(&quot;myParam&quot;, &quot;myValue&quot;));</span>
+<span class="nc" id="L954">    }</span>
+
+    @Test
+    @Deployment(resources = {&quot;org/flowable/engine/test/api/twoTasksProcess.bpmn20.xml&quot;})
+    public void testCompleteWithExecutionBaseNewPropertyExpressionTask() {
+<span class="nc" id="L959">        runtimeService.startProcessInstanceByKey(&quot;twoTasksProcess&quot;);</span>
+
+        // Fetch first task
+<span class="nc" id="L962">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L963">        assertThat(task.getName()).isEqualTo(&quot;First task&quot;);</span>
+
+        // Complete first task
+<span class="nc" id="L966">        Map&lt;String, Object&gt; taskParams = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L967">        taskParams.put(&quot;${execution.myParam}&quot;, &quot;myValue&quot;);</span>
+<span class="nc" id="L968">        assertThatThrownBy(() -&gt; taskService.complete(task.getId(), taskParams))</span>
+<span class="nc" id="L969">                .isExactlyInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L970">                .hasMessageStartingWith(&quot;Error while evaluating expression: ${execution.myParam} with Execution[&quot;)</span>
+<span class="nc" id="L971">                .hasMessageContainingAll(&quot; - definition 'twoTasksProcess:1:&quot;, &quot; - activity 'firstTask'&quot;);</span>
+<span class="nc" id="L972">    }</span>
+
+    @Test
+    @Deployment(resources = {&quot;org/flowable/engine/test/api/twoTasksProcess.bpmn20.xml&quot;})
+    public void testCompleteWithExecutionIdParametersTask() {
+<span class="nc" id="L977">        runtimeService.startProcessInstanceByKey(&quot;twoTasksProcess&quot;);</span>
+
+        // Fetch first task
+<span class="nc" id="L980">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L981">        assertThat(task.getName()).isEqualTo(&quot;First task&quot;);</span>
+
+        // Complete first task
+<span class="nc" id="L984">        Map&lt;String, Object&gt; taskParams = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L985">        taskParams.put(&quot;${execution.id}&quot;, &quot;myValue&quot;);</span>
+<span class="nc" id="L986">        assertThatThrownBy(() -&gt; taskService.complete(task.getId(), taskParams))</span>
+<span class="nc" id="L987">                .isExactlyInstanceOf(PersistenceException.class);</span>
+<span class="nc" id="L988">    }</span>
+
+    @Test
+    @Deployment(resources = {&quot;org/flowable/engine/test/api/twoTasksProcess.bpmn20.xml&quot;})
+    public void testCompleteWithExecutionNameParametersTask() {
+<span class="nc" id="L993">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;twoTasksProcess&quot;);</span>
+
+        // Fetch first task
+<span class="nc" id="L996">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L997">        assertThat(task.getName()).isEqualTo(&quot;First task&quot;);</span>
+
+        // Complete first task
+<span class="nc" id="L1000">        Map&lt;String, Object&gt; taskParams = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L1001">        taskParams.put(&quot;${execution.name}&quot;, &quot;myUpdatedName&quot;);</span>
+<span class="nc" id="L1002">        taskService.complete(task.getId(), taskParams);</span>
+
+        // Verify task parameters set on execution
+<span class="nc" id="L1005">        Execution subExecution = runtimeService.createExecutionQuery().parentId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1006">        assertThat(subExecution.getName()).isEqualTo(&quot;myUpdatedName&quot;);</span>
+<span class="nc" id="L1007">    }</span>
+
+    @Test
+    @Deployment(resources = {&quot;org/flowable/engine/test/api/twoTasksProcess.bpmn20.xml&quot;})
+    public void testCompleteWithExistingVariableParametersTask_withoutBase() {
+<span class="nc" id="L1012">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;twoTasksProcess&quot;,</span>
+<span class="nc" id="L1013">                Collections.singletonMap(&quot;newVariable&quot;, &quot;oldValue&quot;)</span>
+            );
+
+        // Fetch first task
+<span class="nc" id="L1017">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1018">        assertThat(task.getName()).isEqualTo(&quot;First task&quot;);</span>
+
+        // Complete first task
+<span class="nc" id="L1021">        Map&lt;String, Object&gt; taskParams = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L1022">        taskParams.put(&quot;${newVariable}&quot;, &quot;newVariableValue&quot;);</span>
+<span class="nc" id="L1023">        taskService.complete(task.getId(), taskParams);</span>
+
+        // Verify task parameters set on execution
+<span class="nc" id="L1026">        Execution subExecution = runtimeService.createExecutionQuery().parentId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1027">        Map&lt;String, VariableInstance&gt; variableInstances = runtimeService.getVariableInstances(subExecution.getId());</span>
+<span class="nc" id="L1028">        assertThat(variableInstances.get(&quot;newVariable&quot;).getTextValue()).isEqualTo(&quot;newVariableValue&quot;);</span>
+
+<span class="nc bnc" id="L1030" title="All 2 branches missed.">        if (isHistoryLevelAtLeast(HistoryLevel.AUDIT, processEngineConfiguration )) {</span>
+<span class="nc" id="L1031">            HistoricVariableInstance historicVariableInstance = this.historyService.createHistoricVariableInstanceQuery()</span>
+<span class="nc" id="L1032">                .id(variableInstances.get(&quot;newVariable&quot;).getId())</span>
+<span class="nc" id="L1033">                .singleResult();</span>
+<span class="nc" id="L1034">            assertThat(historicVariableInstance.getValue()).isEqualTo(&quot;newVariableValue&quot;);</span>
+        }
+<span class="nc" id="L1036">    }</span>
+
+    @Test
+    @Deployment(resources = {&quot;org/flowable/engine/test/api/twoTasksProcess.bpmn20.xml&quot;})
+    public void testCompleteWithExistingNewVariableParametersTask_withoutBase() {
+<span class="nc" id="L1041">        runtimeService.startProcessInstanceByKey(&quot;twoTasksProcess&quot;);</span>
+
+        // Fetch first task
+<span class="nc" id="L1044">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1045">        assertThat(task.getName()).isEqualTo(&quot;First task&quot;);</span>
+
+        // Complete first task
+<span class="nc" id="L1048">        Map&lt;String, Object&gt; taskParams = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L1049">        taskParams.put(&quot;${newVariable}&quot;, &quot;newVariableValue&quot;);</span>
+
+<span class="nc" id="L1051">        assertThatThrownBy(() -&gt; taskService.complete(task.getId(), taskParams))</span>
+<span class="nc" id="L1052">                .isExactlyInstanceOf(FlowableException.class);</span>
+<span class="nc" id="L1053">    }</span>
+
+    @Test
+    @Deployment(resources = {&quot;org/flowable/engine/test/api/twoTasksProcess.bpmn20.xml&quot;})
+    public void testCompleteWithExistingNewVariableParametersTask() {
+<span class="nc" id="L1058">        runtimeService.startProcessInstanceByKey(&quot;twoTasksProcess&quot;);</span>
+
+        // Fetch first task
+<span class="nc" id="L1061">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1062">        assertThat(task.getName()).isEqualTo(&quot;First task&quot;);</span>
+
+        // Complete first task
+<span class="nc" id="L1065">        Map&lt;String, Object&gt; taskParams = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L1066">        taskParams.put(&quot;${execution.newVariable}&quot;, &quot;newVariableValue&quot;);</span>
+
+<span class="nc" id="L1068">        assertThatThrownBy(() -&gt; taskService.complete(task.getId(), taskParams))</span>
+<span class="nc" id="L1069">                .isExactlyInstanceOf(FlowableException.class);</span>
+<span class="nc" id="L1070">    }</span>
+
+    @Test
+    @Deployment(resources = {&quot;org/flowable/engine/test/api/twoTasksProcess.bpmn20.xml&quot;})
+    public void testCompleteWithExistingVariableParametersTask() {
+<span class="nc" id="L1075">        runtimeService.startProcessInstanceByKey(&quot;twoTasksProcess&quot;,</span>
+<span class="nc" id="L1076">                Collections.singletonMap(&quot;newVariable&quot;, &quot;oldValue&quot;)</span>
+        );
+
+        // Fetch first task
+<span class="nc" id="L1080">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1081">        assertThat(task.getName()).isEqualTo(&quot;First task&quot;);</span>
+
+        // Complete first task
+<span class="nc" id="L1084">        Map&lt;String, Object&gt; taskParams = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L1085">        taskParams.put(&quot;${execution.newVariable}&quot;, &quot;newVariableValue&quot;);</span>
+
+<span class="nc" id="L1087">        assertThatThrownBy(() -&gt; taskService.complete(task.getId(), taskParams))</span>
+<span class="nc" id="L1088">                .isExactlyInstanceOf(FlowableException.class);</span>
+<span class="nc" id="L1089">    }</span>
+
+    @Test
+    @Deployment
+    public void testCompleteWithTaskLocalParameters() {
+<span class="nc" id="L1094">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;testTaskLocalVars&quot;);</span>
+
+        // Fetch first task
+<span class="nc" id="L1097">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+
+        // Complete first task
+<span class="nc" id="L1100">        TaskCompletionBuilder taskCompletionBuilder = taskService.createTaskCompletionBuilder();</span>
+<span class="nc" id="L1101">        taskCompletionBuilder</span>
+<span class="nc" id="L1102">                .taskId(task.getId())</span>
+<span class="nc" id="L1103">                .variableLocal(&quot;a&quot;, 1)</span>
+<span class="nc" id="L1104">                .variableLocal(&quot;b&quot;, 1)</span>
+<span class="nc" id="L1105">                .complete();</span>
+
+        // Verify vars are not stored process instance wide
+<span class="nc" id="L1108">        assertThat(runtimeService.getVariable(processInstance.getId(), &quot;a&quot;)).isNull();</span>
+<span class="nc" id="L1109">        assertThat(runtimeService.getVariable(processInstance.getId(), &quot;b&quot;)).isNull();</span>
+
+        // verify script listener has done its job
+<span class="nc" id="L1112">        assertThat(runtimeService.getVariable(processInstance.getId(), &quot;sum&quot;)).isEqualTo(2);</span>
+
+        // Fetch second task
+<span class="nc" id="L1115">        taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1116">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/oneTaskWithFormKeyProcess.bpmn20.xml&quot; })
+    public void taskFormModelExceptions() {
+<span class="nc" id="L1121">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;oneTaskWithFormProcess&quot;);</span>
+<span class="nc" id="L1122">        org.flowable.task.api.Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+
+<span class="nc" id="L1124">        assertThatThrownBy(() -&gt; taskService.getTaskFormModel(task.getId(), true))</span>
+<span class="nc" id="L1125">                .isInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L1126">                .hasMessage(&quot;Form engine is not initialized&quot;);</span>
+<span class="nc" id="L1127">        assertThatThrownBy(() -&gt; taskService.getTaskFormModel(task.getId()))</span>
+<span class="nc" id="L1128">                .isInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L1129">                .hasMessage(&quot;Form engine is not initialized&quot;);</span>
+
+<span class="nc" id="L1131">        assertThatThrownBy(() -&gt; taskService.completeTaskWithForm(task.getId(), &quot;formDefinitionId&quot;, &quot;outcome&quot;, Collections.EMPTY_MAP))</span>
+<span class="nc" id="L1132">                .isInstanceOf(FlowableIllegalArgumentException.class);</span>
+<span class="nc" id="L1133">        assertThatThrownBy(() -&gt; taskService.completeTaskWithForm(task.getId(), &quot;formDefinitionId&quot;, &quot;outcome&quot;, Collections.EMPTY_MAP, Collections.EMPTY_MAP))</span>
+<span class="nc" id="L1134">                .isInstanceOf(FlowableIllegalArgumentException.class);</span>
+<span class="nc" id="L1135">        assertThatThrownBy(() -&gt; taskService.completeTaskWithForm(task.getId(), &quot;formDefinitionId&quot;, &quot;outcome&quot;, Collections.EMPTY_MAP, false))</span>
+<span class="nc" id="L1136">                .isInstanceOf(FlowableIllegalArgumentException.class);</span>
+
+<span class="nc" id="L1138">        taskService.complete(task.getId());</span>
+<span class="nc" id="L1139">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/oneTaskWithFormKeyProcess.bpmn20.xml&quot; })
+    public void testCompleteTaskWithFormKey() {
+<span class="nc" id="L1144">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;oneTaskWithFormProcess&quot;);</span>
+
+        // Fetch task
+<span class="nc" id="L1147">        org.flowable.task.api.Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1148">        assertThat(task.getName()).isEqualTo(&quot;my task&quot;);</span>
+<span class="nc" id="L1149">        assertThat(task.getFormKey()).isEqualTo(&quot;myFormKey&quot;);</span>
+<span class="nc" id="L1150">        assertThat(task.getAssignee()).isEqualTo(&quot;myAssignee&quot;);</span>
+<span class="nc" id="L1151">        assertThat(task.getOwner()).isEqualTo(&quot;myOwner&quot;);</span>
+<span class="nc" id="L1152">        assertThat(task.getCategory()).isEqualTo(&quot;myCategory&quot;);</span>
+<span class="nc" id="L1153">        assertThat(task.getPriority()).isEqualTo(60);</span>
+<span class="nc" id="L1154">        assertThat(task.getDueDate()).isNotNull();</span>
+
+        // Complete task
+<span class="nc" id="L1157">        taskService.complete(task.getId());</span>
+
+<span class="nc bnc" id="L1159" title="All 2 branches missed.">        if (isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L1160">            HistoricTaskInstance historicTask = historyService.createHistoricTaskInstanceQuery().taskId(task.getId()).singleResult();</span>
+<span class="nc" id="L1161">            assertThat(historicTask.getName()).isEqualTo(&quot;my task&quot;);</span>
+<span class="nc" id="L1162">            assertThat(historicTask.getFormKey()).isEqualTo(&quot;myFormKey&quot;);</span>
+<span class="nc" id="L1163">            assertThat(historicTask.getAssignee()).isEqualTo(&quot;myAssignee&quot;);</span>
+<span class="nc" id="L1164">            assertThat(historicTask.getOwner()).isEqualTo(&quot;myOwner&quot;);</span>
+<span class="nc" id="L1165">            assertThat(historicTask.getCategory()).isEqualTo(&quot;myCategory&quot;);</span>
+<span class="nc" id="L1166">            assertThat(historicTask.getPriority()).isEqualTo(60);</span>
+<span class="nc" id="L1167">            assertThat(historicTask.getDueDate()).isNotNull();</span>
+        }
+<span class="nc" id="L1169">    }</span>
+
+    @Test
+    public void testSetAssignee() {
+<span class="nc" id="L1173">        User user = identityService.newUser(&quot;user&quot;);</span>
+<span class="nc" id="L1174">        identityService.saveUser(user);</span>
+
+<span class="nc" id="L1176">        org.flowable.task.api.Task task = taskService.newTask();</span>
+<span class="nc" id="L1177">        assertThat(task.getAssignee()).isNull();</span>
+<span class="nc" id="L1178">        taskService.saveTask(task);</span>
+
+        // Set assignee
+<span class="nc" id="L1181">        taskService.setAssignee(task.getId(), user.getId());</span>
+
+        // Fetch task again
+<span class="nc" id="L1184">        task = taskService.createTaskQuery().taskId(task.getId()).singleResult();</span>
+<span class="nc" id="L1185">        assertThat(task.getAssignee()).isEqualTo(user.getId());</span>
+
+        // Set assignee to null
+<span class="nc" id="L1188">        taskService.setAssignee(task.getId(), null);</span>
+
+<span class="nc" id="L1190">        identityService.deleteUser(user.getId());</span>
+<span class="nc" id="L1191">        taskService.deleteTask(task.getId(), true);</span>
+<span class="nc" id="L1192">    }</span>
+
+    @Test
+    public void testSetAssigneeNullTaskId() {
+<span class="nc" id="L1196">        assertThatThrownBy(() -&gt; taskService.setAssignee(null, &quot;userId&quot;))</span>
+<span class="nc" id="L1197">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L1198">                .hasMessage(&quot;taskId is null&quot;);</span>
+<span class="nc" id="L1199">    }</span>
+
+    @Test
+    public void testSetAssigneeUnexistingTask() {
+<span class="nc" id="L1203">        User user = identityService.newUser(&quot;user&quot;);</span>
+<span class="nc" id="L1204">        identityService.saveUser(user);</span>
+
+<span class="nc" id="L1206">        assertThatThrownBy(() -&gt; taskService.setAssignee(&quot;unexistingTaskId&quot;, user.getId()))</span>
+<span class="nc" id="L1207">                .isExactlyInstanceOf(FlowableObjectNotFoundException.class)</span>
+<span class="nc" id="L1208">                .hasMessage(&quot;Cannot find task with id unexistingTaskId&quot;);</span>
+
+<span class="nc" id="L1210">        identityService.deleteUser(user.getId());</span>
+<span class="nc" id="L1211">    }</span>
+
+    @Test
+    public void testAddCandidateUserDuplicate() {
+        // Check behavior when adding the same user twice as candidate
+<span class="nc" id="L1216">        User user = identityService.newUser(&quot;user&quot;);</span>
+<span class="nc" id="L1217">        identityService.saveUser(user);</span>
+
+<span class="nc" id="L1219">        org.flowable.task.api.Task task = taskService.newTask();</span>
+<span class="nc" id="L1220">        taskService.saveTask(task);</span>
+
+<span class="nc" id="L1222">        taskService.addCandidateUser(task.getId(), user.getId());</span>
+
+        // Add as candidate the second time
+<span class="nc" id="L1225">        taskService.addCandidateUser(task.getId(), user.getId());</span>
+
+<span class="nc" id="L1227">        identityService.deleteUser(user.getId());</span>
+<span class="nc" id="L1228">        taskService.deleteTask(task.getId(), true);</span>
+<span class="nc" id="L1229">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot; })
+    public void testCountingTaskForAddRemoveIdentityLink() {
+<span class="nc" id="L1234">        processEngineConfiguration.setEnableTaskRelationshipCounts(true);</span>
+<span class="nc" id="L1235">        TaskServiceConfiguration taskServiceConfiguration = (TaskServiceConfiguration) processEngineConfiguration.getServiceConfigurations().get(EngineConfigurationConstants.KEY_TASK_SERVICE_CONFIG);</span>
+<span class="nc" id="L1236">        taskServiceConfiguration.setEnableTaskRelationshipCounts(true);</span>
+
+<span class="nc" id="L1238">        runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+<span class="nc" id="L1239">        org.flowable.task.api.Task currentTask = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1240">        assertThat(((CountingTaskEntity) currentTask).getIdentityLinkCount()).isZero();</span>
+
+<span class="nc" id="L1242">        taskService.addUserIdentityLink(currentTask.getId(), &quot;user01&quot;, IdentityLinkType.PARTICIPANT);</span>
+<span class="nc" id="L1243">        currentTask = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1244">        assertThat(((CountingTaskEntity) currentTask).getIdentityLinkCount()).isEqualTo(1);</span>
+
+<span class="nc" id="L1246">        taskService.addUserIdentityLink(currentTask.getId(), &quot;user02&quot;, IdentityLinkType.PARTICIPANT);</span>
+<span class="nc" id="L1247">        currentTask = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1248">        assertThat(((CountingTaskEntity) currentTask).getIdentityLinkCount()).isEqualTo(2);</span>
+
+<span class="nc" id="L1250">        taskService.deleteUserIdentityLink(currentTask.getId(), &quot;user01&quot;, IdentityLinkType.PARTICIPANT);</span>
+<span class="nc" id="L1251">        currentTask = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1252">        assertThat(((CountingTaskEntity) currentTask).getIdentityLinkCount()).isEqualTo(1);</span>
+
+<span class="nc" id="L1254">        taskService.addGroupIdentityLink(currentTask.getId(), &quot;group01&quot;, IdentityLinkType.PARTICIPANT);</span>
+<span class="nc" id="L1255">        currentTask = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1256">        assertThat(((CountingTaskEntity) currentTask).getIdentityLinkCount()).isEqualTo(2);</span>
+
+<span class="nc" id="L1258">        taskService.addGroupIdentityLink(currentTask.getId(), &quot;group02&quot;, IdentityLinkType.PARTICIPANT);</span>
+<span class="nc" id="L1259">        currentTask = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1260">        assertThat(((CountingTaskEntity) currentTask).getIdentityLinkCount()).isEqualTo(3);</span>
+
+<span class="nc" id="L1262">        taskService.addGroupIdentityLink(currentTask.getId(), &quot;group02&quot;, IdentityLinkType.PARTICIPANT);</span>
+<span class="nc" id="L1263">        currentTask = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1264">        assertThat(((CountingTaskEntity) currentTask).getIdentityLinkCount()).isEqualTo(4);</span>
+
+        // start removing identity links
+<span class="nc" id="L1267">        taskService.deleteGroupIdentityLink(currentTask.getId(), &quot;group02&quot;, IdentityLinkType.PARTICIPANT);</span>
+<span class="nc" id="L1268">        currentTask = taskService.createTaskQuery().singleResult();</span>
+        // Two identityLinks with id &quot;group02&quot; are found. Both are deleted.
+<span class="nc" id="L1270">        assertThat(((CountingTaskEntity) currentTask).getIdentityLinkCount()).isEqualTo(2);</span>
+
+        // remove &quot;user02&quot; once
+<span class="nc" id="L1273">        taskService.deleteUserIdentityLink(currentTask.getId(), &quot;user02&quot;, IdentityLinkType.PARTICIPANT);</span>
+<span class="nc" id="L1274">        currentTask = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1275">        assertThat(((CountingTaskEntity) currentTask).getIdentityLinkCount()).isEqualTo(1);</span>
+
+        // remove &quot;user02&quot; twice
+<span class="nc" id="L1278">        taskService.deleteUserIdentityLink(currentTask.getId(), &quot;user02&quot;, IdentityLinkType.PARTICIPANT);</span>
+<span class="nc" id="L1279">        currentTask = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1280">        assertThat(((CountingTaskEntity) currentTask).getIdentityLinkCount()).isEqualTo(1);</span>
+
+<span class="nc" id="L1282">        taskService.deleteGroupIdentityLink(currentTask.getId(), &quot;group01&quot;, IdentityLinkType.PARTICIPANT);</span>
+<span class="nc" id="L1283">        currentTask = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1284">        assertThat(((CountingTaskEntity) currentTask).getIdentityLinkCount()).isZero();</span>
+
+        // make sure the &quot;identityLinkCount&quot; value does not go negative
+<span class="nc" id="L1287">        taskService.deleteGroupIdentityLink(currentTask.getId(), &quot;group01&quot;, IdentityLinkType.PARTICIPANT);</span>
+<span class="nc" id="L1288">        currentTask = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1289">        assertThat(((CountingTaskEntity) currentTask).getIdentityLinkCount()).isZero();</span>
+
+<span class="nc" id="L1291">        processEngineConfiguration.setEnableTaskRelationshipCounts(false);</span>
+<span class="nc" id="L1292">        taskServiceConfiguration.setEnableTaskRelationshipCounts(false);</span>
+<span class="nc" id="L1293">    }</span>
+
+    @Test
+    public void testAddCandidateUserNullTaskId() {
+<span class="nc" id="L1297">        assertThatThrownBy(() -&gt; taskService.addCandidateUser(null, &quot;userId&quot;))</span>
+<span class="nc" id="L1298">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L1299">                .hasMessage(&quot;taskId is null&quot;);</span>
+<span class="nc" id="L1300">    }</span>
+
+    @Test
+    public void testAddCandidateUserNullUserId() {
+<span class="nc" id="L1304">        assertThatThrownBy(() -&gt; taskService.addCandidateUser(&quot;taskId&quot;, null))</span>
+<span class="nc" id="L1305">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L1306">                .hasMessage(&quot;identityId is null&quot;);</span>
+<span class="nc" id="L1307">    }</span>
+
+    @Test
+    public void testAddCandidateUserUnexistingTask() {
+<span class="nc" id="L1311">        User user = identityService.newUser(&quot;user&quot;);</span>
+<span class="nc" id="L1312">        identityService.saveUser(user);</span>
+
+<span class="nc" id="L1314">        assertThatThrownBy(() -&gt; taskService.addCandidateUser(&quot;unexistingTaskId&quot;, user.getId()))</span>
+<span class="nc" id="L1315">                .isExactlyInstanceOf(FlowableObjectNotFoundException.class)</span>
+<span class="nc" id="L1316">                .hasMessage(&quot;Cannot find task with id unexistingTaskId&quot;);</span>
+
+<span class="nc" id="L1318">        identityService.deleteUser(user.getId());</span>
+<span class="nc" id="L1319">    }</span>
+
+    @Test
+    public void testAddCandidateGroupNullTaskId() {
+<span class="nc" id="L1323">        assertThatThrownBy(() -&gt; taskService.addCandidateGroup(null, &quot;groupId&quot;))</span>
+<span class="nc" id="L1324">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L1325">                .hasMessage(&quot;taskId is null&quot;);</span>
+<span class="nc" id="L1326">    }</span>
+
+    @Test
+    public void testAddCandidateGroupNullGroupId() {
+<span class="nc" id="L1330">        assertThatThrownBy(() -&gt; taskService.addCandidateGroup(&quot;taskId&quot;, null))</span>
+<span class="nc" id="L1331">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L1332">                .hasMessage(&quot;identityId is null&quot;);</span>
+<span class="nc" id="L1333">    }</span>
+
+    @Test
+    public void testAddCandidateGroupUnexistingTask() {
+<span class="nc" id="L1337">        Group group = identityService.newGroup(&quot;group&quot;);</span>
+<span class="nc" id="L1338">        identityService.saveGroup(group);</span>
+<span class="nc" id="L1339">        assertThatThrownBy(() -&gt; taskService.addCandidateGroup(&quot;unexistingTaskId&quot;, group.getId()))</span>
+<span class="nc" id="L1340">                .isExactlyInstanceOf(FlowableObjectNotFoundException.class)</span>
+<span class="nc" id="L1341">                .hasMessage(&quot;Cannot find task with id unexistingTaskId&quot;);</span>
+<span class="nc" id="L1342">        identityService.deleteGroup(group.getId());</span>
+<span class="nc" id="L1343">    }</span>
+
+    @Test
+    public void testAddGroupIdentityLinkNullTaskId() {
+<span class="nc" id="L1347">        assertThatThrownBy(() -&gt; taskService.addGroupIdentityLink(null, &quot;groupId&quot;, IdentityLinkType.CANDIDATE))</span>
+<span class="nc" id="L1348">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L1349">                .hasMessage(&quot;taskId is null&quot;);</span>
+<span class="nc" id="L1350">    }</span>
+
+    @Test
+    public void testAddGroupIdentityLinkNullUserId() {
+<span class="nc" id="L1354">        assertThatThrownBy(() -&gt; taskService.addGroupIdentityLink(&quot;taskId&quot;, null, IdentityLinkType.CANDIDATE))</span>
+<span class="nc" id="L1355">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L1356">                .hasMessage(&quot;identityId is null&quot;);</span>
+<span class="nc" id="L1357">    }</span>
+
+    @Test
+    public void testAddGroupIdentityLinkUnexistingTask() {
+<span class="nc" id="L1361">        User user = identityService.newUser(&quot;user&quot;);</span>
+<span class="nc" id="L1362">        identityService.saveUser(user);</span>
+
+<span class="nc" id="L1364">        assertThatThrownBy(() -&gt; taskService.addGroupIdentityLink(&quot;unexistingTaskId&quot;, user.getId(), IdentityLinkType.CANDIDATE))</span>
+<span class="nc" id="L1365">                .isExactlyInstanceOf(FlowableObjectNotFoundException.class)</span>
+<span class="nc" id="L1366">                .hasMessage(&quot;Cannot find task with id unexistingTaskId&quot;);</span>
+
+<span class="nc" id="L1368">        identityService.deleteUser(user.getId());</span>
+<span class="nc" id="L1369">    }</span>
+
+    @Test
+    public void testAddUserIdentityLinkNullTaskId() {
+<span class="nc" id="L1373">        assertThatThrownBy(() -&gt; taskService.addUserIdentityLink(null, &quot;userId&quot;, IdentityLinkType.CANDIDATE))</span>
+<span class="nc" id="L1374">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L1375">                .hasMessage(&quot;taskId is null&quot;);</span>
+<span class="nc" id="L1376">    }</span>
+
+    @Test
+    public void testAddUserIdentityLinkNullUserId() {
+<span class="nc" id="L1380">        assertThatThrownBy(() -&gt; taskService.addUserIdentityLink(&quot;taskId&quot;, null, IdentityLinkType.CANDIDATE))</span>
+<span class="nc" id="L1381">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L1382">                .hasMessage(&quot;identityId is null&quot;);</span>
+<span class="nc" id="L1383">    }</span>
+
+    @Test
+    public void testAddUserIdentityLinkUnexistingTask() {
+<span class="nc" id="L1387">        User user = identityService.newUser(&quot;user&quot;);</span>
+<span class="nc" id="L1388">        identityService.saveUser(user);</span>
+
+<span class="nc" id="L1390">        assertThatThrownBy(() -&gt; taskService.addUserIdentityLink(&quot;unexistingTaskId&quot;, user.getId(), IdentityLinkType.CANDIDATE))</span>
+<span class="nc" id="L1391">                .isExactlyInstanceOf(FlowableObjectNotFoundException.class)</span>
+<span class="nc" id="L1392">                .hasMessage(&quot;Cannot find task with id unexistingTaskId&quot;);</span>
+
+<span class="nc" id="L1394">        identityService.deleteUser(user.getId());</span>
+<span class="nc" id="L1395">    }</span>
+
+    @Test
+    public void testGetIdentityLinksWithCandidateUser() {
+<span class="nc" id="L1399">        org.flowable.task.api.Task task = taskService.newTask();</span>
+<span class="nc" id="L1400">        taskService.saveTask(task);</span>
+<span class="nc" id="L1401">        String taskId = task.getId();</span>
+
+<span class="nc" id="L1403">        identityService.saveUser(identityService.newUser(&quot;kermit&quot;));</span>
+
+<span class="nc" id="L1405">        taskService.addCandidateUser(taskId, &quot;kermit&quot;);</span>
+<span class="nc" id="L1406">        List&lt;IdentityLink&gt; identityLinks = taskService.getIdentityLinksForTask(taskId);</span>
+<span class="nc" id="L1407">        assertThat(identityLinks)</span>
+<span class="nc" id="L1408">                .extracting(IdentityLink::getUserId, IdentityLink::getGroupId, IdentityLink::getType)</span>
+<span class="nc" id="L1409">                .containsExactly(tuple(&quot;kermit&quot;, null, IdentityLinkType.CANDIDATE));</span>
+
+        // cleanup
+<span class="nc" id="L1412">        taskService.deleteTask(taskId, true);</span>
+<span class="nc" id="L1413">        identityService.deleteUser(&quot;kermit&quot;);</span>
+<span class="nc" id="L1414">    }</span>
+
+    @Test
+    public void testGetIdentityLinksWithCandidateGroup() {
+<span class="nc" id="L1418">        org.flowable.task.api.Task task = taskService.newTask();</span>
+<span class="nc" id="L1419">        taskService.saveTask(task);</span>
+<span class="nc" id="L1420">        String taskId = task.getId();</span>
+
+<span class="nc" id="L1422">        identityService.saveGroup(identityService.newGroup(&quot;muppets&quot;));</span>
+
+<span class="nc" id="L1424">        taskService.addCandidateGroup(taskId, &quot;muppets&quot;);</span>
+<span class="nc" id="L1425">        List&lt;IdentityLink&gt; identityLinks = taskService.getIdentityLinksForTask(taskId);</span>
+<span class="nc" id="L1426">        assertThat(identityLinks)</span>
+<span class="nc" id="L1427">                .extracting(IdentityLink::getUserId, IdentityLink::getGroupId, IdentityLink::getType)</span>
+<span class="nc" id="L1428">                .containsExactly(tuple(null, &quot;muppets&quot;, IdentityLinkType.CANDIDATE));</span>
+
+        // cleanup
+<span class="nc" id="L1431">        taskService.deleteTask(taskId, true);</span>
+<span class="nc" id="L1432">        identityService.deleteGroup(&quot;muppets&quot;);</span>
+<span class="nc" id="L1433">    }</span>
+
+    @Test
+    public void testGetIdentityLinksWithAssignee() {
+<span class="nc" id="L1437">        org.flowable.task.api.Task task = taskService.newTask();</span>
+<span class="nc" id="L1438">        taskService.saveTask(task);</span>
+<span class="nc" id="L1439">        String taskId = task.getId();</span>
+
+<span class="nc" id="L1441">        identityService.saveUser(identityService.newUser(&quot;kermit&quot;));</span>
+
+<span class="nc" id="L1443">        taskService.claim(taskId, &quot;kermit&quot;);</span>
+<span class="nc" id="L1444">        List&lt;IdentityLink&gt; identityLinks = taskService.getIdentityLinksForTask(taskId);</span>
+<span class="nc" id="L1445">        assertThat(identityLinks)</span>
+<span class="nc" id="L1446">                .extracting(IdentityLink::getUserId, IdentityLink::getGroupId, IdentityLink::getType)</span>
+<span class="nc" id="L1447">                .containsExactly(tuple(&quot;kermit&quot;, null, IdentityLinkType.ASSIGNEE));</span>
+
+        // cleanup
+<span class="nc" id="L1450">        taskService.deleteTask(taskId, true);</span>
+<span class="nc" id="L1451">        identityService.deleteUser(&quot;kermit&quot;);</span>
+<span class="nc" id="L1452">    }</span>
+
+    @Test
+    public void testGetIdentityLinksWithNonExistingAssignee() {
+<span class="nc" id="L1456">        org.flowable.task.api.Task task = taskService.newTask();</span>
+<span class="nc" id="L1457">        taskService.saveTask(task);</span>
+<span class="nc" id="L1458">        String taskId = task.getId();</span>
+
+<span class="nc" id="L1460">        taskService.claim(taskId, &quot;nonExistingAssignee&quot;);</span>
+<span class="nc" id="L1461">        List&lt;IdentityLink&gt; identityLinks = taskService.getIdentityLinksForTask(taskId);</span>
+<span class="nc" id="L1462">        assertThat(identityLinks)</span>
+<span class="nc" id="L1463">                .extracting(IdentityLink::getUserId, IdentityLink::getGroupId, IdentityLink::getType)</span>
+<span class="nc" id="L1464">                .containsExactly(tuple(&quot;nonExistingAssignee&quot;, null, IdentityLinkType.ASSIGNEE));</span>
+
+        // cleanup
+<span class="nc" id="L1467">        taskService.deleteTask(taskId, true);</span>
+<span class="nc" id="L1468">    }</span>
+
+    @Test
+    public void testGetIdentityLinksWithOwner() {
+<span class="nc" id="L1472">        org.flowable.task.api.Task task = taskService.newTask();</span>
+<span class="nc" id="L1473">        taskService.saveTask(task);</span>
+<span class="nc" id="L1474">        String taskId = task.getId();</span>
+
+<span class="nc" id="L1476">        identityService.saveUser(identityService.newUser(&quot;kermit&quot;));</span>
+<span class="nc" id="L1477">        identityService.saveUser(identityService.newUser(&quot;fozzie&quot;));</span>
+
+<span class="nc" id="L1479">        taskService.claim(taskId, &quot;kermit&quot;);</span>
+<span class="nc" id="L1480">        taskService.delegateTask(taskId, &quot;fozzie&quot;);</span>
+
+<span class="nc" id="L1482">        List&lt;IdentityLink&gt; identityLinks = taskService.getIdentityLinksForTask(taskId);</span>
+<span class="nc" id="L1483">        assertThat(identityLinks)</span>
+<span class="nc" id="L1484">                .extracting(IdentityLink::getUserId, IdentityLink::getGroupId, IdentityLink::getType)</span>
+<span class="nc" id="L1485">                .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L1486">                        tuple(&quot;fozzie&quot;, null, IdentityLinkType.ASSIGNEE),</span>
+<span class="nc" id="L1487">                        tuple(&quot;kermit&quot;, null, IdentityLinkType.OWNER)</span>
+                );
+
+        // cleanup
+<span class="nc" id="L1491">        taskService.deleteTask(taskId, true);</span>
+<span class="nc" id="L1492">        identityService.deleteUser(&quot;kermit&quot;);</span>
+<span class="nc" id="L1493">        identityService.deleteUser(&quot;fozzie&quot;);</span>
+<span class="nc" id="L1494">    }</span>
+
+    @Test
+    public void testGetIdentityLinksWithNonExistingOwner() {
+<span class="nc" id="L1498">        org.flowable.task.api.Task task = taskService.newTask();</span>
+<span class="nc" id="L1499">        taskService.saveTask(task);</span>
+<span class="nc" id="L1500">        String taskId = task.getId();</span>
+
+<span class="nc" id="L1502">        taskService.claim(taskId, &quot;nonExistingOwner&quot;);</span>
+<span class="nc" id="L1503">        taskService.delegateTask(taskId, &quot;nonExistingAssignee&quot;);</span>
+<span class="nc" id="L1504">        List&lt;IdentityLink&gt; identityLinks = taskService.getIdentityLinksForTask(taskId);</span>
+
+<span class="nc" id="L1506">        assertThat(identityLinks)</span>
+<span class="nc" id="L1507">                .extracting(IdentityLink::getUserId, IdentityLink::getGroupId, IdentityLink::getType)</span>
+<span class="nc" id="L1508">                .containsExactly(</span>
+<span class="nc" id="L1509">                        tuple(&quot;nonExistingAssignee&quot;, null, IdentityLinkType.ASSIGNEE),</span>
+<span class="nc" id="L1510">                        tuple(&quot;nonExistingOwner&quot;, null, IdentityLinkType.OWNER)</span>
+                );
+
+        // cleanup
+<span class="nc" id="L1514">        taskService.deleteTask(taskId, true);</span>
+<span class="nc" id="L1515">    }</span>
+
+    @Test
+    public void testSetPriority() {
+<span class="nc" id="L1519">        org.flowable.task.api.Task task = taskService.newTask();</span>
+<span class="nc" id="L1520">        taskService.saveTask(task);</span>
+
+<span class="nc" id="L1522">        taskService.setPriority(task.getId(), 12345);</span>
+
+        // Fetch task again to check if the priority is set
+<span class="nc" id="L1525">        task = taskService.createTaskQuery().taskId(task.getId()).singleResult();</span>
+<span class="nc" id="L1526">        assertThat(task.getPriority()).isEqualTo(12345);</span>
+
+<span class="nc" id="L1528">        taskService.deleteTask(task.getId(), true);</span>
+<span class="nc" id="L1529">    }</span>
+
+    @Test
+    public void testSetPriorityUnexistingTaskId() {
+<span class="nc" id="L1533">        assertThatThrownBy(() -&gt; taskService.setPriority(&quot;unexistingtask&quot;, 12345))</span>
+<span class="nc" id="L1534">                .isExactlyInstanceOf(FlowableObjectNotFoundException.class)</span>
+<span class="nc" id="L1535">                .hasMessage(&quot;Cannot find task with id unexistingtask&quot;);</span>
+<span class="nc" id="L1536">    }</span>
+
+    @Test
+    public void testSetPriorityNullTaskId() {
+<span class="nc" id="L1540">        assertThatThrownBy(() -&gt; taskService.setPriority(null, 12345))</span>
+<span class="nc" id="L1541">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L1542">                .hasMessage(&quot;taskId is null&quot;);</span>
+<span class="nc" id="L1543">    }</span>
+
+    @Test
+    public void testSetDueDate() {
+<span class="nc" id="L1547">        org.flowable.task.api.Task task = taskService.newTask();</span>
+<span class="nc" id="L1548">        taskService.saveTask(task);</span>
+
+        // Set the due date to a non-null value
+        // We need to make sure the time ends on .000, .003 or .007 due to SQL Server rounding to that
+<span class="nc" id="L1552">        Date now = Date.from(Instant.now().truncatedTo(ChronoUnit.SECONDS).plusMillis(843));</span>
+<span class="nc" id="L1553">        taskService.setDueDate(task.getId(), now);</span>
+
+        // Fetch task to check if the due date was persisted
+<span class="nc" id="L1556">        task = taskService.createTaskQuery().taskId(task.getId()).singleResult();</span>
+<span class="nc" id="L1557">        assertThat(task.getDueDate()).isNotNull();</span>
+
+        // Set the due date to null
+<span class="nc" id="L1560">        taskService.setDueDate(task.getId(), null);</span>
+
+        // Re-fetch the task to make sure the due date was set to null
+<span class="nc" id="L1563">        task = taskService.createTaskQuery().taskId(task.getId()).singleResult();</span>
+<span class="nc" id="L1564">        assertThat(task.getDueDate()).isNull();</span>
+
+        // Call saveTask to update due date
+<span class="nc" id="L1567">        task = taskService.createTaskQuery().taskId(task.getId()).includeIdentityLinks().singleResult();</span>
+        // We need to make sure the time ends on .000, .003 or .007 due to SQL Server rounding to that
+<span class="nc" id="L1569">        now = Date.from(Instant.now().truncatedTo(ChronoUnit.SECONDS).plusMillis(987));</span>
+<span class="nc" id="L1570">        task.setDueDate(now);</span>
+<span class="nc" id="L1571">        taskService.saveTask(task);</span>
+<span class="nc" id="L1572">        task = taskService.createTaskQuery().taskId(task.getId()).singleResult();</span>
+<span class="nc" id="L1573">        assertThat(task.getDueDate()).isEqualTo(now);</span>
+
+<span class="nc" id="L1575">        taskService.deleteTask(task.getId(), true);</span>
+<span class="nc" id="L1576">    }</span>
+
+    @Test
+    public void testSetDueDateUnexistingTaskId() {
+<span class="nc" id="L1580">        assertThatThrownBy(() -&gt; taskService.setDueDate(&quot;unexistingtask&quot;, new Date()))</span>
+<span class="nc" id="L1581">                .isExactlyInstanceOf(FlowableObjectNotFoundException.class)</span>
+<span class="nc" id="L1582">                .hasMessage(&quot;Cannot find task with id unexistingtask&quot;);</span>
+<span class="nc" id="L1583">    }</span>
+
+    @Test
+    public void testSetDueDateNullTaskId() {
+<span class="nc" id="L1587">        assertThatThrownBy(() -&gt; taskService.setDueDate(null, new Date()))</span>
+<span class="nc" id="L1588">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L1589">                .hasMessage(&quot;taskId is null&quot;);</span>
+<span class="nc" id="L1590">    }</span>
+
+    /**
+     * @see &lt;a href=&quot;https://activiti.atlassian.net/browse/ACT-1059&quot;&gt;https://activiti.atlassian.net/browse/ACT-1059&lt;/a&gt;
+     */
+    @Test
+    public void testSetDelegationState() {
+<span class="nc" id="L1597">        org.flowable.task.api.Task task = taskService.newTask();</span>
+<span class="nc" id="L1598">        task.setOwner(&quot;wuzh&quot;);</span>
+<span class="nc" id="L1599">        taskService.saveTask(task);</span>
+<span class="nc" id="L1600">        taskService.delegateTask(task.getId(), &quot;other&quot;);</span>
+<span class="nc" id="L1601">        String taskId = task.getId();</span>
+
+<span class="nc" id="L1603">        task = taskService.createTaskQuery().taskId(taskId).singleResult();</span>
+<span class="nc" id="L1604">        assertThat(task.getOwner()).isEqualTo(&quot;wuzh&quot;);</span>
+<span class="nc" id="L1605">        assertThat(task.getAssignee()).isEqualTo(&quot;other&quot;);</span>
+<span class="nc" id="L1606">        assertThat(task.getDelegationState()).isEqualTo(DelegationState.PENDING);</span>
+
+<span class="nc" id="L1608">        task.setDelegationState(DelegationState.RESOLVED);</span>
+<span class="nc" id="L1609">        taskService.saveTask(task);</span>
+
+<span class="nc" id="L1611">        task = taskService.createTaskQuery().taskId(taskId).singleResult();</span>
+<span class="nc" id="L1612">        assertThat(task.getOwner()).isEqualTo(&quot;wuzh&quot;);</span>
+<span class="nc" id="L1613">        assertThat(task.getAssignee()).isEqualTo(&quot;other&quot;);</span>
+<span class="nc" id="L1614">        assertThat(task.getDelegationState()).isEqualTo(DelegationState.RESOLVED);</span>
+
+<span class="nc" id="L1616">        taskService.deleteTask(taskId, true);</span>
+<span class="nc" id="L1617">    }</span>
+
+    private void checkHistoricVariableUpdateEntity(String variableName, String processInstanceId) {
+<span class="nc bnc" id="L1620" title="All 2 branches missed.">        if (isHistoryLevelAtLeast(HistoryLevel.FULL, processEngineConfiguration)) {</span>
+<span class="nc" id="L1621">            boolean deletedVariableUpdateFound = false;</span>
+
+<span class="nc" id="L1623">            List&lt;HistoricDetail&gt; resultSet = historyService.createHistoricDetailQuery().processInstanceId(processInstanceId).list();</span>
+<span class="nc bnc" id="L1624" title="All 2 branches missed.">            for (HistoricDetail currentHistoricDetail : resultSet) {</span>
+<span class="nc" id="L1625">                assertThat(currentHistoricDetail).isInstanceOf(HistoricDetailVariableInstanceUpdateEntity.class);</span>
+<span class="nc" id="L1626">                HistoricDetailVariableInstanceUpdateEntity historicVariableUpdate = (HistoricDetailVariableInstanceUpdateEntity) currentHistoricDetail;</span>
+
+<span class="nc bnc" id="L1628" title="All 2 branches missed.">                if (historicVariableUpdate.getName().equals(variableName)) {</span>
+<span class="nc bnc" id="L1629" title="All 2 branches missed.">                    if (historicVariableUpdate.getValue() == null) {</span>
+<span class="nc bnc" id="L1630" title="All 2 branches missed.">                        if (deletedVariableUpdateFound) {</span>
+<span class="nc" id="L1631">                            fail(&quot;Mismatch: A HistoricVariableUpdateEntity with a null value already found&quot;);</span>
+                        } else {
+<span class="nc" id="L1633">                            deletedVariableUpdateFound = true;</span>
+                        }
+                    }
+                }
+<span class="nc" id="L1637">            }</span>
+
+<span class="nc" id="L1639">            assertThat(deletedVariableUpdateFound).isTrue();</span>
+        }
+<span class="nc" id="L1641">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot; })
+    public void testRemoveVariable() {
+<span class="nc" id="L1646">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+
+<span class="nc" id="L1648">        org.flowable.task.api.Task currentTask = taskService.createTaskQuery().singleResult();</span>
+
+<span class="nc" id="L1650">        taskService.setVariable(currentTask.getId(), &quot;variable1&quot;, &quot;value1&quot;);</span>
+<span class="nc" id="L1651">        assertThat(taskService.getVariable(currentTask.getId(), &quot;variable1&quot;)).isEqualTo(&quot;value1&quot;);</span>
+<span class="nc" id="L1652">        assertThat(taskService.getVariableLocal(currentTask.getId(), &quot;variable1&quot;)).isNull();</span>
+
+<span class="nc" id="L1654">        taskService.removeVariable(currentTask.getId(), &quot;variable1&quot;);</span>
+
+<span class="nc" id="L1656">        assertThat(taskService.getVariable(currentTask.getId(), &quot;variable1&quot;)).isNull();</span>
+
+<span class="nc" id="L1658">        checkHistoricVariableUpdateEntity(&quot;variable1&quot;, processInstance.getId());</span>
+<span class="nc" id="L1659">    }</span>
+
+    @Test
+    public void testRemoveVariableNullTaskId() {
+<span class="nc" id="L1663">        assertThatThrownBy(() -&gt; taskService.removeVariable(null, &quot;variable&quot;))</span>
+<span class="nc" id="L1664">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L1665">                .hasMessage(&quot;taskId is null&quot;);</span>
+<span class="nc" id="L1666">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot; })
+    public void testRemoveVariables() {
+<span class="nc" id="L1671">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+
+<span class="nc" id="L1673">        org.flowable.task.api.Task currentTask = taskService.createTaskQuery().singleResult();</span>
+
+<span class="nc" id="L1675">        Map&lt;String, Object&gt; varsToDelete = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L1676">        varsToDelete.put(&quot;variable1&quot;, &quot;value1&quot;);</span>
+<span class="nc" id="L1677">        varsToDelete.put(&quot;variable2&quot;, &quot;value2&quot;);</span>
+<span class="nc" id="L1678">        taskService.setVariables(currentTask.getId(), varsToDelete);</span>
+<span class="nc" id="L1679">        taskService.setVariable(currentTask.getId(), &quot;variable3&quot;, &quot;value3&quot;);</span>
+
+<span class="nc" id="L1681">        assertThat(taskService.getVariable(currentTask.getId(), &quot;variable1&quot;)).isEqualTo(&quot;value1&quot;);</span>
+<span class="nc" id="L1682">        assertThat(taskService.getVariable(currentTask.getId(), &quot;variable2&quot;)).isEqualTo(&quot;value2&quot;);</span>
+<span class="nc" id="L1683">        assertThat(taskService.getVariable(currentTask.getId(), &quot;variable3&quot;)).isEqualTo(&quot;value3&quot;);</span>
+<span class="nc" id="L1684">        assertThat(taskService.getVariableLocal(currentTask.getId(), &quot;variable1&quot;)).isNull();</span>
+<span class="nc" id="L1685">        assertThat(taskService.getVariableLocal(currentTask.getId(), &quot;variable2&quot;)).isNull();</span>
+<span class="nc" id="L1686">        assertThat(taskService.getVariableLocal(currentTask.getId(), &quot;variable3&quot;)).isNull();</span>
+
+<span class="nc" id="L1688">        taskService.removeVariables(currentTask.getId(), varsToDelete.keySet());</span>
+
+<span class="nc" id="L1690">        assertThat(taskService.getVariable(currentTask.getId(), &quot;variable1&quot;)).isNull();</span>
+<span class="nc" id="L1691">        assertThat(taskService.getVariable(currentTask.getId(), &quot;variable2&quot;)).isNull();</span>
+<span class="nc" id="L1692">        assertThat(taskService.getVariable(currentTask.getId(), &quot;variable3&quot;)).isEqualTo(&quot;value3&quot;);</span>
+
+<span class="nc" id="L1694">        assertThat(taskService.getVariableLocal(currentTask.getId(), &quot;variable1&quot;)).isNull();</span>
+<span class="nc" id="L1695">        assertThat(taskService.getVariableLocal(currentTask.getId(), &quot;variable2&quot;)).isNull();</span>
+<span class="nc" id="L1696">        assertThat(taskService.getVariableLocal(currentTask.getId(), &quot;variable3&quot;)).isNull();</span>
+
+<span class="nc" id="L1698">        checkHistoricVariableUpdateEntity(&quot;variable1&quot;, processInstance.getId());</span>
+<span class="nc" id="L1699">        checkHistoricVariableUpdateEntity(&quot;variable2&quot;, processInstance.getId());</span>
+<span class="nc" id="L1700">    }</span>
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    @Test
+    public void testRemoveVariablesNullTaskId() {
+<span class="nc" id="L1705">        assertThatThrownBy(() -&gt; taskService.removeVariables(null, new HashSet&lt;&gt;()))</span>
+<span class="nc" id="L1706">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L1707">                .hasMessage(&quot;taskId is null&quot;);</span>
+<span class="nc" id="L1708">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot; })
+    public void testRemoveVariableLocal() {
+<span class="nc" id="L1713">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+
+<span class="nc" id="L1715">        org.flowable.task.api.Task currentTask = taskService.createTaskQuery().singleResult();</span>
+
+<span class="nc" id="L1717">        taskService.setVariableLocal(currentTask.getId(), &quot;variable1&quot;, &quot;value1&quot;);</span>
+<span class="nc" id="L1718">        assertThat(taskService.getVariable(currentTask.getId(), &quot;variable1&quot;)).isEqualTo(&quot;value1&quot;);</span>
+<span class="nc" id="L1719">        assertThat(taskService.getVariableLocal(currentTask.getId(), &quot;variable1&quot;)).isEqualTo(&quot;value1&quot;);</span>
+
+<span class="nc" id="L1721">        taskService.removeVariableLocal(currentTask.getId(), &quot;variable1&quot;);</span>
+
+<span class="nc" id="L1723">        assertThat(taskService.getVariable(currentTask.getId(), &quot;variable1&quot;)).isNull();</span>
+<span class="nc" id="L1724">        assertThat(taskService.getVariableLocal(currentTask.getId(), &quot;variable1&quot;)).isNull();</span>
+
+<span class="nc" id="L1726">        checkHistoricVariableUpdateEntity(&quot;variable1&quot;, processInstance.getId());</span>
+<span class="nc" id="L1727">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot; })
+    public void testCountingTaskForAddRemoveVariable() {
+<span class="nc" id="L1732">        processEngineConfiguration.setEnableTaskRelationshipCounts(true);</span>
+<span class="nc" id="L1733">        TaskServiceConfiguration taskServiceConfiguration = (TaskServiceConfiguration) processEngineConfiguration.getServiceConfigurations().get(EngineConfigurationConstants.KEY_TASK_SERVICE_CONFIG);</span>
+<span class="nc" id="L1734">        taskServiceConfiguration.setEnableTaskRelationshipCounts(true);</span>
+        
+<span class="nc" id="L1736">        runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+<span class="nc" id="L1737">        org.flowable.task.api.Task currentTask = taskService.createTaskQuery().singleResult();</span>
+
+<span class="nc" id="L1739">        assertThat(((CountingTaskEntity) currentTask).getVariableCount()).isZero();</span>
+
+<span class="nc" id="L1741">        taskService.setVariableLocal(currentTask.getId(), &quot;variable1&quot;, &quot;value1&quot;);</span>
+<span class="nc" id="L1742">        currentTask = taskService.createTaskQuery().singleResult();</span>
+
+<span class="nc" id="L1744">        assertThat(((CountingTaskEntity) currentTask).getVariableCount()).isEqualTo(1);</span>
+
+        // process variables should have no effect
+<span class="nc" id="L1747">        taskService.setVariable(currentTask.getId(), &quot;processVariable1&quot;, &quot;procValue1&quot;);</span>
+<span class="nc" id="L1748">        currentTask = taskService.createTaskQuery().singleResult();</span>
+
+<span class="nc" id="L1750">        assertThat(((CountingTaskEntity) currentTask).getVariableCount()).isEqualTo(1);</span>
+
+<span class="nc" id="L1752">        Map&lt;String, Object&gt; localVars = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L1753">        localVars.put(&quot;localVar1&quot;, &quot;localValue1&quot;);</span>
+<span class="nc" id="L1754">        localVars.put(&quot;localVar2&quot;, &quot;localValue2&quot;);</span>
+<span class="nc" id="L1755">        localVars.put(&quot;localVar3&quot;, &quot;localValue3&quot;);</span>
+
+<span class="nc" id="L1757">        taskService.setVariablesLocal(currentTask.getId(), localVars);</span>
+<span class="nc" id="L1758">        currentTask = taskService.createTaskQuery().singleResult();</span>
+
+<span class="nc" id="L1760">        assertThat(((CountingTaskEntity) currentTask).getVariableCount()).isEqualTo(4);</span>
+
+<span class="nc" id="L1762">        taskService.removeVariablesLocal(currentTask.getId(), localVars.keySet());</span>
+<span class="nc" id="L1763">        currentTask = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1764">        assertThat(((CountingTaskEntity) currentTask).getVariableCount()).isEqualTo(1);</span>
+
+<span class="nc" id="L1766">        taskService.removeVariablesLocal(currentTask.getId(), localVars.keySet());</span>
+<span class="nc" id="L1767">        currentTask = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1768">        assertThat(((CountingTaskEntity) currentTask).getVariableCount()).isEqualTo(1);</span>
+
+<span class="nc" id="L1770">        taskService.removeVariableLocal(currentTask.getId(), &quot;variable1&quot;);</span>
+<span class="nc" id="L1771">        currentTask = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1772">        assertThat(((CountingTaskEntity) currentTask).getVariableCount()).isZero();</span>
+
+        // make sure it does not get negative
+<span class="nc" id="L1775">        taskService.removeVariableLocal(currentTask.getId(), &quot;variable1&quot;);</span>
+<span class="nc" id="L1776">        currentTask = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1777">        assertThat(((CountingTaskEntity) currentTask).getVariableCount()).isZero();</span>
+
+<span class="nc" id="L1779">        processEngineConfiguration.setEnableTaskRelationshipCounts(false);</span>
+<span class="nc" id="L1780">        taskServiceConfiguration.setEnableTaskRelationshipCounts(false);</span>
+<span class="nc" id="L1781">    }</span>
+
+    @Test
+    public void testRemoveVariableLocalNullTaskId() {
+<span class="nc" id="L1785">        assertThatThrownBy(() -&gt; taskService.removeVariableLocal(null, &quot;variable&quot;))</span>
+<span class="nc" id="L1786">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L1787">                .hasMessage(&quot;taskId is null&quot;);</span>
+<span class="nc" id="L1788">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot; })
+    public void testRemoveVariablesLocal() {
+<span class="nc" id="L1793">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+
+<span class="nc" id="L1795">        org.flowable.task.api.Task currentTask = taskService.createTaskQuery().singleResult();</span>
+
+<span class="nc" id="L1797">        Map&lt;String, Object&gt; varsToDelete = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L1798">        varsToDelete.put(&quot;variable1&quot;, &quot;value1&quot;);</span>
+<span class="nc" id="L1799">        varsToDelete.put(&quot;variable2&quot;, &quot;value2&quot;);</span>
+<span class="nc" id="L1800">        taskService.setVariablesLocal(currentTask.getId(), varsToDelete);</span>
+<span class="nc" id="L1801">        taskService.setVariableLocal(currentTask.getId(), &quot;variable3&quot;, &quot;value3&quot;);</span>
+
+<span class="nc" id="L1803">        assertThat(taskService.getVariable(currentTask.getId(), &quot;variable1&quot;)).isEqualTo(&quot;value1&quot;);</span>
+<span class="nc" id="L1804">        assertThat(taskService.getVariable(currentTask.getId(), &quot;variable2&quot;)).isEqualTo(&quot;value2&quot;);</span>
+<span class="nc" id="L1805">        assertThat(taskService.getVariable(currentTask.getId(), &quot;variable3&quot;)).isEqualTo(&quot;value3&quot;);</span>
+<span class="nc" id="L1806">        assertThat(taskService.getVariableLocal(currentTask.getId(), &quot;variable1&quot;)).isEqualTo(&quot;value1&quot;);</span>
+<span class="nc" id="L1807">        assertThat(taskService.getVariableLocal(currentTask.getId(), &quot;variable2&quot;)).isEqualTo(&quot;value2&quot;);</span>
+<span class="nc" id="L1808">        assertThat(taskService.getVariableLocal(currentTask.getId(), &quot;variable3&quot;)).isEqualTo(&quot;value3&quot;);</span>
+
+<span class="nc" id="L1810">        taskService.removeVariables(currentTask.getId(), varsToDelete.keySet());</span>
+
+<span class="nc" id="L1812">        assertThat(taskService.getVariable(currentTask.getId(), &quot;variable1&quot;)).isNull();</span>
+<span class="nc" id="L1813">        assertThat(taskService.getVariable(currentTask.getId(), &quot;variable2&quot;)).isNull();</span>
+<span class="nc" id="L1814">        assertThat(taskService.getVariable(currentTask.getId(), &quot;variable3&quot;)).isEqualTo(&quot;value3&quot;);</span>
+
+<span class="nc" id="L1816">        assertThat(taskService.getVariableLocal(currentTask.getId(), &quot;variable1&quot;)).isNull();</span>
+<span class="nc" id="L1817">        assertThat(taskService.getVariableLocal(currentTask.getId(), &quot;variable2&quot;)).isNull();</span>
+<span class="nc" id="L1818">        assertThat(taskService.getVariableLocal(currentTask.getId(), &quot;variable3&quot;)).isEqualTo(&quot;value3&quot;);</span>
+
+<span class="nc" id="L1820">        checkHistoricVariableUpdateEntity(&quot;variable1&quot;, processInstance.getId());</span>
+<span class="nc" id="L1821">        checkHistoricVariableUpdateEntity(&quot;variable2&quot;, processInstance.getId());</span>
+<span class="nc" id="L1822">    }</span>
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    @Test
+    public void testRemoveVariablesLocalNullTaskId() {
+<span class="nc" id="L1827">        assertThatThrownBy(() -&gt; taskService.removeVariablesLocal(null, new HashSet&lt;&gt;()))</span>
+<span class="nc" id="L1828">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L1829">                .hasMessage(&quot;taskId is null&quot;);</span>
+<span class="nc" id="L1830">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot; })
+    public void testGetVariableByHistoricActivityInstance() throws Exception {
+<span class="nc bnc" id="L1835" title="All 2 branches missed.">        if (isHistoryLevelAtLeast(HistoryLevel.FULL, processEngineConfiguration)) {</span>
+<span class="nc" id="L1836">            ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+<span class="nc" id="L1837">            assertThat(processInstance).isNotNull();</span>
+<span class="nc" id="L1838">            org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+
+<span class="nc" id="L1840">            taskService.setVariable(task.getId(), &quot;variable1&quot;, &quot;value1&quot;);</span>
+<span class="nc" id="L1841">            Thread.sleep(50L); // to make sure the times for ordering below are different.</span>
+<span class="nc" id="L1842">            taskService.setVariable(task.getId(), &quot;variable1&quot;, &quot;value2&quot;);</span>
+            
+<span class="nc" id="L1844">            waitForHistoryJobExecutorToProcessAllJobs(7000, 100);</span>
+
+<span class="nc" id="L1846">            HistoricActivityInstance historicActivitiInstance = historyService.createHistoricActivityInstanceQuery()</span>
+<span class="nc" id="L1847">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L1848">                    .activityId(&quot;theTask&quot;).singleResult();</span>
+<span class="nc" id="L1849">            assertThat(historicActivitiInstance).isNotNull();</span>
+
+<span class="nc" id="L1851">            List&lt;HistoricDetail&gt; resultSet = historyService.createHistoricDetailQuery().variableUpdates()</span>
+<span class="nc" id="L1852">                    .orderByTime()</span>
+<span class="nc" id="L1853">                    .asc()</span>
+<span class="nc" id="L1854">                    .list();</span>
+
+<span class="nc" id="L1856">            assertThat(resultSet).hasSize(2);</span>
+<span class="nc" id="L1857">            assertThat(((HistoricVariableUpdate) resultSet.get(0)).getVariableName()).isEqualTo(&quot;variable1&quot;);</span>
+<span class="nc" id="L1858">            assertThat(((HistoricVariableUpdate) resultSet.get(0)).getValue()).isEqualTo(&quot;value1&quot;);</span>
+<span class="nc" id="L1859">            assertThat(((HistoricVariableUpdate) resultSet.get(1)).getVariableName()).isEqualTo(&quot;variable1&quot;);</span>
+<span class="nc" id="L1860">            assertThat(((HistoricVariableUpdate) resultSet.get(1)).getValue()).isEqualTo(&quot;value2&quot;);</span>
+
+<span class="nc" id="L1862">            resultSet = historyService.createHistoricDetailQuery().variableUpdates()</span>
+<span class="nc" id="L1863">                    .activityInstanceId(historicActivitiInstance.getId())</span>
+<span class="nc" id="L1864">                    .orderByTime()</span>
+<span class="nc" id="L1865">                    .asc()</span>
+<span class="nc" id="L1866">                    .list();</span>
+
+<span class="nc" id="L1868">            assertThat(resultSet).hasSize(2);</span>
+<span class="nc" id="L1869">            assertThat(((HistoricVariableUpdate) resultSet.get(0)).getVariableName()).isEqualTo(&quot;variable1&quot;);</span>
+<span class="nc" id="L1870">            assertThat(((HistoricVariableUpdate) resultSet.get(0)).getValue()).isEqualTo(&quot;value1&quot;);</span>
+<span class="nc" id="L1871">            assertThat(((HistoricVariableUpdate) resultSet.get(1)).getVariableName()).isEqualTo(&quot;variable1&quot;);</span>
+<span class="nc" id="L1872">            assertThat(((HistoricVariableUpdate) resultSet.get(1)).getValue()).isEqualTo(&quot;value2&quot;);</span>
+        }
+<span class="nc" id="L1874">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot; })
+    public void testGetVariableByActivityInstance() throws Exception {
+<span class="nc bnc" id="L1879" title="All 2 branches missed.">        if (isHistoryLevelAtLeast(HistoryLevel.FULL, processEngineConfiguration)) {</span>
+<span class="nc" id="L1880">            ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+<span class="nc" id="L1881">            assertThat(processInstance).isNotNull();</span>
+<span class="nc" id="L1882">            org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+
+<span class="nc" id="L1884">            taskService.setVariable(task.getId(), &quot;variable1&quot;, &quot;value1&quot;);</span>
+<span class="nc" id="L1885">            Thread.sleep(50L); // to make sure the times for ordering below are different.</span>
+<span class="nc" id="L1886">            taskService.setVariable(task.getId(), &quot;variable1&quot;, &quot;value2&quot;);</span>
+
+<span class="nc" id="L1888">            waitForHistoryJobExecutorToProcessAllJobs(7000, 100);</span>
+
+<span class="nc" id="L1890">            ActivityInstance activityInstance = runtimeService.createActivityInstanceQuery()</span>
+<span class="nc" id="L1891">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L1892">                    .activityId(&quot;theTask&quot;).singleResult();</span>
+<span class="nc" id="L1893">            assertThat(activityInstance).isNotNull();</span>
+
+<span class="nc" id="L1895">            List&lt;HistoricDetail&gt; resultSet = historyService.createHistoricDetailQuery().variableUpdates()</span>
+<span class="nc" id="L1896">                    .orderByTime()</span>
+<span class="nc" id="L1897">                    .asc()</span>
+<span class="nc" id="L1898">                    .list();</span>
+
+<span class="nc" id="L1900">            assertThat(resultSet).hasSize(2);</span>
+<span class="nc" id="L1901">            assertThat(((HistoricVariableUpdate) resultSet.get(0)).getVariableName()).isEqualTo(&quot;variable1&quot;);</span>
+<span class="nc" id="L1902">            assertThat(((HistoricVariableUpdate) resultSet.get(0)).getValue()).isEqualTo(&quot;value1&quot;);</span>
+<span class="nc" id="L1903">            assertThat(((HistoricVariableUpdate) resultSet.get(1)).getVariableName()).isEqualTo(&quot;variable1&quot;);</span>
+<span class="nc" id="L1904">            assertThat(((HistoricVariableUpdate) resultSet.get(1)).getValue()).isEqualTo(&quot;value2&quot;);</span>
+
+<span class="nc" id="L1906">            resultSet = historyService.createHistoricDetailQuery().variableUpdates()</span>
+<span class="nc" id="L1907">                    .activityInstanceId(activityInstance.getId())</span>
+<span class="nc" id="L1908">                    .orderByTime()</span>
+<span class="nc" id="L1909">                    .asc()</span>
+<span class="nc" id="L1910">                    .list();</span>
+
+<span class="nc" id="L1912">            assertThat(resultSet).hasSize(2);</span>
+<span class="nc" id="L1913">            assertThat(((HistoricVariableUpdate) resultSet.get(0)).getVariableName()).isEqualTo(&quot;variable1&quot;);</span>
+<span class="nc" id="L1914">            assertThat(((HistoricVariableUpdate) resultSet.get(0)).getValue()).isEqualTo(&quot;value1&quot;);</span>
+<span class="nc" id="L1915">            assertThat(((HistoricVariableUpdate) resultSet.get(1)).getVariableName()).isEqualTo(&quot;variable1&quot;);</span>
+<span class="nc" id="L1916">            assertThat(((HistoricVariableUpdate) resultSet.get(1)).getValue()).isEqualTo(&quot;value2&quot;);</span>
+        }
+<span class="nc" id="L1918">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot; })
+    public void testUserTaskOptimisticLocking() {
+<span class="nc" id="L1923">        runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+
+<span class="nc" id="L1925">        org.flowable.task.api.Task task1 = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1926">        org.flowable.task.api.Task task2 = taskService.createTaskQuery().singleResult();</span>
+
+<span class="nc" id="L1928">        task1.setDescription(&quot;test description one&quot;);</span>
+<span class="nc" id="L1929">        taskService.saveTask(task1);</span>
+
+<span class="nc" id="L1931">        assertThatThrownBy(() -&gt; {</span>
+<span class="nc" id="L1932">            task2.setDescription(&quot;test description two&quot;);</span>
+<span class="nc" id="L1933">            taskService.saveTask(task2);</span>
+<span class="nc" id="L1934">        })</span>
+<span class="nc" id="L1935">                .isExactlyInstanceOf(FlowableOptimisticLockingException.class);</span>
+<span class="nc" id="L1936">    }</span>
+
+    @Test
+    public void testDeleteTaskWithDeleteReason() {
+        // ACT-900: deleteReason can be manually specified - can only be
+        // validated when historyLevel &gt; ACTIVITY
+<span class="nc bnc" id="L1942" title="All 2 branches missed.">        if (isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+
+<span class="nc" id="L1944">            org.flowable.task.api.Task task = taskService.newTask();</span>
+<span class="nc" id="L1945">            task.setName(&quot;test task&quot;);</span>
+<span class="nc" id="L1946">            taskService.saveTask(task);</span>
+
+<span class="nc" id="L1948">            assertThat(task.getId()).isNotNull();</span>
+
+<span class="nc" id="L1950">            taskService.deleteTask(task.getId(), &quot;deleted for testing purposes&quot;);</span>
+
+<span class="nc" id="L1952">            waitForHistoryJobExecutorToProcessAllJobs(7000, 100);</span>
+
+<span class="nc" id="L1954">            HistoricTaskInstance historicTaskInstance = historyService.createHistoricTaskInstanceQuery().taskId(task.getId()).singleResult();</span>
+
+<span class="nc" id="L1956">            assertThat(historicTaskInstance).isNotNull();</span>
+<span class="nc" id="L1957">            assertThat(historicTaskInstance.getDeleteReason()).isEqualTo(&quot;deleted for testing purposes&quot;);</span>
+
+            // Delete historic task that is left behind, will not be cleaned up
+            // because this is not part of a process
+<span class="nc" id="L1961">            taskService.deleteTask(task.getId(), true);</span>
+        }
+<span class="nc" id="L1963">    }</span>
+
+    @Test
+    public void testResolveTaskNullTaskId() {
+<span class="nc" id="L1967">        assertThatThrownBy(() -&gt; taskService.resolveTask(null))</span>
+<span class="nc" id="L1968">                .isExactlyInstanceOf(FlowableIllegalArgumentException.class)</span>
+<span class="nc" id="L1969">                .hasMessage(&quot;taskId is null&quot;);</span>
+<span class="nc" id="L1970">    }</span>
+
+    @Test
+    public void testResolveTaskUnexistingTaskId() {
+<span class="nc" id="L1974">        assertThatThrownBy(() -&gt; taskService.resolveTask(&quot;blergh&quot;))</span>
+<span class="nc" id="L1975">                .isExactlyInstanceOf(FlowableObjectNotFoundException.class)</span>
+<span class="nc" id="L1976">                .hasMessage(&quot;Cannot find task with id blergh&quot;);</span>
+<span class="nc" id="L1977">    }</span>
+
+    @Test
+    public void testResolveTaskWithParametersNullParameters() {
+<span class="nc" id="L1981">        org.flowable.task.api.Task task = taskService.newTask();</span>
+<span class="nc" id="L1982">        task.setDelegationState(DelegationState.PENDING);</span>
+<span class="nc" id="L1983">        taskService.saveTask(task);</span>
+
+<span class="nc" id="L1985">        String taskId = task.getId();</span>
+<span class="nc" id="L1986">        taskService.resolveTask(taskId, null);</span>
+
+        // Fetch the task again
+<span class="nc" id="L1989">        task = taskService.createTaskQuery().taskId(taskId).singleResult();</span>
+<span class="nc" id="L1990">        assertThat(task.getDelegationState()).isEqualTo(DelegationState.RESOLVED);</span>
+
+<span class="nc" id="L1992">        taskService.deleteTask(taskId, true);</span>
+<span class="nc" id="L1993">    }</span>
+
+    @Test
+    public void resolveTaskWithParametersNullParametersEmptyTransientVariables() {
+<span class="nc" id="L1997">        org.flowable.task.api.Task task = taskService.newTask();</span>
+<span class="nc" id="L1998">        task.setDelegationState(DelegationState.PENDING);</span>
+<span class="nc" id="L1999">        taskService.saveTask(task);</span>
+
+<span class="nc" id="L2001">        String taskId = task.getId();</span>
+<span class="nc" id="L2002">        taskService.resolveTask(taskId, null, Collections.EMPTY_MAP);</span>
+
+        // Fetch the task again
+<span class="nc" id="L2005">        task = taskService.createTaskQuery().taskId(taskId).singleResult();</span>
+<span class="nc" id="L2006">        assertThat(task.getDelegationState()).isEqualTo(DelegationState.RESOLVED);</span>
+
+<span class="nc" id="L2008">        taskService.deleteTask(taskId, true);</span>
+<span class="nc" id="L2009">    }</span>
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    @Test
+    public void testResolveTaskWithParametersEmptyParameters() {
+<span class="nc" id="L2014">        org.flowable.task.api.Task task = taskService.newTask();</span>
+<span class="nc" id="L2015">        task.setDelegationState(DelegationState.PENDING);</span>
+<span class="nc" id="L2016">        taskService.saveTask(task);</span>
+
+<span class="nc" id="L2018">        String taskId = task.getId();</span>
+<span class="nc" id="L2019">        taskService.resolveTask(taskId, Collections.EMPTY_MAP);</span>
+
+        // Fetch the task again
+<span class="nc" id="L2022">        task = taskService.createTaskQuery().taskId(taskId).singleResult();</span>
+<span class="nc" id="L2023">        assertThat(task.getDelegationState()).isEqualTo(DelegationState.RESOLVED);</span>
+
+<span class="nc" id="L2025">        taskService.deleteTask(taskId, true);</span>
+<span class="nc" id="L2026">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/twoTasksProcess.bpmn20.xml&quot; })
+    public void testResolveWithParametersTask() {
+<span class="nc" id="L2031">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;twoTasksProcess&quot;);</span>
+
+        // Fetch first task
+<span class="nc" id="L2034">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L2035">        assertThat(task.getName()).isEqualTo(&quot;First task&quot;);</span>
+
+<span class="nc" id="L2037">        taskService.delegateTask(task.getId(), &quot;johndoe&quot;);</span>
+
+        // Resolve first task
+<span class="nc" id="L2040">        Map&lt;String, Object&gt; taskParams = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L2041">        taskParams.put(&quot;myParam&quot;, &quot;myValue&quot;);</span>
+<span class="nc" id="L2042">        taskService.resolveTask(task.getId(), taskParams);</span>
+
+        // Verify that task is resolved
+<span class="nc" id="L2045">        task = taskService.createTaskQuery().taskDelegationState(DelegationState.RESOLVED).singleResult();</span>
+<span class="nc" id="L2046">        assertThat(task.getName()).isEqualTo(&quot;First task&quot;);</span>
+
+        // Verify task parameters set on execution
+<span class="nc" id="L2049">        Map&lt;String, Object&gt; variables = runtimeService.getVariables(processInstance.getId());</span>
+<span class="nc" id="L2050">        assertThat(variables)</span>
+<span class="nc" id="L2051">                .containsOnly(entry(&quot;myParam&quot;, &quot;myValue&quot;));</span>
+<span class="nc" id="L2052">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot; })
+    public void testDeleteTaskPartOfProcess() {
+<span class="nc" id="L2057">        runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+<span class="nc" id="L2058">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L2059">        assertThat(task).isNotNull();</span>
+<span class="nc" id="L2060">        String taskErrorString = &quot;Task[id=&quot; + task.getId() + &quot;, key=theTask, name=my task, processInstanceId=&quot; + task.getProcessInstanceId() + &quot;, executionId=&quot;</span>
+<span class="nc" id="L2061">                + task.getExecutionId() + &quot;, processDefinitionId=&quot; + task.getProcessDefinitionId() + &quot;]&quot;;</span>
+
+<span class="nc" id="L2063">        assertThatThrownBy(() -&gt; taskService.deleteTask(task.getId()))</span>
+<span class="nc" id="L2064">                .isInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L2065">                .hasMessage(&quot;The &quot; + taskErrorString + &quot; cannot be deleted because is part of a running process&quot;);</span>
+
+<span class="nc" id="L2067">        assertThatThrownBy(() -&gt; taskService.deleteTask(task.getId(), true))</span>
+<span class="nc" id="L2068">                .isInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L2069">                .hasMessage(&quot;The &quot; + taskErrorString + &quot; cannot be deleted because is part of a running process&quot;);</span>
+
+<span class="nc" id="L2071">        assertThatThrownBy(() -&gt; taskService.deleteTask(task.getId(), &quot;test&quot;))</span>
+<span class="nc" id="L2072">                .isInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L2073">                .hasMessage(&quot;The &quot; + taskErrorString + &quot; cannot be deleted because is part of a running process&quot;);</span>
+
+<span class="nc" id="L2075">        String idLists[] = { task.getId() };</span>
+<span class="nc" id="L2076">        assertThatThrownBy(() -&gt; taskService.deleteTasks(Arrays.asList(idLists)))</span>
+<span class="nc" id="L2077">                .isInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L2078">                .hasMessage(&quot;The &quot; + taskErrorString + &quot; cannot be deleted because is part of a running process&quot;);</span>
+
+<span class="nc" id="L2080">        assertThatThrownBy(() -&gt; taskService.deleteTasks(Arrays.asList(idLists), true))</span>
+<span class="nc" id="L2081">                .isInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L2082">                .hasMessage(&quot;The &quot; + taskErrorString + &quot; cannot be deleted because is part of a running process&quot;);</span>
+
+<span class="nc" id="L2084">        assertThatThrownBy(() -&gt; taskService.deleteTasks(Arrays.asList(idLists), &quot;test&quot;))</span>
+<span class="nc" id="L2085">                .isInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L2086">                .hasMessage(&quot;The &quot; + taskErrorString + &quot; cannot be deleted because is part of a running process&quot;);</span>
+<span class="nc" id="L2087">    }</span>
+
+    @Test
+    @Deployment
+    public void testFormKeyExpression() {
+<span class="nc" id="L2092">        runtimeService.startProcessInstanceByKey(&quot;testFormExpression&quot;, CollectionUtil.singletonMap(&quot;var&quot;, &quot;abc&quot;));</span>
+
+<span class="nc" id="L2094">        org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L2095">        assertThat(task.getFormKey()).isEqualTo(&quot;first-form.json&quot;);</span>
+<span class="nc" id="L2096">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L2098">        task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L2099">        assertThat(task.getFormKey()).isEqualTo(&quot;form-abc.json&quot;);</span>
+
+<span class="nc" id="L2101">        task.setFormKey(&quot;form-changed.json&quot;);</span>
+<span class="nc" id="L2102">        taskService.saveTask(task);</span>
+<span class="nc" id="L2103">        task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L2104">        assertThat(task.getFormKey()).isEqualTo(&quot;form-changed.json&quot;);</span>
+
+<span class="nc bnc" id="L2106" title="All 2 branches missed.">        if (isHistoryLevelAtLeast(HistoryLevel.AUDIT, processEngineConfiguration)) {</span>
+<span class="nc" id="L2107">            HistoricTaskInstance historicTaskInstance = historyService.createHistoricTaskInstanceQuery().taskId(task.getId()).singleResult();</span>
+<span class="nc" id="L2108">            assertThat(historicTaskInstance.getFormKey()).isEqualTo(&quot;form-changed.json&quot;);</span>
+        }
+<span class="nc" id="L2110">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot; })
+    public void testGetVariableLocalWithCast() {
+<span class="nc" id="L2115">        runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+
+<span class="nc" id="L2117">        org.flowable.task.api.Task currentTask = taskService.createTaskQuery().singleResult();</span>
+
+<span class="nc" id="L2119">        taskService.setVariableLocal(currentTask.getId(), &quot;variable1&quot;, &quot;value1&quot;);</span>
+
+<span class="nc" id="L2121">        String variable = taskService.getVariableLocal(currentTask.getId(), &quot;variable1&quot;, String.class);</span>
+
+<span class="nc" id="L2123">        assertThat(variable).isEqualTo(&quot;value1&quot;);</span>
+<span class="nc" id="L2124">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot; })
+    public void testGetVariableLocalNotExistingWithCast() {
+<span class="nc" id="L2129">        runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+
+<span class="nc" id="L2131">        org.flowable.task.api.Task currentTask = taskService.createTaskQuery().singleResult();</span>
+
+<span class="nc" id="L2133">        String variable = taskService.getVariableLocal(currentTask.getId(), &quot;variable1&quot;, String.class);</span>
+
+<span class="nc" id="L2135">        assertThat(variable).isNull();</span>
+<span class="nc" id="L2136">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot; })
+    public void testGetVariableLocalWithInvalidCast() {
+<span class="nc" id="L2141">        runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+
+<span class="nc" id="L2143">        org.flowable.task.api.Task currentTask = taskService.createTaskQuery().singleResult();</span>
+
+<span class="nc" id="L2145">        taskService.setVariableLocal(currentTask.getId(), &quot;variable1&quot;, &quot;value1&quot;);</span>
+
+<span class="nc" id="L2147">        assertThatThrownBy(() -&gt; taskService.getVariableLocal(currentTask.getId(), &quot;variable1&quot;, Boolean.class))</span>
+<span class="nc" id="L2148">            .isExactlyInstanceOf(ClassCastException.class);</span>
+<span class="nc" id="L2149">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot; })
+    public void testGetVariableWithCast() {
+<span class="nc" id="L2154">        runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+
+<span class="nc" id="L2156">        org.flowable.task.api.Task currentTask = taskService.createTaskQuery().singleResult();</span>
+
+<span class="nc" id="L2158">        taskService.setVariable(currentTask.getId(), &quot;variable1&quot;, &quot;value1&quot;);</span>
+
+<span class="nc" id="L2160">        String variable = taskService.getVariable(currentTask.getId(), &quot;variable1&quot;, String.class);</span>
+
+<span class="nc" id="L2162">        assertThat(variable).isEqualTo(&quot;value1&quot;);</span>
+<span class="nc" id="L2163">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot; })
+    public void testGetVariableNotExistingWithCast() {
+<span class="nc" id="L2168">        runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+
+<span class="nc" id="L2170">        org.flowable.task.api.Task currentTask = taskService.createTaskQuery().singleResult();</span>
+
+<span class="nc" id="L2172">        String variable = taskService.getVariable(currentTask.getId(), &quot;variable1&quot;, String.class);</span>
+
+<span class="nc" id="L2174">        assertThat(variable).isNull();</span>
+<span class="nc" id="L2175">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot; })
+    public void testGetVariableWithInvalidCast() {
+<span class="nc" id="L2180">        runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+
+<span class="nc" id="L2182">        org.flowable.task.api.Task currentTask = taskService.createTaskQuery().singleResult();</span>
+
+<span class="nc" id="L2184">        taskService.setVariable(currentTask.getId(), &quot;variable1&quot;, &quot;value1&quot;);</span>
+
+<span class="nc" id="L2186">        assertThatThrownBy(() -&gt; taskService.getVariable(currentTask.getId(), &quot;variable1&quot;, Boolean.class))</span>
+<span class="nc" id="L2187">            .isExactlyInstanceOf(ClassCastException.class);</span>
+<span class="nc" id="L2188">    }</span>
+
+    @Test
+    public void testClaimTime() {
+<span class="nc" id="L2192">        org.flowable.task.api.Task task = taskService.newTask();</span>
+<span class="nc" id="L2193">        taskService.saveTask(task);</span>
+<span class="nc" id="L2194">        User user = identityService.newUser(&quot;user&quot;);</span>
+<span class="nc" id="L2195">        identityService.saveUser(user);</span>
+
+<span class="nc" id="L2197">        assertThat(task.getClaimTime()).isNull();</span>
+
+        // Claim task
+<span class="nc" id="L2200">        taskService.claim(task.getId(), user.getId());</span>
+<span class="nc" id="L2201">        task = taskService.createTaskQuery().taskId(task.getId()).singleResult();</span>
+
+<span class="nc" id="L2203">        assertThat(task.getClaimTime()).isNotNull();</span>
+
+        // Unclaim task
+<span class="nc" id="L2206">        taskService.unclaim(task.getId());</span>
+<span class="nc" id="L2207">        task = taskService.createTaskQuery().taskId(task.getId()).singleResult();</span>
+
+<span class="nc" id="L2209">        assertThat(task.getClaimTime()).isNull();</span>
+
+<span class="nc" id="L2211">        taskService.deleteTask(task.getId(), true);</span>
+<span class="nc" id="L2212">        identityService.deleteUser(user.getId());</span>
+<span class="nc" id="L2213">    }</span>
+
+    private static Set&lt;IdentityLinkEntityImpl&gt; getDefaultIdentityLinks() {
+<span class="nc" id="L2216">        IdentityLinkEntityImpl identityLinkEntityCandidateUser = new IdentityLinkEntityImpl();</span>
+<span class="nc" id="L2217">        identityLinkEntityCandidateUser.setUserId(&quot;testUserBuilder&quot;);</span>
+<span class="nc" id="L2218">        identityLinkEntityCandidateUser.setType(IdentityLinkType.CANDIDATE);</span>
+<span class="nc" id="L2219">        IdentityLinkEntityImpl identityLinkEntityCandidateGroup = new IdentityLinkEntityImpl();</span>
+<span class="nc" id="L2220">        identityLinkEntityCandidateGroup.setGroupId(&quot;testGroupBuilder&quot;);</span>
+<span class="nc" id="L2221">        identityLinkEntityCandidateGroup.setType(IdentityLinkType.CANDIDATE);</span>
+
+<span class="nc" id="L2223">        return Stream.of(</span>
+                identityLinkEntityCandidateUser,
+                identityLinkEntityCandidateGroup
+<span class="nc" id="L2226">        ).collect(toSet());</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

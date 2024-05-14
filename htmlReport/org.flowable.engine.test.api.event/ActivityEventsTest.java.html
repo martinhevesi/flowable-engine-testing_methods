@@ -1,0 +1,961 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ActivityEventsTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.api.event</a> &gt; <span class="el_source">ActivityEventsTest.java</span></div><h1>ActivityEventsTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.test.api.event;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.fail;
+
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Collections;
+import java.util.List;
+
+import org.flowable.bpmn.model.BoundaryEvent;
+import org.flowable.bpmn.model.MessageEventDefinition;
+import org.flowable.bpmn.model.SignalEventDefinition;
+import org.flowable.bpmn.model.TimerEventDefinition;
+import org.flowable.common.engine.api.delegate.event.FlowableEngineEventType;
+import org.flowable.common.engine.api.delegate.event.FlowableEvent;
+import org.flowable.engine.delegate.event.FlowableActivityCancelledEvent;
+import org.flowable.engine.delegate.event.FlowableActivityEvent;
+import org.flowable.engine.delegate.event.FlowableCancelledEvent;
+import org.flowable.engine.delegate.event.FlowableErrorEvent;
+import org.flowable.engine.delegate.event.FlowableMessageEvent;
+import org.flowable.engine.delegate.event.FlowableSignalEvent;
+import org.flowable.engine.delegate.event.impl.FlowableActivityCancelledEventImpl;
+import org.flowable.engine.delegate.event.impl.FlowableActivityEventImpl;
+import org.flowable.engine.delegate.event.impl.FlowableSignalEventImpl;
+import org.flowable.engine.event.EventLogEntry;
+import org.flowable.engine.impl.event.logger.EventLogger;
+import org.flowable.engine.impl.test.PluggableFlowableTestCase;
+import org.flowable.engine.runtime.Execution;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.test.Deployment;
+import org.flowable.job.api.Job;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+/**
+ * Test case for all {@link FlowableEvent}s related to activities.
+ *
+ * @author Joram Barrez
+ * @author Tijs Rademakers
+ */
+<span class="nc" id="L55">public class ActivityEventsTest extends PluggableFlowableTestCase {</span>
+
+    private TestFlowableActivityEventListener listener;
+
+    protected EventLogger databaseEventLogger;
+
+    @BeforeEach
+    protected void setUp() throws Exception {
+<span class="nc" id="L63">        listener = new TestFlowableActivityEventListener(true);</span>
+<span class="nc" id="L64">        processEngineConfiguration.getEventDispatcher().addEventListener(listener);</span>
+
+        // Database event logger setup
+<span class="nc" id="L67">        databaseEventLogger = new EventLogger(processEngineConfiguration.getClock(), processEngineConfiguration.getObjectMapper());</span>
+<span class="nc" id="L68">        runtimeService.addEventListener(databaseEventLogger);</span>
+<span class="nc" id="L69">    }</span>
+
+    @AfterEach
+    protected void tearDown() throws Exception {
+
+<span class="nc bnc" id="L74" title="All 2 branches missed.">        if (listener != null) {</span>
+<span class="nc" id="L75">            listener.clearEventsReceived();</span>
+<span class="nc" id="L76">            processEngineConfiguration.getEventDispatcher().removeEventListener(listener);</span>
+        }
+
+        // Remove entries
+<span class="nc bnc" id="L80" title="All 2 branches missed.">        for (EventLogEntry eventLogEntry : managementService.getEventLogEntries(null, null)) {</span>
+<span class="nc" id="L81">            managementService.deleteEventLogEntry(eventLogEntry.getLogNumber());</span>
+<span class="nc" id="L82">        }</span>
+
+        // Database event logger teardown
+<span class="nc" id="L85">        runtimeService.removeEventListener(databaseEventLogger);</span>
+
+<span class="nc" id="L87">    }</span>
+
+    /**
+     * Test starting and completed events for activity. Since these events are dispatched in the core of the PVM, not all individual activity-type is tested. Rather, we test the main types (tasks,
+     * gateways, events, subprocesses).
+     */
+    @Test
+    @Deployment
+    public void testActivityEvents() throws Exception {
+        // We're interested in the raw events, alter the listener to keep those as well
+<span class="nc" id="L97">        listener.setIgnoreRawActivityEvents(false);</span>
+
+<span class="nc" id="L99">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;activityProcess&quot;);</span>
+<span class="nc" id="L100">        assertThat(processInstance).isNotNull();</span>
+
+<span class="nc" id="L102">        assertThat(listener.getEventsReceived()).hasSize(3);</span>
+
+        // Start-event activity started
+<span class="nc" id="L105">        FlowableActivityEvent activityEvent = (FlowableActivityEvent) listener.getEventsReceived().get(0);</span>
+<span class="nc" id="L106">        assertThat(activityEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_STARTED);</span>
+<span class="nc" id="L107">        assertThat(activityEvent.getActivityId()).isEqualTo(&quot;theStart&quot;);</span>
+<span class="nc" id="L108">        assertThat(processInstance.getId()).isNotEqualTo(activityEvent.getExecutionId());</span>
+<span class="nc" id="L109">        assertThat(activityEvent.getProcessInstanceId()).isEqualTo(processInstance.getProcessInstanceId());</span>
+<span class="nc" id="L110">        assertThat(activityEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+
+        // Start-event finished
+<span class="nc" id="L113">        activityEvent = (FlowableActivityEvent) listener.getEventsReceived().get(1);</span>
+<span class="nc" id="L114">        assertThat(activityEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_COMPLETED);</span>
+<span class="nc" id="L115">        assertThat(activityEvent.getActivityId()).isEqualTo(&quot;theStart&quot;);</span>
+<span class="nc" id="L116">        assertThat(processInstance.getId()).isNotEqualTo(activityEvent.getExecutionId());</span>
+<span class="nc" id="L117">        assertThat(activityEvent.getProcessInstanceId()).isEqualTo(processInstance.getProcessInstanceId());</span>
+<span class="nc" id="L118">        assertThat(activityEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+
+        // Usertask started
+<span class="nc" id="L121">        activityEvent = (FlowableActivityEvent) listener.getEventsReceived().get(2);</span>
+<span class="nc" id="L122">        assertThat(activityEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_STARTED);</span>
+<span class="nc" id="L123">        assertThat(activityEvent.getActivityId()).isEqualTo(&quot;shipOrder&quot;);</span>
+<span class="nc" id="L124">        assertThat(processInstance.getId()).isNotEqualTo(activityEvent.getExecutionId());</span>
+<span class="nc" id="L125">        assertThat(activityEvent.getProcessInstanceId()).isEqualTo(processInstance.getProcessInstanceId());</span>
+<span class="nc" id="L126">        assertThat(activityEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+
+        // Complete usertask
+<span class="nc" id="L129">        listener.clearEventsReceived();</span>
+<span class="nc" id="L130">        org.flowable.task.api.Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L131">        assertThat(task).isNotNull();</span>
+<span class="nc" id="L132">        taskService.complete(task.getId());</span>
+
+        // Subprocess execution is created
+<span class="nc" id="L135">        Execution execution = runtimeService.createExecutionQuery().parentId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L136">        assertThat(execution).isNotNull();</span>
+<span class="nc" id="L137">        assertThat(listener.getEventsReceived()).hasSize(5);</span>
+<span class="nc" id="L138">        activityEvent = (FlowableActivityEvent) listener.getEventsReceived().get(0);</span>
+<span class="nc" id="L139">        assertThat(activityEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_COMPLETED);</span>
+<span class="nc" id="L140">        assertThat(activityEvent.getActivityId()).isEqualTo(&quot;shipOrder&quot;);</span>
+<span class="nc" id="L141">        assertThat(processInstance.getId()).isNotEqualTo(activityEvent.getExecutionId());</span>
+<span class="nc" id="L142">        assertThat(activityEvent.getProcessInstanceId()).isEqualTo(processInstance.getProcessInstanceId());</span>
+<span class="nc" id="L143">        assertThat(activityEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+
+<span class="nc" id="L145">        activityEvent = (FlowableActivityEvent) listener.getEventsReceived().get(1);</span>
+<span class="nc" id="L146">        assertThat(activityEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_STARTED);</span>
+<span class="nc" id="L147">        assertThat(activityEvent.getActivityId()).isEqualTo(&quot;subProcess&quot;);</span>
+<span class="nc" id="L148">        assertThat(activityEvent.getExecutionId()).isEqualTo(execution.getId());</span>
+<span class="nc" id="L149">        assertThat(activityEvent.getProcessInstanceId()).isEqualTo(processInstance.getProcessInstanceId());</span>
+<span class="nc" id="L150">        assertThat(activityEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+
+<span class="nc" id="L152">        activityEvent = (FlowableActivityEvent) listener.getEventsReceived().get(2);</span>
+<span class="nc" id="L153">        assertThat(activityEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_STARTED);</span>
+<span class="nc" id="L154">        assertThat(activityEvent.getActivityId()).isEqualTo(&quot;subProcessStart&quot;);</span>
+<span class="nc" id="L155">        assertThat(execution.getId()).isNotEqualTo(activityEvent.getExecutionId());</span>
+<span class="nc" id="L156">        assertThat(activityEvent.getProcessInstanceId()).isEqualTo(processInstance.getProcessInstanceId());</span>
+<span class="nc" id="L157">        assertThat(activityEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+
+<span class="nc" id="L159">        activityEvent = (FlowableActivityEvent) listener.getEventsReceived().get(3);</span>
+<span class="nc" id="L160">        assertThat(activityEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_COMPLETED);</span>
+<span class="nc" id="L161">        assertThat(activityEvent.getActivityId()).isEqualTo(&quot;subProcessStart&quot;);</span>
+<span class="nc" id="L162">        assertThat(execution.getId()).isNotEqualTo(activityEvent.getExecutionId());</span>
+<span class="nc" id="L163">        assertThat(activityEvent.getProcessInstanceId()).isEqualTo(processInstance.getProcessInstanceId());</span>
+<span class="nc" id="L164">        assertThat(activityEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+
+<span class="nc" id="L166">        activityEvent = (FlowableActivityEvent) listener.getEventsReceived().get(4);</span>
+<span class="nc" id="L167">        assertThat(activityEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_STARTED);</span>
+<span class="nc" id="L168">        assertThat(activityEvent.getActivityId()).isEqualTo(&quot;subTask&quot;);</span>
+<span class="nc" id="L169">        assertThat(execution.getId()).isNotEqualTo(activityEvent.getExecutionId());</span>
+<span class="nc" id="L170">        assertThat(activityEvent.getProcessInstanceId()).isEqualTo(processInstance.getProcessInstanceId());</span>
+<span class="nc" id="L171">        assertThat(activityEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L172">        listener.clearEventsReceived();</span>
+
+        // Check gateway and intermediate throw event
+<span class="nc" id="L175">        org.flowable.task.api.Task subTask = taskService.createTaskQuery().processInstanceId(processInstance.getProcessInstanceId()).singleResult();</span>
+<span class="nc" id="L176">        assertThat(subTask).isNotNull();</span>
+
+<span class="nc" id="L178">        taskService.complete(subTask.getId());</span>
+
+<span class="nc" id="L180">        assertThat(listener.getEventsReceived()).hasSize(10);</span>
+
+<span class="nc" id="L182">        activityEvent = (FlowableActivityEvent) listener.getEventsReceived().get(0);</span>
+<span class="nc" id="L183">        assertThat(activityEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_COMPLETED);</span>
+<span class="nc" id="L184">        assertThat(activityEvent.getActivityId()).isEqualTo(&quot;subTask&quot;);</span>
+
+<span class="nc" id="L186">        activityEvent = (FlowableActivityEvent) listener.getEventsReceived().get(1);</span>
+<span class="nc" id="L187">        assertThat(activityEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_STARTED);</span>
+<span class="nc" id="L188">        assertThat(activityEvent.getActivityId()).isEqualTo(&quot;gateway&quot;);</span>
+
+<span class="nc" id="L190">        activityEvent = (FlowableActivityEvent) listener.getEventsReceived().get(2);</span>
+<span class="nc" id="L191">        assertThat(activityEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_COMPLETED);</span>
+<span class="nc" id="L192">        assertThat(activityEvent.getActivityId()).isEqualTo(&quot;gateway&quot;);</span>
+
+<span class="nc" id="L194">        activityEvent = (FlowableActivityEvent) listener.getEventsReceived().get(3);</span>
+<span class="nc" id="L195">        assertThat(activityEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_STARTED);</span>
+<span class="nc" id="L196">        assertThat(activityEvent.getActivityId()).isEqualTo(&quot;throwMessageEvent&quot;);</span>
+
+<span class="nc" id="L198">        activityEvent = (FlowableActivityEvent) listener.getEventsReceived().get(4);</span>
+<span class="nc" id="L199">        assertThat(activityEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_COMPLETED);</span>
+<span class="nc" id="L200">        assertThat(activityEvent.getActivityId()).isEqualTo(&quot;throwMessageEvent&quot;);</span>
+
+<span class="nc" id="L202">        activityEvent = (FlowableActivityEvent) listener.getEventsReceived().get(5);</span>
+<span class="nc" id="L203">        assertThat(activityEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_STARTED);</span>
+<span class="nc" id="L204">        assertThat(activityEvent.getActivityId()).isEqualTo(&quot;endSubProcess&quot;);</span>
+
+<span class="nc" id="L206">        activityEvent = (FlowableActivityEvent) listener.getEventsReceived().get(6);</span>
+<span class="nc" id="L207">        assertThat(activityEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_COMPLETED);</span>
+<span class="nc" id="L208">        assertThat(activityEvent.getActivityId()).isEqualTo(&quot;endSubProcess&quot;);</span>
+
+<span class="nc" id="L210">        activityEvent = (FlowableActivityEvent) listener.getEventsReceived().get(7);</span>
+<span class="nc" id="L211">        assertThat(activityEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_COMPLETED);</span>
+<span class="nc" id="L212">        assertThat(activityEvent.getActivityId()).isEqualTo(&quot;subProcess&quot;);</span>
+
+<span class="nc" id="L214">        activityEvent = (FlowableActivityEvent) listener.getEventsReceived().get(8);</span>
+<span class="nc" id="L215">        assertThat(activityEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_STARTED);</span>
+<span class="nc" id="L216">        assertThat(activityEvent.getActivityId()).isEqualTo(&quot;theEnd&quot;);</span>
+
+<span class="nc" id="L218">        activityEvent = (FlowableActivityEvent) listener.getEventsReceived().get(9);</span>
+<span class="nc" id="L219">        assertThat(activityEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_COMPLETED);</span>
+<span class="nc" id="L220">        assertThat(activityEvent.getActivityId()).isEqualTo(&quot;theEnd&quot;);</span>
+<span class="nc" id="L221">    }</span>
+
+    /**
+     * Test events related to signalling
+     */
+    @Test
+    @Deployment
+    public void testActivitySignalEvents() throws Exception {
+        // Two paths are active in the process, one receive-task and one intermediate catching signal-event
+<span class="nc" id="L230">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;signalProcess&quot;);</span>
+<span class="nc" id="L231">        assertThat(processInstance).isNotNull();</span>
+
+        // Check regular signal through API
+<span class="nc" id="L234">        Execution executionWithSignal = runtimeService.createExecutionQuery().activityId(&quot;receivePayment&quot;).singleResult();</span>
+<span class="nc" id="L235">        assertThat(executionWithSignal).isNotNull();</span>
+
+<span class="nc" id="L237">        Execution signalExecution = runtimeService.createExecutionQuery().signalEventSubscriptionName(&quot;alert&quot;).singleResult();</span>
+<span class="nc" id="L238">        assertThat(signalExecution).isNotNull();</span>
+
+<span class="nc" id="L240">        runtimeService.trigger(executionWithSignal.getId());</span>
+<span class="nc" id="L241">        assertThat(listener.getEventsReceived()).hasSize(2);</span>
+
+<span class="nc" id="L243">        assertThat(listener.getEventsReceived().get(0)).isInstanceOf(FlowableSignalEvent.class);</span>
+<span class="nc" id="L244">        FlowableSignalEvent signalEvent = (FlowableSignalEvent) listener.getEventsReceived().get(0);</span>
+<span class="nc" id="L245">        assertThat(signalEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_SIGNAL_WAITING);</span>
+<span class="nc" id="L246">        assertThat(signalEvent.getActivityId()).isEqualTo(&quot;shipOrder&quot;);</span>
+<span class="nc" id="L247">        assertThat(signalEvent.getExecutionId()).isEqualTo(signalExecution.getId());</span>
+<span class="nc" id="L248">        assertThat(signalEvent.getProcessInstanceId()).isEqualTo(signalExecution.getProcessInstanceId());</span>
+<span class="nc" id="L249">        assertThat(signalEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L250">        assertThat(signalEvent.getSignalName()).isEqualTo(&quot;alert&quot;);</span>
+<span class="nc" id="L251">        assertThat(signalEvent.getSignalData()).isNull();</span>
+
+<span class="nc" id="L253">        assertThat(listener.getEventsReceived().get(1)).isInstanceOf(FlowableSignalEvent.class);</span>
+<span class="nc" id="L254">        signalEvent = (FlowableSignalEvent) listener.getEventsReceived().get(1);</span>
+<span class="nc" id="L255">        assertThat(signalEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_SIGNALED);</span>
+<span class="nc" id="L256">        assertThat(signalEvent.getActivityId()).isEqualTo(&quot;receivePayment&quot;);</span>
+<span class="nc" id="L257">        assertThat(signalEvent.getExecutionId()).isEqualTo(executionWithSignal.getId());</span>
+<span class="nc" id="L258">        assertThat(signalEvent.getProcessInstanceId()).isEqualTo(executionWithSignal.getProcessInstanceId());</span>
+<span class="nc" id="L259">        assertThat(signalEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L260">        assertThat(signalEvent.getSignalName()).isNull();</span>
+<span class="nc" id="L261">        assertThat(signalEvent.getSignalData()).isNull();</span>
+<span class="nc" id="L262">        listener.clearEventsReceived();</span>
+
+        // Check signal using event, and pass in additional payload
+<span class="nc" id="L265">        Execution executionWithSignalEvent = runtimeService.createExecutionQuery().activityId(&quot;shipOrder&quot;).singleResult();</span>
+<span class="nc" id="L266">        runtimeService.signalEventReceived(&quot;alert&quot;, executionWithSignalEvent.getId(), Collections.singletonMap(&quot;test&quot;, (Object) &quot;test&quot;));</span>
+<span class="nc" id="L267">        assertThat(listener.getEventsReceived()).hasSize(1);</span>
+<span class="nc" id="L268">        assertThat(listener.getEventsReceived().get(0)).isInstanceOf(FlowableSignalEvent.class);</span>
+<span class="nc" id="L269">        signalEvent = (FlowableSignalEvent) listener.getEventsReceived().get(0);</span>
+<span class="nc" id="L270">        assertThat(signalEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_SIGNALED);</span>
+<span class="nc" id="L271">        assertThat(signalEvent.getActivityId()).isEqualTo(&quot;shipOrder&quot;);</span>
+<span class="nc" id="L272">        assertThat(signalEvent.getExecutionId()).isEqualTo(executionWithSignalEvent.getId());</span>
+<span class="nc" id="L273">        assertThat(signalEvent.getProcessInstanceId()).isEqualTo(executionWithSignalEvent.getProcessInstanceId());</span>
+<span class="nc" id="L274">        assertThat(signalEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L275">        assertThat(signalEvent.getSignalName()).isEqualTo(&quot;alert&quot;);</span>
+<span class="nc" id="L276">        assertThat(signalEvent.getSignalData()).isNotNull();</span>
+<span class="nc" id="L277">        listener.clearEventsReceived();</span>
+
+<span class="nc" id="L279">        assertDatabaseEventPresent(FlowableEngineEventType.ACTIVITY_SIGNALED);</span>
+<span class="nc" id="L280">    }</span>
+
+    /**
+     * Test to verify if signals coming from an intermediate throw-event trigger the right events to be dispatched.
+     */
+    @Test
+    @Deployment
+    public void testActivitySignalEventsWithinProcess() throws Exception {
+<span class="nc" id="L288">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;signalProcess&quot;);</span>
+<span class="nc" id="L289">        assertThat(processInstance).isNotNull();</span>
+
+<span class="nc" id="L291">        org.flowable.task.api.Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L292">        assertThat(task).isNotNull();</span>
+
+<span class="nc" id="L294">        Execution executionWithSignalEvent = runtimeService.createExecutionQuery().activityId(&quot;shipOrder&quot;).singleResult();</span>
+
+<span class="nc" id="L296">        taskService.complete(task.getId());</span>
+<span class="nc" id="L297">        assertThat(listener.getEventsReceived()).hasSize(2);</span>
+
+<span class="nc" id="L299">        assertThat(listener.getEventsReceived().get(0)).isInstanceOf(FlowableSignalEvent.class);</span>
+<span class="nc" id="L300">        FlowableSignalEvent signalEvent = (FlowableSignalEvent) listener.getEventsReceived().get(0);</span>
+<span class="nc" id="L301">        assertThat(signalEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_SIGNAL_WAITING);</span>
+<span class="nc" id="L302">        assertThat(signalEvent.getActivityId()).isEqualTo(&quot;shipOrder&quot;);</span>
+<span class="nc" id="L303">        assertThat(signalEvent.getExecutionId()).isEqualTo(executionWithSignalEvent.getId());</span>
+<span class="nc" id="L304">        assertThat(signalEvent.getProcessInstanceId()).isEqualTo(executionWithSignalEvent.getProcessInstanceId());</span>
+<span class="nc" id="L305">        assertThat(signalEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L306">        assertThat(signalEvent.getSignalName()).isEqualTo(&quot;alert&quot;);</span>
+<span class="nc" id="L307">        assertThat(signalEvent.getSignalData()).isNull();</span>
+
+<span class="nc" id="L309">        assertThat(listener.getEventsReceived().get(1)).isInstanceOf(FlowableSignalEvent.class);</span>
+<span class="nc" id="L310">        signalEvent = (FlowableSignalEvent) listener.getEventsReceived().get(1);</span>
+<span class="nc" id="L311">        assertThat(signalEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_SIGNALED);</span>
+<span class="nc" id="L312">        assertThat(signalEvent.getActivityId()).isEqualTo(&quot;shipOrder&quot;);</span>
+<span class="nc" id="L313">        assertThat(signalEvent.getExecutionId()).isEqualTo(executionWithSignalEvent.getId());</span>
+<span class="nc" id="L314">        assertThat(signalEvent.getProcessInstanceId()).isEqualTo(executionWithSignalEvent.getProcessInstanceId());</span>
+<span class="nc" id="L315">        assertThat(signalEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L316">        assertThat(signalEvent.getSignalName()).isEqualTo(&quot;alert&quot;);</span>
+<span class="nc" id="L317">        assertThat(signalEvent.getSignalData()).isNull();</span>
+<span class="nc" id="L318">    }</span>
+
+    /**
+     * Test events related to message events, called from the API.
+     */
+    @Test
+    @Deployment
+    public void testActivityMessageEvents() throws Exception {
+<span class="nc" id="L326">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;messageProcess&quot;);</span>
+<span class="nc" id="L327">        assertThat(processInstance).isNotNull();</span>
+
+<span class="nc" id="L329">        Execution executionWithMessage = runtimeService.createExecutionQuery().activityId(&quot;shipOrder&quot;).singleResult();</span>
+<span class="nc" id="L330">        assertThat(executionWithMessage).isNotNull();</span>
+
+<span class="nc" id="L332">        runtimeService.messageEventReceived(&quot;messageName&quot;, executionWithMessage.getId());</span>
+<span class="nc" id="L333">        assertThat(listener.getEventsReceived()).hasSize(2);</span>
+
+        // First, a message waiting event is expected
+<span class="nc" id="L336">        assertThat(listener.getEventsReceived().get(0)).isInstanceOf(FlowableMessageEvent.class);</span>
+<span class="nc" id="L337">        FlowableMessageEvent messageEvent = (FlowableMessageEvent) listener.getEventsReceived().get(0);</span>
+<span class="nc" id="L338">        assertThat(messageEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_MESSAGE_WAITING);</span>
+<span class="nc" id="L339">        assertThat(messageEvent.getActivityId()).isEqualTo(&quot;shipOrder&quot;);</span>
+<span class="nc" id="L340">        assertThat(messageEvent.getExecutionId()).isEqualTo(executionWithMessage.getId());</span>
+<span class="nc" id="L341">        assertThat(messageEvent.getProcessInstanceId()).isEqualTo(executionWithMessage.getProcessInstanceId());</span>
+<span class="nc" id="L342">        assertThat(messageEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L343">        assertThat(messageEvent.getMessageName()).isEqualTo(&quot;messageName&quot;);</span>
+<span class="nc" id="L344">        assertThat(messageEvent.getMessageData()).isNull();</span>
+
+        // Second, a message received event is expected
+<span class="nc" id="L347">        assertThat(listener.getEventsReceived().get(1)).isInstanceOf(FlowableMessageEvent.class);</span>
+<span class="nc" id="L348">        messageEvent = (FlowableMessageEvent) listener.getEventsReceived().get(1);</span>
+<span class="nc" id="L349">        assertThat(messageEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_MESSAGE_RECEIVED);</span>
+<span class="nc" id="L350">        assertThat(messageEvent.getActivityId()).isEqualTo(&quot;shipOrder&quot;);</span>
+<span class="nc" id="L351">        assertThat(messageEvent.getExecutionId()).isEqualTo(executionWithMessage.getId());</span>
+<span class="nc" id="L352">        assertThat(messageEvent.getProcessInstanceId()).isEqualTo(executionWithMessage.getProcessInstanceId());</span>
+<span class="nc" id="L353">        assertThat(messageEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L354">        assertThat(messageEvent.getMessageName()).isEqualTo(&quot;messageName&quot;);</span>
+<span class="nc" id="L355">        assertThat(messageEvent.getMessageData()).isNull();</span>
+
+<span class="nc" id="L357">        assertDatabaseEventPresent(FlowableEngineEventType.ACTIVITY_MESSAGE_RECEIVED);</span>
+<span class="nc" id="L358">    }</span>
+
+    /**
+     * Test events related to message events, called from the API, targeting an event-subprocess.
+     */
+    @Test
+    @Deployment
+    public void testActivityMessageEventsInEventSubprocess() throws Exception {
+<span class="nc" id="L366">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;messageProcess&quot;);</span>
+<span class="nc" id="L367">        assertThat(processInstance).isNotNull();</span>
+
+<span class="nc" id="L369">        Execution executionWithMessage = runtimeService.createExecutionQuery().messageEventSubscriptionName(&quot;messageName&quot;).singleResult();</span>
+<span class="nc" id="L370">        assertThat(executionWithMessage).isNotNull();</span>
+
+<span class="nc" id="L372">        runtimeService.messageEventReceived(&quot;messageName&quot;, executionWithMessage.getId());</span>
+
+        // Only a message events should be present, no signal-event, since the event-subprocess is
+        // not signaled, but executed instead
+<span class="nc" id="L376">        assertThat(listener.getEventsReceived()).hasSize(3);</span>
+
+        // A message waiting event is expected
+<span class="nc" id="L379">        assertThat(listener.getEventsReceived().get(0)).isInstanceOf(FlowableMessageEvent.class);</span>
+<span class="nc" id="L380">        FlowableMessageEvent messageEvent = (FlowableMessageEvent) listener.getEventsReceived().get(0);</span>
+<span class="nc" id="L381">        assertThat(messageEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_MESSAGE_WAITING);</span>
+<span class="nc" id="L382">        assertThat(messageEvent.getActivityId()).isEqualTo(&quot;catchMessage&quot;);</span>
+<span class="nc" id="L383">        assertThat(messageEvent.getExecutionId()).isEqualTo(executionWithMessage.getId());</span>
+<span class="nc" id="L384">        assertThat(messageEvent.getProcessInstanceId()).isEqualTo(executionWithMessage.getProcessInstanceId());</span>
+<span class="nc" id="L385">        assertThat(messageEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L386">        assertThat(messageEvent.getMessageName()).isEqualTo(&quot;messageName&quot;);</span>
+<span class="nc" id="L387">        assertThat(messageEvent.getMessageData()).isNull();</span>
+
+        // A message received event is expected
+<span class="nc" id="L390">        assertThat(listener.getEventsReceived().get(1)).isInstanceOf(FlowableMessageEvent.class);</span>
+<span class="nc" id="L391">        messageEvent = (FlowableMessageEvent) listener.getEventsReceived().get(1);</span>
+<span class="nc" id="L392">        assertThat(messageEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_MESSAGE_RECEIVED);</span>
+<span class="nc" id="L393">        assertThat(messageEvent.getActivityId()).isEqualTo(&quot;catchMessage&quot;);</span>
+<span class="nc" id="L394">        assertThat(messageEvent.getExecutionId()).isEqualTo(executionWithMessage.getId());</span>
+<span class="nc" id="L395">        assertThat(messageEvent.getProcessInstanceId()).isEqualTo(executionWithMessage.getProcessInstanceId());</span>
+<span class="nc" id="L396">        assertThat(messageEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L397">        assertThat(messageEvent.getMessageName()).isEqualTo(&quot;messageName&quot;);</span>
+<span class="nc" id="L398">        assertThat(messageEvent.getMessageData()).isNull();</span>
+
+        // A message received event is expected
+<span class="nc" id="L401">        assertThat(listener.getEventsReceived().get(2)).isInstanceOf(FlowableActivityCancelledEventImpl.class);</span>
+<span class="nc" id="L402">        FlowableActivityCancelledEventImpl activityEvent = (FlowableActivityCancelledEventImpl) listener.getEventsReceived().get(2);</span>
+<span class="nc" id="L403">        assertThat(activityEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_CANCELLED);</span>
+<span class="nc" id="L404">        assertThat(activityEvent.getActivityId()).isEqualTo(&quot;shipOrder&quot;);</span>
+
+<span class="nc" id="L406">        assertDatabaseEventPresent(FlowableEngineEventType.ACTIVITY_MESSAGE_WAITING);</span>
+<span class="nc" id="L407">        assertDatabaseEventPresent(FlowableEngineEventType.ACTIVITY_MESSAGE_RECEIVED);</span>
+<span class="nc" id="L408">    }</span>
+
+    /**
+     * Test events related to message events, called from the API, targeting an event-subprocess.
+     */
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/api/event/ActivityEventsTest.testActivityMessageEventsInEventSubprocess.bpmn20.xml&quot;)
+    public void testActivityMessageEventsInEventSubprocessForCancel() throws Exception {
+<span class="nc" id="L416">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;messageProcess&quot;);</span>
+<span class="nc" id="L417">        assertThat(processInstance).isNotNull();</span>
+
+<span class="nc" id="L419">        Execution executionWithMessage = runtimeService.createExecutionQuery().messageEventSubscriptionName(&quot;messageName&quot;).singleResult();</span>
+<span class="nc" id="L420">        assertThat(executionWithMessage).isNotNull();</span>
+
+<span class="nc" id="L422">        org.flowable.task.api.Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L423">        assertThat(task.getName()).isEqualTo(&quot;Wait&quot;);</span>
+
+<span class="nc" id="L425">        taskService.complete(task.getId());</span>
+
+        // Only a message events should be present, no signal-event, since the event-subprocess is
+        // not signaled, but executed instead
+<span class="nc" id="L429">        assertThat(listener.getEventsReceived()).hasSize(2);</span>
+
+        // A message waiting event is expected
+<span class="nc" id="L432">        assertThat(listener.getEventsReceived().get(0)).isInstanceOf(FlowableMessageEvent.class);</span>
+<span class="nc" id="L433">        FlowableMessageEvent messageEvent = (FlowableMessageEvent) listener.getEventsReceived().get(0);</span>
+<span class="nc" id="L434">        assertThat(messageEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_MESSAGE_WAITING);</span>
+<span class="nc" id="L435">        assertThat(messageEvent.getActivityId()).isEqualTo(&quot;catchMessage&quot;);</span>
+<span class="nc" id="L436">        assertThat(messageEvent.getExecutionId()).isEqualTo(executionWithMessage.getId());</span>
+<span class="nc" id="L437">        assertThat(messageEvent.getProcessInstanceId()).isEqualTo(executionWithMessage.getProcessInstanceId());</span>
+<span class="nc" id="L438">        assertThat(messageEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L439">        assertThat(messageEvent.getMessageName()).isEqualTo(&quot;messageName&quot;);</span>
+<span class="nc" id="L440">        assertThat(messageEvent.getMessageData()).isNull();</span>
+
+        // A message received event is expected
+<span class="nc" id="L443">        assertThat(listener.getEventsReceived().get(1)).isInstanceOf(FlowableMessageEvent.class);</span>
+<span class="nc" id="L444">        messageEvent = (FlowableMessageEvent) listener.getEventsReceived().get(1);</span>
+<span class="nc" id="L445">        assertThat(messageEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_MESSAGE_CANCELLED);</span>
+<span class="nc" id="L446">        assertThat(messageEvent.getActivityId()).isEqualTo(&quot;catchMessage&quot;);</span>
+<span class="nc" id="L447">        assertThat(messageEvent.getExecutionId()).isEqualTo(executionWithMessage.getId());</span>
+<span class="nc" id="L448">        assertThat(messageEvent.getProcessInstanceId()).isEqualTo(executionWithMessage.getProcessInstanceId());</span>
+<span class="nc" id="L449">        assertThat(messageEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L450">        assertThat(messageEvent.getMessageName()).isEqualTo(&quot;messageName&quot;);</span>
+<span class="nc" id="L451">        assertThat(messageEvent.getMessageData()).isNull();</span>
+
+<span class="nc" id="L453">        assertDatabaseEventPresent(FlowableEngineEventType.ACTIVITY_MESSAGE_WAITING);</span>
+<span class="nc" id="L454">    }</span>
+
+    /**
+     * Test events related to compensation events.
+     */
+    @Test
+    @Deployment
+    public void testActivityCompensationEvents() throws Exception {
+<span class="nc" id="L462">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;compensationProcess&quot;);</span>
+<span class="nc" id="L463">        assertThat(processInstance).isNotNull();</span>
+
+<span class="nc" id="L465">        org.flowable.task.api.Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L466">        assertThat(task).isNotNull();</span>
+
+        // Complete task, next a compensation event will be thrown
+<span class="nc" id="L469">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L471">        assertThat(listener.getEventsReceived()).hasSize(1);</span>
+
+        // A compensate-event is expected
+<span class="nc" id="L474">        assertThat(listener.getEventsReceived().get(0)).isInstanceOf(FlowableActivityEvent.class);</span>
+<span class="nc" id="L475">        FlowableActivityEvent activityEvent = (FlowableActivityEvent) listener.getEventsReceived().get(0);</span>
+<span class="nc" id="L476">        assertThat(activityEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_COMPENSATE);</span>
+<span class="nc" id="L477">        assertThat(activityEvent.getActivityId()).isEqualTo(&quot;usertask&quot;);</span>
+        // A new execution is created for the compensation-event, this should be visible in the event
+<span class="nc" id="L479">        assertThat(processInstance.getId()).isNotEqualTo(activityEvent.getExecutionId());</span>
+<span class="nc" id="L480">        assertThat(activityEvent.getProcessInstanceId()).isEqualTo(processInstance.getProcessInstanceId());</span>
+<span class="nc" id="L481">        assertThat(activityEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+
+        // Check if the process is still alive
+<span class="nc" id="L484">        processInstance = runtimeService.createProcessInstanceQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+
+<span class="nc" id="L486">        assertThat(processInstance).isNotNull();</span>
+
+<span class="nc" id="L488">        assertDatabaseEventPresent(FlowableEngineEventType.ACTIVITY_COMPENSATE);</span>
+<span class="nc" id="L489">    }</span>
+
+    /**
+     * Test events related to error-events
+     */
+    @Test
+    @Deployment
+    public void testActivityErrorEvents() throws Exception {
+<span class="nc" id="L497">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;errorProcess&quot;);</span>
+<span class="nc" id="L498">        assertThat(processInstance).isNotNull();</span>
+
+        // Error-handling should have ended the process
+<span class="nc" id="L501">        ProcessInstance afterErrorInstance = runtimeService.createProcessInstanceQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L502">        assertThat(afterErrorInstance).isNull();</span>
+
+<span class="nc" id="L504">        FlowableErrorEvent errorEvent = null;</span>
+
+<span class="nc bnc" id="L506" title="All 2 branches missed.">        for (FlowableEvent event : listener.getEventsReceived()) {</span>
+<span class="nc bnc" id="L507" title="All 2 branches missed.">            if (event instanceof FlowableErrorEvent) {</span>
+<span class="nc bnc" id="L508" title="All 2 branches missed.">                if (errorEvent == null) {</span>
+<span class="nc" id="L509">                    errorEvent = (FlowableErrorEvent) event;</span>
+                } else {
+<span class="nc" id="L511">                    fail(&quot;Only one ActivityErrorEvent expected&quot;);</span>
+                }
+            }
+<span class="nc" id="L514">        }</span>
+
+<span class="nc" id="L516">        assertThat(errorEvent).isNotNull();</span>
+<span class="nc" id="L517">        assertThat(errorEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_ERROR_RECEIVED);</span>
+<span class="nc" id="L518">        assertThat(errorEvent.getActivityId()).isEqualTo(&quot;catchError&quot;);</span>
+<span class="nc" id="L519">        assertThat(errorEvent.getErrorId()).isEqualTo(&quot;myError&quot;);</span>
+<span class="nc" id="L520">        assertThat(errorEvent.getErrorCode()).isEqualTo(&quot;123&quot;);</span>
+<span class="nc" id="L521">        assertThat(errorEvent.getProcessInstanceId()).isEqualTo(processInstance.getId());</span>
+<span class="nc" id="L522">        assertThat(errorEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L523">        assertThat(processInstance.getId()).isNotEqualTo(errorEvent.getExecutionId());</span>
+<span class="nc" id="L524">    }</span>
+
+    /**
+     * Test events related to error-events, thrown from within process-execution (eg. service-task).
+     */
+    @Test
+    @Deployment
+    public void testActivityErrorEventsFromBPMNError() throws Exception {
+<span class="nc" id="L532">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;errorProcess&quot;);</span>
+<span class="nc" id="L533">        assertThat(processInstance).isNotNull();</span>
+
+        // Error-handling should have ended the process
+<span class="nc" id="L536">        ProcessInstance afterErrorInstance = runtimeService.createProcessInstanceQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L537">        assertThat(afterErrorInstance).isNull();</span>
+
+<span class="nc" id="L539">        FlowableErrorEvent errorEvent = null;</span>
+
+<span class="nc bnc" id="L541" title="All 2 branches missed.">        for (FlowableEvent event : listener.getEventsReceived()) {</span>
+<span class="nc bnc" id="L542" title="All 2 branches missed.">            if (event instanceof FlowableErrorEvent) {</span>
+<span class="nc bnc" id="L543" title="All 2 branches missed.">                if (errorEvent == null) {</span>
+<span class="nc" id="L544">                    errorEvent = (FlowableErrorEvent) event;</span>
+                } else {
+<span class="nc" id="L546">                    fail(&quot;Only one ActivityErrorEvent expected&quot;);</span>
+                }
+            }
+<span class="nc" id="L549">        }</span>
+
+<span class="nc" id="L551">        assertThat(errorEvent).isNotNull();</span>
+<span class="nc" id="L552">        assertThat(errorEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_ERROR_RECEIVED);</span>
+<span class="nc" id="L553">        assertThat(errorEvent.getActivityId()).isEqualTo(&quot;catchError&quot;);</span>
+<span class="nc" id="L554">        assertThat(errorEvent.getErrorId()).isEqualTo(&quot;23&quot;);</span>
+<span class="nc" id="L555">        assertThat(errorEvent.getErrorCode()).isEqualTo(&quot;23&quot;);</span>
+<span class="nc" id="L556">        assertThat(errorEvent.getProcessInstanceId()).isEqualTo(processInstance.getId());</span>
+<span class="nc" id="L557">        assertThat(errorEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L558">        assertThat(processInstance.getId()).isNotEqualTo(errorEvent.getExecutionId());</span>
+<span class="nc" id="L559">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/api/event/JobEventsTest.testJobEntityEvents.bpmn20.xml&quot;)
+    public void testActivityTimeOutEvent() {
+<span class="nc" id="L564">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;testJobEvents&quot;);</span>
+<span class="nc" id="L565">        Job theJob = managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L566">        assertThat(theJob).isNotNull();</span>
+
+        // Force timer to fire
+<span class="nc" id="L569">        Calendar tomorrow = Calendar.getInstance();</span>
+<span class="nc" id="L570">        tomorrow.add(Calendar.DAY_OF_YEAR, 1);</span>
+<span class="nc" id="L571">        processEngineConfiguration.getClock().setCurrentTime(tomorrow.getTime());</span>
+<span class="nc" id="L572">        waitForJobExecutorToProcessAllJobs(2000, 1000);</span>
+
+        // Check timeout has been dispatched
+<span class="nc" id="L575">        assertThat(listener.getEventsReceived()).hasSize(1);</span>
+<span class="nc" id="L576">        FlowableEvent activitiEvent = listener.getEventsReceived().get(0);</span>
+<span class="nc" id="L577">        assertThat(activitiEvent.getType()).as(&quot;ACTIVITY_CANCELLED event expected&quot;)</span>
+<span class="nc" id="L578">                .isEqualTo(FlowableEngineEventType.ACTIVITY_CANCELLED);</span>
+<span class="nc" id="L579">        FlowableActivityCancelledEvent cancelledEvent = (FlowableActivityCancelledEvent) activitiEvent;</span>
+<span class="nc" id="L580">        assertThat(cancelledEvent.getCause()).as(&quot;Boundary timer is the cause of the cancellation&quot;)</span>
+<span class="nc" id="L581">                .isInstanceOf(BoundaryEvent.class);</span>
+<span class="nc" id="L582">        BoundaryEvent boundaryEvent = (BoundaryEvent) cancelledEvent.getCause();</span>
+<span class="nc" id="L583">        assertThat(boundaryEvent.getEventDefinitions().get(0)).as(&quot;Boundary timer is the cause of the cancellation&quot;)</span>
+<span class="nc" id="L584">                .isInstanceOf(TimerEventDefinition.class);</span>
+<span class="nc" id="L585">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/bpmn/event/timer/BoundaryTimerEventTest.testTimerOnNestingOfSubprocesses.bpmn20.xml&quot;)
+    public void testActivityTimeOutEventInSubProcess() {
+<span class="nc" id="L590">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;timerOnNestedSubprocesses&quot;);</span>
+<span class="nc" id="L591">        Job theJob = managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L592">        assertThat(theJob).isNotNull();</span>
+
+        // Force timer to fire
+<span class="nc" id="L595">        Calendar timeToFire = Calendar.getInstance();</span>
+<span class="nc" id="L596">        timeToFire.add(Calendar.HOUR, 2);</span>
+<span class="nc" id="L597">        timeToFire.add(Calendar.SECOND, 5);</span>
+<span class="nc" id="L598">        processEngineConfiguration.getClock().setCurrentTime(timeToFire.getTime());</span>
+<span class="nc" id="L599">        waitForJobExecutorToProcessAllJobs(2000, 200);</span>
+
+        // Check timeout-events have been dispatched
+<span class="nc" id="L602">        assertThat(listener.getEventsReceived()).hasSize(4);</span>
+<span class="nc" id="L603">        List&lt;String&gt; eventIdList = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L604" title="All 2 branches missed.">        for (FlowableEvent event : listener.getEventsReceived()) {</span>
+<span class="nc" id="L605">            assertThat(event.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_CANCELLED);</span>
+<span class="nc" id="L606">            assertThat(((FlowableActivityCancelledEvent) event).getCause()).as(&quot;Boundary timer is the cause of the cancellation&quot;)</span>
+<span class="nc" id="L607">                    .isInstanceOf(BoundaryEvent.class);</span>
+<span class="nc" id="L608">            assertThat(((BoundaryEvent) ((FlowableActivityCancelledEvent) event).getCause()).getEventDefinitions().get(0))</span>
+<span class="nc" id="L609">                    .as(&quot;Boundary timer is the cause of the cancellation&quot;)</span>
+<span class="nc" id="L610">                    .isInstanceOf(TimerEventDefinition.class);</span>
+<span class="nc" id="L611">            eventIdList.add(((FlowableActivityEventImpl) event).getActivityId());</span>
+<span class="nc" id="L612">        }</span>
+<span class="nc" id="L613">        assertThat(eventIdList.indexOf(&quot;innerTask1&quot;)).isGreaterThanOrEqualTo(0);</span>
+<span class="nc" id="L614">        assertThat(eventIdList.indexOf(&quot;innerTask2&quot;)).isGreaterThanOrEqualTo(0);</span>
+<span class="nc" id="L615">        assertThat(eventIdList.indexOf(&quot;subprocess&quot;)).isGreaterThanOrEqualTo(0);</span>
+<span class="nc" id="L616">        assertThat(eventIdList.indexOf(&quot;innerSubprocess&quot;)).isGreaterThanOrEqualTo(0);</span>
+<span class="nc" id="L617">    }</span>
+
+    @Test
+    @Deployment
+    public void testActivityTimeOutEventInCallActivity() {
+<span class="nc" id="L622">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;timerOnCallActivity&quot;);</span>
+<span class="nc" id="L623">        Job theJob = managementService.createTimerJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L624">        assertThat(theJob).isNotNull();</span>
+
+        // Force timer to fire
+<span class="nc" id="L627">        Calendar timeToFire = Calendar.getInstance();</span>
+<span class="nc" id="L628">        timeToFire.add(Calendar.HOUR, 2);</span>
+<span class="nc" id="L629">        timeToFire.add(Calendar.MINUTE, 5);</span>
+<span class="nc" id="L630">        processEngineConfiguration.getClock().setCurrentTime(timeToFire.getTime());</span>
+<span class="nc" id="L631">        waitForJobExecutorToProcessAllJobs(7000, 500);</span>
+
+        // Check timeout-events have been dispatched
+<span class="nc" id="L634">        assertThat(listener.getEventsReceived()).hasSize(4);</span>
+<span class="nc" id="L635">        List&lt;String&gt; eventIdList = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L636" title="All 2 branches missed.">        for (FlowableEvent event : listener.getEventsReceived()) {</span>
+<span class="nc" id="L637">            assertThat(event.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_CANCELLED);</span>
+<span class="nc" id="L638">            assertThat(((FlowableCancelledEvent) event).getCause()).as(&quot;Boundary timer is the cause of the cancellation&quot;)</span>
+<span class="nc" id="L639">                    .isInstanceOf(BoundaryEvent.class);</span>
+<span class="nc" id="L640">            BoundaryEvent boundaryEvent = (BoundaryEvent) ((FlowableCancelledEvent) event).getCause();</span>
+<span class="nc" id="L641">            assertThat(boundaryEvent.getEventDefinitions().get(0)).as(&quot;Boundary timer is the cause of the cancellation&quot;)</span>
+<span class="nc" id="L642">                    .isInstanceOf(TimerEventDefinition.class);</span>
+<span class="nc" id="L643">            eventIdList.add(((FlowableActivityEventImpl) event).getActivityId());</span>
+<span class="nc" id="L644">        }</span>
+<span class="nc" id="L645">        assertThat(eventIdList)</span>
+<span class="nc" id="L646">                .containsOnly(&quot;innerTask1&quot;, &quot;innerTask2&quot;, &quot;callActivity&quot;, &quot;innerSubprocess&quot;);</span>
+<span class="nc" id="L647">    }</span>
+
+    /**
+     * Test events related to message events, called from the API.
+     */
+    @Test
+    @Deployment
+    public void testActivityMessageBoundaryEventsOnUserTask() throws Exception {
+<span class="nc" id="L655">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;messageOnUserTaskProcess&quot;);</span>
+<span class="nc" id="L656">        assertThat(processInstance).isNotNull();</span>
+
+<span class="nc" id="L658">        Execution executionWithMessage = runtimeService.createExecutionQuery().messageEventSubscriptionName(&quot;message_1&quot;).singleResult();</span>
+<span class="nc" id="L659">        assertThat(executionWithMessage).isNotNull();</span>
+
+<span class="nc" id="L661">        runtimeService.messageEventReceived(&quot;message_1&quot;, executionWithMessage.getId());</span>
+<span class="nc" id="L662">        assertThat(listener.getEventsReceived()).hasSize(3);</span>
+
+        // First, a message waiting event is expected
+<span class="nc" id="L665">        assertThat(listener.getEventsReceived().get(0)).isInstanceOf(FlowableMessageEvent.class);</span>
+<span class="nc" id="L666">        FlowableMessageEvent messageEvent = (FlowableMessageEvent) listener.getEventsReceived().get(0);</span>
+<span class="nc" id="L667">        assertThat(messageEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_MESSAGE_WAITING);</span>
+<span class="nc" id="L668">        assertThat(messageEvent.getActivityId()).isEqualTo(&quot;boundaryMessageEventCatching&quot;);</span>
+<span class="nc" id="L669">        assertThat(messageEvent.getExecutionId()).isEqualTo(executionWithMessage.getId());</span>
+<span class="nc" id="L670">        assertThat(messageEvent.getProcessInstanceId()).isEqualTo(executionWithMessage.getProcessInstanceId());</span>
+<span class="nc" id="L671">        assertThat(messageEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L672">        assertThat(messageEvent.getMessageName()).isEqualTo(&quot;message_1&quot;);</span>
+<span class="nc" id="L673">        assertThat(messageEvent.getMessageData()).isNull();</span>
+
+        // Second, a message received event is expected
+<span class="nc" id="L676">        assertThat(listener.getEventsReceived().get(1)).isInstanceOf(FlowableMessageEvent.class);</span>
+<span class="nc" id="L677">        messageEvent = (FlowableMessageEvent) listener.getEventsReceived().get(1);</span>
+<span class="nc" id="L678">        assertThat(messageEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_MESSAGE_RECEIVED);</span>
+<span class="nc" id="L679">        assertThat(messageEvent.getActivityId()).isEqualTo(&quot;boundaryMessageEventCatching&quot;);</span>
+<span class="nc" id="L680">        assertThat(messageEvent.getExecutionId()).isEqualTo(executionWithMessage.getId());</span>
+<span class="nc" id="L681">        assertThat(messageEvent.getProcessInstanceId()).isEqualTo(executionWithMessage.getProcessInstanceId());</span>
+<span class="nc" id="L682">        assertThat(messageEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L683">        assertThat(messageEvent.getMessageName()).isEqualTo(&quot;message_1&quot;);</span>
+<span class="nc" id="L684">        assertThat(messageEvent.getMessageData()).isNull();</span>
+
+        // Next, an signal-event is expected, as a result of the message
+<span class="nc" id="L687">        assertThat(listener.getEventsReceived().get(2)).isInstanceOf(FlowableActivityCancelledEvent.class);</span>
+<span class="nc" id="L688">        FlowableActivityCancelledEvent signalEvent = (FlowableActivityCancelledEvent) listener.getEventsReceived().get(2);</span>
+<span class="nc" id="L689">        assertThat(signalEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_CANCELLED);</span>
+<span class="nc" id="L690">        assertThat(signalEvent.getActivityId()).isEqualTo(&quot;cloudformtask1&quot;);</span>
+<span class="nc" id="L691">        assertThat(signalEvent.getProcessInstanceId()).isEqualTo(executionWithMessage.getProcessInstanceId());</span>
+<span class="nc" id="L692">        assertThat(signalEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L693">        assertThat(signalEvent.getCause()).isInstanceOf(BoundaryEvent.class);</span>
+<span class="nc" id="L694">        BoundaryEvent cause = (BoundaryEvent) signalEvent.getCause();</span>
+<span class="nc" id="L695">        assertThat(((MessageEventDefinition) cause.getEventDefinitions().get(0)).getMessageRef()).isEqualTo(&quot;message_1&quot;);</span>
+
+<span class="nc" id="L697">        assertDatabaseEventPresent(FlowableEngineEventType.ACTIVITY_MESSAGE_WAITING);</span>
+<span class="nc" id="L698">        assertDatabaseEventPresent(FlowableEngineEventType.ACTIVITY_MESSAGE_RECEIVED);</span>
+<span class="nc" id="L699">    }</span>
+
+    /**
+     * Test events related to message events, called from the API.
+     */
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/api/event/ActivityEventsTest.testActivityMessageBoundaryEventsOnUserTask.bpmn20.xml&quot;)
+    public void testActivityMessageBoundaryEventsOnUserTaskForCancel() throws Exception {
+<span class="nc" id="L707">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;messageOnUserTaskProcess&quot;);</span>
+<span class="nc" id="L708">        assertThat(processInstance).isNotNull();</span>
+
+<span class="nc" id="L710">        Execution executionWithMessage = runtimeService.createExecutionQuery().messageEventSubscriptionName(&quot;message_1&quot;).singleResult();</span>
+<span class="nc" id="L711">        assertThat(executionWithMessage).isNotNull();</span>
+
+<span class="nc" id="L713">        org.flowable.task.api.Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L714">        assertThat(task.getName()).isEqualTo(&quot;User Task&quot;);</span>
+<span class="nc" id="L715">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L717">        assertThat(listener.getEventsReceived()).hasSize(2);</span>
+
+        // First, a message waiting event is expected
+<span class="nc" id="L720">        assertThat(listener.getEventsReceived().get(0)).isInstanceOf(FlowableMessageEvent.class);</span>
+<span class="nc" id="L721">        FlowableMessageEvent messageEvent = (FlowableMessageEvent) listener.getEventsReceived().get(0);</span>
+<span class="nc" id="L722">        assertThat(messageEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_MESSAGE_WAITING);</span>
+<span class="nc" id="L723">        assertThat(messageEvent.getActivityId()).isEqualTo(&quot;boundaryMessageEventCatching&quot;);</span>
+<span class="nc" id="L724">        assertThat(messageEvent.getExecutionId()).isEqualTo(executionWithMessage.getId());</span>
+<span class="nc" id="L725">        assertThat(messageEvent.getProcessInstanceId()).isEqualTo(executionWithMessage.getProcessInstanceId());</span>
+<span class="nc" id="L726">        assertThat(messageEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L727">        assertThat(messageEvent.getMessageName()).isEqualTo(&quot;message_1&quot;);</span>
+<span class="nc" id="L728">        assertThat(messageEvent.getMessageData()).isNull();</span>
+
+        // Second, a message received event is expected
+<span class="nc" id="L731">        assertThat(listener.getEventsReceived().get(1)).isInstanceOf(FlowableMessageEvent.class);</span>
+<span class="nc" id="L732">        messageEvent = (FlowableMessageEvent) listener.getEventsReceived().get(1);</span>
+<span class="nc" id="L733">        assertThat(messageEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_MESSAGE_CANCELLED);</span>
+<span class="nc" id="L734">        assertThat(messageEvent.getActivityId()).isEqualTo(&quot;boundaryMessageEventCatching&quot;);</span>
+<span class="nc" id="L735">        assertThat(messageEvent.getExecutionId()).isEqualTo(executionWithMessage.getId());</span>
+<span class="nc" id="L736">        assertThat(messageEvent.getProcessInstanceId()).isEqualTo(executionWithMessage.getProcessInstanceId());</span>
+<span class="nc" id="L737">        assertThat(messageEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L738">        assertThat(messageEvent.getMessageName()).isEqualTo(&quot;message_1&quot;);</span>
+<span class="nc" id="L739">        assertThat(messageEvent.getMessageData()).isNull();</span>
+
+<span class="nc" id="L741">        assertDatabaseEventPresent(FlowableEngineEventType.ACTIVITY_MESSAGE_WAITING);</span>
+<span class="nc" id="L742">    }</span>
+
+    /**
+     * Test events related to message events, called from the API.
+     */
+    @Test
+    @Deployment
+    public void testActivityMessageBoundaryEventsOnSubProcess() throws Exception {
+<span class="nc" id="L750">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;messageOnSubProcess&quot;);</span>
+<span class="nc" id="L751">        assertThat(processInstance).isNotNull();</span>
+
+<span class="nc" id="L753">        Execution executionWithMessage = runtimeService.createExecutionQuery().activityId(&quot;boundaryMessageEventCatching&quot;).singleResult();</span>
+<span class="nc" id="L754">        assertThat(executionWithMessage).isNotNull();</span>
+
+<span class="nc" id="L756">        runtimeService.messageEventReceived(&quot;message_1&quot;, executionWithMessage.getId());</span>
+<span class="nc" id="L757">        assertThat(listener.getEventsReceived()).hasSize(4);</span>
+
+        // First, a message waiting event is expected
+<span class="nc" id="L760">        assertThat(listener.getEventsReceived().get(0)).isInstanceOf(FlowableMessageEvent.class);</span>
+<span class="nc" id="L761">        FlowableMessageEvent messageEvent = (FlowableMessageEvent) listener.getEventsReceived().get(0);</span>
+<span class="nc" id="L762">        assertThat(messageEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_MESSAGE_WAITING);</span>
+<span class="nc" id="L763">        assertThat(messageEvent.getActivityId()).isEqualTo(&quot;boundaryMessageEventCatching&quot;);</span>
+<span class="nc" id="L764">        assertThat(messageEvent.getExecutionId()).isEqualTo(executionWithMessage.getId());</span>
+<span class="nc" id="L765">        assertThat(messageEvent.getProcessInstanceId()).isEqualTo(executionWithMessage.getProcessInstanceId());</span>
+<span class="nc" id="L766">        assertThat(messageEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L767">        assertThat(messageEvent.getMessageName()).isEqualTo(&quot;message_1&quot;);</span>
+<span class="nc" id="L768">        assertThat(messageEvent.getMessageData()).isNull();</span>
+
+        // Second, a message received event is expected
+<span class="nc" id="L771">        assertThat(listener.getEventsReceived().get(1)).isInstanceOf(FlowableMessageEvent.class);</span>
+<span class="nc" id="L772">        messageEvent = (FlowableMessageEvent) listener.getEventsReceived().get(1);</span>
+<span class="nc" id="L773">        assertThat(messageEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_MESSAGE_RECEIVED);</span>
+<span class="nc" id="L774">        assertThat(messageEvent.getActivityId()).isEqualTo(&quot;boundaryMessageEventCatching&quot;);</span>
+<span class="nc" id="L775">        assertThat(messageEvent.getExecutionId()).isEqualTo(executionWithMessage.getId());</span>
+<span class="nc" id="L776">        assertThat(messageEvent.getProcessInstanceId()).isEqualTo(executionWithMessage.getProcessInstanceId());</span>
+<span class="nc" id="L777">        assertThat(messageEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L778">        assertThat(messageEvent.getMessageName()).isEqualTo(&quot;message_1&quot;);</span>
+<span class="nc" id="L779">        assertThat(messageEvent.getMessageData()).isNull();</span>
+
+        // Next, an signal-event is expected, as a result of the message
+
+<span class="nc" id="L783">        assertThat(listener.getEventsReceived().get(2)).isInstanceOf(FlowableActivityCancelledEvent.class);</span>
+<span class="nc" id="L784">        FlowableActivityCancelledEvent cancelEvent = (FlowableActivityCancelledEvent) listener.getEventsReceived().get(2);</span>
+<span class="nc" id="L785">        assertThat(cancelEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_CANCELLED);</span>
+<span class="nc" id="L786">        assertThat(cancelEvent.getActivityId()).isEqualTo(&quot;cloudformtask1&quot;);</span>
+<span class="nc" id="L787">        assertThat(cancelEvent.getProcessInstanceId()).isEqualTo(executionWithMessage.getProcessInstanceId());</span>
+<span class="nc" id="L788">        assertThat(cancelEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L789">        assertThat(cancelEvent.getCause()).isInstanceOf(BoundaryEvent.class);</span>
+<span class="nc" id="L790">        BoundaryEvent cause = (BoundaryEvent) cancelEvent.getCause();</span>
+<span class="nc" id="L791">        assertThat(((MessageEventDefinition) cause.getEventDefinitions().get(0)).getMessageRef()).isEqualTo(&quot;message_1&quot;);</span>
+
+<span class="nc" id="L793">        assertThat(listener.getEventsReceived().get(3)).isInstanceOf(FlowableActivityCancelledEvent.class);</span>
+<span class="nc" id="L794">        cancelEvent = (FlowableActivityCancelledEvent) listener.getEventsReceived().get(3);</span>
+<span class="nc" id="L795">        assertThat(cancelEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_CANCELLED);</span>
+<span class="nc" id="L796">        assertThat(cancelEvent.getActivityId()).isEqualTo(&quot;subProcess&quot;);</span>
+<span class="nc" id="L797">        assertThat(cancelEvent.getProcessInstanceId()).isEqualTo(executionWithMessage.getProcessInstanceId());</span>
+<span class="nc" id="L798">        assertThat(cancelEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L799">        assertThat(cancelEvent.getCause()).isInstanceOf(BoundaryEvent.class);</span>
+<span class="nc" id="L800">        cause = (BoundaryEvent) cancelEvent.getCause();</span>
+<span class="nc" id="L801">        assertThat(((MessageEventDefinition) cause.getEventDefinitions().get(0)).getMessageRef()).isEqualTo(&quot;message_1&quot;);</span>
+
+<span class="nc" id="L803">        assertDatabaseEventPresent(FlowableEngineEventType.ACTIVITY_MESSAGE_WAITING);</span>
+<span class="nc" id="L804">        assertDatabaseEventPresent(FlowableEngineEventType.ACTIVITY_MESSAGE_RECEIVED);</span>
+<span class="nc" id="L805">    }</span>
+
+    /**
+     * Test events related to message events, called from the API.
+     */
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/api/event/ActivityEventsTest.testActivityMessageBoundaryEventsOnSubProcess.bpmn20.xml&quot;)
+    public void testActivityMessageBoundaryEventsOnSubProcessForCancel() throws Exception {
+<span class="nc" id="L813">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;messageOnSubProcess&quot;);</span>
+<span class="nc" id="L814">        assertThat(processInstance).isNotNull();</span>
+
+<span class="nc" id="L816">        Execution executionWithMessage = runtimeService.createExecutionQuery().activityId(&quot;boundaryMessageEventCatching&quot;).singleResult();</span>
+<span class="nc" id="L817">        assertThat(executionWithMessage).isNotNull();</span>
+
+<span class="nc" id="L819">        org.flowable.task.api.Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L820">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L822">        assertThat(listener.getEventsReceived()).hasSize(2);</span>
+
+        // First, a message waiting event is expected
+<span class="nc" id="L825">        assertThat(listener.getEventsReceived().get(0)).isInstanceOf(FlowableMessageEvent.class);</span>
+<span class="nc" id="L826">        FlowableMessageEvent messageEvent = (FlowableMessageEvent) listener.getEventsReceived().get(0);</span>
+<span class="nc" id="L827">        assertThat(messageEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_MESSAGE_WAITING);</span>
+<span class="nc" id="L828">        assertThat(messageEvent.getActivityId()).isEqualTo(&quot;boundaryMessageEventCatching&quot;);</span>
+<span class="nc" id="L829">        assertThat(messageEvent.getExecutionId()).isEqualTo(executionWithMessage.getId());</span>
+<span class="nc" id="L830">        assertThat(messageEvent.getProcessInstanceId()).isEqualTo(executionWithMessage.getProcessInstanceId());</span>
+<span class="nc" id="L831">        assertThat(messageEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L832">        assertThat(messageEvent.getMessageName()).isEqualTo(&quot;message_1&quot;);</span>
+<span class="nc" id="L833">        assertThat(messageEvent.getMessageData()).isNull();</span>
+
+        // Second, a message received event is expected
+<span class="nc" id="L836">        assertThat(listener.getEventsReceived().get(1)).isInstanceOf(FlowableMessageEvent.class);</span>
+<span class="nc" id="L837">        messageEvent = (FlowableMessageEvent) listener.getEventsReceived().get(1);</span>
+<span class="nc" id="L838">        assertThat(messageEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_MESSAGE_CANCELLED);</span>
+<span class="nc" id="L839">        assertThat(messageEvent.getActivityId()).isEqualTo(&quot;boundaryMessageEventCatching&quot;);</span>
+<span class="nc" id="L840">        assertThat(messageEvent.getExecutionId()).isEqualTo(executionWithMessage.getId());</span>
+<span class="nc" id="L841">        assertThat(messageEvent.getProcessInstanceId()).isEqualTo(executionWithMessage.getProcessInstanceId());</span>
+<span class="nc" id="L842">        assertThat(messageEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L843">        assertThat(messageEvent.getMessageName()).isEqualTo(&quot;message_1&quot;);</span>
+<span class="nc" id="L844">        assertThat(messageEvent.getMessageData()).isNull();</span>
+
+<span class="nc" id="L846">        assertDatabaseEventPresent(FlowableEngineEventType.ACTIVITY_MESSAGE_WAITING);</span>
+<span class="nc" id="L847">    }</span>
+
+    @Test
+    @Deployment
+    public void testActivitySignalBoundaryEventsOnSubProcess() throws Exception {
+<span class="nc" id="L852">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;signalOnSubProcess&quot;);</span>
+<span class="nc" id="L853">        assertThat(processInstance).isNotNull();</span>
+
+<span class="nc" id="L855">        Execution executionWithSignal = runtimeService.createExecutionQuery().activityId(&quot;userTaskInsideProcess&quot;).singleResult();</span>
+<span class="nc" id="L856">        assertThat(executionWithSignal).isNotNull();</span>
+
+<span class="nc" id="L858">        runtimeService.signalEventReceived(&quot;signalName&quot;);</span>
+<span class="nc" id="L859">        assertThat(listener.getEventsReceived()).hasSize(4);</span>
+
+<span class="nc" id="L861">        assertThat(listener.getEventsReceived().get(0)).isInstanceOf(FlowableSignalEventImpl.class);</span>
+<span class="nc" id="L862">        FlowableSignalEventImpl signalEvent = (FlowableSignalEventImpl) listener.getEventsReceived().get(0);</span>
+<span class="nc" id="L863">        assertThat(signalEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_SIGNAL_WAITING);</span>
+<span class="nc" id="L864">        assertThat(signalEvent.getActivityId()).isEqualTo(&quot;boundarySignalEventCatching&quot;);</span>
+<span class="nc" id="L865">        assertThat(signalEvent.getProcessInstanceId()).isEqualTo(executionWithSignal.getProcessInstanceId());</span>
+<span class="nc" id="L866">        assertThat(signalEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+
+<span class="nc" id="L868">        assertThat(listener.getEventsReceived().get(1)).isInstanceOf(FlowableSignalEventImpl.class);</span>
+<span class="nc" id="L869">        signalEvent = (FlowableSignalEventImpl) listener.getEventsReceived().get(1);</span>
+<span class="nc" id="L870">        assertThat(signalEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_SIGNALED);</span>
+<span class="nc" id="L871">        assertThat(signalEvent.getActivityId()).isEqualTo(&quot;boundarySignalEventCatching&quot;);</span>
+<span class="nc" id="L872">        assertThat(signalEvent.getProcessInstanceId()).isEqualTo(executionWithSignal.getProcessInstanceId());</span>
+<span class="nc" id="L873">        assertThat(signalEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+
+<span class="nc" id="L875">        assertThat(listener.getEventsReceived().get(2)).isInstanceOf(FlowableActivityCancelledEvent.class);</span>
+<span class="nc" id="L876">        FlowableActivityCancelledEvent cancelEvent = (FlowableActivityCancelledEvent) listener.getEventsReceived().get(2);</span>
+<span class="nc" id="L877">        assertThat(cancelEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_CANCELLED);</span>
+<span class="nc" id="L878">        assertThat(cancelEvent.getActivityId()).isEqualTo(&quot;userTaskInsideProcess&quot;);</span>
+<span class="nc" id="L879">        assertThat(cancelEvent.getExecutionId()).isEqualTo(executionWithSignal.getId());</span>
+<span class="nc" id="L880">        assertThat(cancelEvent.getProcessInstanceId()).isEqualTo(executionWithSignal.getProcessInstanceId());</span>
+<span class="nc" id="L881">        assertThat(cancelEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L882">        assertThat(cancelEvent.getCause()).isInstanceOf(BoundaryEvent.class);</span>
+<span class="nc" id="L883">        BoundaryEvent cause = (BoundaryEvent) cancelEvent.getCause();</span>
+<span class="nc" id="L884">        assertThat(cause.getEventDefinitions().get(0)).isInstanceOf(SignalEventDefinition.class);</span>
+<span class="nc" id="L885">        SignalEventDefinition signalEventDefinition = ((SignalEventDefinition) cause.getEventDefinitions().get(0));</span>
+<span class="nc" id="L886">        assertThat(signalEventDefinition.getSignalRef()).isEqualTo(&quot;signal&quot;);</span>
+<span class="nc" id="L887">        assertThat(repositoryService.getBpmnModel(cancelEvent.getProcessDefinitionId()).getSignal(signalEventDefinition.getSignalRef()).getName())</span>
+<span class="nc" id="L888">                .isEqualTo(&quot;signalName&quot;);</span>
+
+<span class="nc" id="L890">        assertThat(listener.getEventsReceived().get(3)).isInstanceOf(FlowableActivityCancelledEvent.class);</span>
+<span class="nc" id="L891">        cancelEvent = (FlowableActivityCancelledEvent) listener.getEventsReceived().get(3);</span>
+<span class="nc" id="L892">        assertThat(cancelEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_CANCELLED);</span>
+<span class="nc" id="L893">        assertThat(cancelEvent.getActivityId()).isEqualTo(&quot;subProcess&quot;);</span>
+<span class="nc" id="L894">        assertThat(cancelEvent.getProcessInstanceId()).isEqualTo(executionWithSignal.getProcessInstanceId());</span>
+<span class="nc" id="L895">        assertThat(cancelEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L896">        assertThat(cancelEvent.getCause()).isInstanceOf(BoundaryEvent.class);</span>
+<span class="nc" id="L897">        cause = (BoundaryEvent) cancelEvent.getCause();</span>
+<span class="nc" id="L898">        assertThat(cause.getEventDefinitions().get(0)).isInstanceOf(SignalEventDefinition.class);</span>
+<span class="nc" id="L899">        signalEventDefinition = ((SignalEventDefinition) cause.getEventDefinitions().get(0));</span>
+<span class="nc" id="L900">        assertThat(signalEventDefinition.getSignalRef()).isEqualTo(&quot;signal&quot;);</span>
+<span class="nc" id="L901">        assertThat(repositoryService.getBpmnModel(cancelEvent.getProcessDefinitionId()).getSignal(signalEventDefinition.getSignalRef()).getName())</span>
+<span class="nc" id="L902">                .isEqualTo(&quot;signalName&quot;);</span>
+<span class="nc" id="L903">    }</span>
+
+    @Test
+    @Deployment
+    public void testActivitySignalBoundaryEventsOnUserTask() throws Exception {
+<span class="nc" id="L908">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;signalOnUserTask&quot;);</span>
+<span class="nc" id="L909">        assertThat(processInstance).isNotNull();</span>
+
+<span class="nc" id="L911">        Execution executionWithSignal = runtimeService.createExecutionQuery().activityId(&quot;userTask&quot;).singleResult();</span>
+<span class="nc" id="L912">        assertThat(executionWithSignal).isNotNull();</span>
+
+<span class="nc" id="L914">        runtimeService.signalEventReceived(&quot;signalName&quot;);</span>
+
+        // Next, an signal-event is expected, as a result of the message
+<span class="nc" id="L917">        assertThat(listener.getEventsReceived()).hasSize(3);</span>
+
+<span class="nc" id="L919">        assertThat(listener.getEventsReceived().get(0)).isInstanceOf(FlowableSignalEventImpl.class);</span>
+<span class="nc" id="L920">        FlowableSignalEventImpl signalEvent = (FlowableSignalEventImpl) listener.getEventsReceived().get(0);</span>
+<span class="nc" id="L921">        assertThat(signalEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_SIGNAL_WAITING);</span>
+<span class="nc" id="L922">        assertThat(signalEvent.getActivityId()).isEqualTo(&quot;boundarySignalEventCatching&quot;);</span>
+<span class="nc" id="L923">        assertThat(signalEvent.getProcessInstanceId()).isEqualTo(executionWithSignal.getProcessInstanceId());</span>
+<span class="nc" id="L924">        assertThat(signalEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+
+<span class="nc" id="L926">        assertThat(listener.getEventsReceived().get(1)).isInstanceOf(FlowableSignalEventImpl.class);</span>
+<span class="nc" id="L927">        signalEvent = (FlowableSignalEventImpl) listener.getEventsReceived().get(1);</span>
+<span class="nc" id="L928">        assertThat(signalEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_SIGNALED);</span>
+<span class="nc" id="L929">        assertThat(signalEvent.getActivityId()).isEqualTo(&quot;boundarySignalEventCatching&quot;);</span>
+<span class="nc" id="L930">        assertThat(signalEvent.getProcessInstanceId()).isEqualTo(executionWithSignal.getProcessInstanceId());</span>
+<span class="nc" id="L931">        assertThat(signalEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+
+<span class="nc" id="L933">        assertThat(listener.getEventsReceived().get(2)).isInstanceOf(FlowableActivityCancelledEvent.class);</span>
+<span class="nc" id="L934">        FlowableActivityCancelledEvent cancelEvent = (FlowableActivityCancelledEvent) listener.getEventsReceived().get(2);</span>
+<span class="nc" id="L935">        assertThat(cancelEvent.getType()).isEqualTo(FlowableEngineEventType.ACTIVITY_CANCELLED);</span>
+<span class="nc" id="L936">        assertThat(cancelEvent.getActivityId()).isEqualTo(&quot;userTask&quot;);</span>
+<span class="nc" id="L937">        assertThat(cancelEvent.getProcessInstanceId()).isEqualTo(executionWithSignal.getProcessInstanceId());</span>
+<span class="nc" id="L938">        assertThat(cancelEvent.getProcessDefinitionId()).isEqualTo(processInstance.getProcessDefinitionId());</span>
+<span class="nc" id="L939">        assertThat(cancelEvent.getCause()).isInstanceOf(BoundaryEvent.class);</span>
+<span class="nc" id="L940">        BoundaryEvent cause = (BoundaryEvent) cancelEvent.getCause();</span>
+<span class="nc" id="L941">        assertThat(cause.getEventDefinitions().get(0)).isInstanceOf(SignalEventDefinition.class);</span>
+<span class="nc" id="L942">        SignalEventDefinition signalEventDefinition = ((SignalEventDefinition) cause.getEventDefinitions().get(0));</span>
+<span class="nc" id="L943">        assertThat(signalEventDefinition.getSignalRef()).isEqualTo(&quot;signal&quot;);</span>
+<span class="nc" id="L944">        assertThat(repositoryService.getBpmnModel(cancelEvent.getProcessDefinitionId()).getSignal(signalEventDefinition.getSignalRef()).getName())</span>
+<span class="nc" id="L945">                .isEqualTo(&quot;signalName&quot;);</span>
+<span class="nc" id="L946">    }</span>
+
+    protected void assertDatabaseEventPresent(FlowableEngineEventType eventType) {
+<span class="nc" id="L949">        String eventTypeString = eventType.name();</span>
+<span class="nc" id="L950">        List&lt;EventLogEntry&gt; eventLogEntries = managementService.getEventLogEntries(0L, 100000L);</span>
+<span class="nc" id="L951">        boolean found = false;</span>
+<span class="nc bnc" id="L952" title="All 2 branches missed.">        for (EventLogEntry entry : eventLogEntries) {</span>
+<span class="nc bnc" id="L953" title="All 2 branches missed.">            if (entry.getType().equals(eventTypeString)) {</span>
+<span class="nc" id="L954">                found = true;</span>
+            }
+<span class="nc" id="L956">        }</span>
+<span class="nc" id="L957">        assertThat(found).isTrue();</span>
+<span class="nc" id="L958">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

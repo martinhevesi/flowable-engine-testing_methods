@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RestExpiredTimerJobsTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.jobexecutor</a> &gt; <span class="el_source">RestExpiredTimerJobsTest.java</span></div><h1>RestExpiredTimerJobsTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.test.jobexecutor;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
+
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Collections;
+import java.util.Date;
+import java.util.List;
+
+import org.flowable.common.engine.impl.interceptor.CommandExecutor;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.job.api.Job;
+import org.flowable.job.service.JobServiceConfiguration;
+import org.flowable.job.service.TimerJobService;
+import org.flowable.job.service.impl.asyncexecutor.FindExpiredJobsCmd;
+import org.flowable.job.service.impl.asyncexecutor.ResetExpiredJobsCmd;
+import org.flowable.job.service.impl.persistence.entity.JobInfoEntity;
+import org.flowable.job.service.impl.persistence.entity.TimerJobEntity;
+import org.junit.jupiter.api.Test;
+
+/**
+ * @author Filip Hrisafov
+ */
+<span class="nc" id="L38">class RestExpiredTimerJobsTest extends JobExecutorTestCase {</span>
+
+    @Test
+    void testRestExpiredTimerJobs() {
+
+<span class="nc" id="L43">        Instant now = Instant.now();</span>
+<span class="nc" id="L44">        processEngineConfiguration.getClock().setCurrentTime(Date.from(now));</span>
+
+<span class="nc" id="L46">        CommandExecutor commandExecutor = processEngineConfiguration.getCommandExecutor();</span>
+
+<span class="nc" id="L48">        String lockedJobId = commandExecutor.execute(commandContext -&gt; {</span>
+<span class="nc" id="L49">            TimerJobEntity timer = createTweetTimer(&quot;i'm coding a locked test&quot;, Date.from(now.plusSeconds(10)));</span>
+<span class="nc" id="L50">            TimerJobService timerJobService = CommandContextUtil.getProcessEngineConfiguration(commandContext).getJobServiceConfiguration().getTimerJobService();</span>
+<span class="nc" id="L51">            timerJobService.scheduleTimerJob(timer);</span>
+<span class="nc" id="L52">            return timer.getId();</span>
+        });
+
+<span class="nc" id="L55">        commandExecutor.execute(commandContext -&gt; {</span>
+<span class="nc" id="L56">            TimerJobService timerJobService = CommandContextUtil.getProcessEngineConfiguration(commandContext).getJobServiceConfiguration().getTimerJobService();</span>
+<span class="nc" id="L57">            TimerJobEntity timer = timerJobService.findTimerJobById(lockedJobId);</span>
+<span class="nc" id="L58">            timer.setLockOwner(&quot;test&quot;);</span>
+<span class="nc" id="L59">            timer.setLockExpirationTime(Date.from(now.plus(5, ChronoUnit.MINUTES)));</span>
+<span class="nc" id="L60">            return null;</span>
+        });
+
+<span class="nc" id="L63">        Job lockedJob = managementService.createTimerJobQuery().jobId(lockedJobId).singleResult();</span>
+<span class="nc" id="L64">        assertThat(lockedJob).isNotNull();</span>
+<span class="nc" id="L65">        assertThat(((TimerJobEntity) lockedJob).getLockOwner()).isNotNull();</span>
+<span class="nc" id="L66">        assertThat(((TimerJobEntity) lockedJob).getLockExpirationTime()).isNotNull();</span>
+
+<span class="nc" id="L68">        String notLockedJobId = commandExecutor.execute(commandContext -&gt; {</span>
+<span class="nc" id="L69">            TimerJobEntity timer = createTweetTimer(&quot;i'm coding an unlocked test&quot;, Date.from(now.plusSeconds(10)));</span>
+<span class="nc" id="L70">            TimerJobService timerJobService = CommandContextUtil.getProcessEngineConfiguration(commandContext).getJobServiceConfiguration().getTimerJobService();</span>
+<span class="nc" id="L71">            timerJobService.scheduleTimerJob(timer);</span>
+<span class="nc" id="L72">            return timer.getId();</span>
+        });
+
+<span class="nc" id="L75">        int expiredJobsPagesSize = processEngineConfiguration.getAsyncExecutorResetExpiredJobsPageSize();</span>
+
+<span class="nc" id="L77">        JobServiceConfiguration jobServiceConfiguration = processEngineConfiguration.getJobServiceConfiguration();</span>
+<span class="nc" id="L78">        List&lt;? extends JobInfoEntity&gt; expiredJobs = managementService</span>
+<span class="nc" id="L79">                .executeCommand(new FindExpiredJobsCmd(expiredJobsPagesSize, jobServiceConfiguration.getTimerJobEntityManager(), jobServiceConfiguration));</span>
+
+<span class="nc" id="L81">        assertThat(expiredJobs).isEmpty();</span>
+
+<span class="nc" id="L83">        processEngineConfiguration.getClock().setCurrentTime(Date.from(now.plus(15, ChronoUnit.MINUTES)));</span>
+
+<span class="nc" id="L85">        expiredJobs = managementService</span>
+<span class="nc" id="L86">                .executeCommand(new FindExpiredJobsCmd(expiredJobsPagesSize, jobServiceConfiguration.getTimerJobEntityManager(), jobServiceConfiguration));</span>
+
+<span class="nc" id="L88">        assertThat(expiredJobs)</span>
+<span class="nc" id="L89">                .extracting(JobInfoEntity::getId, JobInfoEntity::getJobHandlerConfiguration)</span>
+<span class="nc" id="L90">                .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L91">                        tuple(lockedJobId, &quot;i'm coding a locked test&quot;)</span>
+                );
+
+<span class="nc" id="L94">        managementService.executeCommand(new ResetExpiredJobsCmd(Collections.singleton(lockedJobId), jobServiceConfiguration.getTimerJobEntityManager(), jobServiceConfiguration));</span>
+
+<span class="nc" id="L96">        expiredJobs = managementService</span>
+<span class="nc" id="L97">                .executeCommand(new FindExpiredJobsCmd(expiredJobsPagesSize, jobServiceConfiguration.getTimerJobEntityManager(), jobServiceConfiguration));</span>
+<span class="nc" id="L98">        assertThat(expiredJobs).isEmpty();</span>
+
+<span class="nc" id="L100">        lockedJob = managementService.createTimerJobQuery().jobId(lockedJobId).singleResult();</span>
+<span class="nc" id="L101">        assertThat(lockedJob).isNotNull();</span>
+<span class="nc" id="L102">        assertThat(((TimerJobEntity) lockedJob).getLockOwner()).isNull();</span>
+<span class="nc" id="L103">        assertThat(((TimerJobEntity) lockedJob).getLockExpirationTime()).isNull();</span>
+
+<span class="nc" id="L105">        managementService.deleteTimerJob(notLockedJobId);</span>
+<span class="nc" id="L106">        managementService.deleteTimerJob(lockedJobId);</span>
+<span class="nc" id="L107">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

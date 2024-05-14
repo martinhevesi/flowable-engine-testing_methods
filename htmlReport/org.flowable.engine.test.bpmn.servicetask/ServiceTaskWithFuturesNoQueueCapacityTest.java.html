@@ -1,0 +1,210 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ServiceTaskWithFuturesNoQueueCapacityTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.bpmn.servicetask</a> &gt; <span class="el_source">ServiceTaskWithFuturesNoQueueCapacityTest.java</span></div><h1>ServiceTaskWithFuturesNoQueueCapacityTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.test.bpmn.servicetask;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
+
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.async.AsyncTaskExecutor;
+import org.flowable.common.engine.api.async.AsyncTaskInvoker;
+import org.flowable.common.engine.impl.async.AsyncTaskExecutorConfiguration;
+import org.flowable.common.engine.impl.async.DefaultAsyncTaskExecutor;
+import org.flowable.common.engine.impl.history.HistoryLevel;
+import org.flowable.engine.ProcessEngineConfiguration;
+import org.flowable.engine.delegate.DelegateExecution;
+import org.flowable.engine.delegate.FlowableFutureJavaDelegate;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.test.HistoryTestHelper;
+import org.flowable.engine.impl.test.ResourceFlowableTestCase;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.test.Deployment;
+import org.flowable.variable.api.history.HistoricVariableInstance;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+/**
+ * @author Filip Hrisafov
+ */
+public class ServiceTaskWithFuturesNoQueueCapacityTest extends ResourceFlowableTestCase {
+
+    protected AsyncTaskInvoker originalAsyncTaskInvoker;
+    protected AsyncTaskExecutor originalAsyncTaskInvokerTaskExecutor;
+
+    public ServiceTaskWithFuturesNoQueueCapacityTest() {
+<span class="nc" id="L57">        super(&quot;flowable.cfg.xml&quot;);</span>
+<span class="nc" id="L58">    }</span>
+
+    @Override
+    protected void additionalConfiguration(ProcessEngineConfiguration processEngineConfiguration) {
+<span class="nc" id="L62">        super.additionalConfiguration(processEngineConfiguration);</span>
+
+        // The thread pool will start rejecting jobs once we reach 6 parallel jobs (1 in queue, 4 running)
+<span class="nc" id="L65">        AsyncTaskExecutorConfiguration executorConfiguration = new AsyncTaskExecutorConfiguration();</span>
+<span class="nc" id="L66">        executorConfiguration.setQueueSize(1);</span>
+<span class="nc" id="L67">        executorConfiguration.setCorePoolSize(4);</span>
+<span class="nc" id="L68">        executorConfiguration.setMaxPoolSize(4);</span>
+<span class="nc" id="L69">        executorConfiguration.setThreadNamePrefix(&quot;flowable-async-task-invoker-thread-&quot;);</span>
+<span class="nc" id="L70">        ((ProcessEngineConfigurationImpl) processEngineConfiguration).setAsyncTaskInvokerTaskExecutorConfiguration(executorConfiguration);</span>
+<span class="nc" id="L71">    }</span>
+
+    @BeforeEach
+    void setUp() {
+<span class="nc" id="L75">        this.originalAsyncTaskInvoker = this.processEngineConfiguration.getAsyncTaskInvoker();</span>
+<span class="nc" id="L76">        this.originalAsyncTaskInvokerTaskExecutor = this.processEngineConfiguration.getAsyncTaskInvokerTaskExecutor();</span>
+<span class="nc" id="L77">    }</span>
+
+    @AfterEach
+    void tearDown() {
+<span class="nc bnc" id="L81" title="All 2 branches missed.">        if (this.originalAsyncTaskInvoker != null) {</span>
+<span class="nc" id="L82">            this.processEngineConfiguration.setAsyncTaskInvoker(this.originalAsyncTaskInvoker);</span>
+        }
+
+<span class="nc" id="L85">        AsyncTaskExecutor currentAsyncTaskExecutor = this.processEngineConfiguration.getAsyncTaskInvokerTaskExecutor();</span>
+
+<span class="nc bnc" id="L87" title="All 2 branches missed.">        if (this.originalAsyncTaskInvokerTaskExecutor != null) {</span>
+<span class="nc" id="L88">            this.processEngineConfiguration.setAsyncTaskInvokerTaskExecutor(this.originalAsyncTaskInvokerTaskExecutor);</span>
+        }
+
+<span class="nc bnc" id="L91" title="All 2 branches missed.">        if (this.originalAsyncTaskInvokerTaskExecutor != currentAsyncTaskExecutor) {</span>
+            // If they are different shut down the current one
+<span class="nc" id="L93">            currentAsyncTaskExecutor.shutdown();</span>
+        }
+<span class="nc" id="L95">    }</span>
+
+    @Test
+    @Deployment
+    void testDelegateExpression() {
+
+<span class="nc" id="L101">        String currentThreadName = Thread.currentThread().getName();</span>
+
+        // The 5th job will fail due to no more place on the queue
+        // If that happens then the async execution should be run on the same thread the process
+<span class="nc" id="L105">        CountDownLatch latch = new CountDownLatch(5);</span>
+<span class="nc" id="L106">        TestFutureJavaDelegate testBean = new TestFutureJavaDelegate(latch);</span>
+<span class="nc" id="L107">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L108">                .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L109">                .transientVariable(&quot;bean&quot;, testBean)</span>
+<span class="nc" id="L110">                .start();</span>
+
+<span class="nc" id="L112">        assertProcessEnded(processInstance.getId());</span>
+
+<span class="nc bnc" id="L114" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.AUDIT, processEngineConfiguration)) {</span>
+<span class="nc" id="L115">            List&lt;HistoricVariableInstance&gt; historicVariableInstances = historyService.createHistoricVariableInstanceQuery().list();</span>
+<span class="nc" id="L116">            Map&lt;String, Object&gt; historicVariables = historicVariableInstances.stream()</span>
+<span class="nc bnc" id="L117" title="All 2 branches missed.">                    .filter(variable -&gt; !&quot;initiator&quot;.equals(variable.getVariableName()))</span>
+<span class="nc" id="L118">                    .collect(Collectors.toMap(HistoricVariableInstance::getVariableName, HistoricVariableInstance::getValue));</span>
+
+<span class="nc" id="L120">            assertThat(historicVariables)</span>
+<span class="nc" id="L121">                    .containsOnlyKeys(</span>
+                            &quot;executionThread1&quot;, &quot;executionThread2&quot;, &quot;executionThread3&quot;,
+                            &quot;executionThread4&quot;, &quot;executionThread5&quot;, &quot;executionThread6&quot;,
+                            &quot;executionThread7&quot;, &quot;executionThread8&quot;, &quot;executionThread9&quot;
+                    )
+<span class="nc" id="L126">                    .containsValues(</span>
+                            &quot;flowable-async-task-invoker-thread-1&quot;,
+                            &quot;flowable-async-task-invoker-thread-2&quot;,
+                            &quot;flowable-async-task-invoker-thread-3&quot;,
+                            &quot;flowable-async-task-invoker-thread-4&quot;,
+                            currentThreadName
+                    );
+        }
+<span class="nc" id="L134">    }</span>
+
+    @Test
+    @Deployment(resources = &quot;org/flowable/engine/test/bpmn/servicetask/ServiceTaskWithFuturesNoQueueCapacityTest.testDelegateExpression.bpmn20.xml&quot;)
+    void testDelegateExpressionWithRejectAsyncTaskInvoker() {
+<span class="nc" id="L139">        DefaultAsyncTaskExecutor asyncTaskExecutor = new DefaultAsyncTaskExecutor();</span>
+<span class="nc" id="L140">        asyncTaskExecutor.setCorePoolSize(4);</span>
+<span class="nc" id="L141">        asyncTaskExecutor.setMaxPoolSize(4);</span>
+<span class="nc" id="L142">        asyncTaskExecutor.setQueueSize(1);</span>
+<span class="nc" id="L143">        asyncTaskExecutor.start();</span>
+<span class="nc" id="L144">        processEngineConfiguration.setAsyncTaskInvokerTaskExecutor(asyncTaskExecutor);</span>
+        // No need to reset the invoker because the ResourceFlowableTestCase creates a new engine before every test run
+<span class="nc" id="L146">        processEngineConfiguration.setAsyncTaskInvoker(new AsyncTaskInvoker() {</span>
+
+            @Override
+            public &lt;T&gt; CompletableFuture&lt;T&gt; submit(Callable&lt;T&gt; task) {
+<span class="nc" id="L150">                return processEngineConfiguration.getAsyncTaskInvokerTaskExecutor().submit(task);</span>
+            }
+        });
+
+        // The 5th job will fail due to no more place on the queue
+        // If that happens then the async execution should be run on the same thread the process
+<span class="nc" id="L156">        CountDownLatch latch = new CountDownLatch(5);</span>
+<span class="nc" id="L157">        TestFutureJavaDelegate testBean = new TestFutureJavaDelegate(latch);</span>
+<span class="nc" id="L158">        assertThatThrownBy(() -&gt; {</span>
+<span class="nc" id="L159">            runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L160">                    .processDefinitionKey(&quot;myProcess&quot;)</span>
+<span class="nc" id="L161">                    .transientVariable(&quot;bean&quot;, testBean)</span>
+<span class="nc" id="L162">                    .start();</span>
+<span class="nc" id="L163">        }).isInstanceOf(RejectedExecutionException.class);</span>
+<span class="nc" id="L164">    }</span>
+
+    protected static class TestFutureJavaDelegate implements FlowableFutureJavaDelegate&lt;Map&lt;String, Object&gt;, Map&lt;String, Object&gt;&gt; {
+
+<span class="nc" id="L168">        protected final AtomicInteger counter = new AtomicInteger(0);</span>
+        protected final CountDownLatch latch;
+
+<span class="nc" id="L171">        public TestFutureJavaDelegate(CountDownLatch latch) {</span>
+<span class="nc" id="L172">            this.latch = latch;</span>
+<span class="nc" id="L173">        }</span>
+
+        @Override
+        public Map&lt;String, Object&gt; prepareExecutionData(DelegateExecution execution) {
+<span class="nc" id="L177">            Map&lt;String, Object&gt; inputData = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L178">            inputData.put(&quot;counter&quot;, counter.incrementAndGet());</span>
+<span class="nc" id="L179">            return inputData;</span>
+        }
+
+        @Override
+        public Map&lt;String, Object&gt; execute(Map&lt;String, Object&gt; inputData) {
+<span class="nc" id="L184">            Map&lt;String, Object&gt; outputData = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L185">            int counter = (int) inputData.get(&quot;counter&quot;);</span>
+<span class="nc" id="L186">            outputData.put(&quot;executionThread&quot; + counter, Thread.currentThread().getName());</span>
+<span class="nc" id="L187">            latch.countDown();</span>
+            try {
+<span class="nc bnc" id="L189" title="All 2 branches missed.">                if (latch.await(2, TimeUnit.SECONDS)) {</span>
+<span class="nc" id="L190">                    return outputData;</span>
+                } else {
+<span class="nc" id="L192">                    throw new FlowableException(&quot;latch did not reach 0&quot;);</span>
+                }
+<span class="nc" id="L194">            } catch (InterruptedException e) {</span>
+<span class="nc" id="L195">                Thread.currentThread().interrupt();</span>
+            }
+<span class="nc" id="L197">            return outputData;</span>
+        }
+
+        @Override
+        public void afterExecution(DelegateExecution execution, Map&lt;String, Object&gt; executionData) {
+<span class="nc bnc" id="L202" title="All 2 branches missed.">            if (executionData != null) {</span>
+<span class="nc bnc" id="L203" title="All 2 branches missed.">                for (Map.Entry&lt;String, Object&gt; entry : executionData.entrySet()) {</span>
+<span class="nc" id="L204">                    execution.setVariable(entry.getKey(), entry.getValue());</span>
+<span class="nc" id="L205">                }</span>
+            }
+<span class="nc" id="L207">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

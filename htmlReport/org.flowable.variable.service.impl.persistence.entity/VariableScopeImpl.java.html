@@ -1,0 +1,1079 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>VariableScopeImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.variable.service.impl.persistence.entity</a> &gt; <span class="el_source">VariableScopeImpl.java</span></div><h1>VariableScopeImpl.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.variable.service.impl.persistence.entity;
+
+import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.delegate.event.FlowableEngineEventType;
+import org.flowable.common.engine.impl.context.Context;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.common.engine.impl.javax.el.ELContext;
+import org.flowable.common.engine.impl.logging.LoggingSessionConstants;
+import org.flowable.common.engine.impl.logging.LoggingSessionUtil;
+import org.flowable.common.engine.impl.persistence.entity.AbstractEntity;
+import org.flowable.variable.api.delegate.VariableScope;
+import org.flowable.variable.api.persistence.entity.VariableInstance;
+import org.flowable.variable.service.VariableServiceConfiguration;
+import org.flowable.variable.service.event.impl.FlowableVariableEventBuilder;
+import org.flowable.variable.service.impl.VariableInstanceValueModifier;
+import org.flowable.variable.service.impl.util.VariableLoggingSessionUtil;
+
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+/**
+ * @author Tom Baeyens
+ * @author Joram Barrez
+ * @author Tijs Rademakers
+ * @author Saeid Mirzaei
+ */
+<span class="nc" id="L48">public abstract class VariableScopeImpl extends AbstractEntity implements Serializable, VariableScope {</span>
+
+    private static final long serialVersionUID = 1L;
+
+    // The cache used when fetching all variables
+    protected Map&lt;String, VariableInstanceEntity&gt; variableInstances; // needs to be null, the logic depends on it for checking if vars were already fetched
+
+    // The cache is used when fetching/setting specific variables
+<span class="nc" id="L56">    protected Map&lt;String, VariableInstanceEntity&gt; usedVariablesCache = new HashMap&lt;&gt;();</span>
+
+    protected Map&lt;String, VariableInstance&gt; transientVariables;
+
+    protected ELContext cachedElContext;
+
+    protected abstract Collection&lt;VariableInstanceEntity&gt; loadVariableInstances();
+
+    protected abstract VariableScopeImpl getParentVariableScope();
+
+    protected abstract void initializeVariableInstanceBackPointer(VariableInstance variableInstance);
+    
+    protected abstract void addLoggingSessionInfo(ObjectNode loggingNode);
+
+    protected void ensureVariableInstancesInitialized() {
+<span class="nc bnc" id="L71" title="All 2 branches missed.">        if (variableInstances == null) {</span>
+<span class="nc" id="L72">            variableInstances = new HashMap&lt;&gt;();</span>
+
+<span class="nc" id="L74">            CommandContext commandContext = Context.getCommandContext();</span>
+<span class="nc bnc" id="L75" title="All 2 branches missed.">            if (commandContext == null) {</span>
+<span class="nc" id="L76">                throw new FlowableException(&quot;lazy loading outside command context for &quot; + this);</span>
+            }
+<span class="nc" id="L78">            Collection&lt;VariableInstanceEntity&gt; variableInstancesList = loadVariableInstances();</span>
+<span class="nc bnc" id="L79" title="All 2 branches missed.">            for (VariableInstanceEntity variableInstance : variableInstancesList) {</span>
+<span class="nc" id="L80">                variableInstances.put(variableInstance.getName(), variableInstance);</span>
+<span class="nc" id="L81">            }</span>
+        }
+<span class="nc" id="L83">    }</span>
+
+    /**
+     * Only to be used when creating a new entity, to avoid an extra call to the database.
+     */
+    public void internalSetVariableInstances(Map&lt;String, VariableInstanceEntity&gt; variableInstances) {
+<span class="nc" id="L89">        this.variableInstances = variableInstances;</span>
+<span class="nc" id="L90">    }</span>
+
+    @Override
+    public Map&lt;String, Object&gt; getVariables() {
+<span class="nc" id="L94">        return collectVariables(new HashMap&lt;&gt;());</span>
+    }
+
+    @Override
+    public Map&lt;String, VariableInstance&gt; getVariableInstances() {
+<span class="nc" id="L99">        return collectVariableInstances(new HashMap&lt;&gt;());</span>
+    }
+
+    @Override
+    public Map&lt;String, Object&gt; getVariables(Collection&lt;String&gt; variableNames) {
+<span class="nc" id="L104">        return getVariables(variableNames, true);</span>
+    }
+
+    @Override
+    public Map&lt;String, VariableInstance&gt; getVariableInstances(Collection&lt;String&gt; variableNames) {
+<span class="nc" id="L109">        return getVariableInstances(variableNames, true);</span>
+    }
+
+    @Override
+    public Map&lt;String, Object&gt; getVariables(Collection&lt;String&gt; variableNames, boolean fetchAllVariables) {
+
+<span class="nc" id="L115">        Map&lt;String, Object&gt; requestedVariables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L116">        Set&lt;String&gt; variableNamesToFetch = new HashSet&lt;&gt;(variableNames);</span>
+
+        // Transient variables 'shadow' any existing variables.
+        // The values in the fetch-cache will be more recent, so they can override any existing ones
+<span class="nc bnc" id="L120" title="All 2 branches missed.">        for (String variableName : variableNames) {</span>
+<span class="nc bnc" id="L121" title="All 4 branches missed.">            if (transientVariables != null &amp;&amp; transientVariables.containsKey(variableName)) {</span>
+<span class="nc" id="L122">                requestedVariables.put(variableName, transientVariables.get(variableName).getValue());</span>
+<span class="nc" id="L123">                variableNamesToFetch.remove(variableName);</span>
+<span class="nc bnc" id="L124" title="All 2 branches missed.">            } else if (usedVariablesCache.containsKey(variableName)) {</span>
+<span class="nc" id="L125">                requestedVariables.put(variableName, usedVariablesCache.get(variableName).getValue());</span>
+<span class="nc" id="L126">                variableNamesToFetch.remove(variableName);</span>
+            }
+<span class="nc" id="L128">        }</span>
+
+<span class="nc bnc" id="L130" title="All 2 branches missed.">        if (fetchAllVariables) {</span>
+
+            // getVariables() will go up the execution hierarchy, no need to do
+            // it here also, the cached values will already be applied too
+<span class="nc" id="L134">            Map&lt;String, Object&gt; allVariables = getVariables();</span>
+<span class="nc bnc" id="L135" title="All 2 branches missed.">            for (String variableName : variableNamesToFetch) {</span>
+<span class="nc" id="L136">                requestedVariables.put(variableName, allVariables.get(variableName));</span>
+<span class="nc" id="L137">            }</span>
+
+<span class="nc" id="L139">        } else {</span>
+
+            // Go up if needed
+<span class="nc" id="L142">            VariableScope parent = getParentVariableScope();</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">            if (parent != null) {</span>
+<span class="nc" id="L144">                requestedVariables.putAll(parent.getVariables(variableNamesToFetch, fetchAllVariables));</span>
+            }
+
+            // Fetch variables on this scope
+<span class="nc" id="L148">            List&lt;VariableInstanceEntity&gt; variables = getSpecificVariables(variableNamesToFetch);</span>
+<span class="nc bnc" id="L149" title="All 2 branches missed.">            for (VariableInstanceEntity variable : variables) {</span>
+<span class="nc" id="L150">                requestedVariables.put(variable.getName(), variable.getValue());</span>
+<span class="nc" id="L151">            }</span>
+
+        }
+<span class="nc" id="L154">        return requestedVariables;</span>
+
+    }
+
+    @Override
+    public Map&lt;String, VariableInstance&gt; getVariableInstances(Collection&lt;String&gt; variableNames, boolean fetchAllVariables) {
+
+<span class="nc" id="L161">        Map&lt;String, VariableInstance&gt; requestedVariables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L162">        Set&lt;String&gt; variableNamesToFetch = new HashSet&lt;&gt;(variableNames);</span>
+
+        // The values in the fetch-cache will be more recent, so they can override any existing ones
+<span class="nc bnc" id="L165" title="All 2 branches missed.">        for (String variableName : variableNames) {</span>
+<span class="nc bnc" id="L166" title="All 4 branches missed.">            if (transientVariables != null &amp;&amp; transientVariables.containsKey(variableName)) {</span>
+<span class="nc" id="L167">                requestedVariables.put(variableName, transientVariables.get(variableName));</span>
+<span class="nc" id="L168">                variableNamesToFetch.remove(variableName);</span>
+<span class="nc bnc" id="L169" title="All 2 branches missed.">            } else if (usedVariablesCache.containsKey(variableName)) {</span>
+<span class="nc" id="L170">                requestedVariables.put(variableName, usedVariablesCache.get(variableName));</span>
+<span class="nc" id="L171">                variableNamesToFetch.remove(variableName);</span>
+            }
+<span class="nc" id="L173">        }</span>
+
+<span class="nc bnc" id="L175" title="All 2 branches missed.">        if (fetchAllVariables) {</span>
+
+            // getVariables() will go up the execution hierarchy, no need to do it here
+            // also, the cached values will already be applied too
+<span class="nc" id="L179">            Map&lt;String, VariableInstance&gt; allVariables = getVariableInstances();</span>
+<span class="nc bnc" id="L180" title="All 2 branches missed.">            for (String variableName : variableNamesToFetch) {</span>
+<span class="nc" id="L181">                requestedVariables.put(variableName, allVariables.get(variableName));</span>
+<span class="nc" id="L182">            }</span>
+
+<span class="nc" id="L184">        } else {</span>
+
+            // Go up if needed
+<span class="nc" id="L187">            VariableScope parent = getParentVariableScope();</span>
+<span class="nc bnc" id="L188" title="All 2 branches missed.">            if (parent != null) {</span>
+<span class="nc" id="L189">                requestedVariables.putAll(parent.getVariableInstances(variableNamesToFetch, fetchAllVariables));</span>
+            }
+
+            // Fetch variables on this scope
+<span class="nc" id="L193">            List&lt;VariableInstanceEntity&gt; variables = getSpecificVariables(variableNamesToFetch);</span>
+<span class="nc bnc" id="L194" title="All 2 branches missed.">            for (VariableInstanceEntity variable : variables) {</span>
+<span class="nc" id="L195">                requestedVariables.put(variable.getName(), variable);</span>
+<span class="nc" id="L196">            }</span>
+
+        }
+<span class="nc" id="L199">        return requestedVariables;</span>
+
+    }
+
+    protected Map&lt;String, Object&gt; collectVariables(HashMap&lt;String, Object&gt; variables) {
+<span class="nc" id="L204">        ensureVariableInstancesInitialized();</span>
+<span class="nc" id="L205">        VariableScopeImpl parentScope = getParentVariableScope();</span>
+<span class="nc bnc" id="L206" title="All 2 branches missed.">        if (parentScope != null) {</span>
+<span class="nc" id="L207">            variables.putAll(parentScope.collectVariables(variables));</span>
+        }
+
+<span class="nc bnc" id="L210" title="All 2 branches missed.">        for (VariableInstanceEntity variableInstance : variableInstances.values()) {</span>
+<span class="nc" id="L211">            variables.put(variableInstance.getName(), variableInstance.getValue());</span>
+<span class="nc" id="L212">        }</span>
+
+<span class="nc bnc" id="L214" title="All 2 branches missed.">        for (String variableName : usedVariablesCache.keySet()) {</span>
+<span class="nc" id="L215">            variables.put(variableName, usedVariablesCache.get(variableName).getValue());</span>
+<span class="nc" id="L216">        }</span>
+
+<span class="nc bnc" id="L218" title="All 2 branches missed.">        if (transientVariables != null) {</span>
+<span class="nc bnc" id="L219" title="All 2 branches missed.">            for (String variableName : transientVariables.keySet()) {</span>
+<span class="nc" id="L220">                variables.put(variableName, transientVariables.get(variableName).getValue());</span>
+<span class="nc" id="L221">            }</span>
+        }
+
+<span class="nc" id="L224">        return variables;</span>
+    }
+
+    protected Map&lt;String, VariableInstance&gt; collectVariableInstances(HashMap&lt;String, VariableInstance&gt; variables) {
+<span class="nc" id="L228">        ensureVariableInstancesInitialized();</span>
+<span class="nc" id="L229">        VariableScopeImpl parentScope = getParentVariableScope();</span>
+<span class="nc bnc" id="L230" title="All 2 branches missed.">        if (parentScope != null) {</span>
+<span class="nc" id="L231">            variables.putAll(parentScope.collectVariableInstances(variables));</span>
+        }
+
+<span class="nc bnc" id="L234" title="All 2 branches missed.">        for (VariableInstance variableInstance : variableInstances.values()) {</span>
+<span class="nc" id="L235">            variables.put(variableInstance.getName(), variableInstance);</span>
+<span class="nc" id="L236">        }</span>
+
+<span class="nc bnc" id="L238" title="All 2 branches missed.">        for (String variableName : usedVariablesCache.keySet()) {</span>
+<span class="nc" id="L239">            variables.put(variableName, usedVariablesCache.get(variableName));</span>
+<span class="nc" id="L240">        }</span>
+
+<span class="nc bnc" id="L242" title="All 2 branches missed.">        if (transientVariables != null) {</span>
+<span class="nc" id="L243">            variables.putAll(transientVariables);</span>
+        }
+
+<span class="nc" id="L246">        return variables;</span>
+    }
+
+    @Override
+    public Object getVariable(String variableName) {
+<span class="nc" id="L251">        return getVariable(variableName, true);</span>
+    }
+
+    @Override
+    public VariableInstance getVariableInstance(String variableName) {
+<span class="nc" id="L256">        return getVariableInstance(variableName, true);</span>
+    }
+
+    /**
+     * The same operation as {@link VariableScopeImpl#getVariable(String)}, but with an extra parameter to indicate whether or not all variables need to be fetched.
+     *
+     * Note that the default way (because of backwards compatibility) is to fetch all the variables when doing a get/set of variables. So this means 'true' is the default value for this method, and in
+     * fact it will simply delegate to {@link #getVariable(String)}. This can also be the most performant, if you're doing a lot of variable gets in the same transaction (eg in service tasks).
+     *
+     * In case 'false' is used, only the specific variable will be fetched.
+     */
+    @Override
+    public Object getVariable(String variableName, boolean fetchAllVariables) {
+<span class="nc" id="L269">        Object value = null;</span>
+<span class="nc" id="L270">        VariableInstance variable = getVariableInstance(variableName, fetchAllVariables);</span>
+<span class="nc bnc" id="L271" title="All 2 branches missed.">        if (variable != null) {</span>
+<span class="nc" id="L272">            value = variable.getValue();</span>
+        }
+<span class="nc" id="L274">        return value;</span>
+    }
+
+    @Override
+    public VariableInstance getVariableInstance(String variableName, boolean fetchAllVariables) {
+
+        // Transient variable
+<span class="nc bnc" id="L281" title="All 4 branches missed.">        if (transientVariables != null &amp;&amp; transientVariables.containsKey(variableName)) {</span>
+<span class="nc" id="L282">            return transientVariables.get(variableName);</span>
+        }
+
+        // Check the local single-fetch cache
+<span class="nc bnc" id="L286" title="All 2 branches missed.">        if (usedVariablesCache.containsKey(variableName)) {</span>
+<span class="nc" id="L287">            return usedVariablesCache.get(variableName);</span>
+        }
+
+<span class="nc bnc" id="L290" title="All 2 branches missed.">        if (fetchAllVariables) {</span>
+<span class="nc" id="L291">            ensureVariableInstancesInitialized();</span>
+<span class="nc" id="L292">            VariableInstanceEntity variableInstance = variableInstances.get(variableName);</span>
+<span class="nc bnc" id="L293" title="All 2 branches missed.">            if (variableInstance != null) {</span>
+<span class="nc" id="L294">                return variableInstance;</span>
+            }
+
+            // Go up the hierarchy
+<span class="nc" id="L298">            VariableScope parentScope = getParentVariableScope();</span>
+<span class="nc bnc" id="L299" title="All 2 branches missed.">            if (parentScope != null) {</span>
+<span class="nc" id="L300">                return parentScope.getVariableInstance(variableName, true);</span>
+            }
+
+<span class="nc" id="L303">        } else {</span>
+
+<span class="nc bnc" id="L305" title="All 4 branches missed.">            if (variableInstances != null &amp;&amp; variableInstances.containsKey(variableName)) {</span>
+<span class="nc" id="L306">                return variableInstances.get(variableName);</span>
+            }
+
+<span class="nc" id="L309">            VariableInstanceEntity variable = getSpecificVariable(variableName);</span>
+<span class="nc bnc" id="L310" title="All 2 branches missed.">            if (variable != null) {</span>
+<span class="nc" id="L311">                usedVariablesCache.put(variableName, variable);</span>
+<span class="nc" id="L312">                return variable;</span>
+            }
+
+            // Go up the hierarchy
+<span class="nc" id="L316">            VariableScope parentScope = getParentVariableScope();</span>
+<span class="nc bnc" id="L317" title="All 2 branches missed.">            if (parentScope != null) {</span>
+<span class="nc" id="L318">                return parentScope.getVariableInstance(variableName, false);</span>
+            }
+
+        }
+<span class="nc" id="L322">        return null;</span>
+    }
+
+    protected abstract VariableInstanceEntity getSpecificVariable(String variableName);
+
+    @Override
+    public Object getVariableLocal(String variableName) {
+<span class="nc" id="L329">        return getVariableLocal(variableName, true);</span>
+    }
+
+    @Override
+    public VariableInstance getVariableInstanceLocal(String variableName) {
+<span class="nc" id="L334">        return getVariableInstanceLocal(variableName, true);</span>
+    }
+
+    @Override
+    public Object getVariableLocal(String variableName, boolean fetchAllVariables) {
+<span class="nc" id="L339">        Object value = null;</span>
+<span class="nc" id="L340">        VariableInstance variable = getVariableInstanceLocal(variableName, fetchAllVariables);</span>
+<span class="nc bnc" id="L341" title="All 2 branches missed.">        if (variable != null) {</span>
+<span class="nc" id="L342">            value = variable.getValue();</span>
+        }
+<span class="nc" id="L344">        return value;</span>
+    }
+
+    @Override
+    public VariableInstance getVariableInstanceLocal(String variableName, boolean fetchAllVariables) {
+
+<span class="nc bnc" id="L350" title="All 4 branches missed.">        if (transientVariables != null &amp;&amp; transientVariables.containsKey(variableName)) {</span>
+<span class="nc" id="L351">            return transientVariables.get(variableName);</span>
+        }
+
+<span class="nc bnc" id="L354" title="All 2 branches missed.">        if (usedVariablesCache.containsKey(variableName)) {</span>
+<span class="nc" id="L355">            return usedVariablesCache.get(variableName);</span>
+        }
+
+<span class="nc bnc" id="L358" title="All 2 branches missed.">        if (fetchAllVariables) {</span>
+
+<span class="nc" id="L360">            ensureVariableInstancesInitialized();</span>
+
+<span class="nc" id="L362">            VariableInstanceEntity variableInstance = variableInstances.get(variableName);</span>
+<span class="nc bnc" id="L363" title="All 2 branches missed.">            if (variableInstance != null) {</span>
+<span class="nc" id="L364">                return variableInstance;</span>
+            }
+
+<span class="nc" id="L367">        } else {</span>
+
+<span class="nc bnc" id="L369" title="All 4 branches missed.">            if (variableInstances != null &amp;&amp; variableInstances.containsKey(variableName)) {</span>
+<span class="nc" id="L370">                VariableInstanceEntity variable = variableInstances.get(variableName);</span>
+<span class="nc bnc" id="L371" title="All 2 branches missed.">                if (variable != null) {</span>
+<span class="nc" id="L372">                    return variableInstances.get(variableName);</span>
+                }
+            }
+
+<span class="nc" id="L376">            VariableInstanceEntity variable = getSpecificVariable(variableName);</span>
+<span class="nc bnc" id="L377" title="All 2 branches missed.">            if (variable != null) {</span>
+<span class="nc" id="L378">                usedVariablesCache.put(variableName, variable);</span>
+<span class="nc" id="L379">                return variable;</span>
+            }
+
+        }
+<span class="nc" id="L383">        return null;</span>
+    }
+
+    @Override
+    public boolean hasVariables() {
+<span class="nc bnc" id="L388" title="All 4 branches missed.">        if (transientVariables != null &amp;&amp; !transientVariables.isEmpty()) {</span>
+<span class="nc" id="L389">            return true;</span>
+        }
+
+<span class="nc" id="L392">        ensureVariableInstancesInitialized();</span>
+<span class="nc bnc" id="L393" title="All 2 branches missed.">        if (!variableInstances.isEmpty()) {</span>
+<span class="nc" id="L394">            return true;</span>
+        }
+<span class="nc" id="L396">        VariableScope parentScope = getParentVariableScope();</span>
+<span class="nc bnc" id="L397" title="All 2 branches missed.">        if (parentScope != null) {</span>
+<span class="nc" id="L398">            return parentScope.hasVariables();</span>
+        }
+<span class="nc" id="L400">        return false;</span>
+    }
+
+    @Override
+    public boolean hasVariablesLocal() {
+<span class="nc bnc" id="L405" title="All 4 branches missed.">        if (transientVariables != null &amp;&amp; !transientVariables.isEmpty()) {</span>
+<span class="nc" id="L406">            return true;</span>
+        }
+<span class="nc" id="L408">        ensureVariableInstancesInitialized();</span>
+<span class="nc bnc" id="L409" title="All 2 branches missed.">        return !variableInstances.isEmpty();</span>
+    }
+
+    @Override
+    public boolean hasVariable(String variableName) {
+<span class="nc bnc" id="L414" title="All 2 branches missed.">        if (hasVariableLocal(variableName)) {</span>
+<span class="nc" id="L415">            return true;</span>
+        }
+<span class="nc" id="L417">        VariableScope parentScope = getParentVariableScope();</span>
+<span class="nc bnc" id="L418" title="All 2 branches missed.">        if (parentScope != null) {</span>
+<span class="nc" id="L419">            return parentScope.hasVariable(variableName);</span>
+        }
+<span class="nc" id="L421">        return false;</span>
+    }
+
+    @Override
+    public boolean hasVariableLocal(String variableName) {
+<span class="nc bnc" id="L426" title="All 4 branches missed.">        if (transientVariables != null &amp;&amp; transientVariables.containsKey(variableName)) {</span>
+<span class="nc" id="L427">            return true;</span>
+        }
+<span class="nc" id="L429">        ensureVariableInstancesInitialized();</span>
+<span class="nc" id="L430">        return variableInstances.containsKey(variableName);</span>
+    }
+
+    protected Set&lt;String&gt; collectVariableNames(Set&lt;String&gt; variableNames) {
+<span class="nc bnc" id="L434" title="All 2 branches missed.">        if (transientVariables != null) {</span>
+<span class="nc" id="L435">            variableNames.addAll(transientVariables.keySet());</span>
+        }
+
+<span class="nc" id="L438">        ensureVariableInstancesInitialized();</span>
+<span class="nc" id="L439">        VariableScopeImpl parentScope = getParentVariableScope();</span>
+<span class="nc bnc" id="L440" title="All 2 branches missed.">        if (parentScope != null) {</span>
+<span class="nc" id="L441">            variableNames.addAll(parentScope.collectVariableNames(variableNames));</span>
+        }
+<span class="nc bnc" id="L443" title="All 2 branches missed.">        for (VariableInstanceEntity variableInstance : variableInstances.values()) {</span>
+<span class="nc" id="L444">            variableNames.add(variableInstance.getName());</span>
+<span class="nc" id="L445">        }</span>
+<span class="nc" id="L446">        return variableNames;</span>
+    }
+
+    @Override
+    public Set&lt;String&gt; getVariableNames() {
+<span class="nc" id="L451">        return collectVariableNames(new HashSet&lt;&gt;());</span>
+    }
+
+    @Override
+    public Map&lt;String, Object&gt; getVariablesLocal() {
+<span class="nc" id="L456">        Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L457">        ensureVariableInstancesInitialized();</span>
+<span class="nc bnc" id="L458" title="All 2 branches missed.">        for (VariableInstanceEntity variableInstance : variableInstances.values()) {</span>
+<span class="nc" id="L459">            variables.put(variableInstance.getName(), variableInstance.getValue());</span>
+<span class="nc" id="L460">        }</span>
+<span class="nc bnc" id="L461" title="All 2 branches missed.">        for (String variableName : usedVariablesCache.keySet()) {</span>
+<span class="nc" id="L462">            variables.put(variableName, usedVariablesCache.get(variableName).getValue());</span>
+<span class="nc" id="L463">        }</span>
+<span class="nc bnc" id="L464" title="All 2 branches missed.">        if (transientVariables != null) {</span>
+<span class="nc bnc" id="L465" title="All 2 branches missed.">            for (String variableName : transientVariables.keySet()) {</span>
+<span class="nc" id="L466">                variables.put(variableName, transientVariables.get(variableName).getValue());</span>
+<span class="nc" id="L467">            }</span>
+        }
+<span class="nc" id="L469">        return variables;</span>
+    }
+
+    @Override
+    public Map&lt;String, VariableInstance&gt; getVariableInstancesLocal() {
+<span class="nc" id="L474">        Map&lt;String, VariableInstance&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L475">        ensureVariableInstancesInitialized();</span>
+<span class="nc bnc" id="L476" title="All 2 branches missed.">        for (VariableInstanceEntity variableInstance : variableInstances.values()) {</span>
+<span class="nc" id="L477">            variables.put(variableInstance.getName(), variableInstance);</span>
+<span class="nc" id="L478">        }</span>
+<span class="nc bnc" id="L479" title="All 2 branches missed.">        for (String variableName : usedVariablesCache.keySet()) {</span>
+<span class="nc" id="L480">            variables.put(variableName, usedVariablesCache.get(variableName));</span>
+<span class="nc" id="L481">        }</span>
+<span class="nc bnc" id="L482" title="All 2 branches missed.">        if (transientVariables != null) {</span>
+<span class="nc" id="L483">            variables.putAll(transientVariables);</span>
+        }
+<span class="nc" id="L485">        return variables;</span>
+    }
+
+    @Override
+    public Map&lt;String, Object&gt; getVariablesLocal(Collection&lt;String&gt; variableNames) {
+<span class="nc" id="L490">        return getVariablesLocal(variableNames, true);</span>
+    }
+
+    @Override
+    public Map&lt;String, VariableInstance&gt; getVariableInstancesLocal(Collection&lt;String&gt; variableNames) {
+<span class="nc" id="L495">        return getVariableInstancesLocal(variableNames, true);</span>
+    }
+
+    @Override
+    public Map&lt;String, Object&gt; getVariablesLocal(Collection&lt;String&gt; variableNames, boolean fetchAllVariables) {
+<span class="nc" id="L500">        Map&lt;String, Object&gt; requestedVariables = new HashMap&lt;&gt;();</span>
+
+        // The values in the fetch-cache will be more recent, so they can override any existing ones
+<span class="nc" id="L503">        Set&lt;String&gt; variableNamesToFetch = new HashSet&lt;&gt;(variableNames);</span>
+<span class="nc bnc" id="L504" title="All 2 branches missed.">        for (String variableName : variableNames) {</span>
+<span class="nc bnc" id="L505" title="All 4 branches missed.">            if (transientVariables != null &amp;&amp; transientVariables.containsKey(variableName)) {</span>
+<span class="nc" id="L506">                requestedVariables.put(variableName, transientVariables.get(variableName).getValue());</span>
+<span class="nc" id="L507">                variableNamesToFetch.remove(variableName);</span>
+<span class="nc bnc" id="L508" title="All 2 branches missed.">            } else if (usedVariablesCache.containsKey(variableName)) {</span>
+<span class="nc" id="L509">                requestedVariables.put(variableName, usedVariablesCache.get(variableName).getValue());</span>
+<span class="nc" id="L510">                variableNamesToFetch.remove(variableName);</span>
+            }
+<span class="nc" id="L512">        }</span>
+
+<span class="nc bnc" id="L514" title="All 2 branches missed.">        if (fetchAllVariables) {</span>
+
+<span class="nc" id="L516">            Map&lt;String, Object&gt; allVariables = getVariablesLocal();</span>
+<span class="nc bnc" id="L517" title="All 2 branches missed.">            for (String variableName : variableNamesToFetch) {</span>
+<span class="nc" id="L518">                requestedVariables.put(variableName, allVariables.get(variableName));</span>
+<span class="nc" id="L519">            }</span>
+
+<span class="nc" id="L521">        } else {</span>
+
+<span class="nc" id="L523">            List&lt;VariableInstanceEntity&gt; variables = getSpecificVariables(variableNamesToFetch);</span>
+<span class="nc bnc" id="L524" title="All 2 branches missed.">            for (VariableInstanceEntity variable : variables) {</span>
+<span class="nc" id="L525">                requestedVariables.put(variable.getName(), variable.getValue());</span>
+<span class="nc" id="L526">            }</span>
+
+        }
+
+<span class="nc" id="L530">        return requestedVariables;</span>
+    }
+
+    @Override
+    public Map&lt;String, VariableInstance&gt; getVariableInstancesLocal(Collection&lt;String&gt; variableNames, boolean fetchAllVariables) {
+<span class="nc" id="L535">        Map&lt;String, VariableInstance&gt; requestedVariables = new HashMap&lt;&gt;();</span>
+
+        // The values in the fetch-cache will be more recent, so they can override any existing ones
+<span class="nc" id="L538">        Set&lt;String&gt; variableNamesToFetch = new HashSet&lt;&gt;(variableNames);</span>
+<span class="nc bnc" id="L539" title="All 2 branches missed.">        for (String variableName : variableNames) {</span>
+<span class="nc bnc" id="L540" title="All 4 branches missed.">            if (transientVariables != null &amp;&amp; transientVariables.containsKey(variableName)) {</span>
+<span class="nc" id="L541">                requestedVariables.put(variableName, transientVariables.get(variableName));</span>
+<span class="nc" id="L542">                variableNamesToFetch.remove(variableName);</span>
+<span class="nc bnc" id="L543" title="All 2 branches missed.">            } else if (usedVariablesCache.containsKey(variableName)) {</span>
+<span class="nc" id="L544">                requestedVariables.put(variableName, usedVariablesCache.get(variableName));</span>
+<span class="nc" id="L545">                variableNamesToFetch.remove(variableName);</span>
+            }
+<span class="nc" id="L547">        }</span>
+
+<span class="nc bnc" id="L549" title="All 2 branches missed.">        if (fetchAllVariables) {</span>
+
+<span class="nc" id="L551">            Map&lt;String, VariableInstance&gt; allVariables = getVariableInstancesLocal();</span>
+<span class="nc bnc" id="L552" title="All 2 branches missed.">            for (String variableName : variableNamesToFetch) {</span>
+<span class="nc" id="L553">                requestedVariables.put(variableName, allVariables.get(variableName));</span>
+<span class="nc" id="L554">            }</span>
+
+<span class="nc" id="L556">        } else {</span>
+
+<span class="nc" id="L558">            List&lt;VariableInstanceEntity&gt; variables = getSpecificVariables(variableNamesToFetch);</span>
+<span class="nc bnc" id="L559" title="All 2 branches missed.">            for (VariableInstanceEntity variable : variables) {</span>
+<span class="nc" id="L560">                requestedVariables.put(variable.getName(), variable);</span>
+<span class="nc" id="L561">            }</span>
+
+        }
+
+<span class="nc" id="L565">        return requestedVariables;</span>
+    }
+
+    protected abstract List&lt;VariableInstanceEntity&gt; getSpecificVariables(Collection&lt;String&gt; variableNames);
+
+    @Override
+    public Set&lt;String&gt; getVariableNamesLocal() {
+<span class="nc" id="L572">        Set&lt;String&gt; variableNames = new HashSet&lt;&gt;();</span>
+<span class="nc bnc" id="L573" title="All 2 branches missed.">        if (transientVariables != null) {</span>
+<span class="nc" id="L574">            variableNames.addAll(transientVariables.keySet());</span>
+        }
+<span class="nc" id="L576">        ensureVariableInstancesInitialized();</span>
+<span class="nc" id="L577">        variableNames.addAll(variableInstances.keySet());</span>
+<span class="nc" id="L578">        return variableNames;</span>
+    }
+
+    public Map&lt;String, VariableInstanceEntity&gt; getVariableInstanceEntities() {
+<span class="nc" id="L582">        ensureVariableInstancesInitialized();</span>
+<span class="nc" id="L583">        return Collections.unmodifiableMap(variableInstances);</span>
+    }
+
+    public Map&lt;String, VariableInstanceEntity&gt; getUsedVariablesCache() {
+<span class="nc" id="L587">        return usedVariablesCache;</span>
+    }
+
+    public void createVariablesLocal(Map&lt;String, ? extends Object&gt; variables) {
+<span class="nc bnc" id="L591" title="All 2 branches missed.">        if (variables != null) {</span>
+<span class="nc bnc" id="L592" title="All 2 branches missed.">            for (Map.Entry&lt;String, ? extends Object&gt; entry : variables.entrySet()) {</span>
+<span class="nc" id="L593">                createVariableLocal(entry.getKey(), entry.getValue());</span>
+<span class="nc" id="L594">            }</span>
+        }
+<span class="nc" id="L596">    }</span>
+
+    @Override
+    public void setVariables(Map&lt;String, ? extends Object&gt; variables) {
+<span class="nc bnc" id="L600" title="All 2 branches missed.">        if (variables != null) {</span>
+<span class="nc bnc" id="L601" title="All 2 branches missed.">            for (String variableName : variables.keySet()) {</span>
+<span class="nc" id="L602">                setVariable(variableName, variables.get(variableName));</span>
+<span class="nc" id="L603">            }</span>
+        }
+<span class="nc" id="L605">    }</span>
+
+    @Override
+    public void setVariablesLocal(Map&lt;String, ? extends Object&gt; variables) {
+<span class="nc bnc" id="L609" title="All 2 branches missed.">        if (variables != null) {</span>
+<span class="nc bnc" id="L610" title="All 2 branches missed.">            for (String variableName : variables.keySet()) {</span>
+<span class="nc" id="L611">                setVariableLocal(variableName, variables.get(variableName));</span>
+<span class="nc" id="L612">            }</span>
+        }
+<span class="nc" id="L614">    }</span>
+
+    @Override
+    public void removeVariables() {
+<span class="nc" id="L618">        ensureVariableInstancesInitialized();</span>
+<span class="nc" id="L619">        Set&lt;String&gt; variableNames = new HashSet&lt;&gt;(variableInstances.keySet());</span>
+<span class="nc bnc" id="L620" title="All 2 branches missed.">        for (String variableName : variableNames) {</span>
+<span class="nc" id="L621">            removeVariable(variableName);</span>
+<span class="nc" id="L622">        }</span>
+<span class="nc" id="L623">    }</span>
+
+    @Override
+    public void removeVariablesLocal() {
+<span class="nc" id="L627">        List&lt;String&gt; variableNames = new ArrayList&lt;&gt;(getVariableNamesLocal());</span>
+<span class="nc bnc" id="L628" title="All 2 branches missed.">        for (String variableName : variableNames) {</span>
+<span class="nc" id="L629">            removeVariableLocal(variableName);</span>
+<span class="nc" id="L630">        }</span>
+<span class="nc" id="L631">    }</span>
+
+    @Override
+    public void removeVariables(Collection&lt;String&gt; variableNames) {
+<span class="nc bnc" id="L635" title="All 2 branches missed.">        if (variableNames != null) {</span>
+<span class="nc bnc" id="L636" title="All 2 branches missed.">            for (String variableName : variableNames) {</span>
+<span class="nc" id="L637">                removeVariable(variableName);</span>
+<span class="nc" id="L638">            }</span>
+        }
+<span class="nc" id="L640">    }</span>
+
+    @Override
+    public void removeVariablesLocal(Collection&lt;String&gt; variableNames) {
+<span class="nc bnc" id="L644" title="All 2 branches missed.">        if (variableNames != null) {</span>
+<span class="nc bnc" id="L645" title="All 2 branches missed.">            for (String variableName : variableNames) {</span>
+<span class="nc" id="L646">                removeVariableLocal(variableName);</span>
+<span class="nc" id="L647">            }</span>
+        }
+<span class="nc" id="L649">    }</span>
+
+    @Override
+    public void setVariable(String variableName, Object value) {
+<span class="nc bnc" id="L653" title="All 2 branches missed.">        if (isExpression(variableName)) {</span>
+<span class="nc" id="L654">            getVariableServiceConfiguration().getExpressionManager().</span>
+<span class="nc" id="L655">                    createExpression(variableName).</span>
+<span class="nc" id="L656">                    setValue(value, this);</span>
+        } else {
+<span class="nc" id="L658">            setVariable(variableName, value, true);</span>
+        }
+<span class="nc" id="L660">    }</span>
+
+    /**
+     * The default {@link #setVariable(String, Object)} fetches all variables (for historical and backwards compatible reasons) while setting the variables.
+     *
+     * Setting the fetchAllVariables parameter to true is the default behaviour (ie fetching all variables) Setting the fetchAllVariables parameter to false does not do that.
+     *
+     */
+    @Override
+    public void setVariable(String variableName, Object value, boolean fetchAllVariables) {
+
+<span class="nc bnc" id="L671" title="All 2 branches missed.">        if (fetchAllVariables) {</span>
+
+            // If it's in the cache, it's more recent
+<span class="nc bnc" id="L674" title="All 2 branches missed.">            if (usedVariablesCache.containsKey(variableName)) {</span>
+<span class="nc" id="L675">                updateVariableInstance(usedVariablesCache.get(variableName), value);</span>
+            }
+
+            // If the variable exists on this scope, replace it
+<span class="nc bnc" id="L679" title="All 2 branches missed.">            if (storeVariableLocal(variableName)) {</span>
+<span class="nc" id="L680">                setVariableLocal(variableName, value, true);</span>
+<span class="nc" id="L681">                return;</span>
+            }
+
+            // Otherwise, go up the hierarchy (we're trying to put it as high as possible)
+<span class="nc" id="L685">            VariableScopeImpl parentVariableScope = getParentVariableScope();</span>
+<span class="nc bnc" id="L686" title="All 2 branches missed.">            if (parentVariableScope != null) {</span>
+<span class="nc" id="L687">                parentVariableScope.setVariable(variableName, value);</span>
+<span class="nc" id="L688">                return;</span>
+            }
+
+            // We're as high as possible and the variable doesn't exist yet, so we're creating it
+<span class="nc" id="L692">            createVariableLocal(variableName, value);</span>
+
+<span class="nc" id="L694">        } else {</span>
+
+            // Check local cache first
+<span class="nc bnc" id="L697" title="All 2 branches missed.">            if (usedVariablesCache.containsKey(variableName)) {</span>
+
+<span class="nc" id="L699">                updateVariableInstance(usedVariablesCache.get(variableName), value);</span>
+
+<span class="nc bnc" id="L701" title="All 4 branches missed.">            } else if (variableInstances != null &amp;&amp; variableInstances.containsKey(variableName)) {</span>
+
+<span class="nc" id="L703">                updateVariableInstance(variableInstances.get(variableName), value);</span>
+
+            } else {
+
+                // Not in local cache, check if defined on this scope
+                // Create it if it doesn't exist yet
+<span class="nc" id="L709">                VariableInstanceEntity variable = getSpecificVariable(variableName);</span>
+<span class="nc bnc" id="L710" title="All 2 branches missed.">                if (variable != null) {</span>
+<span class="nc" id="L711">                    updateVariableInstance(variable, value);</span>
+                } else {
+
+<span class="nc" id="L714">                    VariableScopeImpl parent = getParentVariableScope();</span>
+<span class="nc bnc" id="L715" title="All 2 branches missed.">                    if (parent != null) {</span>
+<span class="nc" id="L716">                        parent.setVariable(variableName, value, fetchAllVariables);</span>
+<span class="nc" id="L717">                        return;</span>
+                    }
+
+<span class="nc" id="L720">                    variable = createVariableInstance(variableName, value);</span>
+
+                }
+<span class="nc" id="L723">                usedVariablesCache.put(variableName, variable);</span>
+
+            }
+
+        }
+
+<span class="nc" id="L729">    }</span>
+
+    @Override
+    public Object setVariableLocal(String variableName, Object value) {
+<span class="nc" id="L733">        return setVariableLocal(variableName, value, true);</span>
+    }
+
+    /**
+     * The default {@link #setVariableLocal(String, Object)} fetches all variables (for historical and backwards compatible reasons) while setting the variables.
+     *
+     * Setting the fetchAllVariables parameter to true is the default behaviour (ie fetching all variables) Setting the fetchAllVariables parameter to false does not do that.
+     *
+     */
+    @Override
+    public Object setVariableLocal(String variableName, Object value, boolean fetchAllVariables) {
+
+<span class="nc bnc" id="L745" title="All 2 branches missed.">        if (fetchAllVariables) {</span>
+
+            // If it's in the cache, it's more recent
+<span class="nc bnc" id="L748" title="All 2 branches missed.">            if (usedVariablesCache.containsKey(variableName)) {</span>
+<span class="nc" id="L749">                updateVariableInstance(usedVariablesCache.get(variableName), value);</span>
+            }
+
+<span class="nc" id="L752">            ensureVariableInstancesInitialized();</span>
+
+<span class="nc" id="L754">            VariableInstanceEntity variableInstance = variableInstances.get(variableName);</span>
+<span class="nc bnc" id="L755" title="All 2 branches missed.">            if (variableInstance == null) {</span>
+<span class="nc" id="L756">                variableInstance = usedVariablesCache.get(variableName);</span>
+            }
+
+<span class="nc bnc" id="L759" title="All 2 branches missed.">            if (variableInstance == null) {</span>
+<span class="nc" id="L760">                createVariableLocal(variableName, value);</span>
+            } else {
+<span class="nc" id="L762">                updateVariableInstance(variableInstance, value);</span>
+            }
+
+<span class="nc" id="L765">        } else {</span>
+
+<span class="nc bnc" id="L767" title="All 2 branches missed.">            if (usedVariablesCache.containsKey(variableName)) {</span>
+<span class="nc" id="L768">                updateVariableInstance(usedVariablesCache.get(variableName), value);</span>
+<span class="nc bnc" id="L769" title="All 4 branches missed.">            } else if (variableInstances != null &amp;&amp; variableInstances.containsKey(variableName)) {</span>
+<span class="nc" id="L770">                updateVariableInstance(variableInstances.get(variableName), value);</span>
+            } else {
+
+<span class="nc" id="L773">                VariableInstanceEntity variable = getSpecificVariable(variableName);</span>
+<span class="nc bnc" id="L774" title="All 2 branches missed.">                if (variable != null) {</span>
+<span class="nc" id="L775">                    updateVariableInstance(variable, value);</span>
+                } else {
+<span class="nc" id="L777">                    variable = createVariableInstance(variableName, value);</span>
+                }
+<span class="nc" id="L779">                usedVariablesCache.put(variableName, variable);</span>
+
+            }
+
+        }
+<span class="nc" id="L784">        return null;</span>
+    }
+
+    /**
+     * only called when a new variable is created on this variable scope. This method is also responsible for propagating the creation of this variable to the history.
+     */
+    protected void createVariableLocal(String variableName, Object value) {
+<span class="nc" id="L791">        ensureVariableInstancesInitialized();</span>
+
+<span class="nc bnc" id="L793" title="All 2 branches missed.">        if (variableInstances.containsKey(variableName)) {</span>
+<span class="nc" id="L794">            throw new FlowableException(&quot;variable '&quot; + variableName + &quot;' already exists. Use setVariableLocal if you want to overwrite the value for &quot; + this);</span>
+        }
+
+<span class="nc" id="L797">        createVariableInstance(variableName, value);</span>
+<span class="nc" id="L798">    }</span>
+
+    @Override
+    public void removeVariable(String variableName) {
+<span class="nc" id="L802">        ensureVariableInstancesInitialized();</span>
+<span class="nc bnc" id="L803" title="All 2 branches missed.">        if (variableInstances.containsKey(variableName)) {</span>
+<span class="nc" id="L804">            removeVariableLocal(variableName);</span>
+<span class="nc" id="L805">            return;</span>
+        }
+<span class="nc" id="L807">        VariableScopeImpl parentVariableScope = getParentVariableScope();</span>
+<span class="nc bnc" id="L808" title="All 2 branches missed.">        if (parentVariableScope != null) {</span>
+<span class="nc" id="L809">            parentVariableScope.removeVariable(variableName);</span>
+        }
+<span class="nc" id="L811">    }</span>
+
+    @Override
+    public void removeVariableLocal(String variableName) {
+<span class="nc" id="L815">        ensureVariableInstancesInitialized();</span>
+<span class="nc" id="L816">        VariableInstanceEntity variableInstance = variableInstances.remove(variableName);</span>
+<span class="nc bnc" id="L817" title="All 2 branches missed.">        if (variableInstance != null) {</span>
+<span class="nc" id="L818">            deleteVariableInstanceForExplicitUserCall(variableInstance);</span>
+        }
+<span class="nc" id="L820">    }</span>
+
+    protected void deleteVariableInstanceForExplicitUserCall(VariableInstanceEntity variableInstance) {
+<span class="nc" id="L823">        VariableServiceConfiguration variableServiceConfiguration = getVariableServiceConfiguration();</span>
+<span class="nc" id="L824">        variableServiceConfiguration.getVariableInstanceEntityManager().delete(variableInstance);</span>
+
+<span class="nc bnc" id="L826" title="All 2 branches missed.">        if (variableServiceConfiguration.isLoggingSessionEnabled()) {</span>
+<span class="nc" id="L827">            ObjectNode loggingNode = VariableLoggingSessionUtil.addLoggingData(&quot;Variable '&quot; +</span>
+<span class="nc" id="L828">                    variableInstance.getName() + &quot;' deleted&quot;, variableInstance, variableServiceConfiguration.getObjectMapper());</span>
+<span class="nc" id="L829">            addLoggingSessionInfo(loggingNode);</span>
+<span class="nc" id="L830">            LoggingSessionUtil.addLoggingData(LoggingSessionConstants.TYPE_VARIABLE_DELETE, loggingNode, variableServiceConfiguration.getEngineName());</span>
+        }
+        
+<span class="nc" id="L833">        variableInstance.setValue(null);</span>
+
+<span class="nc" id="L835">        initializeVariableInstanceBackPointer(variableInstance);</span>
+
+<span class="nc bnc" id="L837" title="All 2 branches missed.">        if (isPropagateToHistoricVariable()) {</span>
+<span class="nc bnc" id="L838" title="All 2 branches missed.">            if (variableServiceConfiguration.getInternalHistoryVariableManager() != null) {</span>
+<span class="nc" id="L839">                variableServiceConfiguration.getInternalHistoryVariableManager()</span>
+<span class="nc" id="L840">                    .recordVariableRemoved(variableInstance, variableServiceConfiguration.getClock().getCurrentTime());</span>
+            }
+        }
+<span class="nc" id="L843">    }</span>
+
+    protected void updateVariableInstance(VariableInstanceEntity variableInstance, Object newVariableValue) {
+
+<span class="nc" id="L847">        Object oldVariableValue = variableInstance.getValue();</span>
+<span class="nc" id="L848">        String oldVariableType = variableInstance.getTypeName();</span>
+<span class="nc" id="L849">        initializeVariableInstanceBackPointer(variableInstance);</span>
+<span class="nc" id="L850">        VariableServiceConfiguration variableServiceConfiguration = getVariableServiceConfiguration();</span>
+<span class="nc" id="L851">        variableServiceConfiguration.getVariableInstanceValueModifier().updateVariableValue(variableInstance, newVariableValue, getTenantId());</span>
+<span class="nc bnc" id="L852" title="All 2 branches missed.">        if (isPropagateToHistoricVariable()) {</span>
+<span class="nc bnc" id="L853" title="All 2 branches missed.">            if (variableServiceConfiguration.getInternalHistoryVariableManager() != null) {</span>
+<span class="nc" id="L854">                variableServiceConfiguration.getInternalHistoryVariableManager()</span>
+<span class="nc" id="L855">                        .recordVariableUpdate(variableInstance, variableServiceConfiguration.getClock().getCurrentTime());</span>
+            }
+        }
+
+        // Dispatch event, if needed
+<span class="nc bnc" id="L860" title="All 2 branches missed.">        if (variableServiceConfiguration.isEventDispatcherEnabled()) {</span>
+<span class="nc" id="L861">            variableServiceConfiguration.getEventDispatcher().dispatchEvent(</span>
+<span class="nc" id="L862">                    FlowableVariableEventBuilder.createVariableEvent(FlowableEngineEventType.VARIABLE_UPDATED, variableInstance, variableInstance.getValue(),</span>
+<span class="nc" id="L863">                            variableInstance.getType()), variableServiceConfiguration.getEngineName());</span>
+        }
+
+<span class="nc bnc" id="L866" title="All 2 branches missed.">        if (variableServiceConfiguration.isLoggingSessionEnabled()) {</span>
+<span class="nc" id="L867">            ObjectNode loggingNode = VariableLoggingSessionUtil.addLoggingData(&quot;Variable '&quot; + variableInstance.getName() + &quot;' updated&quot;,</span>
+<span class="nc" id="L868">                    variableInstance, variableServiceConfiguration.getObjectMapper());</span>
+<span class="nc" id="L869">            addLoggingSessionInfo(loggingNode);</span>
+<span class="nc" id="L870">            loggingNode.put(&quot;oldVariableType&quot;, oldVariableType);</span>
+<span class="nc" id="L871">            VariableLoggingSessionUtil.addVariableValue(oldVariableValue, oldVariableType, &quot;oldVariableRawValue&quot;, &quot;oldVariableValue&quot;, loggingNode);</span>
+<span class="nc" id="L872">            LoggingSessionUtil.addLoggingData(LoggingSessionConstants.TYPE_VARIABLE_UPDATE, loggingNode, variableServiceConfiguration.getEngineName());</span>
+        }
+<span class="nc" id="L874">    }</span>
+
+    protected VariableInstanceEntity createVariableInstance(String variableName, Object value) {
+<span class="nc" id="L877">        VariableServiceConfiguration variableServiceConfiguration = getVariableServiceConfiguration();</span>
+
+<span class="nc" id="L879">        VariableInstanceEntityManager variableInstanceEntityManager = variableServiceConfiguration.getVariableInstanceEntityManager();</span>
+<span class="nc" id="L880">        VariableInstanceEntity variableInstance = variableInstanceEntityManager.create();</span>
+<span class="nc" id="L881">        variableInstance.setName(variableName);</span>
+        // Set the value after initializing the back pointer
+<span class="nc" id="L883">        initializeVariableInstanceBackPointer(variableInstance);</span>
+<span class="nc" id="L884">        variableInstanceEntityManager.insertWithValue(variableInstance, value, getTenantId());</span>
+
+<span class="nc bnc" id="L886" title="All 2 branches missed.">        if (variableInstances != null) {</span>
+<span class="nc" id="L887">            variableInstances.put(variableName, variableInstance);</span>
+        }
+
+<span class="nc bnc" id="L890" title="All 2 branches missed.">        if (isPropagateToHistoricVariable()) {</span>
+<span class="nc bnc" id="L891" title="All 2 branches missed.">            if (variableServiceConfiguration.getInternalHistoryVariableManager() != null) {</span>
+<span class="nc" id="L892">                variableServiceConfiguration.getInternalHistoryVariableManager()</span>
+<span class="nc" id="L893">                    .recordVariableCreate(variableInstance, variableServiceConfiguration.getClock().getCurrentTime());</span>
+            }
+        }
+
+<span class="nc bnc" id="L897" title="All 2 branches missed.">        if (variableServiceConfiguration.isEventDispatcherEnabled()) {</span>
+<span class="nc" id="L898">            variableServiceConfiguration.getEventDispatcher().dispatchEvent(</span>
+<span class="nc" id="L899">                    FlowableVariableEventBuilder.createVariableEvent(FlowableEngineEventType.VARIABLE_CREATED, variableInstance, variableInstance.getValue(),</span>
+<span class="nc" id="L900">                            variableInstance.getType()), variableServiceConfiguration.getEngineName());</span>
+        }
+        
+<span class="nc bnc" id="L903" title="All 2 branches missed.">        if (variableServiceConfiguration.isLoggingSessionEnabled()) {</span>
+<span class="nc" id="L904">            ObjectNode loggingNode = VariableLoggingSessionUtil.addLoggingData(&quot;Variable '&quot; + variableInstance.getName() + &quot;' created&quot;,</span>
+<span class="nc" id="L905">                    variableInstance, variableServiceConfiguration.getObjectMapper());</span>
+<span class="nc" id="L906">            addLoggingSessionInfo(loggingNode);</span>
+<span class="nc" id="L907">            LoggingSessionUtil.addLoggingData(LoggingSessionConstants.TYPE_VARIABLE_CREATE, loggingNode, variableServiceConfiguration.getEngineName());</span>
+        }
+<span class="nc" id="L909">        return variableInstance;</span>
+    }
+
+    protected boolean storeVariableLocal(String variableName) {
+<span class="nc" id="L913">        return hasVariableLocal(variableName);</span>
+    }
+
+    /*
+     * Transient variables
+     */
+
+    @Override
+    public void setTransientVariablesLocal(Map&lt;String, Object&gt; transientVariables) {
+<span class="nc bnc" id="L922" title="All 2 branches missed.">        for (String variableName : transientVariables.keySet()) {</span>
+<span class="nc" id="L923">            setTransientVariableLocal(variableName, transientVariables.get(variableName));</span>
+<span class="nc" id="L924">        }</span>
+<span class="nc" id="L925">    }</span>
+
+    @Override
+    public void setTransientVariableLocal(String variableName, Object variableValue) {
+<span class="nc bnc" id="L929" title="All 2 branches missed.">        if (transientVariables == null) {</span>
+<span class="nc" id="L930">            transientVariables = new HashMap&lt;&gt;();</span>
+        }
+<span class="nc" id="L932">        VariableInstanceValueModifier variableValueModifier = getVariableServiceConfiguration().getVariableInstanceValueModifier();</span>
+<span class="nc" id="L933">        TransientVariableInstance transientVariableInstance = new TransientVariableInstance(variableName, null);</span>
+<span class="nc" id="L934">        initializeVariableInstanceBackPointer(transientVariableInstance);</span>
+<span class="nc" id="L935">        variableValueModifier.setVariableValue(transientVariableInstance, variableValue, getTenantId());</span>
+<span class="nc" id="L936">        transientVariables.put(variableName, transientVariableInstance);</span>
+<span class="nc" id="L937">    }</span>
+
+    @Override
+    public void setTransientVariables(Map&lt;String, Object&gt; transientVariables) {
+<span class="nc bnc" id="L941" title="All 2 branches missed.">        for (String variableName : transientVariables.keySet()) {</span>
+<span class="nc" id="L942">            setTransientVariable(variableName, transientVariables.get(variableName));</span>
+<span class="nc" id="L943">        }</span>
+<span class="nc" id="L944">    }</span>
+
+    @Override
+    public void setTransientVariable(String variableName, Object variableValue) {
+<span class="nc" id="L948">        VariableScopeImpl parentVariableScope = getParentVariableScope();</span>
+<span class="nc bnc" id="L949" title="All 2 branches missed.">        if (parentVariableScope != null) {</span>
+<span class="nc" id="L950">            parentVariableScope.setTransientVariable(variableName, variableValue);</span>
+<span class="nc" id="L951">            return;</span>
+        }
+<span class="nc" id="L953">        setTransientVariableLocal(variableName, variableValue);</span>
+<span class="nc" id="L954">    }</span>
+
+    @Override
+    public Object getTransientVariableLocal(String variableName) {
+<span class="nc bnc" id="L958" title="All 4 branches missed.">        if (transientVariables != null &amp;&amp; transientVariables.containsKey(variableName)) {</span>
+<span class="nc" id="L959">            return transientVariables.get(variableName).getValue();</span>
+        }
+<span class="nc" id="L961">        return null;</span>
+    }
+
+    @Override
+    public Map&lt;String, Object&gt; getTransientVariablesLocal() {
+<span class="nc bnc" id="L966" title="All 2 branches missed.">        if (transientVariables != null) {</span>
+<span class="nc" id="L967">            Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L968" title="All 2 branches missed.">            for (String variableName : transientVariables.keySet()) {</span>
+<span class="nc" id="L969">                variables.put(variableName, transientVariables.get(variableName).getValue());</span>
+<span class="nc" id="L970">            }</span>
+<span class="nc" id="L971">            return variables;</span>
+        } else {
+<span class="nc" id="L973">            return Collections.emptyMap();</span>
+        }
+    }
+
+    @Override
+    public Object getTransientVariable(String variableName) {
+<span class="nc bnc" id="L979" title="All 4 branches missed.">        if (transientVariables != null &amp;&amp; transientVariables.containsKey(variableName)) {</span>
+<span class="nc" id="L980">            return transientVariables.get(variableName).getValue();</span>
+        }
+
+<span class="nc" id="L983">        VariableScopeImpl parentScope = getParentVariableScope();</span>
+<span class="nc bnc" id="L984" title="All 2 branches missed.">        if (parentScope != null) {</span>
+<span class="nc" id="L985">            return parentScope.getTransientVariable(variableName);</span>
+        }
+
+<span class="nc" id="L988">        return null;</span>
+    }
+
+    @Override
+    public Map&lt;String, Object&gt; getTransientVariables() {
+<span class="nc" id="L993">        return collectTransientVariables(new HashMap&lt;&gt;());</span>
+    }
+
+    protected Map&lt;String, Object&gt; collectTransientVariables(HashMap&lt;String, Object&gt; variables) {
+<span class="nc" id="L997">        VariableScopeImpl parentScope = getParentVariableScope();</span>
+<span class="nc bnc" id="L998" title="All 2 branches missed.">        if (parentScope != null) {</span>
+<span class="nc" id="L999">            variables.putAll(parentScope.collectTransientVariables(variables));</span>
+        }
+
+<span class="nc bnc" id="L1002" title="All 2 branches missed.">        if (transientVariables != null) {</span>
+<span class="nc bnc" id="L1003" title="All 2 branches missed.">            for (String variableName : transientVariables.keySet()) {</span>
+<span class="nc" id="L1004">                variables.put(variableName, transientVariables.get(variableName).getValue());</span>
+<span class="nc" id="L1005">            }</span>
+        }
+
+<span class="nc" id="L1008">        return variables;</span>
+    }
+
+    @Override
+    public void removeTransientVariableLocal(String variableName) {
+<span class="nc bnc" id="L1013" title="All 2 branches missed.">        if (transientVariables != null) {</span>
+<span class="nc" id="L1014">            transientVariables.remove(variableName);</span>
+        }
+<span class="nc" id="L1016">    }</span>
+
+    @Override
+    public void removeTransientVariablesLocal() {
+<span class="nc bnc" id="L1020" title="All 2 branches missed.">        if (transientVariables != null) {</span>
+<span class="nc" id="L1021">            transientVariables.clear();</span>
+        }
+<span class="nc" id="L1023">    }</span>
+
+    @Override
+    public void removeTransientVariable(String variableName) {
+<span class="nc bnc" id="L1027" title="All 4 branches missed.">        if (transientVariables != null &amp;&amp; transientVariables.containsKey(variableName)) {</span>
+<span class="nc" id="L1028">            removeTransientVariableLocal(variableName);</span>
+<span class="nc" id="L1029">            return;</span>
+        }
+<span class="nc" id="L1031">        VariableScopeImpl parentVariableScope = getParentVariableScope();</span>
+<span class="nc bnc" id="L1032" title="All 2 branches missed.">        if (parentVariableScope != null) {</span>
+<span class="nc" id="L1033">            parentVariableScope.removeTransientVariable(variableName);</span>
+        }
+<span class="nc" id="L1035">    }</span>
+
+    @Override
+    public void removeTransientVariables() {
+<span class="nc" id="L1039">        removeTransientVariablesLocal();</span>
+<span class="nc" id="L1040">        VariableScopeImpl parentVariableScope = getParentVariableScope();</span>
+<span class="nc bnc" id="L1041" title="All 2 branches missed.">        if (parentVariableScope != null) {</span>
+<span class="nc" id="L1042">            parentVariableScope.removeTransientVariablesLocal();</span>
+        }
+<span class="nc" id="L1044">    }</span>
+
+    /**
+     * Return whether changes to the variables are propagated to the history storage.
+     */
+    protected abstract boolean isPropagateToHistoricVariable();
+
+    protected abstract VariableServiceConfiguration getVariableServiceConfiguration();
+
+    // getters and setters
+    // //////////////////////////////////////////////////////
+
+    public ELContext getCachedElContext() {
+<span class="nc" id="L1057">        return cachedElContext;</span>
+    }
+
+    public void setCachedElContext(ELContext cachedElContext) {
+<span class="nc" id="L1061">        this.cachedElContext = cachedElContext;</span>
+<span class="nc" id="L1062">    }</span>
+
+    @Override
+    public &lt;T&gt; T getVariable(String variableName, Class&lt;T&gt; variableClass) {
+<span class="nc" id="L1066">        return variableClass.cast(getVariable(variableName));</span>
+    }
+
+    @Override
+    public &lt;T&gt; T getVariableLocal(String variableName, Class&lt;T&gt; variableClass) {
+<span class="nc" id="L1071">        return variableClass.cast(getVariableLocal(variableName));</span>
+    }
+
+    protected boolean isExpression(String variableName) {
+<span class="nc bnc" id="L1075" title="All 4 branches missed.">        return variableName.startsWith(&quot;${&quot;) || variableName.startsWith(&quot;#{&quot;);</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

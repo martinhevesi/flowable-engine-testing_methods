@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ScriptTaskActivityBehavior.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.bpmn.behavior</a> &gt; <span class="el_source">ScriptTaskActivityBehavior.java</span></div><h1>ScriptTaskActivityBehavior.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.impl.bpmn.behavior;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.common.engine.impl.scripting.ScriptEngineRequest;
+import org.flowable.common.engine.impl.scripting.ScriptingEngines;
+import org.flowable.engine.DynamicBpmnConstants;
+import org.flowable.engine.delegate.BpmnError;
+import org.flowable.engine.delegate.DelegateExecution;
+import org.flowable.engine.impl.bpmn.helper.ErrorPropagation;
+import org.flowable.engine.impl.bpmn.helper.SkipExpressionUtil;
+import org.flowable.engine.impl.context.BpmnOverrideContext;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+/**
+ * Implementation of the BPMN 2.0 script task.
+ *
+ * @author Joram Barrez
+ * @author Christian Stettler
+ * @author Falko Menge
+ */
+public class ScriptTaskActivityBehavior extends TaskActivityBehavior {
+
+    private static final long serialVersionUID = 1L;
+
+<span class="nc" id="L44">    private static final Logger LOGGER = LoggerFactory.getLogger(ScriptTaskActivityBehavior.class);</span>
+
+    protected String scriptTaskId;
+    protected String script;
+    protected String language;
+    protected String resultVariable;
+    protected String skipExpression;
+    protected boolean storeScriptVariables; // see https://activiti.atlassian.net/browse/ACT-1626
+
+<span class="nc" id="L53">    public ScriptTaskActivityBehavior(String script, String language, String resultVariable) {</span>
+<span class="nc" id="L54">        this.script = script;</span>
+<span class="nc" id="L55">        this.language = language;</span>
+<span class="nc" id="L56">        this.resultVariable = resultVariable;</span>
+<span class="nc" id="L57">    }</span>
+
+    public ScriptTaskActivityBehavior(String scriptTaskId, String script, String language, String resultVariable, String skipExpression,
+            boolean storeScriptVariables) {
+<span class="nc" id="L61">        this(script, language, resultVariable);</span>
+<span class="nc" id="L62">        this.scriptTaskId = scriptTaskId;</span>
+<span class="nc" id="L63">        this.skipExpression = skipExpression;</span>
+<span class="nc" id="L64">        this.storeScriptVariables = storeScriptVariables;</span>
+<span class="nc" id="L65">    }</span>
+
+    @Override
+    public void execute(DelegateExecution execution) {
+<span class="nc" id="L69">        CommandContext commandContext = CommandContextUtil.getCommandContext();</span>
+<span class="nc" id="L70">        boolean isSkipExpressionEnabled = SkipExpressionUtil.isSkipExpressionEnabled(skipExpression, scriptTaskId, execution, commandContext);</span>
+
+<span class="nc bnc" id="L72" title="All 4 branches missed.">        if (isSkipExpressionEnabled &amp;&amp; SkipExpressionUtil.shouldSkipFlowElement(skipExpression, scriptTaskId, execution, commandContext)) {</span>
+<span class="nc" id="L73">            leave(execution);</span>
+<span class="nc" id="L74">            return;</span>
+        }
+
+<span class="nc bnc" id="L77" title="All 2 branches missed.">        if (CommandContextUtil.getProcessEngineConfiguration().isEnableProcessDefinitionInfoCache()) {</span>
+<span class="nc" id="L78">            ObjectNode taskElementProperties = BpmnOverrideContext.getBpmnOverrideElementProperties(scriptTaskId, execution.getProcessDefinitionId());</span>
+<span class="nc bnc" id="L79" title="All 4 branches missed.">            if (taskElementProperties != null &amp;&amp; taskElementProperties.has(DynamicBpmnConstants.SCRIPT_TASK_SCRIPT)) {</span>
+<span class="nc" id="L80">                String overrideScript = taskElementProperties.get(DynamicBpmnConstants.SCRIPT_TASK_SCRIPT).asText();</span>
+<span class="nc bnc" id="L81" title="All 4 branches missed.">                if (StringUtils.isNotEmpty(overrideScript) &amp;&amp; !overrideScript.equals(script)) {</span>
+<span class="nc" id="L82">                    script = overrideScript;</span>
+                }
+            }
+        }
+
+<span class="nc" id="L87">        safelyExecuteScript(execution);</span>
+<span class="nc" id="L88">    }</span>
+
+    protected void safelyExecuteScript(DelegateExecution execution) {
+<span class="nc" id="L91">        boolean noErrors = true;</span>
+
+        try {
+<span class="nc" id="L94">            executeScript(execution);</span>
+<span class="nc" id="L95">        } catch (FlowableException e) {</span>
+<span class="nc" id="L96">            LOGGER.warn(&quot;Exception while executing {} : {}&quot;, execution, e.getMessage());</span>
+
+<span class="nc" id="L98">            noErrors = false;</span>
+<span class="nc" id="L99">            Throwable rootCause = ExceptionUtils.getRootCause(e);</span>
+<span class="nc bnc" id="L100" title="All 2 branches missed.">            if (rootCause instanceof BpmnError) {</span>
+<span class="nc" id="L101">                ErrorPropagation.propagateError((BpmnError) rootCause, execution);</span>
+<span class="nc bnc" id="L102" title="All 2 branches missed.">            } else if (rootCause instanceof FlowableException) {</span>
+<span class="nc" id="L103">                throw (FlowableException) rootCause;</span>
+            } else {
+<span class="nc" id="L105">                throw e;</span>
+            }
+<span class="nc" id="L107">        }</span>
+<span class="nc bnc" id="L108" title="All 2 branches missed.">        if (noErrors) {</span>
+<span class="nc" id="L109">            leave(execution);</span>
+        }
+<span class="nc" id="L111">    }</span>
+
+    protected void executeScript(DelegateExecution execution) {
+
+<span class="nc" id="L115">        ScriptingEngines scriptingEngines = CommandContextUtil.getProcessEngineConfiguration().getScriptingEngines();</span>
+<span class="nc" id="L116">        ScriptEngineRequest.Builder builder = ScriptEngineRequest.builder().script(script)</span>
+<span class="nc" id="L117">                .traceEnhancer(trace -&gt; trace.addTraceTag(&quot;type&quot;, &quot;scriptTask&quot;))</span>
+<span class="nc" id="L118">                .language(language).variableContainer(execution);</span>
+<span class="nc bnc" id="L119" title="All 2 branches missed.">        builder = storeScriptVariables ? builder.storeScriptVariables() : builder;</span>
+<span class="nc" id="L120">        ScriptEngineRequest request = builder.build();</span>
+<span class="nc" id="L121">        Object result = scriptingEngines.evaluate(request).getResult();</span>
+
+<span class="nc bnc" id="L123" title="All 2 branches missed.">        if (null != result) {</span>
+<span class="nc bnc" id="L124" title="All 6 branches missed.">            if (&quot;juel&quot;.equalsIgnoreCase(language) &amp;&amp; (result instanceof String) &amp;&amp; script.equals(result.toString())) {</span>
+<span class="nc" id="L125">                throw new FlowableException(&quot;Error evaluating juel script: \&quot;&quot; + script + &quot;\&quot; for &quot; + execution);</span>
+            }
+        }
+
+<span class="nc bnc" id="L129" title="All 2 branches missed.">        if (resultVariable != null) {</span>
+<span class="nc" id="L130">            execution.setVariable(resultVariable, result);</span>
+        }
+<span class="nc" id="L132">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

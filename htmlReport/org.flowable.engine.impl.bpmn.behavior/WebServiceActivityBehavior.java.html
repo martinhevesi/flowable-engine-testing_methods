@@ -1,0 +1,337 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>WebServiceActivityBehavior.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.bpmn.behavior</a> &gt; <span class="el_source">WebServiceActivityBehavior.java</span></div><h1>WebServiceActivityBehavior.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.impl.bpmn.behavior;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.bpmn.model.BpmnModel;
+import org.flowable.bpmn.model.DataAssociation;
+import org.flowable.bpmn.model.DataSpec;
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.IOSpecification;
+import org.flowable.bpmn.model.Import;
+import org.flowable.bpmn.model.Interface;
+import org.flowable.bpmn.model.Message;
+import org.flowable.bpmn.model.SendTask;
+import org.flowable.bpmn.model.ServiceTask;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.delegate.Expression;
+import org.flowable.common.engine.impl.el.ExpressionManager;
+import org.flowable.common.engine.impl.util.ReflectUtil;
+import org.flowable.engine.delegate.BpmnError;
+import org.flowable.engine.delegate.DelegateExecution;
+import org.flowable.engine.impl.bpmn.data.AbstractDataAssociation;
+import org.flowable.engine.impl.bpmn.data.Assignment;
+import org.flowable.engine.impl.bpmn.data.ClassStructureDefinition;
+import org.flowable.engine.impl.bpmn.data.ItemDefinition;
+import org.flowable.engine.impl.bpmn.data.ItemInstance;
+import org.flowable.engine.impl.bpmn.data.ItemKind;
+import org.flowable.engine.impl.bpmn.data.SimpleDataInputAssociation;
+import org.flowable.engine.impl.bpmn.data.StructureDefinition;
+import org.flowable.engine.impl.bpmn.data.TransformationDataOutputAssociation;
+import org.flowable.engine.impl.bpmn.helper.ErrorPropagation;
+import org.flowable.engine.impl.bpmn.parser.XMLImporter;
+import org.flowable.engine.impl.bpmn.webservice.BpmnInterface;
+import org.flowable.engine.impl.bpmn.webservice.MessageDefinition;
+import org.flowable.engine.impl.bpmn.webservice.MessageImplicitDataInputAssociation;
+import org.flowable.engine.impl.bpmn.webservice.MessageImplicitDataOutputAssociation;
+import org.flowable.engine.impl.bpmn.webservice.MessageInstance;
+import org.flowable.engine.impl.bpmn.webservice.Operation;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.engine.impl.util.ProcessDefinitionUtil;
+import org.flowable.engine.impl.webservice.WSOperation;
+import org.flowable.engine.impl.webservice.WSService;
+
+/**
+ * An activity behavior that allows calling Web services
+ * 
+ * @author Esteban Robles Luna
+ * @author Joram Barrez
+ * @author Tijs Rademakers
+ */
+public class WebServiceActivityBehavior extends AbstractBpmnActivityBehavior {
+
+    private static final long serialVersionUID = 1L;
+
+    public static final String CURRENT_MESSAGE = &quot;org.flowable.engine.impl.bpmn.CURRENT_MESSAGE&quot;;
+
+<span class="nc" id="L72">    protected Map&lt;String, XMLImporter&gt; xmlImporterMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L73">    protected Map&lt;String, WSOperation&gt; wsOperationMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L74">    protected Map&lt;String, StructureDefinition&gt; structureDefinitionMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L75">    protected Map&lt;String, WSService&gt; wsServiceMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L76">    protected Map&lt;String, Operation&gt; operationMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L77">    protected Map&lt;String, ItemDefinition&gt; itemDefinitionMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L78">    protected Map&lt;String, MessageDefinition&gt; messageDefinitionMap = new HashMap&lt;&gt;();</span>
+
+<span class="nc" id="L80">    public WebServiceActivityBehavior(BpmnModel bpmnModel) {</span>
+<span class="nc" id="L81">        itemDefinitionMap.put(&quot;http://www.w3.org/2001/XMLSchema:string&quot;, new ItemDefinition(&quot;http://www.w3.org/2001/XMLSchema:string&quot;, new ClassStructureDefinition(String.class)));</span>
+<span class="nc" id="L82">        fillDefinitionMaps(bpmnModel);</span>
+<span class="nc" id="L83">    }</span>
+
+    @Override
+    public void execute(DelegateExecution execution) {
+<span class="nc" id="L87">        BpmnModel bpmnModel = ProcessDefinitionUtil.getBpmnModel(execution.getProcessDefinitionId());</span>
+<span class="nc" id="L88">        FlowElement flowElement = execution.getCurrentFlowElement();</span>
+
+<span class="nc" id="L90">        IOSpecification ioSpecification = null;</span>
+<span class="nc" id="L91">        String operationRef = null;</span>
+<span class="nc" id="L92">        List&lt;DataAssociation&gt; dataInputAssociations = null;</span>
+<span class="nc" id="L93">        List&lt;DataAssociation&gt; dataOutputAssociations = null;</span>
+
+<span class="nc bnc" id="L95" title="All 2 branches missed.">        if (flowElement instanceof SendTask) {</span>
+<span class="nc" id="L96">            SendTask sendTask = (SendTask) flowElement;</span>
+<span class="nc" id="L97">            ioSpecification = sendTask.getIoSpecification();</span>
+<span class="nc" id="L98">            operationRef = sendTask.getOperationRef();</span>
+<span class="nc" id="L99">            dataInputAssociations = sendTask.getDataInputAssociations();</span>
+<span class="nc" id="L100">            dataOutputAssociations = sendTask.getDataOutputAssociations();</span>
+
+<span class="nc bnc" id="L102" title="All 2 branches missed.">        } else if (flowElement instanceof ServiceTask) {</span>
+<span class="nc" id="L103">            ServiceTask serviceTask = (ServiceTask) flowElement;</span>
+<span class="nc" id="L104">            ioSpecification = serviceTask.getIoSpecification();</span>
+<span class="nc" id="L105">            operationRef = serviceTask.getOperationRef();</span>
+<span class="nc" id="L106">            dataInputAssociations = serviceTask.getDataInputAssociations();</span>
+<span class="nc" id="L107">            dataOutputAssociations = serviceTask.getDataOutputAssociations();</span>
+
+<span class="nc" id="L109">        } else {</span>
+<span class="nc" id="L110">            throw new FlowableException(&quot;Unsupported flow element type &quot; + flowElement + &quot; in &quot; + execution);</span>
+        }
+
+<span class="nc" id="L113">        MessageInstance message = null;</span>
+
+<span class="nc" id="L115">        Operation operation = operationMap.get(operationRef);</span>
+
+        try {
+
+<span class="nc bnc" id="L119" title="All 2 branches missed.">            if (ioSpecification != null) {</span>
+<span class="nc" id="L120">                initializeIoSpecification(ioSpecification, execution, bpmnModel);</span>
+<span class="nc bnc" id="L121" title="All 2 branches missed.">                if (ioSpecification.getDataInputRefs().size() &gt; 0) {</span>
+<span class="nc" id="L122">                    String firstDataInputName = ioSpecification.getDataInputRefs().get(0);</span>
+<span class="nc" id="L123">                    ItemInstance inputItem = (ItemInstance) execution.getTransientVariable(firstDataInputName);</span>
+<span class="nc" id="L124">                    message = new MessageInstance(operation.getInMessage(), inputItem);</span>
+<span class="nc" id="L125">                }</span>
+
+            } else {
+<span class="nc" id="L128">                message = operation.getInMessage().createInstance();</span>
+            }
+
+<span class="nc" id="L131">            execution.setTransientVariable(CURRENT_MESSAGE, message);</span>
+
+<span class="nc" id="L133">            fillMessage(dataInputAssociations, execution);</span>
+
+<span class="nc" id="L135">            ProcessEngineConfigurationImpl processEngineConfig = CommandContextUtil.getProcessEngineConfiguration();</span>
+<span class="nc" id="L136">            MessageInstance receivedMessage = operation.sendMessage(message,</span>
+<span class="nc" id="L137">                    processEngineConfig.getWsOverridenEndpointAddresses());</span>
+
+<span class="nc" id="L139">            execution.setTransientVariable(CURRENT_MESSAGE, receivedMessage);</span>
+
+<span class="nc bnc" id="L141" title="All 4 branches missed.">            if (ioSpecification != null &amp;&amp; ioSpecification.getDataOutputRefs().size() &gt; 0) {</span>
+<span class="nc" id="L142">                String firstDataOutputName = ioSpecification.getDataOutputRefs().get(0);</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">                if (firstDataOutputName != null) {</span>
+<span class="nc" id="L144">                    ItemInstance outputItem = (ItemInstance) execution.getTransientVariable(firstDataOutputName);</span>
+<span class="nc" id="L145">                    outputItem.getStructureInstance().loadFrom(receivedMessage.getStructureInstance().toArray());</span>
+                }
+            }
+
+<span class="nc" id="L149">            returnMessage(dataOutputAssociations, execution);</span>
+
+<span class="nc" id="L151">            execution.setTransientVariable(CURRENT_MESSAGE, null);</span>
+<span class="nc" id="L152">            leave(execution);</span>
+<span class="nc" id="L153">        } catch (Exception exc) {</span>
+
+<span class="nc" id="L155">            Throwable cause = exc;</span>
+<span class="nc" id="L156">            BpmnError error = null;</span>
+<span class="nc bnc" id="L157" title="All 2 branches missed.">            while (cause != null) {</span>
+<span class="nc bnc" id="L158" title="All 2 branches missed.">                if (cause instanceof BpmnError) {</span>
+<span class="nc" id="L159">                    error = (BpmnError) cause;</span>
+<span class="nc" id="L160">                    break;</span>
+                }
+<span class="nc" id="L162">                cause = cause.getCause();</span>
+            }
+
+<span class="nc bnc" id="L165" title="All 2 branches missed.">            if (error != null) {</span>
+<span class="nc" id="L166">                ErrorPropagation.propagateError(error, execution);</span>
+<span class="nc bnc" id="L167" title="All 2 branches missed.">            } else if (exc instanceof RuntimeException) {</span>
+<span class="nc" id="L168">                throw (RuntimeException) exc;</span>
+            }
+<span class="nc" id="L170">        }</span>
+<span class="nc" id="L171">    }</span>
+
+    protected void initializeIoSpecification(IOSpecification activityIoSpecification, DelegateExecution execution, BpmnModel bpmnModel) {
+
+<span class="nc bnc" id="L175" title="All 2 branches missed.">        for (DataSpec dataSpec : activityIoSpecification.getDataInputs()) {</span>
+<span class="nc" id="L176">            ItemDefinition itemDefinition = itemDefinitionMap.get(dataSpec.getItemSubjectRef());</span>
+<span class="nc" id="L177">            execution.setTransientVariable(dataSpec.getId(), itemDefinition.createInstance());</span>
+<span class="nc" id="L178">        }</span>
+
+<span class="nc bnc" id="L180" title="All 2 branches missed.">        for (DataSpec dataSpec : activityIoSpecification.getDataOutputs()) {</span>
+<span class="nc" id="L181">            ItemDefinition itemDefinition = itemDefinitionMap.get(dataSpec.getItemSubjectRef());</span>
+<span class="nc" id="L182">            execution.setTransientVariable(dataSpec.getId(), itemDefinition.createInstance());</span>
+<span class="nc" id="L183">        }</span>
+<span class="nc" id="L184">    }</span>
+
+    protected void fillDefinitionMaps(BpmnModel bpmnModel) {
+
+<span class="nc bnc" id="L188" title="All 2 branches missed.">        for (Import theImport : bpmnModel.getImports()) {</span>
+<span class="nc" id="L189">            fillImporterInfo(theImport, bpmnModel.getSourceSystemId());</span>
+<span class="nc" id="L190">        }</span>
+
+<span class="nc" id="L192">        createItemDefinitions(bpmnModel);</span>
+<span class="nc" id="L193">        createMessages(bpmnModel);</span>
+<span class="nc" id="L194">        createOperations(bpmnModel);</span>
+<span class="nc" id="L195">    }</span>
+
+    protected void createItemDefinitions(BpmnModel bpmnModel) {
+
+<span class="nc bnc" id="L199" title="All 2 branches missed.">        for (org.flowable.bpmn.model.ItemDefinition itemDefinitionElement : bpmnModel.getItemDefinitions().values()) {</span>
+
+<span class="nc bnc" id="L201" title="All 2 branches missed.">            if (!itemDefinitionMap.containsKey(itemDefinitionElement.getId())) {</span>
+<span class="nc" id="L202">                StructureDefinition structure = null;</span>
+
+                try {
+                    // it is a class
+<span class="nc" id="L206">                    Class&lt;?&gt; classStructure = ReflectUtil.loadClass(itemDefinitionElement.getStructureRef());</span>
+<span class="nc" id="L207">                    structure = new ClassStructureDefinition(classStructure);</span>
+<span class="nc" id="L208">                } catch (FlowableException e) {</span>
+                    // it is a reference to a different structure
+<span class="nc" id="L210">                    structure = structureDefinitionMap.get(itemDefinitionElement.getStructureRef());</span>
+<span class="nc" id="L211">                }</span>
+
+<span class="nc" id="L213">                ItemDefinition itemDefinition = new ItemDefinition(itemDefinitionElement.getId(), structure);</span>
+<span class="nc bnc" id="L214" title="All 2 branches missed.">                if (StringUtils.isNotEmpty(itemDefinitionElement.getItemKind())) {</span>
+<span class="nc" id="L215">                    itemDefinition.setItemKind(ItemKind.valueOf(itemDefinitionElement.getItemKind()));</span>
+                }
+
+<span class="nc" id="L218">                itemDefinitionMap.put(itemDefinition.getId(), itemDefinition);</span>
+            }
+<span class="nc" id="L220">        }</span>
+<span class="nc" id="L221">    }</span>
+
+    public void createMessages(BpmnModel bpmnModel) {
+<span class="nc bnc" id="L224" title="All 2 branches missed.">        for (Message messageElement : bpmnModel.getMessages()) {</span>
+<span class="nc bnc" id="L225" title="All 2 branches missed.">            if (!messageDefinitionMap.containsKey(messageElement.getId())) {</span>
+<span class="nc" id="L226">                MessageDefinition messageDefinition = new MessageDefinition(messageElement.getId());</span>
+<span class="nc bnc" id="L227" title="All 2 branches missed.">                if (StringUtils.isNotEmpty(messageElement.getItemRef())) {</span>
+<span class="nc bnc" id="L228" title="All 2 branches missed.">                    if (itemDefinitionMap.containsKey(messageElement.getItemRef())) {</span>
+<span class="nc" id="L229">                        ItemDefinition itemDefinition = itemDefinitionMap.get(messageElement.getItemRef());</span>
+<span class="nc" id="L230">                        messageDefinition.setItemDefinition(itemDefinition);</span>
+                    }
+                }
+
+<span class="nc" id="L234">                messageDefinitionMap.put(messageDefinition.getId(), messageDefinition);</span>
+            }
+<span class="nc" id="L236">        }</span>
+<span class="nc" id="L237">    }</span>
+
+    protected void createOperations(BpmnModel bpmnModel) {
+<span class="nc bnc" id="L240" title="All 2 branches missed.">        for (Interface interfaceObject : bpmnModel.getInterfaces()) {</span>
+<span class="nc" id="L241">            BpmnInterface bpmnInterface = new BpmnInterface(interfaceObject.getId(), interfaceObject.getName());</span>
+<span class="nc" id="L242">            bpmnInterface.setImplementation(wsServiceMap.get(interfaceObject.getImplementationRef()));</span>
+
+<span class="nc bnc" id="L244" title="All 2 branches missed.">            for (org.flowable.bpmn.model.Operation operationObject : interfaceObject.getOperations()) {</span>
+
+<span class="nc bnc" id="L246" title="All 2 branches missed.">                if (!operationMap.containsKey(operationObject.getId())) {</span>
+<span class="nc" id="L247">                    MessageDefinition inMessage = messageDefinitionMap.get(operationObject.getInMessageRef());</span>
+<span class="nc" id="L248">                    Operation operation = new Operation(operationObject.getId(), operationObject.getName(), bpmnInterface, inMessage);</span>
+<span class="nc" id="L249">                    operation.setImplementation(wsOperationMap.get(operationObject.getImplementationRef()));</span>
+
+<span class="nc bnc" id="L251" title="All 2 branches missed.">                    if (StringUtils.isNotEmpty(operationObject.getOutMessageRef())) {</span>
+<span class="nc bnc" id="L252" title="All 2 branches missed.">                        if (messageDefinitionMap.containsKey(operationObject.getOutMessageRef())) {</span>
+<span class="nc" id="L253">                            MessageDefinition outMessage = messageDefinitionMap.get(operationObject.getOutMessageRef());</span>
+<span class="nc" id="L254">                            operation.setOutMessage(outMessage);</span>
+                        }
+                    }
+
+<span class="nc" id="L258">                    operationMap.put(operation.getId(), operation);</span>
+                }
+<span class="nc" id="L260">            }</span>
+<span class="nc" id="L261">        }</span>
+<span class="nc" id="L262">    }</span>
+
+    protected void fillImporterInfo(Import theImport, String sourceSystemId) {
+<span class="nc bnc" id="L265" title="All 2 branches missed.">        if (!xmlImporterMap.containsKey(theImport.getNamespace())) {</span>
+
+<span class="nc bnc" id="L267" title="All 2 branches missed.">            if (&quot;http://schemas.xmlsoap.org/wsdl/&quot;.equals(theImport.getImportType())) {</span>
+                try {
+<span class="nc" id="L269">                    ProcessEngineConfigurationImpl processEngineConfig = CommandContextUtil.getProcessEngineConfiguration();</span>
+<span class="nc" id="L270">                    XMLImporter importerInstance = processEngineConfig.getWsdlImporterFactory()</span>
+<span class="nc" id="L271">                            .createXMLImporter(theImport);</span>
+
+<span class="nc" id="L273">                    xmlImporterMap.put(theImport.getNamespace(), importerInstance);</span>
+<span class="nc" id="L274">                    importerInstance.importFrom(theImport, sourceSystemId);</span>
+
+<span class="nc" id="L276">                    structureDefinitionMap.putAll(importerInstance.getStructures());</span>
+<span class="nc" id="L277">                    wsServiceMap.putAll(importerInstance.getServices());</span>
+<span class="nc" id="L278">                    wsOperationMap.putAll(importerInstance.getOperations());</span>
+
+<span class="nc" id="L280">                } catch (FlowableException e) {</span>
+<span class="nc" id="L281">                    throw e;</span>
+<span class="nc" id="L282">                } catch (Exception e) {</span>
+<span class="nc" id="L283">                    throw new FlowableException(String.format(&quot;Error importing '%s' as '%s'&quot;, theImport.getLocation(),</span>
+<span class="nc" id="L284">                            theImport.getImportType()), e);</span>
+<span class="nc" id="L285">                }</span>
+
+            } else {
+<span class="nc" id="L288">                throw new FlowableException(String.format(&quot;Unsupported import type '%s'&quot;, theImport.getImportType()));</span>
+            }
+        }
+<span class="nc" id="L291">    }</span>
+
+    protected void returnMessage(List&lt;DataAssociation&gt; dataOutputAssociations, DelegateExecution execution) {
+<span class="nc bnc" id="L294" title="All 2 branches missed.">        for (DataAssociation dataAssociationElement : dataOutputAssociations) {</span>
+<span class="nc" id="L295">            AbstractDataAssociation dataAssociation = createDataOutputAssociation(dataAssociationElement);</span>
+<span class="nc" id="L296">            dataAssociation.evaluate(execution);</span>
+<span class="nc" id="L297">        }</span>
+<span class="nc" id="L298">    }</span>
+
+    protected void fillMessage(List&lt;DataAssociation&gt; dataInputAssociations, DelegateExecution execution) {
+<span class="nc bnc" id="L301" title="All 2 branches missed.">        for (DataAssociation dataAssociationElement : dataInputAssociations) {</span>
+<span class="nc" id="L302">            AbstractDataAssociation dataAssociation = createDataInputAssociation(dataAssociationElement);</span>
+<span class="nc" id="L303">            dataAssociation.evaluate(execution);</span>
+<span class="nc" id="L304">        }</span>
+<span class="nc" id="L305">    }</span>
+
+    protected AbstractDataAssociation createDataInputAssociation(DataAssociation dataAssociationElement) {
+<span class="nc bnc" id="L308" title="All 2 branches missed.">        if (dataAssociationElement.getAssignments().isEmpty()) {</span>
+<span class="nc" id="L309">            return new MessageImplicitDataInputAssociation(dataAssociationElement.getSourceRef(), dataAssociationElement.getTargetRef());</span>
+        } else {
+<span class="nc" id="L311">            SimpleDataInputAssociation dataAssociation = new SimpleDataInputAssociation(dataAssociationElement.getSourceRef(), dataAssociationElement.getTargetRef());</span>
+<span class="nc" id="L312">            ExpressionManager expressionManager = CommandContextUtil.getProcessEngineConfiguration().getExpressionManager();</span>
+
+<span class="nc bnc" id="L314" title="All 2 branches missed.">            for (org.flowable.bpmn.model.Assignment assignmentElement : dataAssociationElement.getAssignments()) {</span>
+<span class="nc bnc" id="L315" title="All 4 branches missed.">                if (StringUtils.isNotEmpty(assignmentElement.getFrom()) &amp;&amp; StringUtils.isNotEmpty(assignmentElement.getTo())) {</span>
+<span class="nc" id="L316">                    Expression from = expressionManager.createExpression(assignmentElement.getFrom());</span>
+<span class="nc" id="L317">                    Expression to = expressionManager.createExpression(assignmentElement.getTo());</span>
+<span class="nc" id="L318">                    Assignment assignment = new Assignment(from, to);</span>
+<span class="nc" id="L319">                    dataAssociation.addAssignment(assignment);</span>
+                }
+<span class="nc" id="L321">            }</span>
+<span class="nc" id="L322">            return dataAssociation;</span>
+        }
+    }
+
+    protected AbstractDataAssociation createDataOutputAssociation(DataAssociation dataAssociationElement) {
+<span class="nc bnc" id="L327" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(dataAssociationElement.getSourceRef())) {</span>
+<span class="nc" id="L328">            return new MessageImplicitDataOutputAssociation(dataAssociationElement.getTargetRef(), dataAssociationElement.getSourceRef());</span>
+        } else {
+<span class="nc" id="L330">            ExpressionManager expressionManager = CommandContextUtil.getProcessEngineConfiguration().getExpressionManager();</span>
+<span class="nc" id="L331">            Expression transformation = expressionManager.createExpression(dataAssociationElement.getTransformation());</span>
+<span class="nc" id="L332">            AbstractDataAssociation dataOutputAssociation = new TransformationDataOutputAssociation(null, dataAssociationElement.getTargetRef(), transformation);</span>
+<span class="nc" id="L333">            return dataOutputAssociation;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

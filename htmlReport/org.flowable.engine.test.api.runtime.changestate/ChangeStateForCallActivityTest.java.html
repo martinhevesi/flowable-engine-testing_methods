@@ -1,0 +1,407 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ChangeStateForCallActivityTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.api.runtime.changestate</a> &gt; <span class="el_source">ChangeStateForCallActivityTest.java</span></div><h1>ChangeStateForCallActivityTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.flowable.engine.test.api.runtime.changestate;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
+
+import java.util.List;
+
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.impl.history.HistoryLevel;
+import org.flowable.engine.impl.test.HistoryTestHelper;
+import org.flowable.engine.impl.test.PluggableFlowableTestCase;
+import org.flowable.engine.runtime.Execution;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.test.Deployment;
+import org.flowable.entitylink.api.EntityLink;
+import org.flowable.entitylink.api.EntityLinkType;
+import org.flowable.entitylink.api.HierarchyType;
+import org.flowable.task.api.Task;
+import org.flowable.task.api.history.HistoricTaskInstance;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+/**
+ * @author Frederik Heremans
+ * @author Joram Barrez
+ * @author Dennis Federico
+ */
+<span class="nc" id="L44">public class ChangeStateForCallActivityTest extends PluggableFlowableTestCase {</span>
+
+<span class="nc" id="L46">    private ChangeStateEventListener changeStateEventListener = new ChangeStateEventListener();</span>
+
+    @BeforeEach
+    protected void setUp() {
+<span class="nc" id="L50">        processEngine.getRuntimeService().addEventListener(changeStateEventListener);</span>
+<span class="nc" id="L51">    }</span>
+
+    @AfterEach
+    protected void tearDown() {
+<span class="nc" id="L55">        processEngine.getRuntimeService().removeEventListener(changeStateEventListener);</span>
+<span class="nc" id="L56">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/twoTasksParentProcess.bpmn20.xml&quot;, &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot; })
+    public void testSetCurrentActivityInParentProcess() {
+<span class="nc" id="L61">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;twoTasksParentProcess&quot;);</span>
+        
+<span class="nc" id="L63">        waitForHistoryJobExecutorToProcessAllJobs(10000, 200);</span>
+        
+<span class="nc" id="L65">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L66">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;firstTask&quot;);</span>
+
+<span class="nc" id="L68">        taskService.complete(task.getId());</span>
+        
+<span class="nc" id="L70">        waitForHistoryJobExecutorToProcessAllJobs(10000, 200);</span>
+
+<span class="nc" id="L72">        ProcessInstance subProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L73">        assertThat(subProcessInstance).isNotNull();</span>
+
+<span class="nc" id="L75">        task = taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).singleResult();</span>
+<span class="nc" id="L76">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;theTask&quot;);</span>
+
+<span class="nc" id="L78">        runtimeService.createChangeActivityStateBuilder()</span>
+<span class="nc" id="L79">                .processInstanceId(subProcessInstance.getId())</span>
+<span class="nc" id="L80">                .moveActivityIdToParentActivityId(&quot;theTask&quot;, &quot;secondTask&quot;)</span>
+<span class="nc" id="L81">                .changeState();</span>
+        
+<span class="nc" id="L83">        waitForHistoryJobExecutorToProcessAllJobs(10000, 200);</span>
+
+<span class="nc" id="L85">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L86">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;secondTask&quot;);</span>
+
+<span class="nc" id="L88">        assertThat(runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).count()).isZero();</span>
+<span class="nc" id="L89">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceId(subProcessInstance.getId()).count()).isZero();</span>
+
+<span class="nc" id="L91">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L92">        assertThat(executions).hasSize(1);</span>
+
+<span class="nc" id="L94">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L96">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L97">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/twoTasksParentProcessV2.bpmn20.xml&quot;, &quot;org/flowable/engine/test/api/twoTasksProcess.bpmn20.xml&quot; })
+    public void testSetCurrentActivityInParentProcessV2() {
+<span class="nc" id="L102">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;twoTasksParentProcess&quot;);</span>
+        
+<span class="nc" id="L104">        waitForHistoryJobExecutorToProcessAllJobs(10000, 200);</span>
+        
+<span class="nc" id="L106">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L107">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;firstTask&quot;);</span>
+<span class="nc" id="L108">        taskService.complete(task.getId());</span>
+        
+<span class="nc" id="L110">        waitForHistoryJobExecutorToProcessAllJobs(10000, 200);</span>
+
+<span class="nc" id="L112">        ProcessInstance subProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L113">        assertThat(subProcessInstance).isNotNull();</span>
+
+<span class="nc" id="L115">        task = taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).singleResult();</span>
+<span class="nc" id="L116">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;firstTask&quot;);</span>
+<span class="nc" id="L117">        taskService.complete(task.getId());</span>
+        
+<span class="nc" id="L119">        waitForHistoryJobExecutorToProcessAllJobs(10000, 200);</span>
+
+<span class="nc" id="L121">        task = taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).singleResult();</span>
+<span class="nc" id="L122">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;secondTask&quot;);</span>
+
+<span class="nc" id="L124">        runtimeService.createChangeActivityStateBuilder()</span>
+<span class="nc" id="L125">                .processInstanceId(subProcessInstance.getId())</span>
+<span class="nc" id="L126">                .moveActivityIdToParentActivityId(&quot;secondTask&quot;, &quot;secondTask&quot;)</span>
+<span class="nc" id="L127">                .changeState();</span>
+
+<span class="nc" id="L129">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L130">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;secondTask&quot;);</span>
+
+<span class="nc bnc" id="L132" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration, 60000)) {</span>
+<span class="nc" id="L133">            HistoricTaskInstance historicTaskInstance = historyService.createHistoricTaskInstanceQuery().taskId(task.getId()).singleResult();</span>
+<span class="nc" id="L134">            assertThat(historicTaskInstance.getTaskDefinitionKey()).isEqualTo(&quot;secondTask&quot;);</span>
+        }
+
+<span class="nc" id="L137">        assertThat(runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).count()).isZero();</span>
+<span class="nc" id="L138">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceId(subProcessInstance.getId()).count()).isZero();</span>
+
+<span class="nc" id="L140">        List&lt;Execution&gt; executions = runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().list();</span>
+<span class="nc" id="L141">        assertThat(executions).hasSize(1);</span>
+
+<span class="nc" id="L143">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L145">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L146">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/twoTasksParentProcess.bpmn20.xml&quot;, &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot; })
+    public void testSetCurrentActivityInSubProcessInstance() {
+<span class="nc" id="L151">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;twoTasksParentProcess&quot;);</span>
+        
+<span class="nc" id="L153">        waitForHistoryJobExecutorToProcessAllJobs(10000, 200);</span>
+        
+<span class="nc" id="L155">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L156">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;firstTask&quot;);</span>
+
+<span class="nc" id="L158">        runtimeService.createChangeActivityStateBuilder()</span>
+<span class="nc" id="L159">                .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L160">                .moveActivityIdToSubProcessInstanceActivityId(&quot;firstTask&quot;, &quot;theTask&quot;, &quot;callActivity&quot;)</span>
+<span class="nc" id="L161">                .changeState();</span>
+        
+<span class="nc" id="L163">        waitForHistoryJobExecutorToProcessAllJobs(10000, 200);</span>
+
+<span class="nc" id="L165">        ProcessInstance subProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L166">        assertThat(subProcessInstance).isNotNull();</span>
+
+<span class="nc" id="L168">        assertThat(taskService.createTaskQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+<span class="nc" id="L169">        assertThat(taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).count()).isEqualTo(1);</span>
+
+<span class="nc" id="L171">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().count()).isEqualTo(1);</span>
+<span class="nc" id="L172">        assertThat(runtimeService.createExecutionQuery().processInstanceId(subProcessInstance.getId()).onlyChildExecutions().count()).isEqualTo(1);</span>
+
+<span class="nc" id="L174">        task = taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).singleResult();</span>
+<span class="nc" id="L175">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;theTask&quot;);</span>
+<span class="nc" id="L176">        taskService.complete(task.getId());</span>
+        
+<span class="nc" id="L178">        waitForHistoryJobExecutorToProcessAllJobs(10000, 200);</span>
+
+<span class="nc" id="L180">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceId(subProcessInstance.getId()).count()).isZero();</span>
+
+<span class="nc" id="L182">        task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L183">        assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;secondTask&quot;);</span>
+
+<span class="nc" id="L185">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L187">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L188">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/twoTasksParentProcessV2.bpmn20.xml&quot;, &quot;org/flowable/engine/test/api/twoTasksProcess.bpmn20.xml&quot; })
+    public void testSetCurrentActivityInSubProcessInstanceV2() {
+<span class="nc" id="L193">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;twoTasksParentProcess&quot;);</span>
+        
+<span class="nc" id="L195">        waitForHistoryJobExecutorToProcessAllJobs(10000, 200);</span>
+        
+<span class="nc" id="L197">        Task firstTask = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L198">        assertThat(firstTask.getTaskDefinitionKey()).isEqualTo(&quot;firstTask&quot;);</span>
+
+<span class="nc" id="L200">        assertThat(runtimeService.getEntityLinkChildrenForProcessInstance(processInstance.getId()))</span>
+<span class="nc" id="L201">                .extracting(EntityLink::getHierarchyType, EntityLink::getReferenceScopeId,</span>
+                        EntityLink::getReferenceScopeType, EntityLink::getLinkType)
+<span class="nc" id="L203">                .as(&quot;hierarchyType, referenceScopeId, referenceScopeType, linkType&quot;)</span>
+<span class="nc" id="L204">                .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L205">                        tuple(HierarchyType.ROOT, firstTask.getId(), ScopeTypes.TASK, EntityLinkType.CHILD)</span>
+                );
+
+<span class="nc" id="L208">        assertThat(runtimeService.getEntityLinkChildrenForProcessInstance(processInstance.getId()))</span>
+<span class="nc" id="L209">                .extracting(EntityLink::getRootScopeId, EntityLink::getRootScopeType)</span>
+<span class="nc" id="L210">                .containsOnly(</span>
+<span class="nc" id="L211">                        tuple(processInstance.getId(), ScopeTypes.BPMN)</span>
+                );
+
+<span class="nc" id="L214">        runtimeService.createChangeActivityStateBuilder()</span>
+<span class="nc" id="L215">                .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L216">                .moveActivityIdToSubProcessInstanceActivityId(&quot;firstTask&quot;, &quot;secondTask&quot;, &quot;callActivity&quot;)</span>
+<span class="nc" id="L217">                .changeState();</span>
+
+<span class="nc" id="L219">        ProcessInstance subProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L220">        assertThat(subProcessInstance).isNotNull();</span>
+
+<span class="nc" id="L222">        assertThat(taskService.createTaskQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+<span class="nc" id="L223">        assertThat(taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).count()).isEqualTo(1);</span>
+
+<span class="nc" id="L225">        assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().count()).isEqualTo(1);</span>
+<span class="nc" id="L226">        assertThat(runtimeService.createExecutionQuery().processInstanceId(subProcessInstance.getId()).onlyChildExecutions().count()).isEqualTo(1);</span>
+
+<span class="nc" id="L228">        Task firstSecondTask = taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).singleResult();</span>
+<span class="nc" id="L229">        assertThat(firstSecondTask.getTaskDefinitionKey()).isEqualTo(&quot;secondTask&quot;);</span>
+
+<span class="nc bnc" id="L231" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L232">            HistoricTaskInstance historicTaskInstance = historyService.createHistoricTaskInstanceQuery().taskId(firstSecondTask.getId()).singleResult();</span>
+<span class="nc" id="L233">            assertThat(historicTaskInstance.getTaskDefinitionKey()).isEqualTo(&quot;secondTask&quot;);</span>
+        }
+
+<span class="nc" id="L236">        assertThat(runtimeService.getEntityLinkChildrenForProcessInstance(processInstance.getId()))</span>
+<span class="nc" id="L237">                .extracting(EntityLink::getHierarchyType, EntityLink::getReferenceScopeId,</span>
+                        EntityLink::getReferenceScopeType, EntityLink::getLinkType)
+<span class="nc" id="L239">                .as(&quot;hierarchyType, referenceScopeId, referenceScopeType, linkType&quot;)</span>
+<span class="nc" id="L240">                .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L241">                        tuple(HierarchyType.ROOT, firstTask.getId(), ScopeTypes.TASK, EntityLinkType.CHILD),</span>
+<span class="nc" id="L242">                        tuple(HierarchyType.ROOT, firstSecondTask.getId(), ScopeTypes.TASK, EntityLinkType.CHILD),</span>
+<span class="nc" id="L243">                        tuple(HierarchyType.ROOT, subProcessInstance.getId(), ScopeTypes.BPMN, EntityLinkType.CHILD)</span>
+                );
+
+<span class="nc" id="L246">        assertThat(runtimeService.getEntityLinkChildrenForProcessInstance(processInstance.getId()))</span>
+<span class="nc" id="L247">                .extracting(EntityLink::getRootScopeId, EntityLink::getRootScopeType)</span>
+<span class="nc" id="L248">                .containsOnly(</span>
+<span class="nc" id="L249">                        tuple(processInstance.getId(), ScopeTypes.BPMN)</span>
+                );
+
+<span class="nc" id="L252">        assertThat(runtimeService.getEntityLinkChildrenForProcessInstance(subProcessInstance.getId()))</span>
+<span class="nc" id="L253">                .extracting(EntityLink::getHierarchyType, EntityLink::getReferenceScopeId,</span>
+                        EntityLink::getReferenceScopeType, EntityLink::getLinkType)
+<span class="nc" id="L255">                .as(&quot;hierarchyType, referenceScopeId, referenceScopeType, linkType&quot;)</span>
+<span class="nc" id="L256">                .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L257">                        tuple(HierarchyType.PARENT, firstSecondTask.getId(), ScopeTypes.TASK, EntityLinkType.CHILD)</span>
+                );
+
+<span class="nc" id="L260">        assertThat(runtimeService.getEntityLinkChildrenForProcessInstance(subProcessInstance.getId()))</span>
+<span class="nc" id="L261">                .extracting(EntityLink::getRootScopeId, EntityLink::getRootScopeType)</span>
+<span class="nc" id="L262">                .containsOnly(</span>
+<span class="nc" id="L263">                        tuple(processInstance.getId(), ScopeTypes.BPMN)</span>
+                );
+
+<span class="nc" id="L266">        taskService.complete(firstSecondTask.getId());</span>
+        
+<span class="nc" id="L268">        waitForHistoryJobExecutorToProcessAllJobs(10000, 200);</span>
+
+<span class="nc" id="L270">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceId(subProcessInstance.getId()).count()).isZero();</span>
+
+<span class="nc" id="L272">        Task secondTask = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L273">        assertThat(secondTask.getTaskDefinitionKey()).isEqualTo(&quot;secondTask&quot;);</span>
+
+<span class="nc" id="L275">        taskService.complete(secondTask.getId());</span>
+
+<span class="nc" id="L277">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L278">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/variables/callActivityWithCalledElementExpression.bpmn20.xml&quot; })
+    public void testSetCurrentActivityInSubProcessInstanceWithCalledElementExpression() {
+        try {
+            //Deploy second version of the process definition
+<span class="nc" id="L285">            deployProcessDefinition(&quot;my deploy&quot;, &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot;);</span>
+    
+<span class="nc" id="L287">            ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;calledElementExpression&quot;);</span>
+            
+<span class="nc" id="L289">            waitForHistoryJobExecutorToProcessAllJobs(10000, 200);</span>
+    
+<span class="nc" id="L291">            Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L292">            assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;firstTask&quot;);</span>
+    
+            //First change state attempt fails as the calledElement expression cannot be evaluated
+<span class="nc" id="L295">            assertThatThrownBy(() -&gt; runtimeService.createChangeActivityStateBuilder()</span>
+<span class="nc" id="L296">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L297">                    .moveActivityIdToSubProcessInstanceActivityId(&quot;firstTask&quot;, &quot;theTask&quot;, &quot;callActivity&quot;)</span>
+<span class="nc" id="L298">                    .changeState())</span>
+<span class="nc" id="L299">                    .isExactlyInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L300">                    .hasMessage(&quot;Cannot resolve calledElement expression '${subProcessDefId}' of callActivity 'callActivity'&quot;);</span>
+    
+            //Change state specifying the variable with the value
+<span class="nc" id="L303">            runtimeService.createChangeActivityStateBuilder()</span>
+<span class="nc" id="L304">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L305">                    .moveActivityIdToSubProcessInstanceActivityId(&quot;firstTask&quot;, &quot;theTask&quot;, &quot;callActivity&quot;, 1)</span>
+<span class="nc" id="L306">                    .processVariable(&quot;subProcessDefId&quot;, &quot;oneTaskProcess&quot;)</span>
+<span class="nc" id="L307">                    .changeState();</span>
+            
+<span class="nc" id="L309">            waitForHistoryJobExecutorToProcessAllJobs(10000, 200);</span>
+    
+<span class="nc" id="L311">            ProcessInstance subProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L312">            assertThat(subProcessInstance).isNotNull();</span>
+    
+<span class="nc" id="L314">            assertThat(taskService.createTaskQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+<span class="nc" id="L315">            assertThat(taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).count()).isEqualTo(1);</span>
+    
+<span class="nc" id="L317">            assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().count()).isEqualTo(1);</span>
+<span class="nc" id="L318">            assertThat(runtimeService.createExecutionQuery().processInstanceId(subProcessInstance.getId()).onlyChildExecutions().count()).isEqualTo(1);</span>
+    
+<span class="nc" id="L320">            task = taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).singleResult();</span>
+<span class="nc" id="L321">            assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;theTask&quot;);</span>
+<span class="nc" id="L322">            taskService.complete(task.getId());</span>
+            
+<span class="nc" id="L324">            waitForHistoryJobExecutorToProcessAllJobs(10000, 200);</span>
+    
+<span class="nc" id="L326">            assertThat(runtimeService.createProcessInstanceQuery().processInstanceId(subProcessInstance.getId()).count()).isZero();</span>
+    
+<span class="nc" id="L328">            task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L329">            assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;lastTask&quot;);</span>
+    
+<span class="nc" id="L331">            taskService.complete(task.getId());</span>
+    
+<span class="nc" id="L333">            assertProcessEnded(processInstance.getId());</span>
+            
+        } finally {
+<span class="nc" id="L336">            deleteDeployments();</span>
+        }
+<span class="nc" id="L338">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/api/twoTasksParentProcess.bpmn20.xml&quot;, &quot;org/flowable/engine/test/api/oneTaskProcess.bpmn20.xml&quot; })
+    public void testSetCurrentActivityInSubProcessInstanceSpecificVersion() {
+        try {
+            // Deploy second version of the process definition
+<span class="nc" id="L345">            deployProcessDefinition(&quot;my deploy&quot;, &quot;org/flowable/engine/test/api/oneTaskProcessV2.bpmn20.xml&quot;);</span>
+    
+<span class="nc" id="L347">            ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;twoTasksParentProcess&quot;);</span>
+            
+<span class="nc" id="L349">            waitForHistoryJobExecutorToProcessAllJobs(10000, 200);</span>
+            
+<span class="nc" id="L351">            Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L352">            assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;firstTask&quot;);</span>
+    
+<span class="nc" id="L354">            assertThatThrownBy(() -&gt; runtimeService.createChangeActivityStateBuilder()</span>
+<span class="nc" id="L355">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L356">                    .moveActivityIdToSubProcessInstanceActivityId(&quot;firstTask&quot;, &quot;theTask&quot;, &quot;callActivity&quot;)</span>
+<span class="nc" id="L357">                    .changeState())</span>
+<span class="nc" id="L358">                    .isExactlyInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L359">                    .hasMessage(&quot;Cannot find activity 'theTask' in process definition with id 'oneTaskProcess'&quot;);</span>
+    
+            //Invalid &quot;unExistent&quot; process definition version
+<span class="nc" id="L362">            assertThatThrownBy(() -&gt; runtimeService.createChangeActivityStateBuilder()</span>
+<span class="nc" id="L363">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L364">                    .moveActivityIdToSubProcessInstanceActivityId(&quot;firstTask&quot;, &quot;theTask&quot;, &quot;callActivity&quot;, 5)</span>
+<span class="nc" id="L365">                    .changeState())</span>
+<span class="nc" id="L366">                    .isExactlyInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L367">                    .hasMessage(&quot;Cannot find activity 'theTask' in process definition with id 'oneTaskProcess'&quot;);</span>
+    
+            //Change state specifying the first version
+<span class="nc" id="L370">            runtimeService.createChangeActivityStateBuilder()</span>
+<span class="nc" id="L371">                    .processInstanceId(processInstance.getId())</span>
+<span class="nc" id="L372">                    .moveActivityIdToSubProcessInstanceActivityId(&quot;firstTask&quot;, &quot;theTask&quot;, &quot;callActivity&quot;, 1)</span>
+<span class="nc" id="L373">                    .changeState();</span>
+            
+<span class="nc" id="L375">            waitForHistoryJobExecutorToProcessAllJobs(10000, 200);</span>
+    
+<span class="nc" id="L377">            ProcessInstance subProcessInstance = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L378">            assertThat(subProcessInstance).isNotNull();</span>
+    
+<span class="nc" id="L380">            assertThat(taskService.createTaskQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+<span class="nc" id="L381">            assertThat(taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).count()).isEqualTo(1);</span>
+    
+<span class="nc" id="L383">            assertThat(runtimeService.createExecutionQuery().processInstanceId(processInstance.getId()).onlyChildExecutions().count()).isEqualTo(1);</span>
+<span class="nc" id="L384">            assertThat(runtimeService.createExecutionQuery().processInstanceId(subProcessInstance.getId()).onlyChildExecutions().count()).isEqualTo(1);</span>
+    
+<span class="nc" id="L386">            task = taskService.createTaskQuery().processInstanceId(subProcessInstance.getId()).singleResult();</span>
+<span class="nc" id="L387">            assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;theTask&quot;);</span>
+<span class="nc" id="L388">            taskService.complete(task.getId());</span>
+            
+<span class="nc" id="L390">            waitForHistoryJobExecutorToProcessAllJobs(10000, 200);</span>
+    
+<span class="nc" id="L392">            assertThat(runtimeService.createProcessInstanceQuery().processInstanceId(subProcessInstance.getId()).count()).isZero();</span>
+    
+<span class="nc" id="L394">            task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L395">            assertThat(task.getTaskDefinitionKey()).isEqualTo(&quot;secondTask&quot;);</span>
+    
+<span class="nc" id="L397">            taskService.complete(task.getId());</span>
+    
+<span class="nc" id="L399">            assertProcessEnded(processInstance.getId());</span>
+            
+        } finally {
+<span class="nc" id="L402">            deleteDeployments();</span>
+        }
+<span class="nc" id="L404">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

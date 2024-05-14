@@ -1,0 +1,1514 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CallActivityAdvancedTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.bpmn.callactivity</a> &gt; <span class="el_source">CallActivityAdvancedTest.java</span></div><h1>CallActivityAdvancedTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.flowable.engine.test.bpmn.callactivity;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+import java.util.Arrays;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.FlowableObjectNotFoundException;
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.impl.DefaultTenantProvider;
+import org.flowable.common.engine.impl.history.HistoryLevel;
+import org.flowable.common.engine.impl.interceptor.Command;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.common.engine.impl.util.CollectionUtil;
+import org.flowable.engine.ProcessEngineConfiguration;
+import org.flowable.engine.history.DeleteReason;
+import org.flowable.engine.history.HistoricActivityInstance;
+import org.flowable.engine.history.HistoricProcessInstance;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntity;
+import org.flowable.engine.impl.test.HistoryTestHelper;
+import org.flowable.engine.impl.test.PluggableFlowableTestCase;
+import org.flowable.engine.runtime.Execution;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.test.Deployment;
+import org.flowable.entitylink.api.EntityLink;
+import org.flowable.entitylink.api.EntityLinkType;
+import org.flowable.entitylink.api.HierarchyType;
+import org.flowable.entitylink.api.history.HistoricEntityLink;
+import org.flowable.identitylink.api.IdentityLink;
+import org.flowable.identitylink.api.IdentityLinkType;
+import org.flowable.job.api.Job;
+import org.flowable.task.api.Task;
+import org.flowable.task.api.TaskQuery;
+import org.flowable.task.api.history.HistoricTaskInstance;
+import org.junit.jupiter.api.Test;
+
+/**
+ * @author Joram Barrez
+ * @author Nils Preusker
+ * @author Bernd Ruecker
+ * @author Filip Hrisafov
+ */
+<span class="nc" id="L65">public class CallActivityAdvancedTest extends PluggableFlowableTestCase {</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testCallSimpleSubProcess.bpmn20.xml&quot;, 
+                    &quot;org/flowable/engine/test/bpmn/callactivity/simpleSubProcess.bpmn20.xml&quot; })
+    public void testCallSimpleSubProcess() {
+<span class="nc" id="L71">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;callSimpleSubProcess&quot;);</span>
+
+        // one task in the subprocess should be active after starting the process instance
+<span class="nc" id="L74">        TaskQuery taskQuery = taskService.createTaskQuery();</span>
+<span class="nc" id="L75">        Task taskBeforeSubProcess = taskQuery.singleResult();</span>
+<span class="nc" id="L76">        assertThat(taskBeforeSubProcess.getName()).isEqualTo(&quot;Task before subprocess&quot;);</span>
+        
+<span class="nc" id="L78">        Task childTask = taskService.createTaskQuery().processInstanceIdWithChildren(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L79">        assertThat(childTask.getId()).isEqualTo(taskBeforeSubProcess.getId());</span>
+        
+<span class="nc" id="L81">        Execution parentExecution = runtimeService.createExecutionQuery().executionId(childTask.getExecutionId()).singleResult();</span>
+
+        // Completing the task continues the process which leads to calling the subprocess
+<span class="nc" id="L84">        taskService.complete(taskBeforeSubProcess.getId());</span>
+<span class="nc" id="L85">        Task taskInSubProcess = taskQuery.singleResult();</span>
+<span class="nc" id="L86">        assertThat(taskInSubProcess.getName()).isEqualTo(&quot;Task in subprocess&quot;);</span>
+<span class="nc" id="L87">        Execution execution = runtimeService.createExecutionQuery().executionId(taskInSubProcess.getExecutionId()).singleResult();</span>
+<span class="nc" id="L88">        assertThat(execution.getRootProcessInstanceId()).isEqualTo(processInstance.getId());</span>
+<span class="nc" id="L89">        assertThat(execution.getProcessInstanceId()).isNotEqualTo(execution.getRootProcessInstanceId());</span>
+<span class="nc" id="L90">        managementService.executeCommand(new Command&lt;Void&gt;() {</span>
+
+            @Override
+            public Void execute(CommandContext commandContext) {
+<span class="nc" id="L94">                ExecutionEntity rootProcessInstance = ((ExecutionEntity) execution).getRootProcessInstance();</span>
+<span class="nc" id="L95">                assertThat(rootProcessInstance).isNotNull();</span>
+<span class="nc" id="L96">                assertThat(rootProcessInstance.getId()).isEqualTo(processInstance.getId());</span>
+<span class="nc" id="L97">                return null;</span>
+            }
+            
+        });
+        
+<span class="nc" id="L102">        List&lt;EntityLink&gt; entityLinks = runtimeService.getEntityLinkChildrenForProcessInstance(processInstance.getId());</span>
+<span class="nc" id="L103">        assertThat(entityLinks).hasSize(3);</span>
+<span class="nc" id="L104">        EntityLink entityLinkSubProcess = null;</span>
+<span class="nc" id="L105">        EntityLink entityLinkTask = null;</span>
+<span class="nc" id="L106">        EntityLink entityLinkSubTask = null;</span>
+<span class="nc bnc" id="L107" title="All 2 branches missed.">        for (EntityLink entityLink : entityLinks) {</span>
+<span class="nc bnc" id="L108" title="All 2 branches missed.">            if (ScopeTypes.TASK.equals(entityLink.getReferenceScopeType())) {</span>
+<span class="nc bnc" id="L109" title="All 2 branches missed.">                if (taskBeforeSubProcess.getId().equals(entityLink.getReferenceScopeId())) {</span>
+<span class="nc" id="L110">                    entityLinkTask = entityLink;</span>
+                } else {
+<span class="nc" id="L112">                    entityLinkSubTask = entityLink;</span>
+                }
+                
+<span class="nc bnc" id="L115" title="All 2 branches missed.">            } else if (ScopeTypes.BPMN.equals(entityLink.getReferenceScopeType())) {</span>
+<span class="nc" id="L116">                entityLinkSubProcess = entityLink;</span>
+            }
+<span class="nc" id="L118">        }</span>
+<span class="nc" id="L119">        assertThat(entityLinkSubProcess).isNotNull();</span>
+<span class="nc" id="L120">        assertThat(entityLinkTask).isNotNull();</span>
+<span class="nc" id="L121">        assertThat(entityLinkSubTask).isNotNull();</span>
+        
+<span class="nc" id="L123">        assertThat(entityLinkSubProcess.getScopeId()).isEqualTo(processInstance.getId());</span>
+<span class="nc" id="L124">        assertThat(entityLinkSubProcess.getScopeType()).isEqualTo(ScopeTypes.BPMN);</span>
+<span class="nc" id="L125">        assertThat(entityLinkSubProcess.getSubScopeId()).isEqualTo(parentExecution.getId());</span>
+<span class="nc" id="L126">        assertThat(entityLinkSubProcess.getParentElementId()).isEqualTo(&quot;callSubProcess&quot;);</span>
+<span class="nc" id="L127">        assertThat(entityLinkSubProcess.getScopeDefinitionId()).isNull();</span>
+<span class="nc" id="L128">        assertThat(entityLinkSubProcess.getReferenceScopeId()).isEqualTo(execution.getProcessInstanceId());</span>
+<span class="nc" id="L129">        assertThat(entityLinkSubProcess.getReferenceScopeType()).isEqualTo(ScopeTypes.BPMN);</span>
+<span class="nc" id="L130">        assertThat(entityLinkSubProcess.getReferenceScopeDefinitionId()).isNull();</span>
+<span class="nc" id="L131">        assertThat(entityLinkSubProcess.getLinkType()).isEqualTo(EntityLinkType.CHILD);</span>
+<span class="nc" id="L132">        assertThat(entityLinkSubProcess.getCreateTime()).isNotNull();</span>
+<span class="nc" id="L133">        assertThat(entityLinkSubProcess.getHierarchyType()).isEqualTo(HierarchyType.ROOT);</span>
+        
+<span class="nc" id="L135">        assertThat(entityLinkTask.getScopeId()).isEqualTo(processInstance.getId());</span>
+<span class="nc" id="L136">        assertThat(entityLinkTask.getScopeType()).isEqualTo(ScopeTypes.BPMN);</span>
+<span class="nc" id="L137">        assertThat(entityLinkTask.getSubScopeId()).isEqualTo(taskBeforeSubProcess.getExecutionId());</span>
+<span class="nc" id="L138">        assertThat(entityLinkTask.getParentElementId()).isEqualTo(&quot;taskBeforeSubProcess&quot;);</span>
+<span class="nc" id="L139">        assertThat(entityLinkTask.getScopeDefinitionId()).isNull();</span>
+<span class="nc" id="L140">        assertThat(entityLinkTask.getReferenceScopeId()).isEqualTo(taskBeforeSubProcess.getId());</span>
+<span class="nc" id="L141">        assertThat(entityLinkTask.getReferenceScopeType()).isEqualTo(ScopeTypes.TASK);</span>
+<span class="nc" id="L142">        assertThat(entityLinkTask.getReferenceScopeDefinitionId()).isNull();</span>
+<span class="nc" id="L143">        assertThat(entityLinkTask.getLinkType()).isEqualTo(EntityLinkType.CHILD);</span>
+<span class="nc" id="L144">        assertThat(entityLinkTask.getCreateTime()).isNotNull();</span>
+<span class="nc" id="L145">        assertThat(entityLinkTask.getHierarchyType()).isEqualTo(HierarchyType.ROOT);</span>
+        
+<span class="nc" id="L147">        assertThat(entityLinkSubTask.getScopeId()).isEqualTo(processInstance.getId());</span>
+<span class="nc" id="L148">        assertThat(entityLinkSubTask.getScopeType()).isEqualTo(ScopeTypes.BPMN);</span>
+<span class="nc" id="L149">        assertThat(entityLinkSubTask.getSubScopeId()).isEqualTo(taskInSubProcess.getExecutionId());</span>
+<span class="nc" id="L150">        assertThat(entityLinkSubTask.getParentElementId()).isEqualTo(&quot;task&quot;);</span>
+<span class="nc" id="L151">        assertThat(entityLinkSubTask.getScopeDefinitionId()).isNull();</span>
+<span class="nc" id="L152">        assertThat(entityLinkSubTask.getReferenceScopeId()).isEqualTo(taskInSubProcess.getId());</span>
+<span class="nc" id="L153">        assertThat(entityLinkSubTask.getReferenceScopeType()).isEqualTo(ScopeTypes.TASK);</span>
+<span class="nc" id="L154">        assertThat(entityLinkSubTask.getReferenceScopeDefinitionId()).isNull();</span>
+<span class="nc" id="L155">        assertThat(entityLinkSubTask.getLinkType()).isEqualTo(EntityLinkType.CHILD);</span>
+<span class="nc" id="L156">        assertThat(entityLinkSubTask.getCreateTime()).isNotNull();</span>
+<span class="nc" id="L157">        assertThat(entityLinkSubTask.getHierarchyType()).isEqualTo(HierarchyType.ROOT);</span>
+        
+<span class="nc" id="L159">        entityLinks = runtimeService.getEntityLinkChildrenForProcessInstance(execution.getProcessInstanceId());</span>
+<span class="nc" id="L160">        assertThat(entityLinks).hasSize(1);</span>
+<span class="nc" id="L161">        EntityLink entityLink = entityLinks.get(0);</span>
+        
+<span class="nc" id="L163">        assertThat(entityLink.getScopeId()).isEqualTo(execution.getProcessInstanceId());</span>
+<span class="nc" id="L164">        assertThat(entityLink.getScopeType()).isEqualTo(ScopeTypes.BPMN);</span>
+<span class="nc" id="L165">        assertThat(entityLink.getSubScopeId()).isEqualTo(execution.getId());</span>
+<span class="nc" id="L166">        assertThat(entityLink.getParentElementId()).isEqualTo(&quot;task&quot;);</span>
+<span class="nc" id="L167">        assertThat(entityLink.getScopeDefinitionId()).isNull();</span>
+<span class="nc" id="L168">        assertThat(entityLink.getReferenceScopeId()).isEqualTo(taskInSubProcess.getId());</span>
+<span class="nc" id="L169">        assertThat(entityLink.getReferenceScopeType()).isEqualTo(ScopeTypes.TASK);</span>
+<span class="nc" id="L170">        assertThat(entityLink.getReferenceScopeDefinitionId()).isNull();</span>
+<span class="nc" id="L171">        assertThat(entityLink.getLinkType()).isEqualTo(EntityLinkType.CHILD);</span>
+<span class="nc" id="L172">        assertThat(entityLink.getCreateTime()).isNotNull();</span>
+<span class="nc" id="L173">        assertThat(entityLink.getHierarchyType()).isEqualTo(HierarchyType.PARENT);</span>
+        
+<span class="nc" id="L175">        childTask = taskService.createTaskQuery().processInstanceIdWithChildren(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L176">        assertThat(childTask.getId()).isEqualTo(taskInSubProcess.getId());</span>
+        
+<span class="nc bnc" id="L178" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L179">            List&lt;HistoricTaskInstance&gt; childHistoricTasks = historyService.createHistoricTaskInstanceQuery()</span>
+<span class="nc" id="L180">                            .processInstanceIdWithChildren(processInstance.getId())</span>
+<span class="nc" id="L181">                            .list();</span>
+
+<span class="nc" id="L183">            assertThat(childHistoricTasks)</span>
+<span class="nc" id="L184">                    .extracting(HistoricTaskInstance::getId)</span>
+<span class="nc" id="L185">                    .containsOnly(taskBeforeSubProcess.getId(), taskInSubProcess.getId());</span>
+        }
+        
+<span class="nc" id="L188">        childTask = taskService.createTaskQuery().processInstanceIdWithChildren(execution.getProcessInstanceId()).singleResult();</span>
+<span class="nc" id="L189">        assertThat(childTask.getId()).isEqualTo(taskInSubProcess.getId());</span>
+
+        // Completing the task in the subprocess, finishes the subprocess
+<span class="nc" id="L192">        taskService.complete(taskInSubProcess.getId());</span>
+<span class="nc" id="L193">        Task taskAfterSubProcess = taskQuery.singleResult();</span>
+<span class="nc" id="L194">        assertThat(taskAfterSubProcess.getName()).isEqualTo(&quot;Task after subprocess&quot;);</span>
+        
+<span class="nc" id="L196">        childTask = taskService.createTaskQuery().processInstanceIdWithChildren(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L197">        assertThat(childTask.getId()).isEqualTo(taskAfterSubProcess.getId());</span>
+
+        // Completing this task end the process instance
+<span class="nc" id="L200">        taskService.complete(taskAfterSubProcess.getId());</span>
+<span class="nc" id="L201">        assertProcessEnded(processInstance.getId());</span>
+
+        // Validate subprocess history
+<span class="nc bnc" id="L204" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+            // Subprocess should have initial activity set
+<span class="nc" id="L206">            HistoricProcessInstance historicProcess = historyService.createHistoricProcessInstanceQuery().processInstanceId(taskInSubProcess.getProcessInstanceId()).singleResult();</span>
+<span class="nc" id="L207">            assertThat(historicProcess).isNotNull();</span>
+<span class="nc" id="L208">            assertThat(historicProcess.getStartActivityId()).isEqualTo(&quot;theStart&quot;);</span>
+
+<span class="nc" id="L210">            List&lt;HistoricActivityInstance&gt; subProcesshistoricInstances = historyService.createHistoricActivityInstanceQuery().processInstanceId(taskInSubProcess.getProcessInstanceId()).list();</span>
+
+            // Should contain a start-event, the task and an end-event
+<span class="nc" id="L213">            assertThat(subProcesshistoricInstances).hasSize(5);</span>
+<span class="nc" id="L214">            Set&lt;String&gt; expectedActivities = new HashSet&lt;&gt;(Arrays.asList(new String[]{&quot;theStart&quot;, &quot;flow1&quot;, &quot;task&quot;, &quot;flow2&quot;, &quot;theEnd&quot;}));</span>
+
+<span class="nc bnc" id="L216" title="All 2 branches missed.">            for (HistoricActivityInstance act : subProcesshistoricInstances) {</span>
+<span class="nc" id="L217">                expectedActivities.remove(act.getActivityId());</span>
+<span class="nc" id="L218">            }</span>
+<span class="nc" id="L219">            assertThat(expectedActivities).as(&quot;Not all expected activities were found in the history&quot;).isEmpty();</span>
+
+<span class="nc" id="L221">            List&lt;HistoricActivityInstance&gt; historicInstances = historyService.createHistoricActivityInstanceQuery().processInstanceId(processInstance.getProcessInstanceId()).list();</span>
+
+<span class="nc" id="L223">            assertThat(historicInstances).hasSize(9);</span>
+<span class="nc" id="L224">            expectedActivities = new HashSet&lt;&gt;(Arrays.asList(new String[]{&quot;theStart&quot;, &quot;flow1&quot;, &quot;taskBeforeSubProcess&quot;, &quot;flow2&quot;, &quot;callSubProcess&quot;, &quot;flow3&quot;,</span>
+                &quot;taskAfterSubProcess&quot;, &quot;flow4&quot;, &quot;theEnd&quot;
+            }));
+
+<span class="nc bnc" id="L228" title="All 2 branches missed.">            for (HistoricActivityInstance act : historicInstances) {</span>
+<span class="nc" id="L229">                expectedActivities.remove(act.getActivityId());</span>
+<span class="nc" id="L230">            }</span>
+<span class="nc" id="L231">            assertThat(expectedActivities).as(&quot;Not all expected activities were found in the history&quot;).isEmpty();</span>
+
+<span class="nc bnc" id="L233" title="All 2 branches missed.">            if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.AUDIT, processEngineConfiguration)) {</span>
+<span class="nc" id="L234">                List&lt;HistoricEntityLink&gt; historicEntityLinks = historyService.getHistoricEntityLinkChildrenForProcessInstance(processInstance.getId());</span>
+<span class="nc" id="L235">                assertThat(historicEntityLinks).hasSize(4);</span>
+<span class="nc" id="L236">                HistoricEntityLink historicEntityLinkSubProcess = null;</span>
+<span class="nc" id="L237">                HistoricEntityLink historicEntityLinkTask = null;</span>
+<span class="nc" id="L238">                HistoricEntityLink historicEntityLinkSubTask = null;</span>
+<span class="nc" id="L239">                HistoricEntityLink historicEntityLinkAfterTask = null;</span>
+<span class="nc bnc" id="L240" title="All 2 branches missed.">                for (HistoricEntityLink historicEntityLink : historicEntityLinks) {</span>
+<span class="nc bnc" id="L241" title="All 2 branches missed.">                    if (ScopeTypes.TASK.equals(historicEntityLink.getReferenceScopeType())) {</span>
+<span class="nc bnc" id="L242" title="All 2 branches missed.">                        if (taskBeforeSubProcess.getId().equals(historicEntityLink.getReferenceScopeId())) {</span>
+<span class="nc" id="L243">                            historicEntityLinkTask = historicEntityLink;</span>
+<span class="nc bnc" id="L244" title="All 2 branches missed.">                        } else if (taskAfterSubProcess.getId().equals(historicEntityLink.getReferenceScopeId())) {</span>
+<span class="nc" id="L245">                            historicEntityLinkAfterTask = historicEntityLink;</span>
+                        } else {
+<span class="nc" id="L247">                            historicEntityLinkSubTask = historicEntityLink;</span>
+                        }
+                        
+<span class="nc bnc" id="L250" title="All 2 branches missed.">                    } else if (ScopeTypes.BPMN.equals(historicEntityLink.getReferenceScopeType())) {</span>
+<span class="nc" id="L251">                        historicEntityLinkSubProcess = historicEntityLink;</span>
+                    }
+<span class="nc" id="L253">                }</span>
+<span class="nc" id="L254">                assertThat(historicEntityLinkSubProcess).isNotNull();</span>
+<span class="nc" id="L255">                assertThat(historicEntityLinkTask).isNotNull();</span>
+<span class="nc" id="L256">                assertThat(historicEntityLinkSubTask).isNotNull();</span>
+                
+<span class="nc" id="L258">                assertThat(historicEntityLinkSubProcess.getScopeId()).isEqualTo(processInstance.getId());</span>
+<span class="nc" id="L259">                assertThat(historicEntityLinkSubProcess.getSubScopeId()).isEqualTo(parentExecution.getId());</span>
+<span class="nc" id="L260">                assertThat(historicEntityLinkSubProcess.getScopeType()).isEqualTo(ScopeTypes.BPMN);</span>
+<span class="nc" id="L261">                assertThat(historicEntityLinkSubProcess.getParentElementId()).isEqualTo(&quot;callSubProcess&quot;);</span>
+<span class="nc" id="L262">                assertThat(historicEntityLinkSubProcess.getScopeDefinitionId()).isNull();</span>
+<span class="nc" id="L263">                assertThat(historicEntityLinkSubProcess.getReferenceScopeId()).isEqualTo(execution.getProcessInstanceId());</span>
+<span class="nc" id="L264">                assertThat(historicEntityLinkSubProcess.getReferenceScopeType()).isEqualTo(ScopeTypes.BPMN);</span>
+<span class="nc" id="L265">                assertThat(historicEntityLinkSubProcess.getReferenceScopeDefinitionId()).isNull();</span>
+<span class="nc" id="L266">                assertThat(historicEntityLinkSubProcess.getLinkType()).isEqualTo(EntityLinkType.CHILD);</span>
+<span class="nc" id="L267">                assertThat(historicEntityLinkSubProcess.getCreateTime()).isNotNull();</span>
+<span class="nc" id="L268">                assertThat(historicEntityLinkSubProcess.getHierarchyType()).isEqualTo(HierarchyType.ROOT);</span>
+                
+<span class="nc" id="L270">                assertThat(historicEntityLinkTask.getScopeId()).isEqualTo(processInstance.getId());</span>
+<span class="nc" id="L271">                assertThat(historicEntityLinkTask.getSubScopeId()).isEqualTo(taskBeforeSubProcess.getExecutionId());</span>
+<span class="nc" id="L272">                assertThat(historicEntityLinkTask.getScopeType()).isEqualTo(ScopeTypes.BPMN);</span>
+<span class="nc" id="L273">                assertThat(historicEntityLinkTask.getParentElementId()).isEqualTo(&quot;taskBeforeSubProcess&quot;);</span>
+<span class="nc" id="L274">                assertThat(historicEntityLinkTask.getScopeDefinitionId()).isNull();</span>
+<span class="nc" id="L275">                assertThat(historicEntityLinkTask.getReferenceScopeId()).isEqualTo(taskBeforeSubProcess.getId());</span>
+<span class="nc" id="L276">                assertThat(historicEntityLinkTask.getReferenceScopeType()).isEqualTo(ScopeTypes.TASK);</span>
+<span class="nc" id="L277">                assertThat(historicEntityLinkTask.getReferenceScopeDefinitionId()).isNull();</span>
+<span class="nc" id="L278">                assertThat(historicEntityLinkTask.getLinkType()).isEqualTo(EntityLinkType.CHILD);</span>
+<span class="nc" id="L279">                assertThat(historicEntityLinkTask.getCreateTime()).isNotNull();</span>
+<span class="nc" id="L280">                assertThat(historicEntityLinkTask.getHierarchyType()).isEqualTo(HierarchyType.ROOT);</span>
+                
+<span class="nc" id="L282">                assertThat(historicEntityLinkSubTask.getScopeId()).isEqualTo(processInstance.getId());</span>
+<span class="nc" id="L283">                assertThat(historicEntityLinkSubTask.getSubScopeId()).isEqualTo(taskInSubProcess.getExecutionId());</span>
+<span class="nc" id="L284">                assertThat(historicEntityLinkSubTask.getScopeType()).isEqualTo(ScopeTypes.BPMN);</span>
+<span class="nc" id="L285">                assertThat(historicEntityLinkSubTask.getParentElementId()).isEqualTo(&quot;task&quot;);</span>
+<span class="nc" id="L286">                assertThat(historicEntityLinkSubTask.getScopeDefinitionId()).isNull();</span>
+<span class="nc" id="L287">                assertThat(historicEntityLinkSubTask.getReferenceScopeId()).isEqualTo(taskInSubProcess.getId());</span>
+<span class="nc" id="L288">                assertThat(historicEntityLinkSubTask.getReferenceScopeType()).isEqualTo(ScopeTypes.TASK);</span>
+<span class="nc" id="L289">                assertThat(historicEntityLinkSubTask.getReferenceScopeDefinitionId()).isNull();</span>
+<span class="nc" id="L290">                assertThat(historicEntityLinkSubTask.getLinkType()).isEqualTo(EntityLinkType.CHILD);</span>
+<span class="nc" id="L291">                assertThat(historicEntityLinkSubTask.getCreateTime()).isNotNull();</span>
+<span class="nc" id="L292">                assertThat(historicEntityLinkSubTask.getHierarchyType()).isEqualTo(HierarchyType.ROOT);</span>
+                
+<span class="nc" id="L294">                assertThat(historicEntityLinkAfterTask.getScopeId()).isEqualTo(processInstance.getId());</span>
+<span class="nc" id="L295">                assertThat(historicEntityLinkAfterTask.getSubScopeId()).isEqualTo(taskAfterSubProcess.getExecutionId());</span>
+<span class="nc" id="L296">                assertThat(historicEntityLinkAfterTask.getScopeType()).isEqualTo(ScopeTypes.BPMN);</span>
+<span class="nc" id="L297">                assertThat(historicEntityLinkAfterTask.getParentElementId()).isEqualTo(&quot;taskAfterSubProcess&quot;);</span>
+<span class="nc" id="L298">                assertThat(historicEntityLinkAfterTask.getScopeDefinitionId()).isNull();</span>
+<span class="nc" id="L299">                assertThat(historicEntityLinkAfterTask.getReferenceScopeId()).isEqualTo(taskAfterSubProcess.getId());</span>
+<span class="nc" id="L300">                assertThat(historicEntityLinkAfterTask.getReferenceScopeType()).isEqualTo(ScopeTypes.TASK);</span>
+<span class="nc" id="L301">                assertThat(historicEntityLinkAfterTask.getReferenceScopeDefinitionId()).isNull();</span>
+<span class="nc" id="L302">                assertThat(historicEntityLinkAfterTask.getLinkType()).isEqualTo(EntityLinkType.CHILD);</span>
+<span class="nc" id="L303">                assertThat(historicEntityLinkAfterTask.getCreateTime()).isNotNull();</span>
+<span class="nc" id="L304">                assertThat(historicEntityLinkAfterTask.getHierarchyType()).isEqualTo(HierarchyType.ROOT);</span>
+                
+<span class="nc" id="L306">                historicEntityLinks = historyService.getHistoricEntityLinkChildrenForProcessInstance(execution.getProcessInstanceId());</span>
+<span class="nc" id="L307">                assertThat(historicEntityLinks).hasSize(1);</span>
+<span class="nc" id="L308">                HistoricEntityLink historicEntityLink = historicEntityLinks.get(0);</span>
+                
+<span class="nc" id="L310">                assertThat(historicEntityLink.getScopeId()).isEqualTo(execution.getProcessInstanceId());</span>
+<span class="nc" id="L311">                assertThat(historicEntityLink.getSubScopeId()).isEqualTo(taskInSubProcess.getExecutionId());</span>
+<span class="nc" id="L312">                assertThat(historicEntityLink.getScopeType()).isEqualTo(ScopeTypes.BPMN);</span>
+<span class="nc" id="L313">                assertThat(historicEntityLink.getParentElementId()).isEqualTo(&quot;task&quot;);</span>
+<span class="nc" id="L314">                assertThat(historicEntityLink.getScopeDefinitionId()).isNull();</span>
+<span class="nc" id="L315">                assertThat(historicEntityLink.getReferenceScopeId()).isEqualTo(taskInSubProcess.getId());</span>
+<span class="nc" id="L316">                assertThat(historicEntityLink.getReferenceScopeType()).isEqualTo(ScopeTypes.TASK);</span>
+<span class="nc" id="L317">                assertThat(historicEntityLink.getReferenceScopeDefinitionId()).isNull();</span>
+<span class="nc" id="L318">                assertThat(historicEntityLink.getLinkType()).isEqualTo(EntityLinkType.CHILD);</span>
+<span class="nc" id="L319">                assertThat(historicEntityLink.getCreateTime()).isNotNull();</span>
+<span class="nc" id="L320">                assertThat(historicEntityLink.getHierarchyType()).isEqualTo(HierarchyType.PARENT);</span>
+                
+<span class="nc" id="L322">                List&lt;HistoricTaskInstance&gt; childHistoricTasks = historyService.createHistoricTaskInstanceQuery()</span>
+<span class="nc" id="L323">                                .processInstanceIdWithChildren(processInstance.getId())</span>
+<span class="nc" id="L324">                                .list();</span>
+<span class="nc" id="L325">                assertThat(childHistoricTasks)</span>
+<span class="nc" id="L326">                        .extracting(HistoricTaskInstance::getId)</span>
+<span class="nc" id="L327">                        .containsExactlyInAnyOrder(taskBeforeSubProcess.getId(), taskInSubProcess.getId(), taskAfterSubProcess.getId());</span>
+
+<span class="nc" id="L329">                HistoricTaskInstance childHistoricTask = historyService.createHistoricTaskInstanceQuery()</span>
+<span class="nc" id="L330">                                .processInstanceIdWithChildren(execution.getProcessInstanceId())</span>
+<span class="nc" id="L331">                                .singleResult();</span>
+<span class="nc" id="L332">                assertThat(childHistoricTask.getId()).isEqualTo(taskInSubProcess.getId());</span>
+            }
+        }
+<span class="nc" id="L335">    }</span>
+
+    @Test
+    @Deployment(resources = {
+            &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testThreeLevelSubProcess.bpmn20.xml&quot;,
+            &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testCallSimpleSubProcess.bpmn20.xml&quot;,
+            &quot;org/flowable/engine/test/bpmn/callactivity/simpleSubProcess.bpmn20.xml&quot; })
+    public void testThreeLevelSubProcess() {
+        // The threeLevelSubProcess has the following structure
+        // threeLevelSubProcess
+        // - taskBeforeSubProcess (UserTask)
+        // - callSubProcess (CallActivity)
+        //     - taskBeforeSubProcess (UserTask)
+        //     - callSubProcess (CallActivity)
+        //         - task (UserTask)
+        //     - taskAfterSubProcess (UserTask)
+        // - taskAfterSubProcess (UserTask)
+
+<span class="nc" id="L353">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;threeLevelSubProcess&quot;);</span>
+
+        // one task in the subprocess should be active after starting the process instance
+<span class="nc" id="L356">        Task taskBeforeSubProcess = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L357">        assertThat(taskBeforeSubProcess.getName()).isEqualTo(&quot;Task before subprocess&quot;);</span>
+
+<span class="nc" id="L359">        String rootInstanceId = processInstance.getId();</span>
+<span class="nc" id="L360">        Task childTask = taskService.createTaskQuery().processInstanceIdWithChildren(rootInstanceId).singleResult();</span>
+<span class="nc" id="L361">        assertThat(childTask.getId()).isEqualTo(taskBeforeSubProcess.getId());</span>
+
+        // Completing the task continues the process which leads to calling the subprocess
+<span class="nc" id="L364">        taskService.complete(taskBeforeSubProcess.getId());</span>
+<span class="nc" id="L365">        Task taskBeforeSubProcessInSubProcess = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L366">        assertThat(taskBeforeSubProcessInSubProcess.getName()).isEqualTo(&quot;Task before subprocess&quot;);</span>
+<span class="nc" id="L367">        assertThat(taskBeforeSubProcessInSubProcess.getId()).isNotEqualTo(taskBeforeSubProcess.getId());</span>
+
+        // Completing the task continues the process which leads to calling the last subprocess
+<span class="nc" id="L370">        taskService.complete(taskBeforeSubProcessInSubProcess.getId());</span>
+<span class="nc" id="L371">        Task taskInLastSubProcess = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L372">        assertThat(taskInLastSubProcess.getName()).isEqualTo(&quot;Task in subprocess&quot;);</span>
+
+<span class="nc" id="L374">        ProcessInstance firstSubProcess = runtimeService.createProcessInstanceQuery().superProcessInstanceId(rootInstanceId).singleResult();</span>
+<span class="nc" id="L375">        String firstProcessId = firstSubProcess.getId();</span>
+<span class="nc" id="L376">        assertThat(taskBeforeSubProcessInSubProcess.getProcessInstanceId()).isEqualTo(firstProcessId);</span>
+
+<span class="nc" id="L378">        ProcessInstance secondSubProcess = runtimeService.createProcessInstanceQuery().superProcessInstanceId(firstProcessId).singleResult();</span>
+<span class="nc" id="L379">        assertThat(taskInLastSubProcess.getProcessInstanceId()).isEqualTo(secondSubProcess.getId());</span>
+
+<span class="nc" id="L381">        List&lt;EntityLink&gt; entityLinks = runtimeService.getEntityLinkChildrenForProcessInstance(rootInstanceId);</span>
+
+<span class="nc" id="L383">        assertThat(entityLinks)</span>
+<span class="nc" id="L384">                .extracting(EntityLink::getScopeId, EntityLink::getSubScopeId, EntityLink::getParentElementId, </span>
+                        EntityLink::getScopeType, EntityLink::getHierarchyType, EntityLink::getReferenceScopeId,
+                        EntityLink::getReferenceScopeType, EntityLink::getLinkType)
+<span class="nc" id="L387">                .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L388">                        tuple(rootInstanceId, taskBeforeSubProcess.getExecutionId(), &quot;callSubProcess&quot;, ScopeTypes.BPMN, HierarchyType.ROOT, firstProcessId, ScopeTypes.BPMN, EntityLinkType.CHILD),</span>
+<span class="nc" id="L389">                        tuple(rootInstanceId, taskBeforeSubProcessInSubProcess.getExecutionId(), &quot;callSubProcess&quot;, ScopeTypes.BPMN, HierarchyType.ROOT, secondSubProcess.getId(), ScopeTypes.BPMN, EntityLinkType.CHILD),</span>
+<span class="nc" id="L390">                        tuple(rootInstanceId, taskInLastSubProcess.getExecutionId(), &quot;task&quot;, ScopeTypes.BPMN, HierarchyType.ROOT, taskInLastSubProcess.getId(), ScopeTypes.TASK, EntityLinkType.CHILD),</span>
+                        // The sub process tasks even though completed keep their entity links until the process instance is completed
+<span class="nc" id="L392">                        tuple(rootInstanceId, taskBeforeSubProcessInSubProcess.getExecutionId(), &quot;taskBeforeSubProcess&quot;, ScopeTypes.BPMN, HierarchyType.ROOT, taskBeforeSubProcessInSubProcess.getId(), ScopeTypes.TASK, EntityLinkType.CHILD),</span>
+<span class="nc" id="L393">                        tuple(rootInstanceId, taskBeforeSubProcess.getExecutionId(), &quot;taskBeforeSubProcess&quot;, ScopeTypes.BPMN, HierarchyType.ROOT, taskBeforeSubProcess.getId(), ScopeTypes.TASK, EntityLinkType.CHILD)</span>
+                );
+
+<span class="nc" id="L396">        assertThat(entityLinks)</span>
+<span class="nc" id="L397">                .extracting(EntityLink::getRootScopeId, EntityLink::getRootScopeType)</span>
+<span class="nc" id="L398">                .containsOnly(</span>
+<span class="nc" id="L399">                        tuple(rootInstanceId, ScopeTypes.BPMN)</span>
+                );
+
+<span class="nc" id="L402">        entityLinks = runtimeService.getEntityLinkChildrenForProcessInstance(firstSubProcess.getProcessInstanceId());</span>
+<span class="nc" id="L403">        assertThat(entityLinks)</span>
+<span class="nc" id="L404">                .extracting(EntityLink::getScopeId, EntityLink::getSubScopeId, EntityLink::getParentElementId, </span>
+                        EntityLink::getScopeType, EntityLink::getHierarchyType, EntityLink::getReferenceScopeId,
+                        EntityLink::getReferenceScopeType, EntityLink::getLinkType)
+<span class="nc" id="L407">                .as(&quot;scopeId, subScopeId, parentElementId, scopeType, hierarchyType, referenceScopeId, referenceScopeType, linkType&quot;)</span>
+<span class="nc" id="L408">                .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L409">                        tuple(firstProcessId, taskBeforeSubProcessInSubProcess.getExecutionId(), &quot;callSubProcess&quot;, ScopeTypes.BPMN, HierarchyType.PARENT, secondSubProcess.getId(), ScopeTypes.BPMN, EntityLinkType.CHILD),</span>
+<span class="nc" id="L410">                        tuple(firstProcessId, taskInLastSubProcess.getExecutionId(), &quot;task&quot;, ScopeTypes.BPMN, HierarchyType.GRAND_PARENT, taskInLastSubProcess.getId(), ScopeTypes.TASK, EntityLinkType.CHILD),</span>
+                        // The sub process tasks even though completed keep their entity links until the sub process is not completed
+<span class="nc" id="L412">                        tuple(firstProcessId, taskBeforeSubProcessInSubProcess.getExecutionId(), &quot;taskBeforeSubProcess&quot;, ScopeTypes.BPMN, HierarchyType.PARENT, taskBeforeSubProcessInSubProcess.getId(), ScopeTypes.TASK, EntityLinkType.CHILD)</span>
+                );
+
+<span class="nc" id="L415">        assertThat(entityLinks)</span>
+<span class="nc" id="L416">                .extracting(EntityLink::getRootScopeId, EntityLink::getRootScopeType)</span>
+<span class="nc" id="L417">                .containsOnly(</span>
+<span class="nc" id="L418">                        tuple(rootInstanceId, ScopeTypes.BPMN)</span>
+                );
+
+<span class="nc" id="L421">        entityLinks = runtimeService.getEntityLinkChildrenForProcessInstance(secondSubProcess.getProcessInstanceId());</span>
+<span class="nc" id="L422">        assertThat(entityLinks)</span>
+<span class="nc" id="L423">                .extracting(EntityLink::getScopeId, EntityLink::getSubScopeId, EntityLink::getParentElementId,</span>
+                        EntityLink::getScopeType, EntityLink::getHierarchyType, EntityLink::getReferenceScopeId,
+                        EntityLink::getReferenceScopeType, EntityLink::getLinkType)
+<span class="nc" id="L426">                .as(&quot;scopeId, subScopeId, parentElementId, scopeType, hierarchyType, referenceScopeId, referenceScopeType, linkType&quot;)</span>
+<span class="nc" id="L427">                .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L428">                        tuple(secondSubProcess.getId(), taskInLastSubProcess.getExecutionId(), &quot;task&quot;, ScopeTypes.BPMN, HierarchyType.PARENT, taskInLastSubProcess.getId(), ScopeTypes.TASK, EntityLinkType.CHILD)</span>
+                );
+
+<span class="nc" id="L431">        assertThat(entityLinks)</span>
+<span class="nc" id="L432">                .extracting(EntityLink::getRootScopeId, EntityLink::getRootScopeType)</span>
+<span class="nc" id="L433">                .containsOnly(</span>
+<span class="nc" id="L434">                        tuple(rootInstanceId, ScopeTypes.BPMN)</span>
+                );
+
+<span class="nc" id="L437">        List&lt;EntityLink&gt; taskEntityLinks = runtimeService.getEntityLinkParentsForTask(taskInLastSubProcess.getId());</span>
+<span class="nc" id="L438">        assertThat(taskEntityLinks)</span>
+<span class="nc" id="L439">                .extracting(EntityLink::getScopeId, EntityLink::getSubScopeId, EntityLink::getParentElementId,</span>
+                        EntityLink::getScopeType, EntityLink::getHierarchyType, EntityLink::getReferenceScopeId,
+                        EntityLink::getReferenceScopeType, EntityLink::getLinkType)
+<span class="nc" id="L442">                .as(&quot;scopeId, subScopeId, parentElementId, scopeType, hierarchyType, referenceScopeId, referenceScopeType, linkType&quot;)</span>
+<span class="nc" id="L443">                .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L444">                        tuple(rootInstanceId, taskInLastSubProcess.getExecutionId(), &quot;task&quot;, ScopeTypes.BPMN, HierarchyType.ROOT, taskInLastSubProcess.getId(), ScopeTypes.TASK, EntityLinkType.CHILD),</span>
+<span class="nc" id="L445">                        tuple(firstProcessId, taskInLastSubProcess.getExecutionId(), &quot;task&quot;, ScopeTypes.BPMN, HierarchyType.GRAND_PARENT, taskInLastSubProcess.getId(), ScopeTypes.TASK, EntityLinkType.CHILD),</span>
+<span class="nc" id="L446">                        tuple(secondSubProcess.getId(), taskInLastSubProcess.getExecutionId(), &quot;task&quot;, ScopeTypes.BPMN, HierarchyType.PARENT, taskInLastSubProcess.getId(), ScopeTypes.TASK, EntityLinkType.CHILD)</span>
+                );
+
+<span class="nc" id="L449">        assertThat(taskEntityLinks)</span>
+<span class="nc" id="L450">                .extracting(EntityLink::getRootScopeId, EntityLink::getRootScopeType)</span>
+<span class="nc" id="L451">                .containsOnly(</span>
+<span class="nc" id="L452">                        tuple(rootInstanceId, ScopeTypes.BPMN)</span>
+                );
+
+<span class="nc" id="L455">        childTask = taskService.createTaskQuery().processInstanceIdWithChildren(rootInstanceId).singleResult();</span>
+<span class="nc" id="L456">        assertThat(childTask.getId()).isEqualTo(taskInLastSubProcess.getId());</span>
+
+<span class="nc bnc" id="L458" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L459">            List&lt;HistoricTaskInstance&gt; childHistoricTasks = historyService.createHistoricTaskInstanceQuery()</span>
+<span class="nc" id="L460">                    .processInstanceIdWithChildren(rootInstanceId)</span>
+<span class="nc" id="L461">                    .list();</span>
+<span class="nc" id="L462">            assertThat(childHistoricTasks)</span>
+<span class="nc" id="L463">                    .extracting(HistoricTaskInstance::getId)</span>
+<span class="nc" id="L464">                    .containsOnly(taskBeforeSubProcess.getId(), taskBeforeSubProcessInSubProcess.getId(), taskInLastSubProcess.getId());</span>
+        }
+
+        // Completing the task in the second subprocess, finishes the second subprocess
+<span class="nc" id="L468">        taskService.complete(taskInLastSubProcess.getId());</span>
+<span class="nc" id="L469">        Task taskAfterSubProcessInSubProcess = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L470">        assertThat(taskAfterSubProcessInSubProcess.getName()).isEqualTo(&quot;Task after subprocess&quot;);</span>
+
+        // Completing this task finishes the first subprocess
+<span class="nc" id="L473">        taskService.complete(taskAfterSubProcessInSubProcess.getId());</span>
+<span class="nc" id="L474">        Task taskAfterSubProcess = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L475">        assertThat(taskAfterSubProcess.getName()).isEqualTo(&quot;Task after subprocess&quot;);</span>
+
+<span class="nc" id="L477">        entityLinks = runtimeService.getEntityLinkChildrenForProcessInstance(rootInstanceId);</span>
+
+<span class="nc" id="L479">        assertThat(entityLinks)</span>
+<span class="nc" id="L480">                .extracting(EntityLink::getScopeId, EntityLink::getSubScopeId, EntityLink::getParentElementId,</span>
+                        EntityLink::getScopeType, EntityLink::getHierarchyType, EntityLink::getReferenceScopeId,
+                        EntityLink::getReferenceScopeType, EntityLink::getLinkType)
+<span class="nc" id="L483">                .as(&quot;scopeId, subScopeId, parentElementId, scopeType, hierarchyType, referenceScopeId, referenceScopeType, linkType&quot;)</span>
+<span class="nc" id="L484">                .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L485">                        tuple(rootInstanceId, taskBeforeSubProcess.getExecutionId(), &quot;taskBeforeSubProcess&quot;, ScopeTypes.BPMN, HierarchyType.ROOT, taskBeforeSubProcess.getId(), ScopeTypes.TASK, EntityLinkType.CHILD),</span>
+<span class="nc" id="L486">                        tuple(rootInstanceId, taskBeforeSubProcess.getExecutionId(), &quot;callSubProcess&quot;, ScopeTypes.BPMN, HierarchyType.ROOT, firstProcessId, ScopeTypes.BPMN, EntityLinkType.CHILD),</span>
+<span class="nc" id="L487">                        tuple(rootInstanceId, taskBeforeSubProcessInSubProcess.getExecutionId(), &quot;taskBeforeSubProcess&quot;, ScopeTypes.BPMN, HierarchyType.ROOT, taskBeforeSubProcessInSubProcess.getId(), ScopeTypes.TASK, EntityLinkType.CHILD),</span>
+<span class="nc" id="L488">                        tuple(rootInstanceId, taskBeforeSubProcessInSubProcess.getExecutionId(), &quot;callSubProcess&quot;, ScopeTypes.BPMN, HierarchyType.ROOT, secondSubProcess.getId(), ScopeTypes.BPMN, EntityLinkType.CHILD),</span>
+<span class="nc" id="L489">                        tuple(rootInstanceId, taskInLastSubProcess.getExecutionId(), &quot;task&quot;, ScopeTypes.BPMN, HierarchyType.ROOT, taskInLastSubProcess.getId(), ScopeTypes.TASK, EntityLinkType.CHILD),</span>
+<span class="nc" id="L490">                        tuple(rootInstanceId, taskAfterSubProcessInSubProcess.getExecutionId(), &quot;taskAfterSubProcess&quot;, ScopeTypes.BPMN, HierarchyType.ROOT, taskAfterSubProcessInSubProcess.getId(), ScopeTypes.TASK, EntityLinkType.CHILD),</span>
+<span class="nc" id="L491">                        tuple(rootInstanceId, taskAfterSubProcess.getExecutionId(), &quot;taskAfterSubProcess&quot;, ScopeTypes.BPMN, HierarchyType.ROOT, taskAfterSubProcess.getId(), ScopeTypes.TASK, EntityLinkType.CHILD)</span>
+                );
+
+<span class="nc" id="L494">        assertThat(entityLinks)</span>
+<span class="nc" id="L495">                .extracting(EntityLink::getRootScopeId, EntityLink::getRootScopeType)</span>
+<span class="nc" id="L496">                .containsOnly(</span>
+<span class="nc" id="L497">                        tuple(rootInstanceId, ScopeTypes.BPMN)</span>
+                );
+
+        // Completing this task end the process instance
+<span class="nc" id="L501">        taskService.complete(taskAfterSubProcess.getId());</span>
+<span class="nc" id="L502">        assertProcessEnded(rootInstanceId);</span>
+
+        // Validate subprocess history entity links
+<span class="nc bnc" id="L505" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.AUDIT, processEngineConfiguration)) {</span>
+
+<span class="nc" id="L507">            List&lt;HistoricEntityLink&gt; historicEntityLinks = historyService.getHistoricEntityLinkChildrenForProcessInstance(rootInstanceId);</span>
+
+<span class="nc" id="L509">            assertThat(historicEntityLinks)</span>
+<span class="nc" id="L510">                    .extracting(HistoricEntityLink::getScopeId, HistoricEntityLink::getSubScopeId, HistoricEntityLink::getParentElementId,</span>
+                            HistoricEntityLink::getScopeType, HistoricEntityLink::getHierarchyType,
+                            HistoricEntityLink::getReferenceScopeId, HistoricEntityLink::getReferenceScopeType, HistoricEntityLink::getLinkType)
+<span class="nc" id="L513">                    .as(&quot;scopeId, subScopeId, parentElementId, scopeType, hierarchyType, referenceScopeId, referenceScopeType, linkType&quot;)</span>
+<span class="nc" id="L514">                    .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L515">                            tuple(rootInstanceId, taskBeforeSubProcess.getExecutionId(), &quot;taskBeforeSubProcess&quot;, ScopeTypes.BPMN, HierarchyType.ROOT, taskBeforeSubProcess.getId(), ScopeTypes.TASK, EntityLinkType.CHILD),</span>
+<span class="nc" id="L516">                            tuple(rootInstanceId, taskBeforeSubProcess.getExecutionId(), &quot;callSubProcess&quot;, ScopeTypes.BPMN, HierarchyType.ROOT, firstProcessId, ScopeTypes.BPMN, EntityLinkType.CHILD),</span>
+<span class="nc" id="L517">                            tuple(rootInstanceId, taskBeforeSubProcessInSubProcess.getExecutionId(), &quot;taskBeforeSubProcess&quot;, ScopeTypes.BPMN, HierarchyType.ROOT, taskBeforeSubProcessInSubProcess.getId(), ScopeTypes.TASK, EntityLinkType.CHILD),</span>
+<span class="nc" id="L518">                            tuple(rootInstanceId, taskBeforeSubProcessInSubProcess.getExecutionId(), &quot;callSubProcess&quot;, ScopeTypes.BPMN, HierarchyType.ROOT, secondSubProcess.getId(), ScopeTypes.BPMN, EntityLinkType.CHILD),</span>
+<span class="nc" id="L519">                            tuple(rootInstanceId, taskInLastSubProcess.getExecutionId(), &quot;task&quot;, ScopeTypes.BPMN, HierarchyType.ROOT, taskInLastSubProcess.getId(), ScopeTypes.TASK, EntityLinkType.CHILD),</span>
+<span class="nc" id="L520">                            tuple(rootInstanceId, taskAfterSubProcessInSubProcess.getExecutionId(), &quot;taskAfterSubProcess&quot;, ScopeTypes.BPMN, HierarchyType.ROOT, taskAfterSubProcessInSubProcess.getId(), ScopeTypes.TASK, EntityLinkType.CHILD),</span>
+<span class="nc" id="L521">                            tuple(rootInstanceId, taskAfterSubProcess.getExecutionId(), &quot;taskAfterSubProcess&quot;, ScopeTypes.BPMN, HierarchyType.ROOT, taskAfterSubProcess.getId(), ScopeTypes.TASK, EntityLinkType.CHILD)</span>
+                    );
+
+<span class="nc" id="L524">            assertThat(historicEntityLinks)</span>
+<span class="nc" id="L525">                    .extracting(HistoricEntityLink::getRootScopeId, HistoricEntityLink::getRootScopeType)</span>
+<span class="nc" id="L526">                    .containsOnly(</span>
+<span class="nc" id="L527">                            tuple(rootInstanceId, ScopeTypes.BPMN)</span>
+                    );
+
+<span class="nc" id="L530">            historicEntityLinks = historyService.getHistoricEntityLinkChildrenForProcessInstance(firstProcessId);</span>
+
+<span class="nc" id="L532">            assertThat(historicEntityLinks)</span>
+<span class="nc" id="L533">                    .extracting(HistoricEntityLink::getScopeId, HistoricEntityLink::getSubScopeId, HistoricEntityLink::getParentElementId,</span>
+                            HistoricEntityLink::getScopeType, HistoricEntityLink::getHierarchyType,
+                            HistoricEntityLink::getReferenceScopeId, HistoricEntityLink::getReferenceScopeType, HistoricEntityLink::getLinkType)
+<span class="nc" id="L536">                    .as(&quot;scopeId, subScopeId, parentElementId, scopeType, hierarchyType, referenceScopeId, referenceScopeType, linkType&quot;)</span>
+<span class="nc" id="L537">                    .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L538">                            tuple(firstProcessId, taskBeforeSubProcessInSubProcess.getExecutionId(), &quot;taskBeforeSubProcess&quot;, ScopeTypes.BPMN, HierarchyType.PARENT, taskBeforeSubProcessInSubProcess.getId(), ScopeTypes.TASK, EntityLinkType.CHILD),</span>
+<span class="nc" id="L539">                            tuple(firstProcessId, taskBeforeSubProcessInSubProcess.getExecutionId(), &quot;callSubProcess&quot;, ScopeTypes.BPMN, HierarchyType.PARENT, secondSubProcess.getId(), ScopeTypes.BPMN, EntityLinkType.CHILD),</span>
+<span class="nc" id="L540">                            tuple(firstProcessId, taskInLastSubProcess.getExecutionId(), &quot;task&quot;, ScopeTypes.BPMN, HierarchyType.GRAND_PARENT, taskInLastSubProcess.getId(), ScopeTypes.TASK, EntityLinkType.CHILD),</span>
+<span class="nc" id="L541">                            tuple(firstProcessId, taskAfterSubProcessInSubProcess.getExecutionId(), &quot;taskAfterSubProcess&quot;, ScopeTypes.BPMN, HierarchyType.PARENT, taskAfterSubProcessInSubProcess.getId(), ScopeTypes.TASK, EntityLinkType.CHILD)</span>
+                    );
+
+<span class="nc" id="L544">            assertThat(historicEntityLinks)</span>
+<span class="nc" id="L545">                    .extracting(HistoricEntityLink::getRootScopeId, HistoricEntityLink::getRootScopeType)</span>
+<span class="nc" id="L546">                    .containsOnly(</span>
+<span class="nc" id="L547">                            tuple(rootInstanceId, ScopeTypes.BPMN)</span>
+                    );
+
+<span class="nc" id="L550">            historicEntityLinks = historyService.getHistoricEntityLinkChildrenForProcessInstance(secondSubProcess.getId());</span>
+
+<span class="nc" id="L552">            assertThat(historicEntityLinks)</span>
+<span class="nc" id="L553">                    .extracting(HistoricEntityLink::getScopeId, HistoricEntityLink::getSubScopeId, HistoricEntityLink::getParentElementId,</span>
+                            HistoricEntityLink::getScopeType, HistoricEntityLink::getHierarchyType,
+                            HistoricEntityLink::getReferenceScopeId, HistoricEntityLink::getReferenceScopeType, HistoricEntityLink::getLinkType)
+<span class="nc" id="L556">                    .as(&quot;scopeId, subScopeId, parentElementId, scopeType, hierarchyType, referenceScopeId, referenceScopeType, linkType&quot;)</span>
+<span class="nc" id="L557">                    .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L558">                            tuple(secondSubProcess.getId(), taskInLastSubProcess.getExecutionId(), &quot;task&quot;, ScopeTypes.BPMN, HierarchyType.PARENT, taskInLastSubProcess.getId(), ScopeTypes.TASK, EntityLinkType.CHILD)</span>
+                    );
+
+<span class="nc" id="L561">            assertThat(historicEntityLinks)</span>
+<span class="nc" id="L562">                    .extracting(HistoricEntityLink::getRootScopeId, HistoricEntityLink::getRootScopeType)</span>
+<span class="nc" id="L563">                    .containsOnly(</span>
+<span class="nc" id="L564">                            tuple(rootInstanceId, ScopeTypes.BPMN)</span>
+                    );
+
+<span class="nc" id="L567">            List&lt;HistoricEntityLink&gt; taskHistoricEntityLinks = historyService.getHistoricEntityLinkParentsForTask(taskInLastSubProcess.getId());</span>
+
+<span class="nc" id="L569">            assertThat(taskHistoricEntityLinks)</span>
+<span class="nc" id="L570">                    .extracting(HistoricEntityLink::getScopeId, HistoricEntityLink::getSubScopeId, HistoricEntityLink::getParentElementId,</span>
+                            HistoricEntityLink::getScopeType, HistoricEntityLink::getHierarchyType,
+                            HistoricEntityLink::getReferenceScopeId, HistoricEntityLink::getReferenceScopeType, HistoricEntityLink::getLinkType)
+<span class="nc" id="L573">                    .as(&quot;scopeId, subScopeId, parentElementId, scopeType, hierarchyType, referenceScopeId, referenceScopeType, linkType&quot;)</span>
+<span class="nc" id="L574">                    .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L575">                            tuple(rootInstanceId, taskInLastSubProcess.getExecutionId(), &quot;task&quot;, ScopeTypes.BPMN, HierarchyType.ROOT, taskInLastSubProcess.getId(), ScopeTypes.TASK, EntityLinkType.CHILD),</span>
+<span class="nc" id="L576">                            tuple(firstProcessId, taskInLastSubProcess.getExecutionId(), &quot;task&quot;, ScopeTypes.BPMN, HierarchyType.GRAND_PARENT, taskInLastSubProcess.getId(), ScopeTypes.TASK, EntityLinkType.CHILD),</span>
+<span class="nc" id="L577">                            tuple(secondSubProcess.getId(), taskInLastSubProcess.getExecutionId(), &quot;task&quot;, ScopeTypes.BPMN, HierarchyType.PARENT, taskInLastSubProcess.getId(), ScopeTypes.TASK, EntityLinkType.CHILD)</span>
+                    );
+
+<span class="nc" id="L580">            assertThat(taskHistoricEntityLinks)</span>
+<span class="nc" id="L581">                    .extracting(HistoricEntityLink::getRootScopeId, HistoricEntityLink::getRootScopeType)</span>
+<span class="nc" id="L582">                    .containsOnly(</span>
+<span class="nc" id="L583">                            tuple(rootInstanceId, ScopeTypes.BPMN)</span>
+                    );
+
+<span class="nc" id="L586">            taskHistoricEntityLinks = historyService.getHistoricEntityLinkParentsForTask(taskAfterSubProcessInSubProcess.getId());</span>
+
+<span class="nc" id="L588">            assertThat(taskHistoricEntityLinks)</span>
+<span class="nc" id="L589">                    .extracting(HistoricEntityLink::getScopeId, HistoricEntityLink::getSubScopeId, HistoricEntityLink::getParentElementId,</span>
+                            HistoricEntityLink::getScopeType, HistoricEntityLink::getHierarchyType,
+                            HistoricEntityLink::getReferenceScopeId, HistoricEntityLink::getReferenceScopeType, HistoricEntityLink::getLinkType)
+<span class="nc" id="L592">                    .as(&quot;scopeId, subScopeId, parentElementId, scopeType, hierarchyType, referenceScopeId, referenceScopeType, linkType&quot;)</span>
+<span class="nc" id="L593">                    .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L594">                            tuple(rootInstanceId, taskAfterSubProcessInSubProcess.getExecutionId(), &quot;taskAfterSubProcess&quot;, ScopeTypes.BPMN, HierarchyType.ROOT, taskAfterSubProcessInSubProcess.getId(), ScopeTypes.TASK, EntityLinkType.CHILD),</span>
+<span class="nc" id="L595">                            tuple(firstProcessId, taskAfterSubProcessInSubProcess.getExecutionId(), &quot;taskAfterSubProcess&quot;, ScopeTypes.BPMN, HierarchyType.PARENT, taskAfterSubProcessInSubProcess.getId(), ScopeTypes.TASK, EntityLinkType.CHILD)</span>
+                    );
+
+<span class="nc" id="L598">            assertThat(taskHistoricEntityLinks)</span>
+<span class="nc" id="L599">                    .extracting(HistoricEntityLink::getRootScopeId, HistoricEntityLink::getRootScopeType)</span>
+<span class="nc" id="L600">                    .containsOnly(</span>
+<span class="nc" id="L601">                            tuple(rootInstanceId, ScopeTypes.BPMN)</span>
+                    );
+
+<span class="nc" id="L604">            taskHistoricEntityLinks = historyService.getHistoricEntityLinkParentsForTask(taskAfterSubProcess.getId());</span>
+
+<span class="nc" id="L606">            assertThat(taskHistoricEntityLinks)</span>
+<span class="nc" id="L607">                    .extracting(HistoricEntityLink::getScopeId, HistoricEntityLink::getSubScopeId, HistoricEntityLink::getParentElementId,</span>
+                            HistoricEntityLink::getScopeType, HistoricEntityLink::getHierarchyType,
+                            HistoricEntityLink::getReferenceScopeId, HistoricEntityLink::getReferenceScopeType, HistoricEntityLink::getLinkType)
+<span class="nc" id="L610">                    .as(&quot;scopeId, subScopeId, parentElementId, scopeType, hierarchyType, referenceScopeId, referenceScopeType, linkType&quot;)</span>
+<span class="nc" id="L611">                    .containsExactlyInAnyOrder(</span>
+<span class="nc" id="L612">                            tuple(rootInstanceId, taskAfterSubProcess.getExecutionId(), &quot;taskAfterSubProcess&quot;, ScopeTypes.BPMN, HierarchyType.ROOT, taskAfterSubProcess.getId(), ScopeTypes.TASK, EntityLinkType.CHILD)</span>
+                    );
+
+<span class="nc" id="L615">            assertThat(taskHistoricEntityLinks)</span>
+<span class="nc" id="L616">                    .extracting(HistoricEntityLink::getRootScopeId, HistoricEntityLink::getRootScopeType)</span>
+<span class="nc" id="L617">                    .containsOnly(</span>
+<span class="nc" id="L618">                            tuple(rootInstanceId, ScopeTypes.BPMN)</span>
+                    );
+        }
+<span class="nc" id="L621">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testCallSimpleSubProcessWithExpressions.bpmn20.xml&quot;,
+            &quot;org/flowable/engine/test/bpmn/callactivity/simpleSubProcess.bpmn20.xml&quot; })
+    public void testCallSimpleSubProcessWithExpressions() {
+
+<span class="nc" id="L628">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;callSimpleSubProcess&quot;);</span>
+
+        // one task in the subprocess should be active after starting the process instance
+<span class="nc" id="L631">        TaskQuery taskQuery = taskService.createTaskQuery();</span>
+<span class="nc" id="L632">        Task taskBeforeSubProcess = taskQuery.singleResult();</span>
+<span class="nc" id="L633">        assertThat(taskBeforeSubProcess.getName()).isEqualTo(&quot;Task before subprocess&quot;);</span>
+
+        // Completing the task continues the process which leads to calling the
+        // subprocess. The sub process we want to call is passed in as a variable into this task
+<span class="nc" id="L637">        taskService.setVariable(taskBeforeSubProcess.getId(), &quot;simpleSubProcessExpression&quot;, &quot;simpleSubProcess&quot;);</span>
+<span class="nc" id="L638">        taskService.complete(taskBeforeSubProcess.getId());</span>
+<span class="nc" id="L639">        Task taskInSubProcess = taskQuery.singleResult();</span>
+<span class="nc" id="L640">        assertThat(taskInSubProcess.getName()).isEqualTo(&quot;Task in subprocess&quot;);</span>
+
+        // Completing the task in the subprocess, finishes the subprocess
+<span class="nc" id="L643">        taskService.complete(taskInSubProcess.getId());</span>
+<span class="nc" id="L644">        Task taskAfterSubProcess = taskQuery.singleResult();</span>
+<span class="nc" id="L645">        assertThat(taskAfterSubProcess.getName()).isEqualTo(&quot;Task after subprocess&quot;);</span>
+
+        // Completing this task end the process instance
+<span class="nc" id="L648">        taskService.complete(taskAfterSubProcess.getId());</span>
+<span class="nc" id="L649">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L650">    }</span>
+
+    /**
+     * Test case for a possible tricky case: reaching the end event of the subprocess leads to an end event in the super process instance.
+     */
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testSubProcessEndsSuperProcess.bpmn20.xml&quot;,
+            &quot;org/flowable/engine/test/bpmn/callactivity/simpleSubProcess.bpmn20.xml&quot; })
+    public void testSubProcessEndsSuperProcess() {
+<span class="nc" id="L659">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;subProcessEndsSuperProcess&quot;);</span>
+
+        // one task in the subprocess should be active after starting the process instance
+<span class="nc" id="L662">        TaskQuery taskQuery = taskService.createTaskQuery();</span>
+<span class="nc" id="L663">        Task taskBeforeSubProcess = taskQuery.singleResult();</span>
+<span class="nc" id="L664">        assertThat(taskBeforeSubProcess.getName()).isEqualTo(&quot;Task in subprocess&quot;);</span>
+
+        // Completing this task ends the subprocess which leads to the end of the whole process instance
+<span class="nc" id="L667">        taskService.complete(taskBeforeSubProcess.getId());</span>
+<span class="nc" id="L668">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L669">        assertThat(runtimeService.createExecutionQuery().list()).isEmpty();</span>
+<span class="nc" id="L670">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testCallParallelSubProcess.bpmn20.xml&quot;,
+            &quot;org/flowable/engine/test/bpmn/callactivity/simpleParallelSubProcess.bpmn20.xml&quot; })
+    public void testCallParallelSubProcess() {
+<span class="nc" id="L676">        runtimeService.startProcessInstanceByKey(&quot;callParallelSubProcess&quot;);</span>
+
+        // The two tasks in the parallel subprocess should be active
+<span class="nc" id="L679">        TaskQuery taskQuery = taskService.createTaskQuery().orderByTaskName().asc();</span>
+<span class="nc" id="L680">        List&lt;Task&gt; tasks = taskQuery.list();</span>
+<span class="nc" id="L681">        assertThat(tasks)</span>
+<span class="nc" id="L682">                .extracting(Task::getName)</span>
+<span class="nc" id="L683">                .containsExactly(&quot;Task A&quot;, &quot;Task B&quot;);</span>
+
+<span class="nc" id="L685">        Task taskA = tasks.get(0);</span>
+<span class="nc" id="L686">        Task taskB = tasks.get(1);</span>
+        // Completing the first task should not end the subprocess
+<span class="nc" id="L688">        taskService.complete(taskA.getId());</span>
+<span class="nc" id="L689">        assertThat(taskQuery.list()).hasSize(1);</span>
+
+        // Completing the second task should end the subprocess and end the whole process instance
+<span class="nc" id="L692">        taskService.complete(taskB.getId());</span>
+<span class="nc" id="L693">        assertThat(runtimeService.createExecutionQuery().count()).isZero();</span>
+<span class="nc" id="L694">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testCallSequentialSubProcess.bpmn20.xml&quot;,
+            &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testCallSimpleSubProcessWithExpressions.bpmn20.xml&quot;, &quot;org/flowable/engine/test/bpmn/callactivity/simpleSubProcess.bpmn20.xml&quot;,
+            &quot;org/flowable/engine/test/bpmn/callactivity/simpleSubProcess2.bpmn20.xml&quot; })
+    public void testCallSequentialSubProcessWithExpressions() {
+
+<span class="nc" id="L702">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;callSequentialSubProcess&quot;);</span>
+
+        // FIRST sub process calls simpleSubProcess
+
+        // one task in the subprocess should be active after starting the process instance
+<span class="nc" id="L707">        TaskQuery taskQuery = taskService.createTaskQuery();</span>
+<span class="nc" id="L708">        Task taskBeforeSubProcess = taskQuery.singleResult();</span>
+<span class="nc" id="L709">        assertThat(taskBeforeSubProcess.getName()).isEqualTo(&quot;Task before subprocess&quot;);</span>
+
+        // Completing the task continues the process which leads to calling the
+        // subprocess. The sub process we want to call is passed in as a variable into this task
+<span class="nc" id="L713">        taskService.setVariable(taskBeforeSubProcess.getId(), &quot;simpleSubProcessExpression&quot;, &quot;simpleSubProcess&quot;);</span>
+<span class="nc" id="L714">        taskService.complete(taskBeforeSubProcess.getId());</span>
+<span class="nc" id="L715">        Task taskInSubProcess = taskQuery.singleResult();</span>
+<span class="nc" id="L716">        assertThat(taskInSubProcess.getName()).isEqualTo(&quot;Task in subprocess&quot;);</span>
+
+        // Completing the task in the subprocess, finishes the subprocess
+<span class="nc" id="L719">        taskService.complete(taskInSubProcess.getId());</span>
+<span class="nc" id="L720">        Task taskAfterSubProcess = taskQuery.singleResult();</span>
+<span class="nc" id="L721">        assertThat(taskAfterSubProcess.getName()).isEqualTo(&quot;Task after subprocess&quot;);</span>
+
+        // Completing this task end the process instance
+<span class="nc" id="L724">        taskService.complete(taskAfterSubProcess.getId());</span>
+
+        // SECOND sub process calls simpleSubProcess2
+
+        // one task in the subprocess should be active after starting the process instance
+<span class="nc" id="L729">        taskQuery = taskService.createTaskQuery();</span>
+<span class="nc" id="L730">        taskBeforeSubProcess = taskQuery.singleResult();</span>
+<span class="nc" id="L731">        assertThat(taskBeforeSubProcess.getName()).isEqualTo(&quot;Task before subprocess&quot;);</span>
+
+        // Completing the task continues the process which leads to calling the
+        // subprocess. The sub process we want to call is passed in as a variable into this task
+<span class="nc" id="L735">        taskService.setVariable(taskBeforeSubProcess.getId(), &quot;simpleSubProcessExpression&quot;, &quot;simpleSubProcess2&quot;);</span>
+<span class="nc" id="L736">        taskService.complete(taskBeforeSubProcess.getId());</span>
+<span class="nc" id="L737">        taskInSubProcess = taskQuery.singleResult();</span>
+<span class="nc" id="L738">        assertThat(taskInSubProcess.getName()).isEqualTo(&quot;Task in subprocess 2&quot;);</span>
+
+        // Completing the task in the subprocess, finishes the subprocess
+<span class="nc" id="L741">        taskService.complete(taskInSubProcess.getId());</span>
+<span class="nc" id="L742">        taskAfterSubProcess = taskQuery.singleResult();</span>
+<span class="nc" id="L743">        assertThat(taskAfterSubProcess.getName()).isEqualTo(&quot;Task after subprocess&quot;);</span>
+
+        // Completing this task end the process instance
+<span class="nc" id="L746">        taskService.complete(taskAfterSubProcess.getId());</span>
+<span class="nc" id="L747">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L748">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testTimerOnCallActivity.bpmn20.xml&quot;, &quot;org/flowable/engine/test/bpmn/callactivity/simpleSubProcess.bpmn20.xml&quot; })
+    public void testTimerOnCallActivity() {
+<span class="nc" id="L753">        Date startTime = processEngineConfiguration.getClock().getCurrentTime();</span>
+
+        // After process start, the task in the subprocess should be active
+<span class="nc" id="L756">        ProcessInstance pi1 = runtimeService.startProcessInstanceByKey(&quot;timerOnCallActivity&quot;);</span>
+<span class="nc" id="L757">        TaskQuery taskQuery = taskService.createTaskQuery();</span>
+<span class="nc" id="L758">        Task taskInSubProcess = taskQuery.singleResult();</span>
+<span class="nc" id="L759">        assertThat(taskInSubProcess.getName()).isEqualTo(&quot;Task in subprocess&quot;);</span>
+
+<span class="nc" id="L761">        ProcessInstance pi2 = runtimeService.createProcessInstanceQuery().superProcessInstanceId(pi1.getId()).singleResult();</span>
+
+        // When the timer on the subprocess is fired, the complete subprocess is destroyed
+<span class="nc" id="L764">        processEngineConfiguration.getClock().setCurrentTime(new Date(startTime.getTime() + (6 * 60 * 1000))); // + 6 minutes, timer fires on 5 minutes</span>
+<span class="nc" id="L765">        waitForJobExecutorToProcessAllJobs(10000, 7000L);</span>
+
+<span class="nc" id="L767">        Task escalatedTask = taskQuery.singleResult();</span>
+<span class="nc" id="L768">        assertThat(escalatedTask.getName()).isEqualTo(&quot;Escalated Task&quot;);</span>
+
+        // Completing the task ends the complete process
+<span class="nc" id="L771">        taskService.complete(escalatedTask.getId());</span>
+<span class="nc" id="L772">        assertThat(runtimeService.createExecutionQuery().list()).isEmpty();</span>
+
+<span class="nc bnc" id="L774" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.AUDIT, processEngineConfiguration)) {</span>
+<span class="nc" id="L775">            assertThat(historyService.createHistoricProcessInstanceQuery().processInstanceId(pi2.getId()).singleResult()</span>
+<span class="nc" id="L776">                    .getDeleteReason()).startsWith(DeleteReason.BOUNDARY_EVENT_INTERRUPTING);</span>
+<span class="nc" id="L777">            assertHistoricTasksDeleteReason(pi2, DeleteReason.BOUNDARY_EVENT_INTERRUPTING, &quot;Task in subprocess&quot;);</span>
+<span class="nc" id="L778">            assertHistoricActivitiesDeleteReason(pi1, DeleteReason.BOUNDARY_EVENT_INTERRUPTING, &quot;callSubProcess&quot;);</span>
+<span class="nc" id="L779">            assertHistoricActivitiesDeleteReason(pi2, DeleteReason.BOUNDARY_EVENT_INTERRUPTING, &quot;task&quot;);</span>
+        }
+<span class="nc" id="L781">    }</span>
+
+    /**
+     * Test case for handing over process variables to a sub process
+     */
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testSubProcessDataInputOutput.bpmn20.xml&quot;,
+            &quot;org/flowable/engine/test/bpmn/callactivity/simpleSubProcess.bpmn20.xml&quot; })
+    public void testSubProcessWithDataInputOutput() {
+<span class="nc" id="L790">        Map&lt;String, Object&gt; vars = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L791">        vars.put(&quot;superVariable&quot;, &quot;Hello from the super process.&quot;);</span>
+
+<span class="nc" id="L793">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;subProcessDataInputOutput&quot;, vars);</span>
+
+        // one task in the subprocess should be active after starting the
+        // process instance
+<span class="nc" id="L797">        TaskQuery taskQuery = taskService.createTaskQuery();</span>
+<span class="nc" id="L798">        Task taskBeforeSubProcess = taskQuery.singleResult();</span>
+<span class="nc" id="L799">        assertThat(taskBeforeSubProcess.getName()).isEqualTo(&quot;Task in subprocess&quot;);</span>
+<span class="nc" id="L800">        assertThat(runtimeService.getVariable(taskBeforeSubProcess.getProcessInstanceId(), &quot;subVariable&quot;)).isEqualTo(&quot;Hello from the super process.&quot;);</span>
+<span class="nc" id="L801">        assertThat(taskService.getVariable(taskBeforeSubProcess.getId(), &quot;subVariable&quot;)).isEqualTo(&quot;Hello from the super process.&quot;);</span>
+
+<span class="nc" id="L803">        runtimeService.setVariable(taskBeforeSubProcess.getProcessInstanceId(), &quot;subVariable&quot;, &quot;Hello from sub process.&quot;);</span>
+
+        // super variable is unchanged
+<span class="nc" id="L806">        assertThat(runtimeService.getVariable(processInstance.getId(), &quot;superVariable&quot;)).isEqualTo(&quot;Hello from the super process.&quot;);</span>
+
+        // Completing this task ends the subprocess which leads to a task in the
+        // super process
+<span class="nc" id="L810">        taskService.complete(taskBeforeSubProcess.getId());</span>
+
+        // one task in the subprocess should be active after starting the
+        // process instance
+<span class="nc" id="L814">        Task taskAfterSubProcess = taskQuery.singleResult();</span>
+<span class="nc" id="L815">        assertThat(taskAfterSubProcess.getName()).isEqualTo(&quot;Task in super process&quot;);</span>
+<span class="nc" id="L816">        assertThat(runtimeService.getVariable(processInstance.getId(), &quot;superVariable&quot;)).isEqualTo(&quot;Hello from sub process.&quot;);</span>
+<span class="nc" id="L817">        assertThat(taskService.getVariable(taskAfterSubProcess.getId(), &quot;superVariable&quot;)).isEqualTo(&quot;Hello from sub process.&quot;);</span>
+
+<span class="nc" id="L819">        vars.clear();</span>
+<span class="nc" id="L820">        vars.put(&quot;x&quot;, 5L);</span>
+
+        // Completing this task ends the super process which leads to a task in
+        // the super process
+<span class="nc" id="L824">        taskService.complete(taskAfterSubProcess.getId(), vars);</span>
+
+        // now we are the second time in the sub process but passed variables
+        // via expressions
+<span class="nc" id="L828">        Task taskInSecondSubProcess = taskQuery.singleResult();</span>
+<span class="nc" id="L829">        assertThat(taskInSecondSubProcess.getName()).isEqualTo(&quot;Task in subprocess&quot;);</span>
+<span class="nc" id="L830">        assertThat(runtimeService.getVariable(taskInSecondSubProcess.getProcessInstanceId(), &quot;y&quot;)).isEqualTo(10L);</span>
+<span class="nc" id="L831">        assertThat(taskService.getVariable(taskInSecondSubProcess.getId(), &quot;y&quot;)).isEqualTo(10L);</span>
+
+        // Completing this task ends the subprocess which leads to a task in the super process
+<span class="nc" id="L834">        taskService.complete(taskInSecondSubProcess.getId());</span>
+
+        // one task in the subprocess should be active after starting the process instance
+<span class="nc" id="L837">        Task taskAfterSecondSubProcess = taskQuery.singleResult();</span>
+<span class="nc" id="L838">        assertThat(taskAfterSecondSubProcess.getName()).isEqualTo(&quot;Task in super process&quot;);</span>
+<span class="nc" id="L839">        assertThat(runtimeService.getVariable(taskAfterSecondSubProcess.getProcessInstanceId(), &quot;z&quot;)).isEqualTo(15L);</span>
+<span class="nc" id="L840">        assertThat(taskService.getVariable(taskAfterSecondSubProcess.getId(), &quot;z&quot;)).isEqualTo(15L);</span>
+
+        // and end last task in Super process
+<span class="nc" id="L843">        taskService.complete(taskAfterSecondSubProcess.getId());</span>
+
+<span class="nc" id="L845">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L846">        assertThat(runtimeService.createExecutionQuery().list()).isEmpty();</span>
+<span class="nc" id="L847">    }</span>
+
+    @Test
+    @Deployment(resources = {
+            &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testMultiInstanceSequentialSubProcessDataInputOutput.bpmn20.xml&quot;,
+            &quot;org/flowable/engine/test/bpmn/callactivity/simpleSubProcess.bpmn20.xml&quot;
+    })
+    public void testMultiInstanceSequentialSubProcessWithDataInputOutput() {
+<span class="nc" id="L855">        ProcessInstance processInstance = runtimeService</span>
+<span class="nc" id="L856">                .createProcessInstanceBuilder()</span>
+<span class="nc" id="L857">                .processDefinitionKey(&quot;subProcessDataInputOutput&quot;)</span>
+<span class="nc" id="L858">                .variable(&quot;superVariable&quot;, &quot;Hello from the super process.&quot;)</span>
+<span class="nc" id="L859">                .variable(&quot;nrOfLoops&quot;, 2)</span>
+<span class="nc" id="L860">                .start();</span>
+
+        // There should be one sub process instances active after starting the process instance
+<span class="nc" id="L863">        Task taskBeforeSubProcess = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L864">        assertThat(taskBeforeSubProcess.getName()).isEqualTo(&quot;Task in subprocess&quot;);</span>
+<span class="nc" id="L865">        assertThat(runtimeService.getVariable(taskBeforeSubProcess.getProcessInstanceId(), &quot;subVariable&quot;)).isEqualTo(&quot;Hello from the super process.&quot;);</span>
+<span class="nc" id="L866">        assertThat(taskService.getVariable(taskBeforeSubProcess.getId(), &quot;subVariable&quot;)).isEqualTo(&quot;Hello from the super process.&quot;);</span>
+
+<span class="nc" id="L868">        runtimeService.setVariable(taskBeforeSubProcess.getProcessInstanceId(), &quot;subVariable&quot;, &quot;Hello from sub process.&quot;);</span>
+
+        // super variable is unchanged
+<span class="nc" id="L871">        assertThat(runtimeService.getVariable(processInstance.getId(), &quot;superVariable&quot;)).isEqualTo(&quot;Hello from the super process.&quot;);</span>
+
+        // Completing the first task ends the first subprocess which leads to the super process having an updated sub variable
+<span class="nc" id="L874">        taskService.complete(taskBeforeSubProcess.getId());</span>
+
+<span class="nc" id="L876">        assertThat(runtimeService.getVariable(processInstance.getId(), &quot;superVariable&quot;)).isEqualTo(&quot;Hello from sub process.&quot;);</span>
+
+        // The second instance should now be started
+<span class="nc" id="L879">        taskBeforeSubProcess = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L880">        assertThat(taskBeforeSubProcess.getName()).isEqualTo(&quot;Task in subprocess&quot;);</span>
+<span class="nc" id="L881">        assertThat(runtimeService.getVariable(taskBeforeSubProcess.getProcessInstanceId(), &quot;subVariable&quot;)).isEqualTo(&quot;Hello from sub process.&quot;);</span>
+<span class="nc" id="L882">        assertThat(taskService.getVariable(taskBeforeSubProcess.getId(), &quot;subVariable&quot;)).isEqualTo(&quot;Hello from sub process.&quot;);</span>
+
+<span class="nc" id="L884">        runtimeService.setVariable(taskBeforeSubProcess.getProcessInstanceId(), &quot;subVariable&quot;, &quot;Hello from second iteration sub process.&quot;);</span>
+
+        // Completing the second task ends the first subprocess which leads to the super process having an updated sub variable
+<span class="nc" id="L887">        taskService.complete(taskBeforeSubProcess.getId());</span>
+
+<span class="nc" id="L889">        assertThat(runtimeService.getVariable(processInstance.getId(), &quot;superVariable&quot;)).isEqualTo(&quot;Hello from second iteration sub process.&quot;);</span>
+
+        // one task in the subprocess should be active after starting the process instance
+<span class="nc" id="L892">        Task taskAfterSubProcess = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L893">        assertThat(taskAfterSubProcess.getName()).isEqualTo(&quot;Task in super process&quot;);</span>
+<span class="nc" id="L894">        assertThat(runtimeService.getVariable(processInstance.getId(), &quot;superVariable&quot;)).isEqualTo(&quot;Hello from second iteration sub process.&quot;);</span>
+<span class="nc" id="L895">        assertThat(taskService.getVariable(taskAfterSubProcess.getId(), &quot;superVariable&quot;)).isEqualTo(&quot;Hello from second iteration sub process.&quot;);</span>
+<span class="nc" id="L896">    }</span>
+
+    @Test
+    @Deployment(resources = {
+            &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testMultiInstanceParallelSubProcessDataInputOutput.bpmn20.xml&quot;,
+            &quot;org/flowable/engine/test/bpmn/callactivity/simpleSubProcess.bpmn20.xml&quot;
+    })
+    public void testMultiInstanceParallelSubProcessWithDataInputOutput() {
+<span class="nc" id="L904">        ProcessInstance processInstance = runtimeService</span>
+<span class="nc" id="L905">                .createProcessInstanceBuilder()</span>
+<span class="nc" id="L906">                .processDefinitionKey(&quot;subProcessDataInputOutput&quot;)</span>
+<span class="nc" id="L907">                .variable(&quot;superVariable&quot;, &quot;Hello from the super process.&quot;)</span>
+<span class="nc" id="L908">                .variable(&quot;nrOfLoops&quot;, 2)</span>
+<span class="nc" id="L909">                .start();</span>
+
+        // There should be 2 sub process instances active after starting the process instance
+<span class="nc" id="L912">        List&lt;Task&gt; tasks = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L913">        assertThat(tasks)</span>
+<span class="nc" id="L914">                .hasSize(2)</span>
+<span class="nc" id="L915">                .extracting(Task::getName)</span>
+<span class="nc" id="L916">                .containsOnly(&quot;Task in subprocess&quot;);</span>
+
+<span class="nc" id="L918">        Task taskBeforeSubProcess = tasks.get(0);</span>
+<span class="nc" id="L919">        assertThat(runtimeService.getVariable(taskBeforeSubProcess.getProcessInstanceId(), &quot;subVariable&quot;)).isEqualTo(&quot;Hello from the super process.&quot;);</span>
+<span class="nc" id="L920">        assertThat(taskService.getVariable(taskBeforeSubProcess.getId(), &quot;subVariable&quot;)).isEqualTo(&quot;Hello from the super process.&quot;);</span>
+
+<span class="nc" id="L922">        runtimeService.setVariable(taskBeforeSubProcess.getProcessInstanceId(), &quot;subVariable&quot;, &quot;Hello from sub process.&quot;);</span>
+
+        // super variable is unchanged
+<span class="nc" id="L925">        assertThat(runtimeService.getVariable(processInstance.getId(), &quot;superVariable&quot;)).isEqualTo(&quot;Hello from the super process.&quot;);</span>
+
+        // Completing the first task ends the first subprocess which leads to the super process having an updated sub variable
+<span class="nc" id="L928">        taskService.complete(taskBeforeSubProcess.getId());</span>
+
+<span class="nc" id="L930">        assertThat(runtimeService.getVariable(processInstance.getId(), &quot;superVariable&quot;)).isEqualTo(&quot;Hello from sub process.&quot;);</span>
+
+        // The second instance should have the same data as the first one
+<span class="nc" id="L933">        taskBeforeSubProcess = tasks.get(1);</span>
+<span class="nc" id="L934">        assertThat(runtimeService.getVariable(taskBeforeSubProcess.getProcessInstanceId(), &quot;subVariable&quot;)).isEqualTo(&quot;Hello from the super process.&quot;);</span>
+<span class="nc" id="L935">        assertThat(taskService.getVariable(taskBeforeSubProcess.getId(), &quot;subVariable&quot;)).isEqualTo(&quot;Hello from the super process.&quot;);</span>
+
+<span class="nc" id="L937">        runtimeService.setVariable(taskBeforeSubProcess.getProcessInstanceId(), &quot;subVariable&quot;, &quot;Hello from second iteration sub process.&quot;);</span>
+
+        // Completing the second task ends the second subprocess which leads to the super process having an updated sub variable
+<span class="nc" id="L940">        taskService.complete(taskBeforeSubProcess.getId());</span>
+
+<span class="nc" id="L942">        assertThat(runtimeService.getVariable(processInstance.getId(), &quot;superVariable&quot;)).isEqualTo(&quot;Hello from second iteration sub process.&quot;);</span>
+
+
+        // one task in the subprocess should be active after starting the process instance
+<span class="nc" id="L946">        Task taskAfterSubProcess = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L947">        assertThat(taskAfterSubProcess.getName()).isEqualTo(&quot;Task in super process&quot;);</span>
+<span class="nc" id="L948">        assertThat(runtimeService.getVariable(processInstance.getId(), &quot;superVariable&quot;)).isEqualTo(&quot;Hello from second iteration sub process.&quot;);</span>
+<span class="nc" id="L949">        assertThat(taskService.getVariable(taskAfterSubProcess.getId(), &quot;superVariable&quot;)).isEqualTo(&quot;Hello from second iteration sub process.&quot;);</span>
+<span class="nc" id="L950">    }</span>
+
+    /**
+     * Test case for deleting a sub process
+     */
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testTwoSubProcesses.bpmn20.xml&quot;, &quot;org/flowable/engine/test/bpmn/callactivity/simpleSubProcess.bpmn20.xml&quot; })
+    public void testTwoSubProcesses() {
+<span class="nc" id="L958">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;callTwoSubProcesses&quot;);</span>
+
+<span class="nc" id="L960">        List&lt;ProcessInstance&gt; instanceList = runtimeService.createProcessInstanceQuery().list();</span>
+<span class="nc" id="L961">        assertThat(instanceList).hasSize(3);</span>
+
+<span class="nc" id="L963">        List&lt;Task&gt; taskList = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L964">        assertThat(taskList).hasSize(2);</span>
+
+<span class="nc" id="L966">        runtimeService.deleteProcessInstance(processInstance.getId(), &quot;Test cascading&quot;);</span>
+
+<span class="nc" id="L968">        instanceList = runtimeService.createProcessInstanceQuery().list();</span>
+<span class="nc" id="L969">        assertThat(instanceList).isEmpty();</span>
+
+<span class="nc" id="L971">        taskList = taskService.createTaskQuery().list();</span>
+<span class="nc" id="L972">        assertThat(taskList).isEmpty();</span>
+<span class="nc" id="L973">    }</span>
+
+    @Test
+    @Deployment(resources = {
+            &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testStartUserIdSetWhenLooping.bpmn20.xml&quot;,
+            &quot;org/flowable/engine/test/bpmn/callactivity/simpleSubProcess.bpmn20.xml&quot;
+    })
+    public void testStartUserIdSetWhenLooping() {
+<span class="nc" id="L981">        identityService.setAuthenticatedUserId(&quot;kermit&quot;);</span>
+<span class="nc" id="L982">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;loopingCallActivity&quot;, CollectionUtil.singletonMap(&quot;input&quot;, 0));</span>
+<span class="nc bnc" id="L983" title="All 2 branches missed.">        for (int i = 1; i &lt; 4; i++) {</span>
+<span class="nc" id="L984">            Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L985">            assertThat(task.getName()).isEqualTo(&quot;Task in subprocess&quot;);</span>
+<span class="nc" id="L986">            identityService.setAuthenticatedUserId(&quot;kermit&quot;);</span>
+<span class="nc" id="L987">            taskService.complete(task.getId(), CollectionUtil.singletonMap(&quot;input&quot;, i));</span>
+        }
+<span class="nc" id="L989">        identityService.setAuthenticatedUserId(null);</span>
+
+<span class="nc" id="L991">        Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L992">        assertThat(task.getName()).isEqualTo(&quot;Final task&quot;);</span>
+
+<span class="nc bnc" id="L994" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration, 30000)) {</span>
+<span class="nc" id="L995">            List&lt;HistoricProcessInstance&gt; historicProcessInstances = historyService.createHistoricProcessInstanceQuery()</span>
+<span class="nc" id="L996">                    .superProcessInstanceId(processInstance.getId()).list();</span>
+<span class="nc" id="L997">            assertThat(historicProcessInstances).hasSize(3);</span>
+<span class="nc bnc" id="L998" title="All 2 branches missed.">            for (HistoricProcessInstance historicProcessInstance : historicProcessInstances) {</span>
+<span class="nc" id="L999">                assertThat(historicProcessInstance.getStartUserId()).isNotNull();</span>
+<span class="nc" id="L1000">                assertThat(historicProcessInstance.getStartTime()).isNotNull();</span>
+<span class="nc" id="L1001">                assertThat(historicProcessInstance.getEndTime()).isNotNull();</span>
+<span class="nc" id="L1002">            }</span>
+        }
+<span class="nc" id="L1004">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testCallSimpleSubProcess.bpmn20.xml&quot;, &quot;org/flowable/engine/test/bpmn/callactivity/simpleSubProcess.bpmn20.xml&quot; })
+    public void testAuthenticatedStartUserInCallActivity() {
+<span class="nc" id="L1009">        final String authenticatedUser = &quot;user1&quot;;</span>
+<span class="nc" id="L1010">        identityService.setAuthenticatedUserId(authenticatedUser);</span>
+<span class="nc" id="L1011">        final ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;callSimpleSubProcess&quot;);</span>
+
+<span class="nc" id="L1013">        TaskQuery taskQuery = taskService.createTaskQuery();</span>
+<span class="nc" id="L1014">        Task taskBeforeSubProcess = taskQuery.singleResult();</span>
+<span class="nc" id="L1015">        assertThat(taskBeforeSubProcess.getName()).isEqualTo(&quot;Task before subprocess&quot;);</span>
+        // Completing the task continues the process which leads to calling the subprocess
+<span class="nc" id="L1017">        taskService.complete(taskBeforeSubProcess.getId());</span>
+
+<span class="nc" id="L1019">        ProcessInstance subProcess = runtimeService.createProcessInstanceQuery().superProcessInstanceId(processInstance.getId()).singleResult();</span>
+
+<span class="nc" id="L1021">        assertThat(subProcess.getStartUserId()).isEqualTo(authenticatedUser);</span>
+<span class="nc" id="L1022">        List&lt;IdentityLink&gt; subProcessIdentityLinks = runtimeService.getIdentityLinksForProcessInstance(subProcess.getId());</span>
+<span class="nc" id="L1023">        assertThat(subProcessIdentityLinks).hasSize(1);</span>
+<span class="nc" id="L1024">        assertThat(subProcessIdentityLinks.get(0).getType()).isEqualTo(IdentityLinkType.STARTER);</span>
+<span class="nc" id="L1025">        assertThat(subProcessIdentityLinks.get(0).getUserId()).isEqualTo(authenticatedUser);</span>
+<span class="nc" id="L1026">    }</span>
+    
+    @Test
+    @Deployment(resources = { 
+            &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testCallSimpleSubProcess.bpmn20.xml&quot;, 
+            &quot;org/flowable/engine/test/bpmn/callactivity/simpleSubProcess.bpmn20.xml&quot; 
+            })
+    public void testDeleteProcessInstance() {
+        // Bring process instance to task in child process instance
+<span class="nc" id="L1035">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;callSimpleSubProcess&quot;);</span>
+<span class="nc" id="L1036">        Task taskBeforeSubProcess = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1037">        assertThat(taskBeforeSubProcess.getName()).isEqualTo(&quot;Task before subprocess&quot;);</span>
+<span class="nc" id="L1038">        taskService.complete(taskBeforeSubProcess.getId());</span>
+<span class="nc" id="L1039">        Task taskInSubProcess = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1040">        assertThat(taskInSubProcess.getName()).isEqualTo(&quot;Task in subprocess&quot;);</span>
+        
+        // Delete child process instance: parent process instance should continue
+<span class="nc" id="L1043">        assertThat(processInstance.getId()).isNotEqualTo(taskInSubProcess.getProcessInstanceId());</span>
+<span class="nc" id="L1044">        runtimeService.deleteProcessInstance(taskInSubProcess.getProcessInstanceId(), null);</span>
+        
+<span class="nc" id="L1046">        Task taskAfterSubProcess = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1047">        assertThat(taskAfterSubProcess).isNotNull();</span>
+<span class="nc" id="L1048">        assertThat(taskAfterSubProcess.getName()).isEqualTo(&quot;Task after subprocess&quot;);</span>
+        
+<span class="nc" id="L1050">        taskService.complete(taskAfterSubProcess.getId());</span>
+<span class="nc" id="L1051">        assertThat(runtimeService.createExecutionQuery().count()).isZero();</span>
+<span class="nc" id="L1052">    }</span>
+    
+    @Test
+    @Deployment(resources = {
+        &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testCallSimpleSubProcess.bpmn20.xml&quot;, 
+        &quot;org/flowable/engine/test/bpmn/callactivity/simpleSubProcess.bpmn20.xml&quot; 
+    })
+    public void testSubProcessEndTime() {
+<span class="nc" id="L1060">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;callSimpleSubProcess&quot;);</span>
+<span class="nc" id="L1061">        Task taskBeforeSubProcess = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1062">        assertThat(taskBeforeSubProcess.getName()).isEqualTo(&quot;Task before subprocess&quot;);</span>
+<span class="nc" id="L1063">        taskService.complete(taskBeforeSubProcess.getId());</span>
+<span class="nc" id="L1064">        Task taskInSubProcess = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1065">        assertThat(taskInSubProcess.getName()).isEqualTo(&quot;Task in subprocess&quot;);</span>
+
+<span class="nc" id="L1067">        runtimeService.deleteProcessInstance(processInstance.getId(), null);</span>
+
+<span class="nc bnc" id="L1069" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration, 20000)) {</span>
+<span class="nc" id="L1070">            List&lt;HistoricProcessInstance&gt; processes = historyService.createHistoricProcessInstanceQuery().list();</span>
+<span class="nc" id="L1071">            assertThat(processes).hasSize(2);</span>
+    
+<span class="nc bnc" id="L1073" title="All 2 branches missed.">            for (HistoricProcessInstance process: processes) {</span>
+<span class="nc" id="L1074">                assertThat(process.getEndTime()).isNotNull();</span>
+<span class="nc" id="L1075">            }</span>
+        }
+<span class="nc" id="L1077">    }</span>
+    
+    @Test
+    @Deployment(resources = {
+        &quot;org/flowable/engine/test/bpmn/callactivity/callActivityInEmbeddedSubProcess.bpmn20.xml&quot;, 
+        &quot;org/flowable/engine/test/bpmn/callactivity/simpleSubProcess.bpmn20.xml&quot; 
+    })
+    public void testCallActivityInEmbeddedSubProcessEndTime() {
+<span class="nc" id="L1085">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;mainProcess&quot;);</span>
+<span class="nc" id="L1086">        Task taskInSubProcess = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1087">        assertThat(taskInSubProcess.getName()).isEqualTo(&quot;Task in subprocess&quot;);</span>
+
+<span class="nc" id="L1089">        runtimeService.deleteProcessInstance(processInstance.getId(), null);</span>
+
+<span class="nc bnc" id="L1091" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration, 20000)) {</span>
+<span class="nc" id="L1092">            List&lt;HistoricProcessInstance&gt; processes = historyService.createHistoricProcessInstanceQuery().list();</span>
+<span class="nc" id="L1093">            assertThat(processes).hasSize(2);</span>
+    
+<span class="nc bnc" id="L1095" title="All 2 branches missed.">            for (HistoricProcessInstance process: processes) {</span>
+<span class="nc" id="L1096">                assertThat(process.getEndTime()).isNotNull();</span>
+<span class="nc" id="L1097">            }</span>
+        }
+<span class="nc" id="L1099">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testCallSimpleSubProcessWithFallback.bpmn20.xml&quot;},
+        tenantId = &quot;flowable&quot;
+    )
+    public void testCallSubProcessWithFallbackToDefaultTenant() {
+<span class="nc" id="L1106">        assertCallActivityToFallback();</span>
+<span class="nc" id="L1107">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testCallSimpleSubProcessWithFallbackWrongNonBoolean.bpmn20.xml&quot;,
+        &quot;org/flowable/engine/test/bpmn/callactivity/simpleSubProcess.bpmn20.xml&quot;},
+        tenantId = &quot;flowable&quot;
+    )
+    public void testCallSubProcessWithFallbackToDefaultTenantWithWrongExpressionOnSameTenant() {
+<span class="nc" id="L1115">        assertProcessExecuted();</span>
+<span class="nc" id="L1116">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testCallSimpleSubProcessWithFallbackFalse.bpmn20.xml&quot;,
+        &quot;org/flowable/engine/test/bpmn/callactivity/simpleSubProcess.bpmn20.xml&quot;},
+        tenantId = &quot;flowable&quot;
+    )
+    public void testCallSubProcessWithFallbackToDefaultTenantFalseInSameTenant() {
+<span class="nc" id="L1124">        assertProcessExecuted();</span>
+<span class="nc" id="L1125">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testCallSimpleSubProcessWithFallbackFalse.bpmn20.xml&quot;},
+        tenantId = &quot;flowable&quot;
+    )
+    public void testCallSubProcessWithFallbackToDefaultTenantFalse() {
+<span class="nc" id="L1132">        assertThrows(</span>
+            FlowableObjectNotFoundException.class,
+<span class="nc" id="L1134">            () -&gt; assertCallActivityToFallback()</span>
+        );
+<span class="nc" id="L1136">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testCallSimpleSubProcessWithFallbackWrongNonBoolean.bpmn20.xml&quot;},
+        tenantId = &quot;flowable&quot;
+    )
+    public void testCallSubProcessWithFallbackToDefaultTenantNonBooleanValue() {
+<span class="nc" id="L1143">        assertThrows(</span>
+            FlowableException.class,
+<span class="nc" id="L1145">            () -&gt; assertCallActivityToFallback(),</span>
+            &quot;Unable to recognize fallbackToDefaultTenant value 1&quot;
+        );
+<span class="nc" id="L1148">    }</span>
+    
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testCallSimpleSubProcessWithFallback.bpmn20.xml&quot;,
+        &quot;org/flowable/engine/test/bpmn/callactivity/simpleSubProcess.bpmn20.xml&quot;},
+        tenantId = &quot;defaultFlowable&quot;
+    )
+    public void testCallSimpleSubProcessWithDefaultTenantFallback() {
+<span class="nc" id="L1156">        DefaultTenantProvider originalDefaultTenantProvider = processEngineConfiguration.getDefaultTenantProvider();</span>
+<span class="nc" id="L1157">        processEngineConfiguration.setDefaultTenantValue(&quot;defaultFlowable&quot;);</span>
+        try {
+<span class="nc" id="L1159">            ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L1160">                            .processDefinitionKey(&quot;callSimpleSubProcess&quot;)</span>
+<span class="nc" id="L1161">                            .tenantId(&quot;someTenant&quot;)</span>
+<span class="nc" id="L1162">                            .fallbackToDefaultTenant()</span>
+<span class="nc" id="L1163">                            .start();</span>
+            
+<span class="nc" id="L1165">            assertThat(processInstance.getTenantId()).isEqualTo(&quot;someTenant&quot;);</span>
+    
+            // one task in the subprocess should be active after starting the process instance
+<span class="nc" id="L1168">            TaskQuery taskQuery = taskService.createTaskQuery().taskTenantId(&quot;someTenant&quot;);</span>
+<span class="nc" id="L1169">            Task taskInSubProcess = taskQuery.singleResult();</span>
+<span class="nc" id="L1170">            assertThat(taskInSubProcess.getName()).isEqualTo(&quot;Task in subprocess&quot;);</span>
+<span class="nc" id="L1171">            assertThat(taskInSubProcess.getTenantId()).isEqualTo(&quot;someTenant&quot;);</span>
+    
+            // Completing the task in the subprocess, finishes the subprocess
+<span class="nc" id="L1174">            taskService.complete(taskInSubProcess.getId());</span>
+<span class="nc" id="L1175">            assertProcessEnded(processInstance.getId());</span>
+            
+        } finally {
+<span class="nc" id="L1178">            processEngineConfiguration.setDefaultTenantProvider(originalDefaultTenantProvider);</span>
+        }
+<span class="nc" id="L1180">    }</span>
+    
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testCallSimpleSubProcess.bpmn20.xml&quot;,
+        &quot;org/flowable/engine/test/bpmn/callactivity/simpleSubProcess.bpmn20.xml&quot;},
+        tenantId = &quot;defaultFlowable&quot;
+    )
+    public void testCallSimpleSubProcessWithGlobalDefaultTenantFallback() {
+<span class="nc" id="L1188">        DefaultTenantProvider originalDefaultTenantProvider = processEngineConfiguration.getDefaultTenantProvider();</span>
+<span class="nc" id="L1189">        processEngineConfiguration.setDefaultTenantValue(&quot;defaultFlowable&quot;);</span>
+<span class="nc" id="L1190">        processEngineConfiguration.setFallbackToDefaultTenant(true);</span>
+        try {
+<span class="nc" id="L1192">            ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L1193">                            .processDefinitionKey(&quot;callSimpleSubProcess&quot;)</span>
+<span class="nc" id="L1194">                            .tenantId(&quot;someTenant&quot;)</span>
+<span class="nc" id="L1195">                            .fallbackToDefaultTenant()</span>
+<span class="nc" id="L1196">                            .start();</span>
+            
+<span class="nc" id="L1198">            assertThat(processInstance.getTenantId()).isEqualTo(&quot;someTenant&quot;);</span>
+    
+            // one task in the subprocess should be active after starting the process instance
+<span class="nc" id="L1201">            Task taskBeforeSubProcess = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1202">            assertThat(taskBeforeSubProcess.getName()).isEqualTo(&quot;Task before subprocess&quot;);</span>
+<span class="nc" id="L1203">            assertThat(taskBeforeSubProcess.getTenantId()).isEqualTo(&quot;someTenant&quot;);</span>
+<span class="nc" id="L1204">            taskService.complete(taskBeforeSubProcess.getId());</span>
+            
+<span class="nc" id="L1206">            Task taskInSubProcess = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1207">            assertThat(taskInSubProcess.getName()).isEqualTo(&quot;Task in subprocess&quot;);</span>
+<span class="nc" id="L1208">            assertThat(taskInSubProcess.getTenantId()).isEqualTo(&quot;someTenant&quot;);</span>
+            
+            // Delete child process instance: parent process instance should continue
+<span class="nc" id="L1211">            assertThat(processInstance.getId()).isNotEqualTo(taskInSubProcess.getProcessInstanceId());</span>
+<span class="nc" id="L1212">            runtimeService.deleteProcessInstance(taskInSubProcess.getProcessInstanceId(), null);</span>
+            
+<span class="nc" id="L1214">            Task taskAfterSubProcess = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1215">            assertThat(taskAfterSubProcess).isNotNull();</span>
+<span class="nc" id="L1216">            assertThat(taskAfterSubProcess.getName()).isEqualTo(&quot;Task after subprocess&quot;);</span>
+            
+<span class="nc" id="L1218">            taskService.complete(taskAfterSubProcess.getId());</span>
+            
+<span class="nc" id="L1220">            assertProcessEnded(processInstance.getId());</span>
+            
+        } finally {
+<span class="nc" id="L1223">            processEngineConfiguration.setDefaultTenantProvider(originalDefaultTenantProvider);</span>
+<span class="nc" id="L1224">            processEngineConfiguration.setFallbackToDefaultTenant(false);</span>
+        }
+<span class="nc" id="L1226">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testCallSimpleSubProcess.bpmn20.xml&quot;,
+        &quot;org/flowable/engine/test/bpmn/callactivity/simpleSubProcess.bpmn20.xml&quot;},
+        tenantId = &quot;defaultFlowable&quot;
+    )
+    public void testCallSimpleSubProcessWithGlobalDefaultTenantFallbackAndComplexTenantFallback() {
+<span class="nc" id="L1234">        DefaultTenantProvider originalDefaultTenantProvider = processEngineConfiguration.getDefaultTenantProvider();</span>
+<span class="nc" id="L1235">        processEngineConfiguration.setDefaultTenantProvider((tenantId, scope, scopeKey) -&gt; {</span>
+<span class="nc bnc" id="L1236" title="All 2 branches missed.">            if (&quot;someTenant&quot;.equals(tenantId)) {</span>
+<span class="nc" id="L1237">                return &quot;defaultFlowable&quot;;</span>
+            } else {
+<span class="nc" id="L1239">                return &quot;defaultTest&quot;;</span>
+            }
+        });
+<span class="nc" id="L1242">        processEngineConfiguration.setFallbackToDefaultTenant(true);</span>
+        try {
+<span class="nc" id="L1244">            ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L1245">                            .processDefinitionKey(&quot;callSimpleSubProcess&quot;)</span>
+<span class="nc" id="L1246">                            .tenantId(&quot;someTenant&quot;)</span>
+<span class="nc" id="L1247">                            .fallbackToDefaultTenant()</span>
+<span class="nc" id="L1248">                            .start();</span>
+
+<span class="nc" id="L1250">            assertThat(processInstance.getTenantId()).isEqualTo(&quot;someTenant&quot;);</span>
+
+            // one task in the subprocess should be active after starting the process instance
+<span class="nc" id="L1253">            Task taskBeforeSubProcess = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1254">            assertThat(taskBeforeSubProcess.getName()).isEqualTo(&quot;Task before subprocess&quot;);</span>
+<span class="nc" id="L1255">            assertThat(taskBeforeSubProcess.getTenantId()).isEqualTo(&quot;someTenant&quot;);</span>
+<span class="nc" id="L1256">            taskService.complete(taskBeforeSubProcess.getId());</span>
+
+<span class="nc" id="L1258">            Task taskInSubProcess = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1259">            assertThat(taskInSubProcess.getName()).isEqualTo(&quot;Task in subprocess&quot;);</span>
+<span class="nc" id="L1260">            assertThat(taskInSubProcess.getTenantId()).isEqualTo(&quot;someTenant&quot;);</span>
+
+            // Delete child process instance: parent process instance should continue
+<span class="nc" id="L1263">            assertThat(processInstance.getId()).isNotEqualTo(taskInSubProcess.getProcessInstanceId());</span>
+<span class="nc" id="L1264">            runtimeService.deleteProcessInstance(taskInSubProcess.getProcessInstanceId(), null);</span>
+
+<span class="nc" id="L1266">            Task taskAfterSubProcess = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1267">            assertThat(taskAfterSubProcess).isNotNull();</span>
+<span class="nc" id="L1268">            assertThat(taskAfterSubProcess.getName()).isEqualTo(&quot;Task after subprocess&quot;);</span>
+
+<span class="nc" id="L1270">            taskService.complete(taskAfterSubProcess.getId());</span>
+
+<span class="nc" id="L1272">            assertProcessEnded(processInstance.getId());</span>
+
+        } finally {
+<span class="nc" id="L1275">            processEngineConfiguration.setDefaultTenantProvider(originalDefaultTenantProvider);</span>
+<span class="nc" id="L1276">            processEngineConfiguration.setFallbackToDefaultTenant(false);</span>
+        }
+<span class="nc" id="L1278">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testCallSimpleSubProcess.bpmn20.xml&quot;,
+        &quot;org/flowable/engine/test/bpmn/callactivity/simpleSubProcess.bpmn20.xml&quot;},
+        tenantId = &quot;defaultFlowable&quot;
+    )
+    public void testCallSimpleSubProcessWithGlobalDefaultTenantFallbackAndComplexTenantFallbackAndNotExistingDefaultTenant() {
+<span class="nc" id="L1286">        DefaultTenantProvider originalDefaultTenantProvider = processEngineConfiguration.getDefaultTenantProvider();</span>
+<span class="nc" id="L1287">        processEngineConfiguration.setDefaultTenantProvider((tenantId, scope, scopeKey) -&gt; {</span>
+<span class="nc bnc" id="L1288" title="All 2 branches missed.">            if (&quot;someTenant&quot;.equals(tenantId)) {</span>
+<span class="nc" id="L1289">                return &quot;defaultFlowable&quot;;</span>
+            } else {
+<span class="nc" id="L1291">                return &quot;defaultTest&quot;;</span>
+            }
+        });
+<span class="nc" id="L1294">        processEngineConfiguration.setFallbackToDefaultTenant(true);</span>
+        try {
+<span class="nc" id="L1296">            assertThatThrownBy(() -&gt; {</span>
+<span class="nc" id="L1297">                    runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L1298">                            .processDefinitionKey(&quot;callSimpleSubProcess&quot;)</span>
+<span class="nc" id="L1299">                            .tenantId(&quot;someOtherTenant&quot;)</span>
+<span class="nc" id="L1300">                            .fallbackToDefaultTenant()</span>
+<span class="nc" id="L1301">                            .start();</span>
+
+<span class="nc" id="L1303">            })</span>
+<span class="nc" id="L1304">                .isInstanceOf(FlowableObjectNotFoundException.class)</span>
+<span class="nc" id="L1305">                .hasMessage(&quot;No process definition found for key 'callSimpleSubProcess'. Fallback to default tenant was also applied.&quot;);</span>
+        } finally {
+<span class="nc" id="L1307">            processEngineConfiguration.setDefaultTenantProvider(originalDefaultTenantProvider);</span>
+<span class="nc" id="L1308">            processEngineConfiguration.setFallbackToDefaultTenant(false);</span>
+        }
+<span class="nc" id="L1310">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testCallSimpleSubProcessWithFallback.bpmn20.xml&quot;,
+        &quot;org/flowable/engine/test/bpmn/callactivity/simpleSubProcess.bpmn20.xml&quot;},
+        tenantId = &quot;defaultFlowable&quot;
+    )
+    public void testCallSimpleSubProcessWithDefaultTenantFallbackAndEmptyDefaultTenant() {
+<span class="nc" id="L1318">        assertThatThrownBy(() -&gt; runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L1319">                .processDefinitionKey(&quot;callSimpleSubProcess&quot;)</span>
+<span class="nc" id="L1320">                .tenantId(&quot;someTenant&quot;)</span>
+<span class="nc" id="L1321">                .fallbackToDefaultTenant()</span>
+<span class="nc" id="L1322">                .start())</span>
+<span class="nc" id="L1323">                .as(&quot;Expected process definition not found&quot;)</span>
+<span class="nc" id="L1324">                .isInstanceOf(FlowableObjectNotFoundException.class);</span>
+<span class="nc" id="L1325">    }</span>
+    
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testCallSimpleSubProcess.bpmn20.xml&quot;,
+        &quot;org/flowable/engine/test/bpmn/callactivity/simpleSubProcess.bpmn20.xml&quot;},
+        tenantId = &quot;defaultFlowable&quot;
+    )
+    public void testCallSimpleSubProcessWithGlobalDefaultTenantFallbackAndEmptyDefaultTenant() {
+<span class="nc" id="L1333">        processEngineConfiguration.setFallbackToDefaultTenant(true);</span>
+        try {
+<span class="nc" id="L1335">            assertThatThrownBy(() -&gt; runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L1336">                    .processDefinitionKey(&quot;callSimpleSubProcess&quot;)</span>
+<span class="nc" id="L1337">                    .tenantId(&quot;someTenant&quot;)</span>
+<span class="nc" id="L1338">                    .fallbackToDefaultTenant()</span>
+<span class="nc" id="L1339">                    .start())</span>
+<span class="nc" id="L1340">                    .as(&quot;Expected process definition not found&quot;)</span>
+<span class="nc" id="L1341">                    .isInstanceOf(FlowableObjectNotFoundException.class);</span>
+        } finally {
+<span class="nc" id="L1343">            processEngineConfiguration.setFallbackToDefaultTenant(false);</span>
+        }
+<span class="nc" id="L1345">    }</span>
+
+    @Test
+    @Deployment(resources = {
+            &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testAsyncSequentialMiCallActivity.bpmn20.xml&quot;,
+            &quot;org/flowable/engine/test/bpmn/callactivity/simpleSubProcess.bpmn20.xml&quot;
+    })
+    public void testAsyncSequentialMiCallActivity() {
+<span class="nc" id="L1353">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L1354">                .processDefinitionKey(&quot;testAsyncMiCallActivity&quot;)</span>
+<span class="nc" id="L1355">                .variable(&quot;myList&quot;, Arrays.asList(&quot;one&quot;, &quot;two&quot;, &quot;three&quot;))</span>
+<span class="nc" id="L1356">                .start();</span>
+
+<span class="nc" id="L1358">        Job job = managementService.createJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1359">        assertThat(job).isNotNull();</span>
+<span class="nc" id="L1360">        managementService.executeJob(job.getId());</span>
+
+<span class="nc" id="L1362">        assertThat(taskService.createTaskQuery().count()).isEqualTo(1);</span>
+<span class="nc" id="L1363">        Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1364">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L1366">        Job secondJob = managementService.createJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1367">        assertThat(secondJob.getId()).isNotSameAs(job.getId());</span>
+<span class="nc" id="L1368">        managementService.executeJob(secondJob.getId());</span>
+
+<span class="nc" id="L1370">        task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1371">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L1373">        Job thirdJob = managementService.createJobQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L1374">        assertThat(thirdJob.getId()).isNotSameAs(secondJob.getId());</span>
+<span class="nc" id="L1375">        managementService.executeJob(thirdJob.getId());</span>
+
+<span class="nc" id="L1377">        task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1378">        taskService.complete(task.getId());</span>
+
+<span class="nc" id="L1380">        assertProcessEnded(processInstance.getId());</span>
+<span class="nc" id="L1381">    }</span>
+
+    @Test
+    @Deployment(resources = {
+        &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testIdVariableName.bpmn20.xml&quot;,
+        &quot;org/flowable/engine/test/bpmn/callactivity/simpleSubProcess.bpmn20.xml&quot;
+    })
+    public void testIdVariableName() {
+<span class="nc" id="L1389">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L1390">            .processDefinitionKey(&quot;testIdVariableName&quot;)</span>
+<span class="nc" id="L1391">            .start();</span>
+
+<span class="nc" id="L1393">        Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1394">        assertThat(task.getName()).isEqualTo(&quot;Task in subprocess&quot;);</span>
+
+<span class="nc" id="L1396">        assertThat(runtimeService.getVariables(processInstance.getId())).hasSize(1);</span>
+<span class="nc" id="L1397">        assertThat(runtimeService.getVariables(task.getProcessInstanceId())).isEmpty();</span>
+
+<span class="nc" id="L1399">        assertThat(runtimeService.getVariable(processInstance.getId(), &quot;myVariable&quot;)).isEqualTo(task.getProcessInstanceId());</span>
+<span class="nc" id="L1400">    }</span>
+
+    @Test
+    @Deployment(resources = {
+        &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testIdVariableNameExpression.bpmn20.xml&quot;,
+        &quot;org/flowable/engine/test/bpmn/callactivity/simpleSubProcess.bpmn20.xml&quot;
+    })
+    public void testIdVariableNameExpression() {
+<span class="nc" id="L1408">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder()</span>
+<span class="nc" id="L1409">            .processDefinitionKey(&quot;testIdVariableName&quot;)</span>
+<span class="nc" id="L1410">            .variable(&quot;counter&quot;, 123)</span>
+<span class="nc" id="L1411">            .start();</span>
+
+<span class="nc" id="L1413">        Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1414">        assertThat(task.getName()).isEqualTo(&quot;Task in subprocess&quot;);</span>
+
+<span class="nc" id="L1416">        assertThat(runtimeService.getVariables(processInstance.getId())).hasSize(2);</span>
+<span class="nc" id="L1417">        assertThat(runtimeService.getVariables(task.getProcessInstanceId())).isEmpty();</span>
+
+<span class="nc" id="L1419">        assertThat(runtimeService.getVariable(processInstance.getId(), &quot;myVariable-123&quot;)).isEqualTo(task.getProcessInstanceId());</span>
+<span class="nc" id="L1420">    }</span>
+
+    @Test
+    @Deployment(resources = {
+        &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testCallSimpleSubProcess.bpmn20.xml&quot;,
+        &quot;org/flowable/engine/test/bpmn/callactivity/simpleSubProcess.bpmn20.xml&quot;
+    })
+    public void testCompleteChildProcessInstanceWithSuspendedParentProcess() {
+        // Bring process instance to task in child process instance
+<span class="nc" id="L1429">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;callSimpleSubProcess&quot;);</span>
+
+        // one task in the subprocess should be active after starting the process instance
+<span class="nc" id="L1432">        Task taskBeforeSubProcess = taskService.createTaskQuery().singleResult();</span>
+
+        // Completing the task continues the process which leads to calling the subprocess
+<span class="nc" id="L1435">        taskService.complete(taskBeforeSubProcess.getId());</span>
+<span class="nc" id="L1436">        Task taskInSubProcess = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1437">        assertThat(taskInSubProcess.getName()).isEqualTo(&quot;Task in subprocess&quot;);</span>
+
+<span class="nc" id="L1439">        Execution childProcessInstance = runtimeService.createExecutionQuery().executionId(taskInSubProcess.getProcessInstanceId()).singleResult();</span>
+
+        // Suspend process instance
+<span class="nc" id="L1442">        runtimeService.suspendProcessInstanceById(processInstance.getId());</span>
+
+<span class="nc" id="L1444">        assertThatThrownBy(() -&gt; taskService.complete(taskInSubProcess.getId()))</span>
+<span class="nc" id="L1445">            .isInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L1446">            .hasMessageContainingAll(&quot;Cannot complete process instance. Parent process instance&quot;, &quot;is suspended&quot;);</span>
+
+        // Activate and complete
+<span class="nc" id="L1449">        runtimeService.activateProcessInstanceById(processInstance.getId());</span>
+<span class="nc" id="L1450">        taskService.complete(taskInSubProcess.getId());</span>
+<span class="nc" id="L1451">        assertProcessEnded(childProcessInstance.getId());</span>
+
+<span class="nc" id="L1453">    }</span>
+
+    @Test
+    @Deployment(resources = {
+        &quot;org/flowable/engine/test/bpmn/callactivity/CallActivity.testCallSimpleSubProcess.bpmn20.xml&quot;,
+        &quot;org/flowable/engine/test/bpmn/callactivity/simpleSubProcess.bpmn20.xml&quot;
+    })
+    public void testCompleteChildProcessInstanceWithSuspendedParentProcessDefinition() {
+        // Bring process instance to task in child process instance
+<span class="nc" id="L1462">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey(&quot;callSimpleSubProcess&quot;);</span>
+
+        // one task in the subprocess should be active after starting the process instance
+<span class="nc" id="L1465">        Task taskBeforeSubProcess = taskService.createTaskQuery().singleResult();</span>
+
+        // Completing the task continues the process which leads to calling the subprocess
+<span class="nc" id="L1468">        taskService.complete(taskBeforeSubProcess.getId());</span>
+<span class="nc" id="L1469">        Task taskInSubProcess = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1470">        assertThat(taskInSubProcess.getName()).isEqualTo(&quot;Task in subprocess&quot;);</span>
+
+<span class="nc" id="L1472">        Execution childProcessInstance = runtimeService.createExecutionQuery().executionId(taskInSubProcess.getProcessInstanceId()).singleResult();</span>
+
+        // Suspend process instance
+<span class="nc" id="L1475">        repositoryService.suspendProcessDefinitionByKey(&quot;callSimpleSubProcess&quot;);</span>
+
+<span class="nc" id="L1477">        assertThatThrownBy(() -&gt; taskService.complete(taskInSubProcess.getId()))</span>
+<span class="nc" id="L1478">            .isInstanceOf(FlowableException.class)</span>
+<span class="nc" id="L1479">            .hasMessageContainingAll(&quot;Cannot complete process instance. Parent process instance&quot;, &quot;is suspended&quot;);</span>
+
+        // Activate and complete
+<span class="nc" id="L1482">        repositoryService.activateProcessDefinitionByKey(&quot;callSimpleSubProcess&quot;);</span>
+<span class="nc" id="L1483">        taskService.complete(taskInSubProcess.getId());</span>
+<span class="nc" id="L1484">        assertProcessEnded(childProcessInstance.getId());</span>
+
+<span class="nc" id="L1486">    }</span>
+
+    protected void assertCallActivityToFallback() {
+<span class="nc" id="L1489">        org.flowable.engine.repository.Deployment deployment = this.repositoryService.createDeployment().</span>
+<span class="nc" id="L1490">            addClasspathResource(&quot;org/flowable/engine/test/bpmn/callactivity/simpleSubProcess.bpmn20.xml&quot;).</span>
+<span class="nc" id="L1491">            tenantId(ProcessEngineConfiguration.NO_TENANT_ID).</span>
+<span class="nc" id="L1492">            deploy();</span>
+
+        try {
+<span class="nc" id="L1495">            assertProcessExecuted();</span>
+        } finally {
+<span class="nc" id="L1497">            repositoryService.deleteDeployment(deployment.getId(), true);</span>
+        }
+<span class="nc" id="L1499">    }</span>
+
+    protected void assertProcessExecuted() {
+<span class="nc" id="L1502">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKeyAndTenantId(&quot;callSimpleSubProcess&quot;, &quot;flowable&quot;);</span>
+
+<span class="nc" id="L1504">        Task taskInSubProcess = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L1505">        assertThat(taskInSubProcess.getName()).isEqualTo(&quot;Task in subprocess&quot;);</span>
+<span class="nc" id="L1506">        assertThat(taskInSubProcess.getTenantId()).isEqualTo(&quot;flowable&quot;);</span>
+
+        // Completing the task in the subprocess, finishes the processes
+<span class="nc" id="L1509">        taskService.complete(taskInSubProcess.getId());</span>
+<span class="nc" id="L1510">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceId(processInstance.getId()).count()).isZero();</span>
+<span class="nc" id="L1511">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

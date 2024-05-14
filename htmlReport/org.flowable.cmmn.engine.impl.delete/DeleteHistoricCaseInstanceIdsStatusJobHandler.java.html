@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DeleteHistoricCaseInstanceIdsStatusJobHandler.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.cmmn.engine.impl.delete</a> &gt; <span class="el_source">DeleteHistoricCaseInstanceIdsStatusJobHandler.java</span></div><h1>DeleteHistoricCaseInstanceIdsStatusJobHandler.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.cmmn.engine.impl.delete;
+
+import java.util.List;
+
+import org.flowable.batch.api.Batch;
+import org.flowable.batch.api.BatchPart;
+import org.flowable.batch.api.BatchPartQuery;
+import org.flowable.batch.service.impl.persistence.entity.BatchEntity;
+import org.flowable.cmmn.api.CmmnManagementService;
+import org.flowable.cmmn.engine.CmmnEngineConfiguration;
+import org.flowable.cmmn.engine.impl.util.CommandContextUtil;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.FlowableIllegalArgumentException;
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.job.service.JobHandler;
+import org.flowable.job.service.impl.persistence.entity.JobEntity;
+import org.flowable.variable.api.delegate.VariableScope;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+/**
+ * @author Filip Hrisafov
+ */
+<span class="nc" id="L40">public class DeleteHistoricCaseInstanceIdsStatusJobHandler implements JobHandler {</span>
+
+    public static final String TYPE = &quot;delete-historic-case-status&quot;;
+
+    @Override
+    public String getType() {
+<span class="nc" id="L46">        return TYPE;</span>
+    }
+
+    @Override
+    public void execute(JobEntity job, String configuration, VariableScope variableScope, CommandContext commandContext) {
+<span class="nc" id="L51">        CmmnEngineConfiguration engineConfiguration = CommandContextUtil.getCmmnEngineConfiguration(commandContext);</span>
+<span class="nc" id="L52">        CmmnManagementService managementService = engineConfiguration.getCmmnManagementService();</span>
+<span class="nc" id="L53">        Batch batch = managementService.createBatchQuery()</span>
+<span class="nc" id="L54">                .batchId(configuration)</span>
+<span class="nc" id="L55">                .singleResult();</span>
+
+<span class="nc bnc" id="L57" title="All 2 branches missed.">        if (batch == null) {</span>
+<span class="nc" id="L58">            throw new FlowableIllegalArgumentException(&quot;There is no batch with the id &quot; + configuration);</span>
+        }
+
+<span class="nc bnc" id="L61" title="All 2 branches missed.">        if (DeleteCaseInstanceBatchConstants.STATUS_STOPPED.equals(batch.getStatus())) {</span>
+            // The batch has been stopped there is nothing that we need to check anymore, so we will set the repeat to null
+<span class="nc" id="L63">            job.setRepeat(null);</span>
+<span class="nc" id="L64">            return;</span>
+        }
+
+<span class="nc" id="L67">        long totalBatchParts = createStatusQuery(batch, managementService).count();</span>
+<span class="nc" id="L68">        long totalCompleted = createStatusQuery(batch, managementService).completed().count();</span>
+
+<span class="nc bnc" id="L70" title="All 2 branches missed.">        if (totalBatchParts == totalCompleted) {</span>
+<span class="nc" id="L71">            List&lt;BatchPart&gt; failedParts = createStatusQuery(batch, managementService)</span>
+<span class="nc" id="L72">                    .status(DeleteCaseInstanceBatchConstants.STATUS_FAILED)</span>
+<span class="nc" id="L73">                    .list();</span>
+<span class="nc" id="L74">            long totalFailed = failedParts.size();</span>
+
+<span class="nc bnc" id="L76" title="All 2 branches missed.">            if (totalFailed == 0) {</span>
+<span class="nc" id="L77">                completeBatch(batch, DeleteCaseInstanceBatchConstants.STATUS_COMPLETED, engineConfiguration);</span>
+            } else {
+<span class="nc" id="L79">                completeBatchFail(batch, failedParts, engineConfiguration);</span>
+            }
+
+<span class="nc" id="L82">            job.setRepeat(null);</span>
+<span class="nc bnc" id="L83" title="All 2 branches missed.">        } else if (totalBatchParts == 0) {</span>
+<span class="nc" id="L84">            completeBatch(batch, DeleteCaseInstanceBatchConstants.STATUS_COMPLETED, engineConfiguration);</span>
+<span class="nc" id="L85">            job.setRepeat(null);</span>
+        }
+
+<span class="nc" id="L88">    }</span>
+
+    protected BatchPartQuery createStatusQuery(Batch batch, CmmnManagementService managementService) {
+<span class="nc" id="L91">        return managementService.createBatchPartQuery()</span>
+<span class="nc" id="L92">                .batchId(batch.getId())</span>
+<span class="nc" id="L93">                .type(DeleteCaseInstanceBatchConstants.BATCH_PART_DELETE_CASE_INSTANCES_TYPE);</span>
+    }
+
+    protected void completeBatch(Batch batch, String status, CmmnEngineConfiguration engineConfiguration) {
+<span class="nc" id="L97">        engineConfiguration.getBatchServiceConfiguration()</span>
+<span class="nc" id="L98">                .getBatchService()</span>
+<span class="nc" id="L99">                .completeBatch(batch.getId(), status);</span>
+<span class="nc" id="L100">    }</span>
+
+    protected void completeBatchFail(Batch batch, List&lt;BatchPart&gt; failedParts, CmmnEngineConfiguration engineConfiguration) {
+<span class="nc" id="L103">        completeBatch(batch, DeleteCaseInstanceBatchConstants.STATUS_FAILED, engineConfiguration);</span>
+
+<span class="nc" id="L105">        long totalFailedInstances = 0;</span>
+
+<span class="nc" id="L107">        ObjectMapper objectMapper = engineConfiguration.getObjectMapper();</span>
+<span class="nc bnc" id="L108" title="All 2 branches missed.">        for (BatchPart failedPart : failedParts) {</span>
+<span class="nc" id="L109">            JsonNode node = readJson(failedPart.getResultDocumentJson(ScopeTypes.CMMN), objectMapper);</span>
+<span class="nc bnc" id="L110" title="All 2 branches missed.">            if (node != null) {</span>
+<span class="nc" id="L111">                totalFailedInstances += node.path(&quot;caseInstanceIdsFailedToDelete&quot;).size();</span>
+            }
+<span class="nc" id="L113">        }</span>
+
+<span class="nc" id="L115">        ObjectNode batchDocument = (ObjectNode) readJson(batch.getBatchDocumentJson(ScopeTypes.CMMN), objectMapper);</span>
+<span class="nc" id="L116">        batchDocument.put(&quot;numberOfFailedInstances&quot;, totalFailedInstances);</span>
+
+<span class="nc" id="L118">        ((BatchEntity) batch).setBatchDocumentJson(batchDocument.toString(), ScopeTypes.CMMN);</span>
+<span class="nc" id="L119">    }</span>
+
+    protected JsonNode readJson(String json, ObjectMapper objectMapper) {
+<span class="nc bnc" id="L122" title="All 2 branches missed.">        if (json == null) {</span>
+<span class="nc" id="L123">            return null;</span>
+        }
+        try {
+<span class="nc" id="L126">            return objectMapper.readTree(json);</span>
+<span class="nc" id="L127">        } catch (JsonProcessingException e) {</span>
+<span class="nc" id="L128">            throw new FlowableException(&quot;Failed to read json&quot;, e);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

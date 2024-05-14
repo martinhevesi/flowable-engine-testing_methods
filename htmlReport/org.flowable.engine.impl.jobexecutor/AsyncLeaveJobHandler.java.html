@@ -1,0 +1,191 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AsyncLeaveJobHandler.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.jobexecutor</a> &gt; <span class="el_source">AsyncLeaveJobHandler.java</span></div><h1>AsyncLeaveJobHandler.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.impl.jobexecutor;
+
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.bpmn.model.BpmnModel;
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.SequenceFlow;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.engine.ProcessEngineConfiguration;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntity;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.engine.impl.util.ProcessDefinitionUtil;
+import org.flowable.job.service.JobHandler;
+import org.flowable.job.service.impl.persistence.entity.JobEntity;
+import org.flowable.variable.api.delegate.VariableScope;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+/**
+ * 
+ * @author Joram Barrez
+ */
+<span class="nc" id="L44">public class AsyncLeaveJobHandler implements JobHandler {</span>
+
+<span class="nc" id="L46">    public static final Logger LOGGER = LoggerFactory.getLogger(AsyncLeaveJobHandler.class);</span>
+
+    public static final String TYPE = &quot;async-after&quot;;
+
+    private static final String FIELD_EVALUATE_CONDITIONS = &quot;evaluateConditions&quot;;
+    private static final String FIELD_SEQUENCE_FLOW_ID = &quot;sequenceFlowId&quot;;
+    private static final String FIELD_SEQUENCE_FLOW_SOURCE = &quot;source&quot;;
+    private static final String FIELD_SEQUENCE_FLOW_TARGET = &quot;target&quot;;
+    private static final String FIELD_SEQUENCE_FLOW_LINE_NR = &quot;lineNr&quot;;
+    private static final String FIELD_SEQUENCE_FLOW_LINE_COLUMN_NR = &quot;colNr&quot;;
+
+
+    @Override
+    public String getType() {
+<span class="nc" id="L60">        return TYPE;</span>
+    }
+
+    @Override
+    public void execute(JobEntity job, String configuration, VariableScope variableScope, CommandContext commandContext) {
+<span class="nc" id="L65">        ExecutionEntity executionEntity = (ExecutionEntity) variableScope;</span>
+
+<span class="nc" id="L67">        ObjectMapper objectMapper = CommandContextUtil.getProcessEngineConfiguration(commandContext).getObjectMapper();</span>
+
+<span class="nc bnc" id="L69" title="All 2 branches missed.">        if (configuration != null) {</span>
+            try {
+<span class="nc" id="L71">                JsonNode jobConfigurationJson = objectMapper.readTree(configuration);</span>
+
+<span class="nc" id="L73">                boolean evaluateConditions = false;</span>
+<span class="nc" id="L74">                JsonNode evaluateConditionsNode = jobConfigurationJson.path(FIELD_EVALUATE_CONDITIONS);</span>
+<span class="nc bnc" id="L75" title="All 4 branches missed.">                if (evaluateConditionsNode != null &amp;&amp; evaluateConditionsNode.isBoolean()) {</span>
+<span class="nc" id="L76">                    evaluateConditions = evaluateConditionsNode.booleanValue();</span>
+                }
+
+<span class="nc bnc" id="L79" title="All 2 branches missed.">                if (isAsyncLeaveWithSpecificSequenceFlow(jobConfigurationJson)) { // see createJobConfiguration method below why sequence flow are treated differently</span>
+<span class="nc" id="L80">                    executionEntity.setCurrentFlowElement(determineSequenceFlow(job, executionEntity, jobConfigurationJson));</span>
+                }
+
+<span class="nc" id="L83">                CommandContextUtil.getAgenda(commandContext).planTakeOutgoingSequenceFlowsSynchronousOperation(executionEntity, evaluateConditions);</span>
+
+<span class="nc" id="L85">            } catch (JsonProcessingException e) {</span>
+<span class="nc" id="L86">                LOGGER.warn(&quot;Programmatic error: could not parse job configuration JSON&quot;, e);</span>
+<span class="nc" id="L87">            }</span>
+        }
+
+<span class="nc" id="L90">    }</span>
+
+    protected boolean isAsyncLeaveWithSpecificSequenceFlow( JsonNode jobConfigurationJson ) {
+<span class="nc bnc" id="L93" title="All 2 branches missed.">        return jobConfigurationJson.size() &gt; 1; // a leave through a flow node has only one entry in the JSON. The leave through a sequence flow has more.</span>
+    }
+
+    protected SequenceFlow determineSequenceFlow(JobEntity job, ExecutionEntity executionEntity, JsonNode jobConfigurationJson) {
+
+        // See below how the configuration JSON is structured: either it's
+        // - a flow node leave -&gt; no more information in json
+        // - a leave through a specific sequence flow (e.g. exclusive gw), in that case the id of the sequence flow can be given
+        //   or sequence flow info to look it up, if the id is missing.
+
+<span class="nc" id="L103">        String sequenceFlowId = null;</span>
+<span class="nc" id="L104">        JsonNode sequenceFlowIdJsonNode = jobConfigurationJson.path(FIELD_SEQUENCE_FLOW_ID);</span>
+<span class="nc bnc" id="L105" title="All 6 branches missed.">        if (sequenceFlowIdJsonNode != null &amp;&amp; !sequenceFlowIdJsonNode.isNull() &amp;&amp; !sequenceFlowIdJsonNode.isMissingNode()) {</span>
+<span class="nc" id="L106">            sequenceFlowId = sequenceFlowIdJsonNode.asText();</span>
+        }
+
+<span class="nc" id="L109">        BpmnModel bpmnModel = ProcessDefinitionUtil.getBpmnModel(executionEntity.getProcessDefinitionId());</span>
+
+<span class="nc" id="L111">        SequenceFlow sequenceFlow = null;</span>
+<span class="nc bnc" id="L112" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(sequenceFlowId)) {</span>
+<span class="nc" id="L113">            FlowElement flowElement = bpmnModel.getMainProcess().getFlowElement(sequenceFlowId);</span>
+<span class="nc bnc" id="L114" title="All 2 branches missed.">            if (flowElement instanceof SequenceFlow) {</span>
+<span class="nc" id="L115">                sequenceFlow = (SequenceFlow) flowElement;</span>
+            }
+        }
+
+<span class="nc bnc" id="L119" title="All 2 branches missed.">        if (sequenceFlow == null) {</span>
+<span class="nc" id="L120">            String source = jobConfigurationJson.path(FIELD_SEQUENCE_FLOW_SOURCE).asText();</span>
+<span class="nc" id="L121">            String target = jobConfigurationJson.path(FIELD_SEQUENCE_FLOW_TARGET).asText();</span>
+<span class="nc" id="L122">            int lineNr = jobConfigurationJson.path(FIELD_SEQUENCE_FLOW_LINE_NR).asInt();</span>
+<span class="nc" id="L123">            int columnNr = jobConfigurationJson.path(FIELD_SEQUENCE_FLOW_LINE_COLUMN_NR).asInt();</span>
+
+<span class="nc" id="L125">            List&lt;SequenceFlow&gt; sequenceFlows = bpmnModel.getMainProcess().findFlowElementsOfType(SequenceFlow.class, true);</span>
+<span class="nc" id="L126">            Optional&lt;SequenceFlow&gt; sequenceFlowOptional = sequenceFlows.stream()</span>
+<span class="nc" id="L127">                    .filter(s -&gt;</span>
+<span class="nc bnc" id="L128" title="All 2 branches missed.">                            Objects.equals(source, s.getSourceRef())</span>
+<span class="nc bnc" id="L129" title="All 2 branches missed.">                                    &amp;&amp; Objects.equals(target, s.getTargetRef())</span>
+<span class="nc bnc" id="L130" title="All 2 branches missed.">                                    &amp;&amp; lineNr == s.getXmlRowNumber()</span>
+<span class="nc bnc" id="L131" title="All 2 branches missed.">                                    &amp;&amp; columnNr == s.getXmlColumnNumber())</span>
+<span class="nc" id="L132">                    .findFirst();</span>
+
+<span class="nc bnc" id="L134" title="All 2 branches missed.">            if (sequenceFlowOptional.isPresent()) {</span>
+<span class="nc" id="L135">                sequenceFlow = sequenceFlowOptional.get();</span>
+            }
+
+        }
+
+<span class="nc bnc" id="L140" title="All 2 branches missed.">        if (sequenceFlow == null) {</span>
+<span class="nc" id="L141">            throw new FlowableException(&quot;Programmatic error: no sequence flow could be found for async leave in job &quot; + job);</span>
+        }
+
+<span class="nc" id="L144">        return sequenceFlow;</span>
+    }
+
+    public static String createJobConfiguration(ProcessEngineConfiguration processEngineConfiguration, boolean evaluateConditions) {
+<span class="nc" id="L148">        ObjectMapper objectMapper = processEngineConfiguration.getObjectMapper();</span>
+<span class="nc" id="L149">        ObjectNode objectNode = objectMapper.createObjectNode();</span>
+<span class="nc" id="L150">        objectNode.put(FIELD_EVALUATE_CONDITIONS, evaluateConditions);</span>
+        try {
+<span class="nc" id="L152">            return objectMapper.writeValueAsString(objectNode);</span>
+<span class="nc" id="L153">        } catch (JsonProcessingException e) {</span>
+<span class="nc" id="L154">            LOGGER.warn(&quot;Programmatic error: could not create job configuration JSON&quot;, e);</span>
+        }
+<span class="nc" id="L156">        return null;</span>
+    }
+
+    public static String createJobConfiguration(ProcessEngineConfiguration processEngineConfiguration, SequenceFlow sequenceFlow) {
+<span class="nc" id="L160">        ObjectMapper objectMapper = processEngineConfiguration.getObjectMapper();</span>
+<span class="nc" id="L161">        ObjectNode objectNode = objectMapper.createObjectNode();</span>
+<span class="nc" id="L162">        objectNode.put(FIELD_EVALUATE_CONDITIONS, false); // If the sequenceflow is passed, no need to evaluate conditions</span>
+
+        // The execution entity does not persistently store when it's currently at a sequence flow (it only has an activityId).
+        // As such, the information of the current sequence flow needs to be persisted in the job configuration, contrary to the
+        // the other createJobConfiguration above where the execution entity's activityId will be enough and no extra information is needed.
+
+<span class="nc" id="L168">        String sequenceFlowId = sequenceFlow.getId();</span>
+<span class="nc bnc" id="L169" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(sequenceFlowId)) {</span>
+<span class="nc" id="L170">            objectNode.put(FIELD_SEQUENCE_FLOW_ID, sequenceFlowId);</span>
+
+        } else {
+            // Sequence flow don't have a requied id.
+            // To be able to find it in the job, the source/target/xml location is stored.
+<span class="nc" id="L175">            objectNode.put(FIELD_SEQUENCE_FLOW_SOURCE, sequenceFlow.getSourceRef());</span>
+<span class="nc" id="L176">            objectNode.put(FIELD_SEQUENCE_FLOW_TARGET, sequenceFlow.getTargetRef());</span>
+<span class="nc" id="L177">            objectNode.put(FIELD_SEQUENCE_FLOW_LINE_NR, sequenceFlow.getXmlRowNumber());</span>
+<span class="nc" id="L178">            objectNode.put(FIELD_SEQUENCE_FLOW_LINE_COLUMN_NR, sequenceFlow.getXmlColumnNumber());</span>
+
+        }
+
+        try {
+<span class="nc" id="L183">            return objectMapper.writeValueAsString(objectNode);</span>
+<span class="nc" id="L184">        } catch (JsonProcessingException e) {</span>
+<span class="nc" id="L185">            LOGGER.warn(&quot;Programmatic error: could not create job configuration JSON&quot;, e);</span>
+        }
+<span class="nc" id="L187">        return null;</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

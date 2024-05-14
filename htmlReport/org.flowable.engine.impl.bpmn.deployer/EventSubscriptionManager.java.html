@@ -1,0 +1,253 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>EventSubscriptionManager.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.bpmn.deployer</a> &gt; <span class="el_source">EventSubscriptionManager.java</span></div><h1>EventSubscriptionManager.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.impl.bpmn.deployer;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.bpmn.constants.BpmnXMLConstants;
+import org.flowable.bpmn.model.BpmnModel;
+import org.flowable.bpmn.model.EventDefinition;
+import org.flowable.bpmn.model.ExtensionElement;
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.MessageEventDefinition;
+import org.flowable.bpmn.model.Process;
+import org.flowable.bpmn.model.SignalEventDefinition;
+import org.flowable.bpmn.model.StartEvent;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.impl.context.Context;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.common.engine.impl.util.CollectionUtil;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.event.EventDefinitionExpressionUtil;
+import org.flowable.engine.impl.event.MessageEventHandler;
+import org.flowable.engine.impl.event.SignalEventHandler;
+import org.flowable.engine.impl.persistence.entity.ProcessDefinitionEntity;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.engine.impl.util.CorrelationUtil;
+import org.flowable.engine.impl.util.CountingEntityUtil;
+import org.flowable.engine.impl.util.ProcessDefinitionUtil;
+import org.flowable.eventsubscription.api.EventSubscription;
+import org.flowable.eventsubscription.api.EventSubscriptionBuilder;
+import org.flowable.eventsubscription.service.EventSubscriptionService;
+import org.flowable.eventsubscription.service.impl.persistence.entity.EventSubscriptionEntity;
+import org.flowable.eventsubscription.service.impl.persistence.entity.MessageEventSubscriptionEntity;
+import org.flowable.eventsubscription.service.impl.persistence.entity.SignalEventSubscriptionEntity;
+
+/**
+ * Manages event subscriptions for newly-deployed process definitions and their previous versions.
+ */
+<span class="nc" id="L52">public class EventSubscriptionManager {</span>
+
+    protected void removeObsoleteMessageEventSubscriptions(ProcessDefinitionEntity previousProcessDefinition) {
+        // remove all subscriptions for the previous version
+<span class="nc bnc" id="L56" title="All 2 branches missed.">        if (previousProcessDefinition != null) {</span>
+<span class="nc" id="L57">            removeObsoleteEventSubscriptions(previousProcessDefinition, MessageEventHandler.EVENT_HANDLER_TYPE);</span>
+        }
+<span class="nc" id="L59">    }</span>
+
+    protected void removeObsoleteSignalEventSubscription(ProcessDefinitionEntity previousProcessDefinition) {
+        // remove all subscriptions for the previous version
+<span class="nc bnc" id="L63" title="All 2 branches missed.">        if (previousProcessDefinition != null) {</span>
+<span class="nc" id="L64">            removeObsoleteEventSubscriptions(previousProcessDefinition, SignalEventHandler.EVENT_HANDLER_TYPE);</span>
+        }
+<span class="nc" id="L66">    }</span>
+
+    protected void removeOrUpdateObsoleteEventRegistryEventSubscription(ProcessDefinitionEntity previousProcessDefinition, ProcessDefinitionEntity processDefinition) {
+        // remove all subscriptions for the previous version or update them for a dynamic, manual subscription behavior
+<span class="nc bnc" id="L70" title="All 2 branches missed.">        if (previousProcessDefinition != null) {</span>
+<span class="nc" id="L71">            List&lt;StartEventInfo&gt; eventRegistryStartEvents = getEventRegistryStartEventEventTypes(previousProcessDefinition);</span>
+<span class="nc bnc" id="L72" title="All 2 branches missed.">            if (eventRegistryStartEvents != null) {</span>
+<span class="nc bnc" id="L73" title="All 2 branches missed.">                for (StartEventInfo eventRegistryStartEvent : eventRegistryStartEvents) {</span>
+<span class="nc bnc" id="L74" title="All 2 branches missed.">                    if (eventRegistryStartEvent.dynamic()) {</span>
+                        // for a dynamic, manual subscription behavior, we must not remove the old subscriptions, but rather update them
+                        // to the newest process definition id, as they have been manually added before
+<span class="nc" id="L77">                        updateOldEventSubscriptions(previousProcessDefinition, processDefinition, eventRegistryStartEvent.eventType(), eventRegistryStartEvent.activityId());</span>
+                    } else {
+                        // for a static starting behavior, we always remove the old subscription and recreate it with the new definition
+<span class="nc" id="L80">                        removeObsoleteEventSubscriptions(previousProcessDefinition, eventRegistryStartEvent.eventType());</span>
+                    }
+<span class="nc" id="L82">                }</span>
+            }
+        }
+<span class="nc" id="L85">    }</span>
+
+    protected List&lt;StartEventInfo&gt; getEventRegistryStartEventEventTypes(ProcessDefinitionEntity previousProcessDefinition) {
+<span class="nc" id="L88">        List&lt;StartEventInfo&gt; result = null;</span>
+<span class="nc" id="L89">        Process process = ProcessDefinitionUtil.getProcess(previousProcessDefinition.getId());</span>
+<span class="nc" id="L90">        List&lt;StartEvent&gt; startEvents = process.findFlowElementsOfType(StartEvent.class, true);</span>
+<span class="nc bnc" id="L91" title="All 2 branches missed.">        if (!startEvents.isEmpty()) {</span>
+<span class="nc bnc" id="L92" title="All 2 branches missed.">            for (StartEvent startEvent : startEvents) {</span>
+<span class="nc bnc" id="L93" title="All 2 branches missed.">                if (CollectionUtil.isEmpty(startEvent.getEventDefinitions())) {</span>
+<span class="nc" id="L94">                    List&lt;ExtensionElement&gt; eventTypeElements = startEvent.getExtensionElements().get(&quot;eventType&quot;);</span>
+<span class="nc bnc" id="L95" title="All 4 branches missed.">                    if (eventTypeElements != null &amp;&amp; !eventTypeElements.isEmpty()) {</span>
+<span class="nc" id="L96">                        String eventType = eventTypeElements.get(0).getElementText();</span>
+<span class="nc bnc" id="L97" title="All 2 branches missed.">                        if (StringUtils.isNotEmpty(eventType)) {</span>
+<span class="nc bnc" id="L98" title="All 2 branches missed.">                            if (result == null) {</span>
+<span class="nc" id="L99">                                result = new ArrayList&lt;&gt;();</span>
+                            }
+
+                            // check the starting behavior of the event-registry start event, if it is dynamic with manual subscriptions, add it to the
+                            // result with a true boolean, otherwise with false
+<span class="nc" id="L104">                            List&lt;ExtensionElement&gt; correlationConfiguration = startEvent.getExtensionElements().get(BpmnXMLConstants.START_EVENT_CORRELATION_CONFIGURATION);</span>
+<span class="nc bnc" id="L105" title="All 6 branches missed.">                            if (correlationConfiguration != null &amp;&amp; correlationConfiguration.size() &gt; 0 &amp;&amp; BpmnXMLConstants.START_EVENT_CORRELATION_MANUAL.equals(correlationConfiguration.get(0).getElementText())) {</span>
+<span class="nc" id="L106">                                result.add(new StartEventInfo(eventType, startEvent.getId(), true));</span>
+                            } else {
+<span class="nc" id="L108">                                result.add(new StartEventInfo(eventType, startEvent.getId(), false));</span>
+                            }
+                        }
+                    }
+                }
+<span class="nc" id="L113">            }</span>
+        }
+<span class="nc" id="L115">        return result;</span>
+    }
+
+<span class="nc" id="L118">    protected record StartEventInfo(String eventType, String activityId, boolean dynamic) {</span>
+    }
+
+    protected void removeObsoleteEventSubscriptions(ProcessDefinitionEntity processDefinition, String eventHandlerType) {
+        // remove all subscriptions for the previous version
+<span class="nc" id="L123">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration();</span>
+<span class="nc" id="L124">        EventSubscriptionService eventSubscriptionService = processEngineConfiguration.getEventSubscriptionServiceConfiguration().getEventSubscriptionService();</span>
+<span class="nc" id="L125">        List&lt;EventSubscriptionEntity&gt; subscriptionsToDelete = eventSubscriptionService</span>
+<span class="nc" id="L126">            .findEventSubscriptionsByTypeAndProcessDefinitionId(eventHandlerType, processDefinition.getId(), processDefinition.getTenantId());</span>
+
+<span class="nc bnc" id="L128" title="All 2 branches missed.">        for (EventSubscriptionEntity eventSubscriptionEntity : subscriptionsToDelete) {</span>
+<span class="nc" id="L129">            eventSubscriptionService.deleteEventSubscription(eventSubscriptionEntity);</span>
+<span class="nc" id="L130">            CountingEntityUtil.handleDeleteEventSubscriptionEntityCount(eventSubscriptionEntity);</span>
+<span class="nc" id="L131">        }</span>
+<span class="nc" id="L132">    }</span>
+
+    protected void updateOldEventSubscriptions(ProcessDefinitionEntity previousProcessDefinition, ProcessDefinitionEntity processDefinition,
+        String eventType, String activityId) {
+<span class="nc" id="L136">        CommandContext commandContext = Context.getCommandContext();</span>
+<span class="nc" id="L137">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+
+<span class="nc" id="L139">        processEngineConfiguration.getEventSubscriptionServiceConfiguration().getEventSubscriptionService().updateEventSubscriptionProcessDefinitionId(</span>
+<span class="nc" id="L140">            previousProcessDefinition.getId(), processDefinition.getId(), eventType, activityId, processDefinition.getKey(), null);</span>
+<span class="nc" id="L141">    }</span>
+
+    protected void addEventSubscriptions(ProcessDefinitionEntity processDefinition, org.flowable.bpmn.model.Process process, BpmnModel bpmnModel) {
+<span class="nc bnc" id="L144" title="All 2 branches missed.">        if (CollectionUtil.isNotEmpty(process.getFlowElements())) {</span>
+<span class="nc bnc" id="L145" title="All 2 branches missed.">            for (FlowElement element : process.getFlowElements()) {</span>
+<span class="nc bnc" id="L146" title="All 2 branches missed.">                if (element instanceof StartEvent) {</span>
+<span class="nc" id="L147">                    StartEvent startEvent = (StartEvent) element;</span>
+<span class="nc bnc" id="L148" title="All 2 branches missed.">                    if (CollectionUtil.isNotEmpty(startEvent.getEventDefinitions())) {</span>
+<span class="nc" id="L149">                        EventDefinition eventDefinition = startEvent.getEventDefinitions().get(0);</span>
+<span class="nc bnc" id="L150" title="All 2 branches missed.">                        if (eventDefinition instanceof SignalEventDefinition) {</span>
+<span class="nc" id="L151">                            SignalEventDefinition signalEventDefinition = (SignalEventDefinition) eventDefinition;</span>
+<span class="nc" id="L152">                            insertSignalEvent(signalEventDefinition, startEvent, processDefinition, bpmnModel);</span>
+                        
+<span class="nc bnc" id="L154" title="All 2 branches missed.">                        } else if (eventDefinition instanceof MessageEventDefinition) {</span>
+<span class="nc" id="L155">                            MessageEventDefinition messageEventDefinition = (MessageEventDefinition) eventDefinition;</span>
+<span class="nc" id="L156">                            insertMessageEvent(messageEventDefinition, startEvent, processDefinition, bpmnModel);</span>
+                        }
+                        
+<span class="nc" id="L159">                    } else {</span>
+<span class="nc bnc" id="L160" title="All 2 branches missed.">                        if (startEvent.getExtensionElements().get(BpmnXMLConstants.ELEMENT_EVENT_TYPE) != null) {</span>
+<span class="nc" id="L161">                            List&lt;ExtensionElement&gt; eventTypeElements = startEvent.getExtensionElements().get(BpmnXMLConstants.ELEMENT_EVENT_TYPE);</span>
+<span class="nc bnc" id="L162" title="All 2 branches missed.">                            if (!eventTypeElements.isEmpty()) {</span>
+<span class="nc" id="L163">                                String eventDefinitionKey = eventTypeElements.get(0).getElementText();</span>
+<span class="nc" id="L164">                                insertEventRegistryEvent(eventDefinitionKey, startEvent, processDefinition, bpmnModel);</span>
+                            }
+                        }
+                    }
+                }
+<span class="nc" id="L169">            }</span>
+        }
+<span class="nc" id="L171">    }</span>
+    
+    protected void insertSignalEvent(SignalEventDefinition signalEventDefinition, StartEvent startEvent, ProcessDefinitionEntity processDefinition, BpmnModel bpmnModel) {
+<span class="nc" id="L174">        CommandContext commandContext = Context.getCommandContext();</span>
+<span class="nc" id="L175">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc" id="L176">        EventSubscriptionService eventSubscriptionService = processEngineConfiguration.getEventSubscriptionServiceConfiguration().getEventSubscriptionService();</span>
+<span class="nc" id="L177">        SignalEventSubscriptionEntity subscriptionEntity = eventSubscriptionService.createSignalEventSubscription();</span>
+
+<span class="nc" id="L179">        String signalName = EventDefinitionExpressionUtil.determineSignalName(commandContext, signalEventDefinition, bpmnModel,null);</span>
+<span class="nc" id="L180">        subscriptionEntity.setEventName(signalName);</span>
+
+<span class="nc" id="L182">        subscriptionEntity.setActivityId(startEvent.getId());</span>
+<span class="nc" id="L183">        subscriptionEntity.setProcessDefinitionId(processDefinition.getId());</span>
+<span class="nc bnc" id="L184" title="All 2 branches missed.">        if (processDefinition.getTenantId() != null) {</span>
+<span class="nc" id="L185">            subscriptionEntity.setTenantId(processDefinition.getTenantId());</span>
+        }
+
+<span class="nc" id="L188">        eventSubscriptionService.insertEventSubscription(subscriptionEntity);</span>
+<span class="nc" id="L189">        CountingEntityUtil.handleInsertEventSubscriptionEntityCount(subscriptionEntity);</span>
+<span class="nc" id="L190">    }</span>
+    
+    protected void insertMessageEvent(MessageEventDefinition messageEventDefinition, StartEvent startEvent, ProcessDefinitionEntity processDefinition, BpmnModel bpmnModel) {
+<span class="nc" id="L193">        CommandContext commandContext = Context.getCommandContext();</span>
+
+<span class="nc" id="L195">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc" id="L196">        EventSubscriptionService eventSubscriptionService = processEngineConfiguration.getEventSubscriptionServiceConfiguration().getEventSubscriptionService();</span>
+        // look for subscriptions for the same name in db:
+<span class="nc" id="L198">        String messageName = EventDefinitionExpressionUtil.determineMessageName(commandContext, messageEventDefinition, null);</span>
+<span class="nc" id="L199">        List&lt;EventSubscriptionEntity&gt; subscriptionsForSameMessageName = eventSubscriptionService</span>
+<span class="nc" id="L200">                .findEventSubscriptionsByName(MessageEventHandler.EVENT_HANDLER_TYPE, messageName, processDefinition.getTenantId());</span>
+
+<span class="nc bnc" id="L202" title="All 2 branches missed.">        for (EventSubscriptionEntity eventSubscriptionEntity : subscriptionsForSameMessageName) {</span>
+            // throw exception only if there's already a subscription as start event
+<span class="nc bnc" id="L204" title="All 4 branches missed.">            if (eventSubscriptionEntity.getProcessInstanceId() == null || eventSubscriptionEntity.getProcessInstanceId().isEmpty()) { // processInstanceId != null or not empty -&gt; it's a message related to an execution</span>
+                // the event subscription has no instance-id, so it's a message start event
+<span class="nc" id="L206">                throw new FlowableException(&quot;Cannot deploy process definition '&quot; + processDefinition.getResourceName()</span>
+                        + &quot;': there already is a message event subscription for the message with name '&quot; + messageName + &quot;'. For &quot; + eventSubscriptionEntity);
+            }
+<span class="nc" id="L209">        }</span>
+
+<span class="nc" id="L211">        MessageEventSubscriptionEntity newSubscription = eventSubscriptionService.createMessageEventSubscription();</span>
+<span class="nc" id="L212">        newSubscription.setEventName(messageName);</span>
+<span class="nc" id="L213">        newSubscription.setActivityId(startEvent.getId());</span>
+<span class="nc" id="L214">        newSubscription.setConfiguration(processDefinition.getId());</span>
+<span class="nc" id="L215">        newSubscription.setProcessDefinitionId(processDefinition.getId());</span>
+
+<span class="nc bnc" id="L217" title="All 2 branches missed.">        if (processDefinition.getTenantId() != null) {</span>
+<span class="nc" id="L218">            newSubscription.setTenantId(processDefinition.getTenantId());</span>
+        }
+
+<span class="nc" id="L221">        eventSubscriptionService.insertEventSubscription(newSubscription);</span>
+<span class="nc" id="L222">        CountingEntityUtil.handleInsertEventSubscriptionEntityCount(newSubscription);</span>
+<span class="nc" id="L223">    }</span>
+    
+    protected void insertEventRegistryEvent(String eventDefinitionKey, StartEvent startEvent, ProcessDefinitionEntity processDefinition, BpmnModel bpmnModel) {
+         // check, if we have a dynamic event-based start for that process definition
+<span class="nc" id="L227">        List&lt;ExtensionElement&gt; correlationConfiguration = startEvent.getExtensionElements().get(BpmnXMLConstants.START_EVENT_CORRELATION_CONFIGURATION);</span>
+<span class="nc bnc" id="L228" title="All 4 branches missed.">        if (correlationConfiguration != null &amp;&amp; correlationConfiguration.size() &gt; 0) {</span>
+<span class="nc bnc" id="L229" title="All 2 branches missed.">            if (BpmnXMLConstants.START_EVENT_CORRELATION_MANUAL.equals(correlationConfiguration.get(0).getElementText())) {</span>
+<span class="nc" id="L230">                return;</span>
+            }
+        }
+
+<span class="nc" id="L234">        CommandContext commandContext = Context.getCommandContext();</span>
+<span class="nc" id="L235">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc" id="L236">        EventSubscriptionService eventSubscriptionService = processEngineConfiguration.getEventSubscriptionServiceConfiguration().getEventSubscriptionService();</span>
+<span class="nc" id="L237">        EventSubscriptionBuilder eventSubscriptionBuilder = eventSubscriptionService.createEventSubscriptionBuilder()</span>
+<span class="nc" id="L238">                .eventType(eventDefinitionKey)</span>
+<span class="nc" id="L239">                .activityId(startEvent.getId())</span>
+<span class="nc" id="L240">                .processDefinitionId(processDefinition.getId())</span>
+<span class="nc" id="L241">                .scopeType(ScopeTypes.BPMN)</span>
+<span class="nc" id="L242">                .configuration(CorrelationUtil.getCorrelationKey(BpmnXMLConstants.ELEMENT_EVENT_CORRELATION_PARAMETER, commandContext, startEvent, null));</span>
+                
+<span class="nc bnc" id="L244" title="All 2 branches missed.">        if (processDefinition.getTenantId() != null) {</span>
+<span class="nc" id="L245">            eventSubscriptionBuilder.tenantId(processDefinition.getTenantId());</span>
+        }
+
+<span class="nc" id="L248">        EventSubscription eventSubscription = eventSubscriptionBuilder.create();</span>
+<span class="nc" id="L249">        CountingEntityUtil.handleInsertEventSubscriptionEntityCount(eventSubscription);</span>
+<span class="nc" id="L250">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

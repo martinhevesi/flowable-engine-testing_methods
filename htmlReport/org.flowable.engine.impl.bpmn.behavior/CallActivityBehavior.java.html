@@ -1,0 +1,376 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CallActivityBehavior.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.bpmn.behavior</a> &gt; <span class="el_source">CallActivityBehavior.java</span></div><h1>CallActivityBehavior.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.flowable.engine.impl.bpmn.behavior;
+
+import static org.flowable.engine.impl.bpmn.helper.DynamicPropertyUtil.getActiveValue;
+
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.function.BiConsumer;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.bpmn.model.CallActivity;
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.IOParameter;
+import org.flowable.bpmn.model.MapExceptionEntry;
+import org.flowable.bpmn.model.Process;
+import org.flowable.bpmn.model.ValuedDataObject;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.FlowableObjectNotFoundException;
+import org.flowable.common.engine.api.delegate.Expression;
+import org.flowable.common.engine.api.delegate.event.FlowableEngineEventType;
+import org.flowable.common.engine.api.delegate.event.FlowableEventDispatcher;
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.impl.el.ExpressionManager;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.engine.DynamicBpmnConstants;
+import org.flowable.engine.ProcessEngineConfiguration;
+import org.flowable.engine.delegate.DelegateExecution;
+import org.flowable.engine.delegate.event.impl.FlowableEventBuilder;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.context.BpmnOverrideContext;
+import org.flowable.engine.impl.context.Context;
+import org.flowable.engine.impl.delegate.SubProcessActivityBehavior;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntity;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntityManager;
+import org.flowable.engine.impl.persistence.entity.ProcessDefinitionEntity;
+import org.flowable.engine.impl.persistence.entity.ProcessDefinitionEntityManager;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.engine.impl.util.EntityLinkUtil;
+import org.flowable.engine.impl.util.IOParameterUtil;
+import org.flowable.engine.impl.util.ProcessDefinitionUtil;
+import org.flowable.engine.interceptor.StartSubProcessInstanceAfterContext;
+import org.flowable.engine.interceptor.StartSubProcessInstanceBeforeContext;
+import org.flowable.engine.repository.ProcessDefinition;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+/**
+ * Implementation of the BPMN 2.0 call activity (limited currently to calling a subprocess and not (yet) a global task).
+ *
+ * @author Joram Barrez
+ * @author Tijs Rademakers
+ */
+public class CallActivityBehavior extends AbstractBpmnActivityBehavior implements SubProcessActivityBehavior {
+
+<span class="nc" id="L71">    private static final Logger LOGGER = LoggerFactory.getLogger(CallActivityBehavior.class);</span>
+
+    private static final long serialVersionUID = 1L;
+
+    private static final String EXPRESSION_REGEX = &quot;\\$+\\{+.+\\}&quot;;
+    public static final String CALLED_ELEMENT_TYPE_KEY = &quot;key&quot;;
+    public static final String CALLED_ELEMENT_TYPE_ID = &quot;id&quot;;
+
+    protected CallActivity callActivity;
+    protected String calledElementType;
+    protected Boolean fallbackToDefaultTenant;
+    protected List&lt;MapExceptionEntry&gt; mapExceptions;
+
+<span class="nc" id="L84">    public CallActivityBehavior(CallActivity callActivity) {</span>
+<span class="nc" id="L85">        this.callActivity = callActivity;</span>
+<span class="nc" id="L86">        this.calledElementType = callActivity.getCalledElementType();</span>
+<span class="nc" id="L87">        this.mapExceptions = callActivity.getMapExceptions();</span>
+<span class="nc" id="L88">        this.fallbackToDefaultTenant = callActivity.getFallbackToDefaultTenant();</span>
+<span class="nc" id="L89">    }</span>
+
+    @Override
+    public void execute(DelegateExecution execution) {
+
+<span class="nc" id="L94">        ExecutionEntity executionEntity = (ExecutionEntity) execution;</span>
+<span class="nc" id="L95">        CallActivity callActivity = (CallActivity) executionEntity.getCurrentFlowElement();</span>
+        
+<span class="nc" id="L97">        CommandContext commandContext = CommandContextUtil.getCommandContext();</span>
+
+<span class="nc" id="L99">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+
+<span class="nc" id="L101">        ProcessDefinition processDefinition = getProcessDefinition(execution, callActivity, processEngineConfiguration);</span>
+
+        // Get model from cache
+<span class="nc" id="L104">        Process subProcess = ProcessDefinitionUtil.getProcess(processDefinition.getId());</span>
+<span class="nc bnc" id="L105" title="All 2 branches missed.">        if (subProcess == null) {</span>
+<span class="nc" id="L106">            throw new FlowableException(&quot;Cannot start a sub process instance. Process model &quot; + processDefinition.getName() + &quot; (id = &quot; + processDefinition.getId() + &quot;) could not be found&quot;);</span>
+        }
+
+<span class="nc" id="L109">        FlowElement initialFlowElement = subProcess.getInitialFlowElement();</span>
+<span class="nc bnc" id="L110" title="All 2 branches missed.">        if (initialFlowElement == null) {</span>
+<span class="nc" id="L111">            throw new FlowableException(&quot;No start element found for process definition &quot; + processDefinition.getId());</span>
+        }
+
+        // Do not start a process instance if the process definition is suspended
+<span class="nc bnc" id="L115" title="All 2 branches missed.">        if (ProcessDefinitionUtil.isProcessDefinitionSuspended(processDefinition.getId())) {</span>
+<span class="nc" id="L116">            throw new FlowableException(&quot;Cannot start process instance. Process definition &quot; + processDefinition.getName() + &quot; (id = &quot; + processDefinition.getId() + &quot;) is suspended&quot;);</span>
+        }
+
+<span class="nc" id="L119">        ExecutionEntityManager executionEntityManager = CommandContextUtil.getExecutionEntityManager(commandContext);</span>
+<span class="nc" id="L120">        ExpressionManager expressionManager = processEngineConfiguration.getExpressionManager();</span>
+
+<span class="nc" id="L122">        String businessKey = null;</span>
+<span class="nc bnc" id="L123" title="All 2 branches missed.">        if (!StringUtils.isEmpty(callActivity.getBusinessKey())) {</span>
+<span class="nc" id="L124">            Expression expression = expressionManager.createExpression(callActivity.getBusinessKey());</span>
+<span class="nc" id="L125">            businessKey = expression.getValue(execution).toString();</span>
+
+<span class="nc bnc" id="L127" title="All 2 branches missed.">        } else if (callActivity.isInheritBusinessKey()) {</span>
+<span class="nc" id="L128">            ExecutionEntity processInstance = executionEntityManager.findById(execution.getProcessInstanceId());</span>
+<span class="nc" id="L129">            businessKey = processInstance.getBusinessKey();</span>
+        }
+
+<span class="nc" id="L132">        StartSubProcessInstanceBeforeContext instanceBeforeContext = new StartSubProcessInstanceBeforeContext(businessKey, null,</span>
+<span class="nc" id="L133">                callActivity.getProcessInstanceName(), new HashMap&lt;&gt;(), new HashMap&lt;&gt;(), executionEntity, callActivity.getInParameters(),</span>
+<span class="nc" id="L134">                callActivity.isInheritVariables(), initialFlowElement.getId(), initialFlowElement, subProcess, processDefinition);</span>
+        
+<span class="nc bnc" id="L136" title="All 2 branches missed.">        if (processEngineConfiguration.getStartProcessInstanceInterceptor() != null) {</span>
+<span class="nc" id="L137">            processEngineConfiguration.getStartProcessInstanceInterceptor().beforeStartSubProcessInstance(instanceBeforeContext);</span>
+        }
+
+<span class="nc" id="L140">        ExecutionEntity subProcessInstance = processEngineConfiguration.getExecutionEntityManager().createSubprocessInstance(</span>
+<span class="nc" id="L141">                        instanceBeforeContext.getProcessDefinition(), instanceBeforeContext.getCallActivityExecution(), </span>
+<span class="nc" id="L142">                        instanceBeforeContext.getBusinessKey(), instanceBeforeContext.getInitialActivityId());</span>
+
+<span class="nc" id="L144">        FlowableEventDispatcher eventDispatcher = processEngineConfiguration.getEventDispatcher();</span>
+<span class="nc bnc" id="L145" title="All 4 branches missed.">        if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L146">            eventDispatcher.dispatchEvent(</span>
+<span class="nc" id="L147">                    FlowableEventBuilder.createEntityEvent(FlowableEngineEventType.PROCESS_CREATED, subProcessInstance),</span>
+<span class="nc" id="L148">                    processEngineConfiguration.getEngineCfgKey());</span>
+        }
+
+        // process template-defined data objects
+<span class="nc" id="L152">        subProcessInstance.setVariables(processDataObjects(subProcess.getDataObjects()));</span>
+
+<span class="nc bnc" id="L154" title="All 2 branches missed.">        if (instanceBeforeContext.isInheritVariables()) {</span>
+
+<span class="nc" id="L156">            Map&lt;String, Object&gt; executionVariables = execution.getVariables();</span>
+<span class="nc" id="L157">            Map&lt;String, Object&gt; transientVariables = execution.getTransientVariables();</span>
+<span class="nc bnc" id="L158" title="All 2 branches missed.">            for (Map.Entry&lt;String, Object&gt; entry : executionVariables.entrySet()) {</span>
+
+                // The executionVariables contain all variables, including the transient variables.
+                // Hence why that map is iterated and the transient variables are split off
+<span class="nc" id="L162">                String variableName = entry.getKey();</span>
+<span class="nc bnc" id="L163" title="All 2 branches missed.">                if (transientVariables.containsKey(variableName)) {</span>
+<span class="nc" id="L164">                    instanceBeforeContext.getTransientVariables().put(variableName, entry.getValue());</span>
+
+                } else {
+<span class="nc" id="L167">                    instanceBeforeContext.getVariables().put(variableName, entry.getValue());</span>
+
+                }
+<span class="nc" id="L170">            }</span>
+
+        }
+
+<span class="nc" id="L174">        List&lt;IOParameter&gt; inParameters = instanceBeforeContext.getInParameters();</span>
+<span class="nc bnc" id="L175" title="All 2 branches missed.">        if (!inParameters.isEmpty()) {</span>
+<span class="nc" id="L176">            Map&lt;String, Object&gt; variables = instanceBeforeContext.getVariables();</span>
+            // copy process variables
+<span class="nc" id="L178">            IOParameterUtil.processInParameters(inParameters, execution, variables::put, variables::put, expressionManager);</span>
+        }
+
+<span class="nc bnc" id="L181" title="All 2 branches missed.">        if (!instanceBeforeContext.getVariables().isEmpty()) {</span>
+<span class="nc" id="L182">            initializeVariables(subProcessInstance, instanceBeforeContext.getVariables());</span>
+        }
+
+<span class="nc bnc" id="L185" title="All 2 branches missed.">        if (!instanceBeforeContext.getTransientVariables().isEmpty()) {</span>
+<span class="nc" id="L186">            initializeTransientVariables(subProcessInstance, instanceBeforeContext.getTransientVariables());</span>
+        }
+        
+        // Process instance name is resolved after setting the variables on the process instance, so they can be used in the expression
+<span class="nc" id="L190">        String processInstanceName = null;</span>
+<span class="nc bnc" id="L191" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(instanceBeforeContext.getProcessInstanceName())) {</span>
+<span class="nc" id="L192">            Expression processInstanceNameExpression = expressionManager.createExpression(instanceBeforeContext.getProcessInstanceName());</span>
+<span class="nc" id="L193">            processInstanceName = processInstanceNameExpression.getValue(subProcessInstance).toString();</span>
+<span class="nc" id="L194">            subProcessInstance.setName(processInstanceName);</span>
+        }
+
+<span class="nc bnc" id="L197" title="All 4 branches missed.">        if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L198">            eventDispatcher.dispatchEvent(FlowableEventBuilder.createEntityEvent(FlowableEngineEventType.ENTITY_INITIALIZED, subProcessInstance),</span>
+<span class="nc" id="L199">                    processEngineConfiguration.getEngineCfgKey());</span>
+        }
+        
+<span class="nc bnc" id="L202" title="All 2 branches missed.">        if (processEngineConfiguration.isEnableEntityLinks()) {</span>
+<span class="nc" id="L203">            EntityLinkUtil.createEntityLinks(execution.getProcessInstanceId(), executionEntity.getId(), callActivity.getId(),</span>
+<span class="nc" id="L204">                    subProcessInstance.getId(), ScopeTypes.BPMN);</span>
+        }
+
+<span class="nc bnc" id="L207" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(callActivity.getProcessInstanceIdVariableName())) {</span>
+<span class="nc" id="L208">            Expression expression = expressionManager.createExpression(callActivity.getProcessInstanceIdVariableName());</span>
+<span class="nc" id="L209">            String idVariableName = (String) expression.getValue(execution);</span>
+<span class="nc bnc" id="L210" title="All 2 branches missed.">            if (StringUtils.isNotEmpty(idVariableName)) {</span>
+<span class="nc" id="L211">                execution.setVariable(idVariableName, subProcessInstance.getId());</span>
+            }
+        }
+
+        // Create the first execution that will visit all the process definition elements
+<span class="nc" id="L216">        ExecutionEntity subProcessInitialExecution = executionEntityManager.createChildExecution(subProcessInstance);</span>
+<span class="nc" id="L217">        subProcessInitialExecution.setCurrentFlowElement(instanceBeforeContext.getInitialFlowElement());</span>
+
+<span class="nc bnc" id="L219" title="All 2 branches missed.">        if (processEngineConfiguration.getStartProcessInstanceInterceptor() != null) {</span>
+<span class="nc" id="L220">            StartSubProcessInstanceAfterContext instanceAfterContext = new StartSubProcessInstanceAfterContext(subProcessInstance, subProcessInitialExecution,</span>
+<span class="nc" id="L221">                instanceBeforeContext.getVariables(), instanceBeforeContext.getTransientVariables(), instanceBeforeContext.getCallActivityExecution(),</span>
+<span class="nc" id="L222">                instanceBeforeContext.getInParameters(), instanceBeforeContext.getInitialFlowElement(), instanceBeforeContext.getProcess(),</span>
+<span class="nc" id="L223">                instanceBeforeContext.getProcessDefinition());</span>
+
+<span class="nc" id="L225">            processEngineConfiguration.getStartProcessInstanceInterceptor().afterStartSubProcessInstance(instanceAfterContext);</span>
+        }
+
+<span class="nc" id="L228">        processEngineConfiguration.getActivityInstanceEntityManager().recordSubProcessInstanceStart(executionEntity, subProcessInstance);</span>
+
+<span class="nc" id="L230">        CommandContextUtil.getAgenda().planContinueProcessOperation(subProcessInitialExecution);</span>
+
+<span class="nc bnc" id="L232" title="All 4 branches missed.">        if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L233">            Map&lt;String, Object&gt; allVariables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L234">            allVariables.putAll(instanceBeforeContext.getVariables());</span>
+<span class="nc" id="L235">            allVariables.putAll(instanceBeforeContext.getTransientVariables());</span>
+<span class="nc" id="L236">            eventDispatcher.dispatchEvent(FlowableEventBuilder.createProcessStartedEvent(subProcessInitialExecution, allVariables, false),</span>
+<span class="nc" id="L237">                    processEngineConfiguration.getEngineCfgKey());</span>
+        }
+        
+<span class="nc" id="L240">    }</span>
+
+    protected ProcessDefinition getProcessDefinition(DelegateExecution execution, CallActivity callActivity, ProcessEngineConfigurationImpl processEngineConfiguration) {
+        ProcessDefinition processDefinition;
+<span class="nc bnc" id="L244" title="All 5 branches missed.">        switch (StringUtils.isNotEmpty(calledElementType) ? calledElementType : CALLED_ELEMENT_TYPE_KEY) {</span>
+            case CALLED_ELEMENT_TYPE_ID:
+<span class="nc" id="L246">                processDefinition = getProcessDefinitionById(execution, processEngineConfiguration);</span>
+<span class="nc" id="L247">                break;</span>
+            case CALLED_ELEMENT_TYPE_KEY:
+<span class="nc" id="L249">                processDefinition = getProcessDefinitionByKey(execution, callActivity.isSameDeployment(), processEngineConfiguration);</span>
+<span class="nc" id="L250">                break;</span>
+            default:
+<span class="nc" id="L252">                throw new FlowableException(&quot;Unrecognized calledElementType [&quot; + calledElementType + &quot;] in &quot; + execution);</span>
+        }
+<span class="nc" id="L254">        return processDefinition;</span>
+    }
+
+    @Override
+    public void completing(DelegateExecution execution, DelegateExecution subProcessInstance) throws Exception {
+        // only data. no control flow available on this execution.
+
+<span class="nc" id="L261">        ExpressionManager expressionManager = CommandContextUtil.getProcessEngineConfiguration().getExpressionManager();</span>
+
+        // copy process variables
+<span class="nc" id="L264">        ExecutionEntity executionEntity = (ExecutionEntity) execution;</span>
+<span class="nc" id="L265">        CallActivity callActivity = (CallActivity) executionEntity.getCurrentFlowElement();</span>
+
+<span class="nc" id="L267">        List&lt;IOParameter&gt; outParameters = callActivity.getOutParameters();</span>
+<span class="nc bnc" id="L268" title="All 2 branches missed.">        if (!outParameters.isEmpty()) {</span>
+<span class="nc" id="L269">            BiConsumer&lt;String, Object&gt; variableConsumer = (variableName, value) -&gt; {</span>
+<span class="nc bnc" id="L270" title="All 2 branches missed.">                if (callActivity.isUseLocalScopeForOutParameters()) {</span>
+<span class="nc" id="L271">                    executionEntity.setVariableLocal(variableName, value);</span>
+                } else {
+<span class="nc" id="L273">                    executionEntity.setVariable(variableName, value);</span>
+                }
+<span class="nc" id="L275">            };</span>
+
+<span class="nc" id="L277">            IOParameterUtil.processOutParameters(outParameters, subProcessInstance, variableConsumer, variableConsumer, expressionManager);</span>
+        }
+<span class="nc" id="L279">    }</span>
+
+    @Override
+    public void completed(DelegateExecution execution) throws Exception {
+        // only control flow. no sub process instance data available
+
+<span class="nc" id="L285">        ExecutionEntity executionEntity = (ExecutionEntity) execution;</span>
+<span class="nc bnc" id="L286" title="All 4 branches missed.">        if (executionEntity.isSuspended() || ProcessDefinitionUtil.isProcessDefinitionSuspended(execution.getProcessDefinitionId())) {</span>
+<span class="nc" id="L287">            throw new FlowableException(&quot;Cannot complete process instance. Parent process instance &quot; + executionEntity + &quot; is suspended&quot;);</span>
+        }
+
+<span class="nc" id="L290">        leave(execution);</span>
+<span class="nc" id="L291">    }</span>
+
+    protected ProcessDefinition getProcessDefinitionById(DelegateExecution execution, ProcessEngineConfigurationImpl processEngineConfiguration) {
+<span class="nc" id="L294">        return CommandContextUtil.getProcessEngineConfiguration().getDeploymentManager()</span>
+<span class="nc" id="L295">            .findDeployedProcessDefinitionById(getCalledElementValue(execution, processEngineConfiguration));</span>
+    }
+
+    protected ProcessDefinition getProcessDefinitionByKey(DelegateExecution execution, boolean isSameDeployment, ProcessEngineConfigurationImpl processEngineConfiguration) {
+<span class="nc" id="L299">        String processDefinitionKey = getCalledElementValue(execution, processEngineConfiguration);</span>
+<span class="nc" id="L300">        String tenantId = execution.getTenantId();</span>
+
+<span class="nc" id="L302">        ProcessDefinitionEntityManager processDefinitionEntityManager = Context.getProcessEngineConfiguration().getProcessDefinitionEntityManager();</span>
+        ProcessDefinitionEntity processDefinition;
+
+<span class="nc bnc" id="L305" title="All 2 branches missed.">        if (isSameDeployment) {</span>
+<span class="nc" id="L306">            String deploymentId = ProcessDefinitionUtil.getProcessDefinition(execution.getProcessDefinitionId()).getDeploymentId();</span>
+<span class="nc bnc" id="L307" title="All 4 branches missed.">            if (tenantId == null || ProcessEngineConfiguration.NO_TENANT_ID.equals(tenantId)) {</span>
+<span class="nc" id="L308">                processDefinition = processDefinitionEntityManager.findProcessDefinitionByDeploymentAndKey(deploymentId, processDefinitionKey);</span>
+            } else {
+<span class="nc" id="L310">                processDefinition = processDefinitionEntityManager.findProcessDefinitionByDeploymentAndKeyAndTenantId(deploymentId, processDefinitionKey, tenantId);</span>
+            }
+
+<span class="nc bnc" id="L313" title="All 2 branches missed.">            if (processDefinition != null) {</span>
+<span class="nc" id="L314">                return processDefinition;</span>
+            }
+        }
+
+<span class="nc bnc" id="L318" title="All 4 branches missed.">        if (tenantId == null || ProcessEngineConfiguration.NO_TENANT_ID.equals(tenantId)) {</span>
+<span class="nc" id="L319">            processDefinition = processDefinitionEntityManager.findLatestProcessDefinitionByKey(processDefinitionKey);</span>
+        } else {
+<span class="nc" id="L321">            processDefinition = processDefinitionEntityManager.findLatestProcessDefinitionByKeyAndTenantId(processDefinitionKey, tenantId);</span>
+<span class="nc bnc" id="L322" title="All 8 branches missed.">            if (processDefinition == null &amp;&amp; ((this.fallbackToDefaultTenant != null &amp;&amp; this.fallbackToDefaultTenant) || processEngineConfiguration.isFallbackToDefaultTenant())) {</span>
+
+<span class="nc" id="L324">                String defaultTenant = processEngineConfiguration.getDefaultTenantProvider().getDefaultTenant(tenantId, ScopeTypes.BPMN, processDefinitionKey);</span>
+<span class="nc bnc" id="L325" title="All 2 branches missed.">                if (StringUtils.isNotEmpty(defaultTenant)) {</span>
+<span class="nc" id="L326">                    processDefinition = processDefinitionEntityManager.findLatestProcessDefinitionByKeyAndTenantId(</span>
+                                    processDefinitionKey, defaultTenant);
+                } else {
+<span class="nc" id="L329">                    processDefinition = processDefinitionEntityManager.findLatestProcessDefinitionByKey(processDefinitionKey);</span>
+                }
+            }
+        }
+
+<span class="nc bnc" id="L334" title="All 2 branches missed.">        if (processDefinition == null) {</span>
+<span class="nc" id="L335">            throw new FlowableObjectNotFoundException(&quot;Process definition &quot; + processDefinitionKey + &quot; was not found in sameDeployment[&quot;+ isSameDeployment +</span>
+                &quot;] tenantId[&quot;+ tenantId+ &quot;] fallbackToDefaultTenant[&quot;+ this.fallbackToDefaultTenant + &quot;]&quot;);
+        }
+<span class="nc" id="L338">        return processDefinition;</span>
+    }
+
+    protected String getCalledElementValue(DelegateExecution execution, ProcessEngineConfigurationImpl processEngineConfiguration) {
+<span class="nc" id="L342">        String calledElementValue = callActivity.getCalledElement();</span>
+<span class="nc bnc" id="L343" title="All 2 branches missed.">        if (Context.getProcessEngineConfiguration().isEnableProcessDefinitionInfoCache()){</span>
+<span class="nc" id="L344">            ObjectNode taskElementProperties = BpmnOverrideContext</span>
+<span class="nc" id="L345">                    .getBpmnOverrideElementProperties(callActivity.getId(), execution.getProcessDefinitionId());</span>
+<span class="nc" id="L346">            calledElementValue = getActiveValue(callActivity.getCalledElement(), DynamicBpmnConstants.CALL_ACTIVITY_CALLED_ELEMENT, taskElementProperties);</span>
+        }
+<span class="nc bnc" id="L348" title="All 4 branches missed.">        if (StringUtils.isNotEmpty(calledElementValue) &amp;&amp; calledElementValue.matches(EXPRESSION_REGEX)) {</span>
+<span class="nc" id="L349">            calledElementValue = (String) processEngineConfiguration.getExpressionManager().createExpression(calledElementValue).getValue(execution);</span>
+        }
+<span class="nc" id="L351">        return calledElementValue;</span>
+    }
+
+    protected Map&lt;String, Object&gt; processDataObjects(Collection&lt;ValuedDataObject&gt; dataObjects) {
+<span class="nc" id="L355">        Map&lt;String, Object&gt; variablesMap = new HashMap&lt;&gt;();</span>
+        // convert data objects to process variables
+<span class="nc bnc" id="L357" title="All 2 branches missed.">        if (dataObjects != null) {</span>
+<span class="nc" id="L358">            variablesMap = new HashMap&lt;&gt;(dataObjects.size());</span>
+<span class="nc bnc" id="L359" title="All 2 branches missed.">            for (ValuedDataObject dataObject : dataObjects) {</span>
+<span class="nc" id="L360">                variablesMap.put(dataObject.getName(), dataObject.getValue());</span>
+<span class="nc" id="L361">            }</span>
+        }
+<span class="nc" id="L363">        return variablesMap;</span>
+    }
+
+    // Allow a subclass to override how variables are initialized.
+    protected void initializeVariables(ExecutionEntity subProcessInstance, Map&lt;String, Object&gt; variables) {
+<span class="nc" id="L368">        subProcessInstance.setVariables(variables);</span>
+<span class="nc" id="L369">    }</span>
+
+    // Allow a subclass to override how variables are initialized.
+    protected void initializeTransientVariables(ExecutionEntity subProcessInstance, Map&lt;String, Object&gt; transientVariables) {
+<span class="nc" id="L373">        subProcessInstance.setTransientVariables(transientVariables);</span>
+<span class="nc" id="L374">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,742 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Util.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.common.engine.impl.javax.el</a> &gt; <span class="el_source">Util.java</span></div><h1>Util.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.common.engine.impl.javax.el;
+
+import java.lang.reflect.Array;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Set;
+
+// This class is copied from https://github.com/apache/tomcat/tree/febda9acf2a9d6ed833382c4c49eec8964bc1431/java/jakarta/el
+// This class has been slightly modified in order to support the use cases for Flowable.
+// The following modifications have been done:
+// Remove getExpressionFactory static method -&gt; We are instead passing the expression Factory to the appropriate methods in this class
+// Remove nullTcclFactory and factoryCache static fields -&gt; They are only relevant to the getExpressionFactory method, and we don't need that one
+// Remove private static CacheKey, CacheValue and PrivilegedGetTccl classes -&gt; They are only relevant to the getExpressionFactory method, and we don't need that one
+// Remove private static getContextLoader method -&gt; Only relevant for the getExpressionFactory method, abd we don't need that one
+// Remove handleThrowable static method -&gt; We are not using it
+// Remove findConstructor static method -&gt; We are not using it
+// Throw fixed error messages instead of using LocalString resource bundle
+// Remove message static method -&gt; ew are not using it
+// Add ExpressionFactory as last method parameter to findMethod, findWrapper, isCoercibleFrom and buildParameters
+// Make public methods accessible if they aren't
+// The findWrapper method has been enhanced with the implementation from https://github.com/eclipse-ee4j/el-ri/blob/4e7c61bce9e7750c2fa6fb85476e33f17b0246b4/api/src/main/java/jakarta/el/ELUtil.java
+// This method follows the JLS more closely and allows picking of ambiguous overloaded methods better.
+// The code in findWrapper is not identical to the one from ELUtil in order to make it more readable for the maintainers of Flowable
+
+// In order for this class to be more easily kept in sync with the Tomcat implementation we should not do style changes, nor fix warnings.
+// Keeping the modifications to minimum would make it easier to keep this class in sync
+<span class="nc" id="L47">class Util {</span>
+
+<span class="nc" id="L49">    private static final Class&lt;?&gt;[] EMPTY_CLASS_ARRAY = new Class&lt;?&gt;[0];</span>
+<span class="nc" id="L50">    private static final Object[] EMPTY_OBJECT_ARRAY = new Object[0];</span>
+
+    /*
+     * This method duplicates code in org.apache.el.util.ReflectionUtil. When
+     * making changes keep the code in sync.
+     */
+    static Method findMethod(Class&lt;?&gt; clazz, Object base, String methodName,
+            Class&lt;?&gt;[] paramTypes, Object[] paramValues, ExpressionFactory factory) {
+
+<span class="nc bnc" id="L59" title="All 4 branches missed.">        if (clazz == null || methodName == null) {</span>
+<span class="nc" id="L60">            throw new MethodNotFoundException(&quot;Method not found: &quot; + clazz + &quot;.&quot; + methodName + &quot;(&quot; + paramString(paramTypes) + &quot;)&quot;);</span>
+        }
+
+<span class="nc bnc" id="L63" title="All 2 branches missed.">        if (paramTypes == null) {</span>
+<span class="nc" id="L64">            paramTypes = getTypesFromValues(paramValues);</span>
+        }
+
+<span class="nc" id="L67">        Method[] methods = clazz.getMethods();</span>
+
+<span class="nc" id="L69">        List&lt;Wrapper&lt;Method&gt;&gt; wrappers = Wrapper.wrap(methods, methodName);</span>
+
+<span class="nc" id="L71">        Wrapper&lt;Method&gt; result = findWrapper(clazz, wrappers, methodName, paramTypes, paramValues, factory);</span>
+
+<span class="nc" id="L73">        return getMethod(clazz, base, result.unWrap());</span>
+    }
+
+    /*
+     * This method duplicates code in org.apache.el.util.ReflectionUtil. When
+     * making changes keep the code in sync.
+     *
+     * Parts of this method and related methods (distributed under the Apache 2.0 License):
+     * Copyright (c) 1997, 2019 Oracle and/or its affiliates and others.
+     * All rights reserved.
+     * Copyright 2004 The Apache Software Foundation
+     */
+    @SuppressWarnings(&quot;null&quot;)
+    private static &lt;T&gt; Wrapper&lt;T&gt; findWrapper(Class&lt;?&gt; clazz, List&lt;Wrapper&lt;T&gt;&gt; wrappers,
+            String name, Class&lt;?&gt;[] paramTypes, Object[] paramValues, ExpressionFactory factory) {
+
+        // Flowable comment: The implementation in ELUtil has 3 candidates lists.
+        // This is changed here to have one list and tracking the current candidates type.
+        // Since only the most specific one will be used
+<span class="nc" id="L92">        List&lt;Wrapper&lt;T&gt;&gt; candidates = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L93">        CandidatesType candidatesType = CandidatesType.UNKNOWN;</span>
+
+<span class="nc" id="L95">        int paramCount = paramTypes.length;</span>
+
+<span class="nc bnc" id="L97" title="All 2 branches missed.">        for (Wrapper&lt;T&gt; w : wrappers) {</span>
+<span class="nc" id="L98">            Class&lt;?&gt;[] mParamTypes = w.getParameterTypes();</span>
+            int mParamCount;
+<span class="nc bnc" id="L100" title="All 2 branches missed.">            if (mParamTypes == null) {</span>
+<span class="nc" id="L101">                mParamCount = 0;</span>
+            } else {
+<span class="nc" id="L103">                mParamCount = mParamTypes.length;</span>
+            }
+
+            // Check the number of parameters
+            // Multiple tests to improve readability
+<span class="nc bnc" id="L108" title="All 4 branches missed.">            if (!w.isVarArgs() &amp;&amp; paramCount != mParamCount) {</span>
+                // Method has wrong number of parameters
+<span class="nc" id="L110">                continue;</span>
+            }
+<span class="nc bnc" id="L112" title="All 4 branches missed.">            if (w.isVarArgs() &amp;&amp; paramCount &lt; mParamCount -1) {</span>
+                // Method has wrong number of parameters
+<span class="nc" id="L114">                continue;</span>
+            }
+<span class="nc bnc" id="L116" title="All 8 branches missed.">            if (w.isVarArgs() &amp;&amp; paramCount == mParamCount &amp;&amp; paramValues != null &amp;&amp;</span>
+<span class="nc bnc" id="L117" title="All 2 branches missed.">                    paramValues.length &gt; paramCount &amp;&amp; !paramTypes[mParamCount -1].isArray()) {</span>
+                // Method arguments don't match
+<span class="nc" id="L119">                continue;</span>
+            }
+<span class="nc bnc" id="L121" title="All 8 branches missed.">            if (w.isVarArgs() &amp;&amp; paramCount &gt; mParamCount &amp;&amp; paramValues != null &amp;&amp;</span>
+                    paramValues.length != paramCount) {
+                // Might match a different varargs method
+<span class="nc" id="L124">                continue;</span>
+            }
+<span class="nc bnc" id="L126" title="All 6 branches missed.">            if (!w.isVarArgs() &amp;&amp; paramValues != null &amp;&amp; paramCount != paramValues.length) {</span>
+                // Might match a different varargs method
+<span class="nc" id="L128">                continue;</span>
+            }
+
+            // Check the parameters match
+<span class="nc" id="L132">            boolean assignable = false;</span>
+<span class="nc" id="L133">            boolean coercible = false;</span>
+<span class="nc" id="L134">            boolean varArgs = false;</span>
+<span class="nc" id="L135">            int exactMatch = 0;</span>
+<span class="nc" id="L136">            boolean noMatch = false;</span>
+<span class="nc bnc" id="L137" title="All 2 branches missed.">            for (int i = 0; i &lt; mParamCount; i++) {</span>
+                // Can't be null
+<span class="nc bnc" id="L139" title="All 4 branches missed.">                if (w.isVarArgs() &amp;&amp; i == (mParamCount - 1)) {</span>
+<span class="nc" id="L140">                    varArgs = true;</span>
+                    // exact var array type match
+<span class="nc bnc" id="L142" title="All 2 branches missed.">                    if (mParamCount == paramCount) {</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">                        if (mParamTypes[i] == paramTypes[i]) {</span>
+<span class="nc" id="L144">                            continue;</span>
+                        }
+                    }
+
+<span class="nc bnc" id="L148" title="All 6 branches missed.">                    if (i == paramCount || (paramValues != null &amp;&amp; paramValues.length == i)) {</span>
+                        // Nothing is passed as varargs
+<span class="nc" id="L150">                        break;</span>
+                    }
+<span class="nc" id="L152">                    Class&lt;?&gt; varType = mParamTypes[i].getComponentType();</span>
+<span class="nc bnc" id="L153" title="All 2 branches missed.">                    for (int j = i; j &lt; paramCount; j++) {</span>
+<span class="nc bnc" id="L154" title="All 2 branches missed.">                        if (!isAssignableFrom(paramTypes[j], varType)) {</span>
+<span class="nc bnc" id="L155" title="All 2 branches missed.">                            if (paramValues == null) {</span>
+<span class="nc" id="L156">                                noMatch = true;</span>
+<span class="nc" id="L157">                                break;</span>
+                            } else {
+<span class="nc bnc" id="L159" title="All 2 branches missed.">                                if (!isCoercibleFrom(paramValues[j], varType, factory)) {</span>
+<span class="nc" id="L160">                                    noMatch = true;</span>
+<span class="nc" id="L161">                                    break;</span>
+                                }
+                            }
+                        }
+                    }
+<span class="nc" id="L166">                } else {</span>
+<span class="nc bnc" id="L167" title="All 2 branches missed.">                    if (mParamTypes[i].equals(paramTypes[i])) {</span>
+<span class="nc" id="L168">                        exactMatch++;</span>
+<span class="nc bnc" id="L169" title="All 4 branches missed.">                    } else if (paramTypes[i] != null &amp;&amp; isAssignableFrom(paramTypes[i], mParamTypes[i])) {</span>
+<span class="nc" id="L170">                        assignable = true;</span>
+                    } else {
+<span class="nc bnc" id="L172" title="All 2 branches missed.">                        if (paramValues == null) {</span>
+<span class="nc" id="L173">                            noMatch = true;</span>
+<span class="nc" id="L174">                            break;</span>
+                        } else {
+<span class="nc bnc" id="L176" title="All 2 branches missed.">                            if (isCoercibleFrom(paramValues[i], mParamTypes[i], factory)) {</span>
+<span class="nc" id="L177">                                coercible = true;</span>
+                            } else {
+<span class="nc" id="L179">                                noMatch = true;</span>
+<span class="nc" id="L180">                                break;</span>
+                            }
+                        }
+                    }
+                }
+            }
+<span class="nc bnc" id="L186" title="All 2 branches missed.">            if (noMatch) {</span>
+<span class="nc" id="L187">                continue;</span>
+            }
+
+            // If a method is found where every parameter matches exactly,
+            // return it
+<span class="nc bnc" id="L192" title="All 2 branches missed.">            if (exactMatch == paramCount) {</span>
+<span class="nc" id="L193">                return w;</span>
+            }
+
+<span class="nc bnc" id="L196" title="All 2 branches missed.">            if (varArgs) {</span>
+<span class="nc bnc" id="L197" title="All 2 branches missed.">                if (candidatesType == CandidatesType.VAR_ARGS) {</span>
+<span class="nc" id="L198">                    candidates.add(w);</span>
+<span class="nc bnc" id="L199" title="All 2 branches missed.">                } else if (candidatesType.compareTo(CandidatesType.VAR_ARGS) &lt; 0) {</span>
+<span class="nc" id="L200">                    candidatesType = CandidatesType.VAR_ARGS;</span>
+<span class="nc" id="L201">                    candidates.clear();</span>
+<span class="nc" id="L202">                    candidates.add(w);</span>
+                }
+<span class="nc bnc" id="L204" title="All 2 branches missed.">            } else if (coercible) {</span>
+<span class="nc bnc" id="L205" title="All 2 branches missed.">                if (candidatesType == CandidatesType.COERCIBLE) {</span>
+<span class="nc" id="L206">                    candidates.add(w);</span>
+<span class="nc bnc" id="L207" title="All 2 branches missed.">                } else if (candidatesType.compareTo(CandidatesType.COERCIBLE) &lt; 0) {</span>
+<span class="nc" id="L208">                    candidatesType = CandidatesType.COERCIBLE;</span>
+<span class="nc" id="L209">                    candidates.clear();</span>
+<span class="nc" id="L210">                    candidates.add(w);</span>
+                }
+<span class="nc bnc" id="L212" title="All 2 branches missed.">            } else if (assignable) {</span>
+<span class="nc bnc" id="L213" title="All 2 branches missed.">                if (candidatesType == CandidatesType.ASSIGNABLE) {</span>
+<span class="nc" id="L214">                    candidates.add(w);</span>
+<span class="nc bnc" id="L215" title="All 2 branches missed.">                } else if (candidatesType.compareTo(CandidatesType.ASSIGNABLE) &lt; 0) {</span>
+<span class="nc" id="L216">                    candidatesType = CandidatesType.ASSIGNABLE;</span>
+<span class="nc" id="L217">                    candidates.clear();</span>
+<span class="nc" id="L218">                    candidates.add(w);</span>
+                }
+            }
+<span class="nc" id="L221">        }</span>
+
+<span class="nc bnc" id="L223" title="All 2 branches missed.">        if (!candidates.isEmpty()) {</span>
+<span class="nc" id="L224">            String errorMsg = &quot;Unable to find unambiguous method: &quot; + clazz + &quot;.&quot; + name + &quot;(&quot; + paramString(paramTypes) + &quot;)&quot;;</span>
+<span class="nc bnc" id="L225" title="All 2 branches missed.">            return findMostSpecificWrapper(candidates, paramTypes, candidatesType == CandidatesType.ASSIGNABLE, errorMsg);</span>
+        }
+
+<span class="nc" id="L228">        throw new MethodNotFoundException(&quot;Method not found: &quot; + clazz + &quot;.&quot; + name + &quot;(&quot; + paramString(paramTypes) + &quot;)&quot;);</span>
+    }
+
+    /*
+     * This method duplicates code in com.sun.el.util.ReflectionUtil. When making changes keep the code in sync.
+     */
+    private static &lt;T&gt; Wrapper&lt;T&gt; findMostSpecificWrapper(List&lt;Wrapper&lt;T&gt;&gt; candidates, Class&lt;?&gt;[] matchingTypes, boolean elSpecific, String errorMsg) {
+<span class="nc" id="L235">        List&lt;Wrapper&lt;T&gt;&gt; ambiguouses = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L236" title="All 2 branches missed.">        for (Wrapper&lt;T&gt; candidate : candidates) {</span>
+<span class="nc" id="L237">            boolean lessSpecific = false;</span>
+
+<span class="nc" id="L239">            Iterator&lt;Wrapper&lt;T&gt;&gt; it = ambiguouses.iterator();</span>
+<span class="nc bnc" id="L240" title="All 2 branches missed.">            while (it.hasNext()) {</span>
+<span class="nc" id="L241">                int result = isMoreSpecific(candidate, it.next(), matchingTypes, elSpecific);</span>
+<span class="nc bnc" id="L242" title="All 2 branches missed.">                if (result == 1) {</span>
+<span class="nc" id="L243">                    it.remove();</span>
+<span class="nc bnc" id="L244" title="All 2 branches missed.">                } else if (result == -1) {</span>
+<span class="nc" id="L245">                    lessSpecific = true;</span>
+                }
+<span class="nc" id="L247">            }</span>
+
+<span class="nc bnc" id="L249" title="All 2 branches missed.">            if (!lessSpecific) {</span>
+<span class="nc" id="L250">                ambiguouses.add(candidate);</span>
+            }
+<span class="nc" id="L252">        }</span>
+
+<span class="nc bnc" id="L254" title="All 2 branches missed.">        if (ambiguouses.size() &gt; 1) {</span>
+<span class="nc" id="L255">            throw new MethodNotFoundException(errorMsg);</span>
+        }
+
+<span class="nc" id="L258">        return ambiguouses.get(0);</span>
+    }
+
+    /*
+     * This method duplicates code in com.sun.el.util.ReflectionUtil. When making changes keep the code in sync.
+     */
+    private static &lt;T&gt; int isMoreSpecific(Wrapper&lt;T&gt; wrapper1, Wrapper&lt;T&gt; wrapper2, Class&lt;?&gt;[] matchingTypes, boolean elSpecific) {
+<span class="nc" id="L265">        Class&lt;?&gt;[] paramTypes1 = wrapper1.getParameterTypes();</span>
+<span class="nc" id="L266">        Class&lt;?&gt;[] paramTypes2 = wrapper2.getParameterTypes();</span>
+
+<span class="nc bnc" id="L268" title="All 2 branches missed.">        if (wrapper1.isVarArgs()) {</span>
+            // JLS8 15.12.2.5 Choosing the Most Specific Method
+<span class="nc" id="L270">            int length = Math.max(Math.max(paramTypes1.length, paramTypes2.length), matchingTypes.length);</span>
+<span class="nc" id="L271">            paramTypes1 = getComparingParamTypesForVarArgsMethod(paramTypes1, length);</span>
+<span class="nc" id="L272">            paramTypes2 = getComparingParamTypesForVarArgsMethod(paramTypes2, length);</span>
+
+<span class="nc bnc" id="L274" title="All 2 branches missed.">            if (length &gt; matchingTypes.length) {</span>
+<span class="nc" id="L275">                Class&lt;?&gt;[] matchingTypes2 = new Class&lt;?&gt;[length];</span>
+<span class="nc" id="L276">                System.arraycopy(matchingTypes, 0, matchingTypes2, 0, matchingTypes.length);</span>
+<span class="nc" id="L277">                matchingTypes = matchingTypes2;</span>
+            }
+        }
+
+<span class="nc" id="L281">        int result = 0;</span>
+<span class="nc bnc" id="L282" title="All 2 branches missed.">        for (int i = 0; i &lt; paramTypes1.length; i++) {</span>
+<span class="nc bnc" id="L283" title="All 2 branches missed.">            if (paramTypes1[i] != paramTypes2[i]) {</span>
+<span class="nc" id="L284">                int r2 = isMoreSpecific(paramTypes1[i], paramTypes2[i], matchingTypes[i], elSpecific);</span>
+<span class="nc bnc" id="L285" title="All 2 branches missed.">                if (r2 == 1) {</span>
+<span class="nc bnc" id="L286" title="All 2 branches missed.">                    if (result == -1) {</span>
+<span class="nc" id="L287">                        return 0;</span>
+                    }
+<span class="nc" id="L289">                    result = 1;</span>
+<span class="nc bnc" id="L290" title="All 2 branches missed.">                } else if (r2 == -1) {</span>
+<span class="nc bnc" id="L291" title="All 2 branches missed.">                    if (result == 1) {</span>
+<span class="nc" id="L292">                        return 0;</span>
+                    }
+<span class="nc" id="L294">                    result = -1;</span>
+                } else {
+<span class="nc" id="L296">                    return 0;</span>
+                }
+            }
+        }
+
+<span class="nc bnc" id="L301" title="All 2 branches missed.">        if (result == 0) {</span>
+            // The nature of bridge methods is such that it actually
+            // doesn't matter which one we pick as long as we pick
+            // one. That said, pick the 'right' one (the non-bridge
+            // one) anyway.
+<span class="nc" id="L306">            result = Boolean.compare(wrapper1.isBridge(), wrapper2.isBridge());</span>
+        }
+
+<span class="nc" id="L309">        return result;</span>
+    }
+
+    /*
+     * This method duplicates code in com.sun.el.util.ReflectionUtil. When making changes keep the code in sync.
+     */
+    private static int isMoreSpecific(Class&lt;?&gt; type1, Class&lt;?&gt; type2, Class&lt;?&gt; matchingType, boolean elSpecific) {
+<span class="nc" id="L316">        type1 = getBoxingTypeIfPrimitive(type1);</span>
+<span class="nc" id="L317">        type2 = getBoxingTypeIfPrimitive(type2);</span>
+<span class="nc bnc" id="L318" title="All 2 branches missed.">        if (type2.isAssignableFrom(type1)) {</span>
+<span class="nc" id="L319">            return 1;</span>
+<span class="nc bnc" id="L320" title="All 2 branches missed.">        } else if (type1.isAssignableFrom(type2)) {</span>
+<span class="nc" id="L321">            return -1;</span>
+        } else {
+<span class="nc bnc" id="L323" title="All 2 branches missed.">            if (elSpecific) {</span>
+                /*
+                 * Number will be treated as more specific
+                 *
+                 * ASTInteger only return Long or BigInteger, no Byte / Short / Integer. ASTFloatingPoint also.
+                 *
+                 */
+<span class="nc bnc" id="L330" title="All 4 branches missed.">                if (matchingType != null &amp;&amp; Number.class.isAssignableFrom(matchingType)) {</span>
+<span class="nc bnc" id="L331" title="All 4 branches missed.">                    boolean b1 = Number.class.isAssignableFrom(type1) || type1.isPrimitive();</span>
+<span class="nc bnc" id="L332" title="All 4 branches missed.">                    boolean b2 = Number.class.isAssignableFrom(type2) || type2.isPrimitive();</span>
+<span class="nc bnc" id="L333" title="All 4 branches missed.">                    if (b1 &amp;&amp; !b2) {</span>
+<span class="nc" id="L334">                        return 1;</span>
+<span class="nc bnc" id="L335" title="All 4 branches missed.">                    } else if (b2 &amp;&amp; !b1) {</span>
+<span class="nc" id="L336">                        return -1;</span>
+                    } else {
+<span class="nc" id="L338">                        return 0;</span>
+                    }
+                }
+
+<span class="nc" id="L342">                return 0;</span>
+            } else {
+<span class="nc" id="L344">                return 0;</span>
+            }
+        }
+    }
+
+    /*
+     * This method duplicates code in com.sun.el.util.ReflectionUtil. When making changes keep the code in sync.
+     */
+    private static Class&lt;?&gt; getBoxingTypeIfPrimitive(Class&lt;?&gt; clazz) {
+<span class="nc bnc" id="L353" title="All 2 branches missed.">        if (clazz.isPrimitive()) {</span>
+<span class="nc bnc" id="L354" title="All 2 branches missed.">            if (clazz == Boolean.TYPE) {</span>
+<span class="nc" id="L355">                return Boolean.class;</span>
+            }
+<span class="nc bnc" id="L357" title="All 2 branches missed.">            if (clazz == Character.TYPE) {</span>
+<span class="nc" id="L358">                return Character.class;</span>
+            }
+<span class="nc bnc" id="L360" title="All 2 branches missed.">            if (clazz == Byte.TYPE) {</span>
+<span class="nc" id="L361">                return Byte.class;</span>
+            }
+<span class="nc bnc" id="L363" title="All 2 branches missed.">            if (clazz == Short.TYPE) {</span>
+<span class="nc" id="L364">                return Short.class;</span>
+            }
+<span class="nc bnc" id="L366" title="All 2 branches missed.">            if (clazz == Integer.TYPE) {</span>
+<span class="nc" id="L367">                return Integer.class;</span>
+            }
+<span class="nc bnc" id="L369" title="All 2 branches missed.">            if (clazz == Long.TYPE) {</span>
+<span class="nc" id="L370">                return Long.class;</span>
+            }
+<span class="nc bnc" id="L372" title="All 2 branches missed.">            if (clazz == Float.TYPE) {</span>
+<span class="nc" id="L373">                return Float.class;</span>
+            }
+
+<span class="nc" id="L376">            return Double.class;</span>
+        } else {
+<span class="nc" id="L378">            return clazz;</span>
+        }
+    }
+
+    /*
+     * This method duplicates code in com.sun.el.util.ReflectionUtil. When making changes keep the code in sync.
+     */
+    private static Class&lt;?&gt;[] getComparingParamTypesForVarArgsMethod(Class&lt;?&gt;[] paramTypes, int length) {
+<span class="nc" id="L386">        Class&lt;?&gt;[] result = new Class&lt;?&gt;[length];</span>
+<span class="nc" id="L387">        System.arraycopy(paramTypes, 0, result, 0, paramTypes.length - 1);</span>
+<span class="nc" id="L388">        Class&lt;?&gt; type = paramTypes[paramTypes.length - 1].getComponentType();</span>
+<span class="nc bnc" id="L389" title="All 2 branches missed.">        for (int i = paramTypes.length - 1; i &lt; length; i++) {</span>
+<span class="nc" id="L390">            result[i] = type;</span>
+        }
+
+<span class="nc" id="L393">        return result;</span>
+    }
+
+
+    private static final String paramString(Class&lt;?&gt;[] types) {
+<span class="nc bnc" id="L398" title="All 2 branches missed.">        if (types != null) {</span>
+<span class="nc" id="L399">            StringBuilder sb = new StringBuilder();</span>
+<span class="nc bnc" id="L400" title="All 2 branches missed.">            for (Class&lt;?&gt; type : types) {</span>
+<span class="nc bnc" id="L401" title="All 2 branches missed.">                if (type == null) {</span>
+<span class="nc" id="L402">                    sb.append(&quot;null, &quot;);</span>
+                } else {
+<span class="nc" id="L404">                    sb.append(type.getName()).append(&quot;, &quot;);</span>
+                }
+            }
+<span class="nc bnc" id="L407" title="All 2 branches missed.">            if (sb.length() &gt; 2) {</span>
+<span class="nc" id="L408">                sb.setLength(sb.length() - 2);</span>
+            }
+<span class="nc" id="L410">            return sb.toString();</span>
+        }
+<span class="nc" id="L412">        return null;</span>
+    }
+
+
+    /*
+     * This method duplicates code in org.apache.el.util.ReflectionUtil. When
+     * making changes keep the code in sync.
+     */
+    private static &lt;T&gt; Wrapper&lt;T&gt; resolveAmbiguousWrapper(Set&lt;Wrapper&lt;T&gt;&gt; candidates,
+            Class&lt;?&gt;[] paramTypes) {
+        // Identify which parameter isn't an exact match
+<span class="nc" id="L423">        Wrapper&lt;T&gt; w = candidates.iterator().next();</span>
+
+<span class="nc" id="L425">        int nonMatchIndex = 0;</span>
+<span class="nc" id="L426">        Class&lt;?&gt; nonMatchClass = null;</span>
+
+<span class="nc bnc" id="L428" title="All 2 branches missed.">        for (int i = 0; i &lt; paramTypes.length; i++) {</span>
+<span class="nc bnc" id="L429" title="All 2 branches missed.">            if (w.getParameterTypes()[i] != paramTypes[i]) {</span>
+<span class="nc" id="L430">                nonMatchIndex = i;</span>
+<span class="nc" id="L431">                nonMatchClass = paramTypes[i];</span>
+<span class="nc" id="L432">                break;</span>
+            }
+        }
+
+<span class="nc bnc" id="L436" title="All 2 branches missed.">        if (nonMatchClass == null) {</span>
+            // Null will always be ambiguous
+<span class="nc" id="L438">            return null;</span>
+        }
+
+<span class="nc bnc" id="L441" title="All 2 branches missed.">        for (Wrapper&lt;T&gt; c : candidates) {</span>
+<span class="nc bnc" id="L442" title="All 2 branches missed.">            if (c.getParameterTypes()[nonMatchIndex] ==</span>
+                    paramTypes[nonMatchIndex]) {
+                // Methods have different non-matching parameters
+                // Result is ambiguous
+<span class="nc" id="L446">                return null;</span>
+            }
+<span class="nc" id="L448">        }</span>
+
+        // Can't be null
+<span class="nc" id="L451">        Class&lt;?&gt; superClass = nonMatchClass.getSuperclass();</span>
+<span class="nc bnc" id="L452" title="All 2 branches missed.">        while (superClass != null) {</span>
+<span class="nc bnc" id="L453" title="All 2 branches missed.">            for (Wrapper&lt;T&gt; c : candidates) {</span>
+<span class="nc bnc" id="L454" title="All 2 branches missed.">                if (c.getParameterTypes()[nonMatchIndex].equals(superClass)) {</span>
+                    // Found a match
+<span class="nc" id="L456">                    return c;</span>
+                }
+<span class="nc" id="L458">            }</span>
+<span class="nc" id="L459">            superClass = superClass.getSuperclass();</span>
+        }
+
+        // Treat instances of Number as a special case
+<span class="nc" id="L463">        Wrapper&lt;T&gt; match = null;</span>
+<span class="nc bnc" id="L464" title="All 2 branches missed.">        if (Number.class.isAssignableFrom(nonMatchClass)) {</span>
+<span class="nc bnc" id="L465" title="All 2 branches missed.">            for (Wrapper&lt;T&gt; c : candidates) {</span>
+<span class="nc" id="L466">                Class&lt;?&gt; candidateType = c.getParameterTypes()[nonMatchIndex];</span>
+<span class="nc bnc" id="L467" title="All 2 branches missed.">                if (Number.class.isAssignableFrom(candidateType) ||</span>
+<span class="nc bnc" id="L468" title="All 2 branches missed.">                        candidateType.isPrimitive()) {</span>
+<span class="nc bnc" id="L469" title="All 2 branches missed.">                    if (match == null) {</span>
+<span class="nc" id="L470">                        match = c;</span>
+                    } else {
+                        // Match still ambiguous
+<span class="nc" id="L473">                        match = null;</span>
+<span class="nc" id="L474">                        break;</span>
+                    }
+                }
+<span class="nc" id="L477">            }</span>
+        }
+
+<span class="nc" id="L480">        return match;</span>
+    }
+
+
+    /*
+     * This method duplicates code in org.apache.el.util.ReflectionUtil. When
+     * making changes keep the code in sync.
+     */
+    static boolean isAssignableFrom(Class&lt;?&gt; src, Class&lt;?&gt; target) {
+        // src will always be an object
+        // Short-cut. null is always assignable to an object and in EL null
+        // can always be coerced to a valid value for a primitive
+<span class="nc bnc" id="L492" title="All 2 branches missed.">        if (src == null) {</span>
+<span class="nc" id="L493">            return true;</span>
+        }
+
+        Class&lt;?&gt; targetClass;
+<span class="nc bnc" id="L497" title="All 2 branches missed.">        if (target.isPrimitive()) {</span>
+<span class="nc bnc" id="L498" title="All 2 branches missed.">            if (target == Boolean.TYPE) {</span>
+<span class="nc" id="L499">                targetClass = Boolean.class;</span>
+<span class="nc bnc" id="L500" title="All 2 branches missed.">            } else if (target == Character.TYPE) {</span>
+<span class="nc" id="L501">                targetClass = Character.class;</span>
+<span class="nc bnc" id="L502" title="All 2 branches missed.">            } else if (target == Byte.TYPE) {</span>
+<span class="nc" id="L503">                targetClass = Byte.class;</span>
+<span class="nc bnc" id="L504" title="All 2 branches missed.">            } else if (target == Short.TYPE) {</span>
+<span class="nc" id="L505">                targetClass = Short.class;</span>
+<span class="nc bnc" id="L506" title="All 2 branches missed.">            } else if (target == Integer.TYPE) {</span>
+<span class="nc" id="L507">                targetClass = Integer.class;</span>
+<span class="nc bnc" id="L508" title="All 2 branches missed.">            } else if (target == Long.TYPE) {</span>
+<span class="nc" id="L509">                targetClass = Long.class;</span>
+<span class="nc bnc" id="L510" title="All 2 branches missed.">            } else if (target == Float.TYPE) {</span>
+<span class="nc" id="L511">                targetClass = Float.class;</span>
+            } else {
+<span class="nc" id="L513">                targetClass = Double.class;</span>
+            }
+        } else {
+<span class="nc" id="L516">            targetClass = target;</span>
+        }
+<span class="nc" id="L518">        return targetClass.isAssignableFrom(src);</span>
+    }
+
+
+    /*
+     * This method duplicates code in org.apache.el.util.ReflectionUtil. When
+     * making changes keep the code in sync.
+     */
+    private static boolean isCoercibleFrom(Object src, Class&lt;?&gt; target, ExpressionFactory factory) {
+        // TODO: This isn't pretty but it works. Significant refactoring would
+        //       be required to avoid the exception.
+        try {
+<span class="nc" id="L530">            factory.coerceToType(src, target);</span>
+<span class="nc" id="L531">        } catch (ELException e) {</span>
+<span class="nc" id="L532">            return false;</span>
+<span class="nc" id="L533">        }</span>
+<span class="nc" id="L534">        return true;</span>
+    }
+
+
+    private static Class&lt;?&gt;[] getTypesFromValues(Object[] values) {
+<span class="nc bnc" id="L539" title="All 2 branches missed.">        if (values == null) {</span>
+<span class="nc" id="L540">            return EMPTY_CLASS_ARRAY;</span>
+        }
+
+<span class="nc" id="L543">        Class&lt;?&gt; result[] = new Class&lt;?&gt;[values.length];</span>
+<span class="nc bnc" id="L544" title="All 2 branches missed.">        for (int i = 0; i &lt; values.length; i++) {</span>
+<span class="nc bnc" id="L545" title="All 2 branches missed.">            if (values[i] == null) {</span>
+<span class="nc" id="L546">                result[i] = null;</span>
+            } else {
+<span class="nc" id="L548">                result[i] = values[i].getClass();</span>
+            }
+        }
+<span class="nc" id="L551">        return result;</span>
+    }
+
+
+    /*
+     * This method duplicates code in org.apache.el.util.ReflectionUtil. When
+     * making changes keep the code in sync.
+     */
+    static Method getMethod(Class&lt;?&gt; type, Object base, Method m) {
+<span class="nc" id="L560">        JreCompat jreCompat = JreCompat.getInstance();</span>
+        // If base is null, method MUST be static
+        // If base is non-null, method may be static or non-static
+<span class="nc bnc" id="L563" title="All 2 branches missed.">        if (m == null ||</span>
+<span class="nc bnc" id="L564" title="All 2 branches missed.">                (Modifier.isPublic(type.getModifiers()) &amp;&amp;</span>
+<span class="nc bnc" id="L565" title="All 6 branches missed.">                        (jreCompat.canAccess(base, m) || base != null &amp;&amp; jreCompat.canAccess(null, m)))) {</span>
+<span class="nc" id="L566">            return m;</span>
+        }
+
+<span class="nc bnc" id="L569" title="All 2 branches missed.">        if (Modifier.isPublic(m.getModifiers())) {</span>
+<span class="nc bnc" id="L570" title="All 2 branches missed.">            if (jreCompat.trySetAccessible(m)) {</span>
+<span class="nc" id="L571">                return m;</span>
+            }
+        }
+
+<span class="nc" id="L575">        Class&lt;?&gt;[] interfaces = type.getInterfaces();</span>
+<span class="nc" id="L576">        Method mp = null;</span>
+<span class="nc bnc" id="L577" title="All 2 branches missed.">        for (Class&lt;?&gt; iface : interfaces) {</span>
+            try {
+<span class="nc" id="L579">                mp = iface.getMethod(m.getName(), m.getParameterTypes());</span>
+<span class="nc" id="L580">                mp = getMethod(mp.getDeclaringClass(), base, mp);</span>
+<span class="nc bnc" id="L581" title="All 2 branches missed.">                if (mp != null) {</span>
+<span class="nc" id="L582">                    return mp;</span>
+                }
+<span class="nc" id="L584">            } catch (NoSuchMethodException e) {</span>
+                // Ignore
+<span class="nc" id="L586">            }</span>
+        }
+<span class="nc" id="L588">        Class&lt;?&gt; sup = type.getSuperclass();</span>
+<span class="nc bnc" id="L589" title="All 2 branches missed.">        if (sup != null) {</span>
+            try {
+<span class="nc" id="L591">                mp = sup.getMethod(m.getName(), m.getParameterTypes());</span>
+<span class="nc" id="L592">                mp = getMethod(mp.getDeclaringClass(), base, mp);</span>
+<span class="nc bnc" id="L593" title="All 2 branches missed.">                if (mp != null) {</span>
+<span class="nc" id="L594">                    return mp;</span>
+                }
+<span class="nc" id="L596">            } catch (NoSuchMethodException e) {</span>
+                // Ignore
+<span class="nc" id="L598">            }</span>
+        }
+<span class="nc" id="L600">        return null;</span>
+    }
+
+
+    static Object[] buildParameters(Class&lt;?&gt;[] parameterTypes,
+            boolean isVarArgs,Object[] params, ExpressionFactory factory) {
+<span class="nc" id="L606">        Object[] parameters = null;</span>
+<span class="nc bnc" id="L607" title="All 2 branches missed.">        if (parameterTypes.length &gt; 0) {</span>
+<span class="nc" id="L608">            parameters = new Object[parameterTypes.length];</span>
+            int paramCount;
+<span class="nc bnc" id="L610" title="All 2 branches missed.">            if (params == null) {</span>
+<span class="nc" id="L611">                params = EMPTY_OBJECT_ARRAY;</span>
+            }
+<span class="nc" id="L613">            paramCount = params.length;</span>
+<span class="nc bnc" id="L614" title="All 2 branches missed.">            if (isVarArgs) {</span>
+<span class="nc" id="L615">                int varArgIndex = parameterTypes.length - 1;</span>
+                // First argCount-1 parameters are standard
+<span class="nc bnc" id="L617" title="All 2 branches missed.">                for (int i = 0; (i &lt; varArgIndex); i++) {</span>
+<span class="nc" id="L618">                    parameters[i] = coerceValue(params[i], parameterTypes[i], factory);</span>
+                }
+                // Last parameter is the varargs
+<span class="nc" id="L621">                Class&lt;?&gt; varArgClass =</span>
+<span class="nc" id="L622">                        parameterTypes[varArgIndex].getComponentType();</span>
+<span class="nc" id="L623">                final Object varargs = Array.newInstance(</span>
+                        varArgClass,
+                        (paramCount - varArgIndex));
+<span class="nc bnc" id="L626" title="All 2 branches missed.">                for (int i = (varArgIndex); i &lt; paramCount; i++) {</span>
+<span class="nc" id="L627">                    Array.set(varargs, i - varArgIndex,</span>
+<span class="nc" id="L628">                            coerceValue(params[i], varArgClass, factory));</span>
+                }
+<span class="nc" id="L630">                parameters[varArgIndex] = varargs;</span>
+<span class="nc" id="L631">            } else {</span>
+<span class="nc" id="L632">                parameters = new Object[parameterTypes.length];</span>
+<span class="nc bnc" id="L633" title="All 2 branches missed.">                for (int i = 0; i &lt; parameterTypes.length; i++) {</span>
+<span class="nc" id="L634">                    parameters[i] = coerceValue(params[i], parameterTypes[i], factory);</span>
+                }
+            }
+        }
+<span class="nc" id="L638">        return parameters;</span>
+    }
+
+    static Object coerceValue(Object value, Class&lt;?&gt; type, ExpressionFactory factory) {
+<span class="nc bnc" id="L642" title="All 4 branches missed.">        if (value != null || type.isPrimitive()) {</span>
+<span class="nc" id="L643">            return factory.coerceToType(value, type);</span>
+        }
+
+<span class="nc" id="L646">        return null;</span>
+    }
+
+
+    private abstract static class Wrapper&lt;T&gt; {
+
+        public static List&lt;Wrapper&lt;Method&gt;&gt; wrap(Method[] methods, String name) {
+<span class="nc" id="L653">            List&lt;Wrapper&lt;Method&gt;&gt; result = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L654" title="All 2 branches missed.">            for (Method method : methods) {</span>
+<span class="nc bnc" id="L655" title="All 2 branches missed.">                if (method.getName().equals(name)) {</span>
+<span class="nc" id="L656">                    result.add(new MethodWrapper(method));</span>
+                }
+            }
+<span class="nc" id="L659">            return result;</span>
+        }
+
+        public static List&lt;Wrapper&lt;Constructor&lt;?&gt;&gt;&gt; wrap(Constructor&lt;?&gt;[] constructors) {
+<span class="nc" id="L663">            List&lt;Wrapper&lt;Constructor&lt;?&gt;&gt;&gt; result = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L664" title="All 2 branches missed.">            for (Constructor&lt;?&gt; constructor : constructors) {</span>
+<span class="nc" id="L665">                result.add(new ConstructorWrapper(constructor));</span>
+            }
+<span class="nc" id="L667">            return result;</span>
+        }
+
+        public abstract T unWrap();
+        public abstract Class&lt;?&gt;[] getParameterTypes();
+        public abstract boolean isVarArgs();
+        public abstract boolean isBridge();
+    }
+
+
+    private static class MethodWrapper extends Wrapper&lt;Method&gt; {
+        private final Method m;
+
+<span class="nc" id="L680">        public MethodWrapper(Method m) {</span>
+<span class="nc" id="L681">            this.m = m;</span>
+<span class="nc" id="L682">        }</span>
+
+        @Override
+        public Method unWrap() {
+<span class="nc" id="L686">            return m;</span>
+        }
+
+        @Override
+        public Class&lt;?&gt;[] getParameterTypes() {
+<span class="nc" id="L691">            return m.getParameterTypes();</span>
+        }
+
+        @Override
+        public boolean isVarArgs() {
+<span class="nc" id="L696">            return m.isVarArgs();</span>
+        }
+
+        @Override
+        public boolean isBridge() {
+<span class="nc" id="L701">            return m.isBridge();</span>
+        }
+    }
+
+    private static class ConstructorWrapper extends Wrapper&lt;Constructor&lt;?&gt;&gt; {
+        private final Constructor&lt;?&gt; c;
+
+<span class="nc" id="L708">        public ConstructorWrapper(Constructor&lt;?&gt; c) {</span>
+<span class="nc" id="L709">            this.c = c;</span>
+<span class="nc" id="L710">        }</span>
+
+        @Override
+        public Constructor&lt;?&gt; unWrap() {
+<span class="nc" id="L714">            return c;</span>
+        }
+
+        @Override
+        public Class&lt;?&gt;[] getParameterTypes() {
+<span class="nc" id="L719">            return c.getParameterTypes();</span>
+        }
+
+        @Override
+        public boolean isVarArgs() {
+<span class="nc" id="L724">            return c.isVarArgs();</span>
+        }
+
+        @Override
+        public boolean isBridge() {
+<span class="nc" id="L729">            return false;</span>
+        }
+    }
+
+<span class="nc" id="L733">    private enum CandidatesType {</span>
+<span class="nc" id="L734">        UNKNOWN,</span>
+<span class="nc" id="L735">        VAR_ARGS,</span>
+<span class="nc" id="L736">        COERCIBLE,</span>
+<span class="nc" id="L737">        ASSIGNABLE,</span>
+
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

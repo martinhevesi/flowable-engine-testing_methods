@@ -1,0 +1,308 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TaskHelper.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.cmmn.engine.impl.task</a> &gt; <span class="el_source">TaskHelper.java</span></div><h1>TaskHelper.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.cmmn.engine.impl.task;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.cmmn.engine.CmmnEngineConfiguration;
+import org.flowable.cmmn.engine.impl.event.FlowableCmmnEventBuilder;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.delegate.event.FlowableEventDispatcher;
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.api.variable.VariableContainer;
+import org.flowable.common.engine.impl.el.ExpressionManager;
+import org.flowable.common.engine.impl.history.HistoryLevel;
+import org.flowable.common.engine.impl.identity.Authentication;
+import org.flowable.common.engine.impl.persistence.entity.ByteArrayRef;
+import org.flowable.task.api.Task;
+import org.flowable.task.api.history.HistoricTaskInstance;
+import org.flowable.task.api.history.HistoricTaskLogEntryType;
+import org.flowable.task.service.HistoricTaskService;
+import org.flowable.task.service.TaskService;
+import org.flowable.task.service.TaskServiceConfiguration;
+import org.flowable.task.service.delegate.TaskListener;
+import org.flowable.task.service.impl.BaseHistoricTaskLogEntryBuilderImpl;
+import org.flowable.task.service.impl.persistence.CountingTaskEntity;
+import org.flowable.task.service.impl.persistence.entity.HistoricTaskInstanceEntity;
+import org.flowable.task.service.impl.persistence.entity.TaskEntity;
+import org.flowable.variable.service.impl.persistence.entity.VariableInstanceEntity;
+
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+/**
+ * @author Joram Barrez
+ */
+<span class="nc" id="L49">public class TaskHelper {</span>
+
+    public static void insertTask(TaskEntity taskEntity, boolean fireCreateEvent, CmmnEngineConfiguration cmmnEngineConfiguration) {
+<span class="nc" id="L52">        cmmnEngineConfiguration.getTaskServiceConfiguration().getTaskService().insertTask(taskEntity, fireCreateEvent);</span>
+
+<span class="nc bnc" id="L54" title="All 2 branches missed.">        if (taskEntity.getOwner() != null) {</span>
+<span class="nc" id="L55">            addOwnerIdentityLink(taskEntity, cmmnEngineConfiguration);</span>
+        }
+
+<span class="nc bnc" id="L58" title="All 2 branches missed.">        if (taskEntity.getAssignee() != null) {</span>
+<span class="nc" id="L59">            addAssigneeIdentityLinks(taskEntity, cmmnEngineConfiguration);</span>
+<span class="nc" id="L60">            fireAssignmentEvents(taskEntity, cmmnEngineConfiguration);</span>
+        }
+
+<span class="nc" id="L63">    }</span>
+    
+    public static void completeTask(TaskEntity task, String userId, CmmnEngineConfiguration cmmnEngineConfiguration) {
+<span class="nc" id="L66">        internalDeleteTask(task, userId, null, false, true, cmmnEngineConfiguration);</span>
+<span class="nc" id="L67">    }</span>
+
+    public static void deleteTask(String taskId, String deleteReason, boolean cascade, CmmnEngineConfiguration cmmnEngineConfiguration) {
+<span class="nc" id="L70">        TaskEntity task = cmmnEngineConfiguration.getTaskServiceConfiguration().getTaskService().getTask(taskId);</span>
+<span class="nc bnc" id="L71" title="All 2 branches missed.">        if (task != null) {</span>
+<span class="nc bnc" id="L72" title="All 4 branches missed.">            if (task.getScopeId() != null &amp;&amp; ScopeTypes.CMMN.equals(task.getScopeType())) {</span>
+<span class="nc" id="L73">                throw new FlowableException(&quot;The &quot; + task + &quot; cannot be deleted because is part of a running case instance&quot;);</span>
+<span class="nc bnc" id="L74" title="All 2 branches missed.">            } else if (task.getExecutionId() != null) {</span>
+<span class="nc" id="L75">                throw new FlowableException(&quot;The &quot; + task + &quot; cannot be deleted because is part of a running process instance&quot;);</span>
+            }
+<span class="nc" id="L77">            deleteTask(task, deleteReason, cascade, true, cmmnEngineConfiguration);</span>
+            
+<span class="nc bnc" id="L79" title="All 2 branches missed.">        } else if (cascade) {</span>
+<span class="nc" id="L80">            deleteHistoricTask(taskId, cmmnEngineConfiguration);</span>
+        }
+<span class="nc" id="L82">    }</span>
+    
+    public static void deleteTask(TaskEntity task, String deleteReason, boolean cascade, 
+            boolean fireEvents, CmmnEngineConfiguration cmmnEngineConfiguration) {
+        
+<span class="nc" id="L87">        internalDeleteTask(task, null, deleteReason, cascade, fireEvents, cmmnEngineConfiguration);</span>
+<span class="nc" id="L88">    }</span>
+
+    protected static void internalDeleteTask(TaskEntity task, String userId, String deleteReason, boolean cascade, 
+            boolean fireEvents, CmmnEngineConfiguration cmmnEngineConfiguration) {
+        
+<span class="nc bnc" id="L93" title="All 2 branches missed.">        if (!task.isDeleted()) {</span>
+<span class="nc" id="L94">            task.setDeleted(true);</span>
+
+<span class="nc" id="L96">            TaskService taskService = cmmnEngineConfiguration.getTaskServiceConfiguration().getTaskService();</span>
+<span class="nc" id="L97">            List&lt;Task&gt; subTasks = taskService.findTasksByParentTaskId(task.getId());</span>
+<span class="nc bnc" id="L98" title="All 2 branches missed.">            for (Task subTask : subTasks) {</span>
+<span class="nc" id="L99">                internalDeleteTask((TaskEntity) subTask, userId, deleteReason, cascade, fireEvents, cmmnEngineConfiguration);</span>
+<span class="nc" id="L100">            }</span>
+
+<span class="nc" id="L102">            CountingTaskEntity countingTaskEntity = (CountingTaskEntity) task;</span>
+            
+<span class="nc bnc" id="L104" title="All 4 branches missed.">            if (countingTaskEntity.isCountEnabled() &amp;&amp; countingTaskEntity.getIdentityLinkCount() &gt; 0) {    </span>
+<span class="nc" id="L105">                cmmnEngineConfiguration.getIdentityLinkServiceConfiguration().getIdentityLinkService().deleteIdentityLinksByTaskId(task.getId());</span>
+            }
+            
+<span class="nc bnc" id="L108" title="All 4 branches missed.">            if (countingTaskEntity.isCountEnabled() &amp;&amp; countingTaskEntity.getVariableCount() &gt; 0) {</span>
+                
+<span class="nc" id="L110">                Map&lt;String, VariableInstanceEntity&gt; taskVariables = task.getVariableInstanceEntities();</span>
+<span class="nc" id="L111">                List&lt;ByteArrayRef&gt; variableByteArrayRefs = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L112" title="All 2 branches missed.">                for (VariableInstanceEntity variableInstanceEntity : taskVariables.values()) {</span>
+<span class="nc bnc" id="L113" title="All 4 branches missed.">                    if (variableInstanceEntity.getByteArrayRef() != null &amp;&amp; variableInstanceEntity.getByteArrayRef().getId() != null) {</span>
+<span class="nc" id="L114">                        variableByteArrayRefs.add(variableInstanceEntity.getByteArrayRef());</span>
+                    }
+<span class="nc" id="L116">                }</span>
+                
+<span class="nc bnc" id="L118" title="All 2 branches missed.">                for (ByteArrayRef variableByteArrayRef : variableByteArrayRefs) {</span>
+<span class="nc" id="L119">                    cmmnEngineConfiguration.getByteArrayEntityManager().deleteByteArrayById(variableByteArrayRef.getId());</span>
+<span class="nc" id="L120">                }</span>
+                
+<span class="nc bnc" id="L122" title="All 2 branches missed.">                if (!taskVariables.isEmpty()) {</span>
+<span class="nc" id="L123">                    cmmnEngineConfiguration.getVariableServiceConfiguration().getVariableService().deleteVariablesByTaskId(task.getId());</span>
+                }
+                
+<span class="nc" id="L126">                cmmnEngineConfiguration.getVariableServiceConfiguration().getVariableService().deleteVariablesByTaskId(task.getId());</span>
+            }
+            
+<span class="nc bnc" id="L129" title="All 2 branches missed.">            if (cascade) {</span>
+<span class="nc" id="L130">                deleteHistoricTask(task.getId(), cmmnEngineConfiguration);</span>
+            } else {
+<span class="nc" id="L132">                cmmnEngineConfiguration.getCmmnHistoryManager().recordTaskEnd(task, userId, deleteReason,</span>
+<span class="nc" id="L133">                        cmmnEngineConfiguration.getClock().getCurrentTime());</span>
+            }
+
+<span class="nc" id="L136">            cmmnEngineConfiguration.getListenerNotificationHelper().executeTaskListeners(task, TaskListener.EVENTNAME_DELETE);</span>
+<span class="nc" id="L137">            cmmnEngineConfiguration.getTaskServiceConfiguration().getTaskService().deleteTask(task, fireEvents);</span>
+        }
+<span class="nc" id="L139">    }</span>
+
+    public static void changeTaskAssignee(TaskEntity taskEntity, String assignee, CmmnEngineConfiguration cmmnEngineConfiguration) {
+<span class="nc bnc" id="L142" title="All 4 branches missed.">        if ((taskEntity.getAssignee() != null &amp;&amp; !taskEntity.getAssignee().equals(assignee))</span>
+<span class="nc bnc" id="L143" title="All 4 branches missed.">                || (taskEntity.getAssignee() == null &amp;&amp; assignee != null)) {</span>
+            
+<span class="nc" id="L145">            cmmnEngineConfiguration.getTaskServiceConfiguration().getTaskService().changeTaskAssignee(taskEntity, assignee);</span>
+<span class="nc" id="L146">            fireAssignmentEvents(taskEntity, cmmnEngineConfiguration);</span>
+
+<span class="nc bnc" id="L148" title="All 2 branches missed.">            if (taskEntity.getId() != null) {</span>
+<span class="nc" id="L149">                addAssigneeIdentityLinks(taskEntity, cmmnEngineConfiguration);</span>
+            }
+        }
+<span class="nc" id="L152">    }</span>
+    
+    public static void changeTaskOwner(TaskEntity taskEntity, String owner, CmmnEngineConfiguration cmmnEngineConfiguration) {
+<span class="nc bnc" id="L155" title="All 4 branches missed.">        if ((taskEntity.getOwner() != null &amp;&amp; !taskEntity.getOwner().equals(owner))</span>
+<span class="nc bnc" id="L156" title="All 4 branches missed.">                || (taskEntity.getOwner() == null &amp;&amp; owner != null)) {</span>
+
+<span class="nc" id="L158">            cmmnEngineConfiguration.getTaskServiceConfiguration().getTaskService().changeTaskOwner(taskEntity, owner);</span>
+
+<span class="nc bnc" id="L160" title="All 2 branches missed.">            if (taskEntity.getId() != null) {</span>
+<span class="nc" id="L161">                addOwnerIdentityLink(taskEntity, cmmnEngineConfiguration);</span>
+            }
+        }
+<span class="nc" id="L164">    }</span>
+    
+    protected static void addAssigneeIdentityLinks(TaskEntity taskEntity, CmmnEngineConfiguration cmmnEngineConfiguration) {
+<span class="nc bnc" id="L167" title="All 2 branches missed.">        if (cmmnEngineConfiguration.getIdentityLinkInterceptor() != null) {</span>
+<span class="nc" id="L168">            cmmnEngineConfiguration.getIdentityLinkInterceptor().handleAddAssigneeIdentityLinkToTask(taskEntity, taskEntity.getAssignee());</span>
+        }
+<span class="nc" id="L170">    }</span>
+
+    protected static void addOwnerIdentityLink(TaskEntity taskEntity, CmmnEngineConfiguration cmmnEngineConfiguration) {
+<span class="nc bnc" id="L173" title="All 2 branches missed.">        if (cmmnEngineConfiguration.getIdentityLinkInterceptor() != null) {</span>
+<span class="nc" id="L174">            cmmnEngineConfiguration.getIdentityLinkInterceptor().handleAddOwnerIdentityLinkToTask(taskEntity, taskEntity.getOwner());</span>
+        }
+<span class="nc" id="L176">    }</span>
+
+    public static void deleteHistoricTaskInstancesByCaseInstanceId(String caseInstanceId, CmmnEngineConfiguration cmmnEngineConfiguration) {
+<span class="nc bnc" id="L179" title="All 2 branches missed.">        if (cmmnEngineConfiguration.getHistoryLevel() != HistoryLevel.NONE) {</span>
+<span class="nc" id="L180">            List&lt;HistoricTaskInstance&gt; taskInstances = cmmnEngineConfiguration.getCmmnHistoryService()</span>
+<span class="nc" id="L181">                    .createHistoricTaskInstanceQuery()</span>
+<span class="nc" id="L182">                    .caseInstanceId(caseInstanceId)</span>
+<span class="nc" id="L183">                    .list();</span>
+
+<span class="nc bnc" id="L185" title="All 2 branches missed.">            for (HistoricTaskInstance taskInstance : taskInstances) {</span>
+<span class="nc" id="L186">                deleteHistoricTask(taskInstance.getId(), cmmnEngineConfiguration);</span>
+<span class="nc" id="L187">            }</span>
+        }
+<span class="nc" id="L189">    }</span>
+    
+    public static void bulkDeleteHistoricTaskInstancesByCaseInstanceIds(Collection&lt;String&gt; caseInstanceIds, CmmnEngineConfiguration cmmnEngineConfiguration) {
+<span class="nc bnc" id="L192" title="All 2 branches missed.">        if (cmmnEngineConfiguration.getHistoryLevel() != HistoryLevel.NONE) {</span>
+<span class="nc" id="L193">            List&lt;String&gt; taskIds = cmmnEngineConfiguration.getTaskServiceConfiguration().getHistoricTaskInstanceEntityManager()</span>
+<span class="nc" id="L194">                    .findHistoricTaskIdsForScopeIdsAndScopeType(caseInstanceIds, ScopeTypes.CMMN);</span>
+            
+<span class="nc bnc" id="L196" title="All 4 branches missed.">            if (taskIds != null &amp;&amp; !taskIds.isEmpty()) {</span>
+<span class="nc" id="L197">                bulkDeleteHistoricTaskInstances(taskIds, cmmnEngineConfiguration);</span>
+            }
+        }
+<span class="nc" id="L200">    }</span>
+
+    public static void deleteHistoricTask(String taskId, CmmnEngineConfiguration cmmnEngineConfiguration) {
+<span class="nc bnc" id="L203" title="All 2 branches missed.">        if (cmmnEngineConfiguration.getHistoryLevel() != HistoryLevel.NONE) {</span>
+<span class="nc" id="L204">            HistoricTaskService historicTaskService = cmmnEngineConfiguration.getTaskServiceConfiguration().getHistoricTaskService();</span>
+<span class="nc" id="L205">            HistoricTaskInstanceEntity historicTaskInstance = historicTaskService.getHistoricTask(taskId);</span>
+<span class="nc bnc" id="L206" title="All 2 branches missed.">            if (historicTaskInstance != null) {</span>
+    
+<span class="nc" id="L208">                List&lt;HistoricTaskInstanceEntity&gt; subTasks = historicTaskService.findHistoricTasksByParentTaskId(historicTaskInstance.getId());</span>
+<span class="nc bnc" id="L209" title="All 2 branches missed.">                for (HistoricTaskInstance subTask : subTasks) {</span>
+<span class="nc" id="L210">                    deleteHistoricTask(subTask.getId(), cmmnEngineConfiguration);</span>
+<span class="nc" id="L211">                }</span>
+
+<span class="nc bnc" id="L213" title="All 2 branches missed.">                if (cmmnEngineConfiguration.getCmmnHistoryConfigurationSettings().isHistoryEnabledForVariables(historicTaskInstance)) {</span>
+<span class="nc" id="L214">                    cmmnEngineConfiguration.getVariableServiceConfiguration().getHistoricVariableService().deleteHistoricVariableInstancesByTaskId(taskId);</span>
+                }
+
+<span class="nc" id="L217">                cmmnEngineConfiguration.getIdentityLinkServiceConfiguration().getHistoricIdentityLinkService().deleteHistoricIdentityLinksByTaskId(taskId);</span>
+    
+<span class="nc" id="L219">                historicTaskService.deleteHistoricTask(historicTaskInstance);</span>
+            }
+        }
+<span class="nc" id="L222">        deleteHistoricTaskLogEntries(taskId, cmmnEngineConfiguration);</span>
+<span class="nc" id="L223">    }</span>
+
+    public static void deleteHistoricTaskLogEntries(String taskId, CmmnEngineConfiguration cmmnEngineConfiguration) {
+<span class="nc bnc" id="L226" title="All 2 branches missed.">        if (cmmnEngineConfiguration.getTaskServiceConfiguration().isEnableHistoricTaskLogging()) {</span>
+<span class="nc" id="L227">            cmmnEngineConfiguration.getTaskServiceConfiguration().getHistoricTaskService().deleteHistoricTaskLogEntriesForTaskId(taskId);</span>
+        }
+<span class="nc" id="L229">    }</span>
+
+    public static void logUserTaskCompleted(TaskEntity taskEntity, CmmnEngineConfiguration cmmnEngineConfiguration) {
+<span class="nc" id="L232">        TaskServiceConfiguration taskServiceConfiguration = cmmnEngineConfiguration.getTaskServiceConfiguration();</span>
+<span class="nc bnc" id="L233" title="All 2 branches missed.">        if (taskServiceConfiguration.isEnableHistoricTaskLogging()) {</span>
+<span class="nc" id="L234">            BaseHistoricTaskLogEntryBuilderImpl taskLogEntryBuilder = new BaseHistoricTaskLogEntryBuilderImpl(taskEntity);</span>
+<span class="nc" id="L235">            ObjectNode data = taskServiceConfiguration.getObjectMapper().createObjectNode();</span>
+<span class="nc" id="L236">            taskLogEntryBuilder.timeStamp(taskServiceConfiguration.getClock().getCurrentTime());</span>
+<span class="nc" id="L237">            taskLogEntryBuilder.userId(Authentication.getAuthenticatedUserId());</span>
+<span class="nc" id="L238">            taskLogEntryBuilder.data(data.toString());</span>
+<span class="nc" id="L239">            taskLogEntryBuilder.type(HistoricTaskLogEntryType.USER_TASK_COMPLETED.name());</span>
+<span class="nc" id="L240">            taskServiceConfiguration.getInternalHistoryTaskManager().recordHistoryUserTaskLog(taskLogEntryBuilder);</span>
+        }
+<span class="nc" id="L242">    }</span>
+
+    public static boolean isFormFieldValidationEnabled(VariableContainer variableContainer,
+        CmmnEngineConfiguration cmmnEngineConfiguration, String formFieldValidationExpression) {
+<span class="nc bnc" id="L246" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(formFieldValidationExpression)) {</span>
+<span class="nc" id="L247">            Boolean formFieldValidation = getBoolean(formFieldValidationExpression);</span>
+<span class="nc bnc" id="L248" title="All 2 branches missed.">            if (formFieldValidation != null) {</span>
+<span class="nc" id="L249">                return formFieldValidation;</span>
+            }
+
+<span class="nc bnc" id="L252" title="All 2 branches missed.">            if (variableContainer != null) {</span>
+<span class="nc" id="L253">                ExpressionManager expressionManager = cmmnEngineConfiguration.getExpressionManager();</span>
+<span class="nc" id="L254">                Boolean formFieldValidationValue = getBoolean(</span>
+<span class="nc" id="L255">                    expressionManager.createExpression(formFieldValidationExpression).getValue(variableContainer)</span>
+                );
+<span class="nc bnc" id="L257" title="All 2 branches missed.">                if (formFieldValidationValue == null) {</span>
+<span class="nc" id="L258">                    throw new FlowableException(&quot;Unable to resolve formFieldValidationExpression to boolean value for &quot; + variableContainer);</span>
+                }
+<span class="nc" id="L260">                return formFieldValidationValue;</span>
+            }
+<span class="nc" id="L262">            throw new FlowableException(&quot;Unable to resolve formFieldValidationExpression without variable container&quot;);</span>
+        }
+<span class="nc" id="L264">        return true;</span>
+    }
+    
+    protected static void bulkDeleteHistoricTaskInstances(Collection&lt;String&gt; taskIds, CmmnEngineConfiguration cmmnEngineConfiguration) {
+<span class="nc" id="L268">        HistoricTaskService historicTaskService = cmmnEngineConfiguration.getTaskServiceConfiguration().getHistoricTaskService();</span>
+        
+<span class="nc" id="L270">        List&lt;String&gt; subTaskIds = historicTaskService.findHistoricTaskIdsByParentTaskIds(taskIds);</span>
+<span class="nc bnc" id="L271" title="All 4 branches missed.">        if (subTaskIds != null &amp;&amp; !subTaskIds.isEmpty()) {</span>
+<span class="nc" id="L272">            bulkDeleteHistoricTaskInstances(subTaskIds, cmmnEngineConfiguration);</span>
+        }
+        
+<span class="nc" id="L275">        cmmnEngineConfiguration.getVariableServiceConfiguration().getHistoricVariableService().bulkDeleteHistoricVariableInstancesByTaskIds(taskIds);</span>
+<span class="nc" id="L276">        cmmnEngineConfiguration.getIdentityLinkServiceConfiguration().getHistoricIdentityLinkService().bulkDeleteHistoricIdentityLinksForTaskIds(taskIds);</span>
+        
+<span class="nc" id="L278">        historicTaskService.bulkDeleteHistoricTaskInstances(taskIds);</span>
+        
+<span class="nc" id="L280">        historicTaskService.bulkDeleteHistoricTaskLogEntriesForTaskIds(taskIds);</span>
+<span class="nc" id="L281">    }</span>
+
+    protected static Boolean getBoolean(Object booleanObject) {
+<span class="nc bnc" id="L284" title="All 2 branches missed.">        if (booleanObject instanceof Boolean) {</span>
+<span class="nc" id="L285">            return (Boolean) booleanObject;</span>
+        }
+<span class="nc bnc" id="L287" title="All 2 branches missed.">        if (booleanObject instanceof String) {</span>
+<span class="nc bnc" id="L288" title="All 2 branches missed.">            if (&quot;true&quot;.equalsIgnoreCase((String) booleanObject)) {</span>
+<span class="nc" id="L289">                return Boolean.TRUE;</span>
+            }
+<span class="nc bnc" id="L291" title="All 2 branches missed.">            if (&quot;false&quot;.equalsIgnoreCase((String) booleanObject)) {</span>
+<span class="nc" id="L292">                return Boolean.FALSE;</span>
+            }
+        }
+<span class="nc" id="L295">        return null;</span>
+    }
+
+    protected static void fireAssignmentEvents(TaskEntity taskEntity, CmmnEngineConfiguration cmmnEngineConfiguration) {
+<span class="nc" id="L299">        cmmnEngineConfiguration.getListenerNotificationHelper().executeTaskListeners(taskEntity, TaskListener.EVENTNAME_ASSIGNMENT);</span>
+
+<span class="nc" id="L301">        FlowableEventDispatcher eventDispatcher = cmmnEngineConfiguration.getEventDispatcher();</span>
+<span class="nc bnc" id="L302" title="All 4 branches missed.">        if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L303">            eventDispatcher.dispatchEvent(FlowableCmmnEventBuilder.createTaskAssignedEvent(taskEntity), cmmnEngineConfiguration.getEngineCfgKey());</span>
+        }
+<span class="nc" id="L305">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

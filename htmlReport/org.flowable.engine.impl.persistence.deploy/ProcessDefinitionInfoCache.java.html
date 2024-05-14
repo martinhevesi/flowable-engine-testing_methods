@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ProcessDefinitionInfoCache.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.persistence.deploy</a> &gt; <span class="el_source">ProcessDefinitionInfoCache.java</span></div><h1>ProcessDefinitionInfoCache.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.impl.persistence.deploy;
+
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.impl.context.Context;
+import org.flowable.common.engine.impl.interceptor.Command;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.common.engine.impl.interceptor.CommandExecutor;
+import org.flowable.common.engine.impl.persistence.deploy.DeploymentCache;
+import org.flowable.engine.impl.persistence.entity.ProcessDefinitionInfoEntity;
+import org.flowable.engine.impl.persistence.entity.ProcessDefinitionInfoEntityManager;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+/**
+ * Default cache: keep everything in memory, unless a limit is set.
+ * 
+ * @author Tijs Rademakers
+ */
+public class ProcessDefinitionInfoCache implements DeploymentCache&lt;ProcessDefinitionInfoCacheObject&gt; {
+
+<span class="nc" id="L43">    private static final Logger LOGGER = LoggerFactory.getLogger(ProcessDefinitionInfoCache.class);</span>
+
+    protected Map&lt;String, ProcessDefinitionInfoCacheObject&gt; cache;
+    protected CommandExecutor commandExecutor;
+
+    /** Cache with no limit */
+<span class="nc" id="L49">    public ProcessDefinitionInfoCache(CommandExecutor commandExecutor) {</span>
+<span class="nc" id="L50">        this.commandExecutor = commandExecutor;</span>
+<span class="nc" id="L51">        this.cache = Collections.synchronizedMap(new HashMap&lt;&gt;());</span>
+<span class="nc" id="L52">    }</span>
+
+    /** Cache which has a hard limit: no more elements will be cached than the limit. */
+<span class="nc" id="L55">    public ProcessDefinitionInfoCache(CommandExecutor commandExecutor, final int limit) {</span>
+<span class="nc" id="L56">        this.commandExecutor = commandExecutor;</span>
+<span class="nc" id="L57">        this.cache = Collections.synchronizedMap(new LinkedHashMap&lt;&gt;(limit + 1, 0.75f, true) {</span>
+
+            // +1 is needed, because the entry is inserted first, before it is removed
+            // 0.75 is the default (see javadocs)
+            // true will keep the 'access-order', which is needed to have a real LRU cache
+            private static final long serialVersionUID = 1L;
+
+            @Override
+            protected boolean removeEldestEntry(Map.Entry&lt;String, ProcessDefinitionInfoCacheObject&gt; eldest) {
+<span class="nc bnc" id="L66" title="All 2 branches missed.">                boolean removeEldest = size() &gt; limit;</span>
+<span class="nc bnc" id="L67" title="All 2 branches missed.">                if (removeEldest) {</span>
+<span class="nc" id="L68">                    LOGGER.trace(&quot;Cache limit is reached, {} will be evicted&quot;, eldest.getKey());</span>
+                }
+<span class="nc" id="L70">                return removeEldest;</span>
+            }
+
+        });
+<span class="nc" id="L74">    }</span>
+
+    @Override
+    public ProcessDefinitionInfoCacheObject get(final String processDefinitionId) {
+<span class="nc" id="L78">        ProcessDefinitionInfoCacheObject infoCacheObject = null;</span>
+<span class="nc" id="L79">        Command&lt;ProcessDefinitionInfoCacheObject&gt; cacheCommand = new Command&lt;&gt;() {</span>
+
+            @Override
+            public ProcessDefinitionInfoCacheObject execute(CommandContext commandContext) {
+<span class="nc" id="L83">                return retrieveProcessDefinitionInfoCacheObject(processDefinitionId, commandContext);</span>
+            }
+        };
+
+<span class="nc bnc" id="L87" title="All 2 branches missed.">        if (Context.getCommandContext() != null) {</span>
+<span class="nc" id="L88">            infoCacheObject = retrieveProcessDefinitionInfoCacheObject(processDefinitionId, Context.getCommandContext());</span>
+        } else {
+<span class="nc" id="L90">            infoCacheObject = commandExecutor.execute(cacheCommand);</span>
+        }
+
+<span class="nc" id="L93">        return infoCacheObject;</span>
+    }
+
+    @Override
+    public boolean contains(String id) {
+<span class="nc" id="L98">        return cache.containsKey(id);</span>
+    }
+
+    @Override
+    public void add(String id, ProcessDefinitionInfoCacheObject obj) {
+<span class="nc" id="L103">        cache.put(id, obj);</span>
+<span class="nc" id="L104">    }</span>
+
+    @Override
+    public void remove(String id) {
+<span class="nc" id="L108">        cache.remove(id);</span>
+<span class="nc" id="L109">    }</span>
+
+    @Override
+    public void clear() {
+<span class="nc" id="L113">        cache.clear();</span>
+<span class="nc" id="L114">    }</span>
+
+    @Override
+    public Collection&lt;ProcessDefinitionInfoCacheObject&gt; getAll() {
+<span class="nc" id="L118">        return cache.values();</span>
+    }
+
+    @Override
+    public int size() {
+<span class="nc" id="L123">        return cache.size();</span>
+    }
+
+    protected ProcessDefinitionInfoCacheObject retrieveProcessDefinitionInfoCacheObject(String processDefinitionId, CommandContext commandContext) {
+<span class="nc" id="L127">        ProcessDefinitionInfoEntityManager infoEntityManager = CommandContextUtil.getProcessDefinitionInfoEntityManager(commandContext);</span>
+<span class="nc" id="L128">        ObjectMapper objectMapper = CommandContextUtil.getProcessEngineConfiguration(commandContext).getObjectMapper();</span>
+
+<span class="nc" id="L130">        ProcessDefinitionInfoCacheObject cacheObject = null;</span>
+<span class="nc bnc" id="L131" title="All 2 branches missed.">        if (cache.containsKey(processDefinitionId)) {</span>
+<span class="nc" id="L132">            cacheObject = cache.get(processDefinitionId);</span>
+        } else {
+<span class="nc" id="L134">            cacheObject = new ProcessDefinitionInfoCacheObject();</span>
+<span class="nc" id="L135">            cacheObject.setRevision(0);</span>
+<span class="nc" id="L136">            cacheObject.setInfoNode(objectMapper.createObjectNode());</span>
+        }
+
+<span class="nc" id="L139">        ProcessDefinitionInfoEntity infoEntity = infoEntityManager.findProcessDefinitionInfoByProcessDefinitionId(processDefinitionId);</span>
+<span class="nc bnc" id="L140" title="All 4 branches missed.">        if (infoEntity != null &amp;&amp; infoEntity.getRevision() != cacheObject.getRevision()) {</span>
+<span class="nc" id="L141">            cacheObject.setRevision(infoEntity.getRevision());</span>
+<span class="nc bnc" id="L142" title="All 2 branches missed.">            if (infoEntity.getInfoJsonId() != null) {</span>
+<span class="nc" id="L143">                byte[] infoBytes = infoEntityManager.findInfoJsonById(infoEntity.getInfoJsonId());</span>
+                try {
+<span class="nc" id="L145">                    ObjectNode infoNode = (ObjectNode) objectMapper.readTree(infoBytes);</span>
+<span class="nc" id="L146">                    cacheObject.setInfoNode(infoNode);</span>
+<span class="nc" id="L147">                } catch (Exception e) {</span>
+<span class="nc" id="L148">                    throw new FlowableException(&quot;Error reading json info node for process definition &quot; + processDefinitionId, e);</span>
+<span class="nc" id="L149">                }</span>
+<span class="nc" id="L150">            }</span>
+<span class="nc bnc" id="L151" title="All 2 branches missed.">        } else if (infoEntity == null) {</span>
+<span class="nc" id="L152">            cacheObject.setRevision(0);</span>
+<span class="nc" id="L153">            cacheObject.setInfoNode(objectMapper.createObjectNode());</span>
+        }
+
+<span class="nc" id="L156">        return cacheObject;</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

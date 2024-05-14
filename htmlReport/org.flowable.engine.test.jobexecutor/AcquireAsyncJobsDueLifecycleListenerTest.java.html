@@ -1,0 +1,219 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AcquireAsyncJobsDueLifecycleListenerTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.jobexecutor</a> &gt; <span class="el_source">AcquireAsyncJobsDueLifecycleListenerTest.java</span></div><h1>AcquireAsyncJobsDueLifecycleListenerTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.test.jobexecutor;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Date;
+import java.util.Deque;
+import java.util.LinkedHashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.impl.interceptor.CommandExecutor;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.job.api.Job;
+import org.flowable.job.service.JobService;
+import org.flowable.job.service.impl.asyncexecutor.AcquireAsyncJobsDueLifecycleListener;
+import org.flowable.job.service.impl.asyncexecutor.AcquireAsyncJobsDueRunnable;
+import org.flowable.job.service.impl.asyncexecutor.AcquireJobsRunnableConfiguration;
+import org.flowable.job.service.impl.asyncexecutor.AsyncExecutor;
+import org.flowable.job.service.impl.persistence.entity.JobEntity;
+import org.junit.jupiter.api.Test;
+import org.opentest4j.AssertionFailedError;
+
+/**
+ * @author Filip Hrisafov
+ */
+<span class="nc" id="L49">class AcquireAsyncJobsDueLifecycleListenerTest extends JobExecutorTestCase {</span>
+
+    @Override
+    protected void configureConfiguration(ProcessEngineConfigurationImpl processEngineConfiguration) {
+<span class="nc" id="L53">        super.configureConfiguration(processEngineConfiguration);</span>
+<span class="nc" id="L54">        processEngineConfiguration.getAsyncExecutorConfiguration().setMaxAsyncJobsDuePerAcquisition(1);</span>
+<span class="nc" id="L55">        processEngineConfiguration.getAsyncExecutorConfiguration().setDefaultAsyncJobAcquireWaitTime(Duration.ofMillis(500));</span>
+<span class="nc bnc" id="L56" title="All 2 branches missed.">        if (processEngineConfiguration.getAsyncExecutor() != null) {</span>
+<span class="nc" id="L57">            processEngineConfiguration.getAsyncExecutor().setMaxAsyncJobsDuePerAcquisition(1);</span>
+<span class="nc" id="L58">            processEngineConfiguration.getAsyncExecutor().setDefaultAsyncJobAcquireWaitTimeInMillis(500);</span>
+        }
+<span class="nc" id="L60">    }</span>
+
+    @Test
+    void lifecycleMethodsAreInvoked() throws InterruptedException {
+<span class="nc" id="L64">        Instant now = Instant.now();</span>
+<span class="nc" id="L65">        AsyncExecutor asyncExecutor = processEngineConfiguration.getAsyncExecutor();</span>
+<span class="nc" id="L66">        CountDownLatch waitingLatch = new CountDownLatch(2);</span>
+<span class="nc" id="L67">        TestAcquireAsyncJobsDueLifecycleListener listener = new TestAcquireAsyncJobsDueLifecycleListener(waitingLatch);</span>
+<span class="nc" id="L68">        AcquireAsyncJobsDueRunnable runnable = new AcquireAsyncJobsDueRunnable(&quot;test-acquire-jobs&quot;, asyncExecutor,</span>
+<span class="nc" id="L69">                processEngineConfiguration.getJobServiceConfiguration().getJobEntityManager(), listener, AcquireJobsRunnableConfiguration.DEFAULT);</span>
+
+<span class="nc" id="L71">        CommandExecutor commandExecutor = processEngineConfiguration.getCommandExecutor();</span>
+
+<span class="nc" id="L73">        commandExecutor.execute(commandContext -&gt; {</span>
+
+<span class="nc" id="L75">            JobService jobService = CommandContextUtil.getProcessEngineConfiguration(commandContext).getJobServiceConfiguration()</span>
+<span class="nc" id="L76">                    .getJobService();</span>
+
+<span class="nc" id="L78">            JobEntity job1 = createTweetMessage(&quot;Message 1&quot;);</span>
+<span class="nc" id="L79">            jobService.scheduleAsyncJob(job1);</span>
+
+<span class="nc" id="L81">            JobEntity job2 = createTweetMessage(&quot;Message 2&quot;);</span>
+<span class="nc" id="L82">            jobService.scheduleAsyncJob(job2);</span>
+
+<span class="nc" id="L84">            return null;</span>
+        });
+
+<span class="nc" id="L87">        processEngineConfiguration.getClock().setCurrentTime(Date.from(now.plusSeconds(60)));</span>
+
+<span class="nc" id="L89">        assertThat(managementService.createJobQuery().list())</span>
+<span class="nc" id="L90">                .hasSize(2)</span>
+<span class="nc" id="L91">                .extracting(job -&gt; ((JobEntity) job).getLockOwner())</span>
+<span class="nc" id="L92">                .containsOnlyNulls();</span>
+
+<span class="nc" id="L94">        ExecutorService executorService = Executors.newSingleThreadExecutor();</span>
+<span class="nc" id="L95">        CompletableFuture.runAsync(runnable, executorService);</span>
+
+<span class="nc bnc" id="L97" title="All 2 branches missed.">        if (waitingLatch.await(10, TimeUnit.SECONDS)) {</span>
+<span class="nc" id="L98">            runnable.stop();</span>
+        } else {
+<span class="nc" id="L100">            throw new AssertionFailedError(&quot;Acquire timer runnable did not run twice&quot;);</span>
+        }
+
+<span class="nc" id="L103">        assertThat(managementService.createTimerJobQuery().list()).isEmpty();</span>
+<span class="nc" id="L104">        List&lt;Job&gt; jobs = managementService.createJobQuery().list();</span>
+<span class="nc" id="L105">        assertThat(jobs)</span>
+<span class="nc" id="L106">                .hasSize(2)</span>
+<span class="nc" id="L107">                .extracting(job -&gt; ((JobEntity) job).getLockOwner())</span>
+<span class="nc" id="L108">                .doesNotContainNull();</span>
+
+<span class="nc" id="L110">        commandExecutor.execute(commandContext -&gt; {</span>
+<span class="nc" id="L111">            JobService jobService = CommandContextUtil.getProcessEngineConfiguration(commandContext)</span>
+<span class="nc" id="L112">                    .getJobServiceConfiguration()</span>
+<span class="nc" id="L113">                    .getJobService();</span>
+<span class="nc bnc" id="L114" title="All 2 branches missed.">            for (Job job : jobs) {</span>
+<span class="nc" id="L115">                JobEntity jobEntity = (JobEntity) job;</span>
+<span class="nc" id="L116">                jobEntity.setLockExpirationTime(null);</span>
+<span class="nc" id="L117">                jobEntity.setLockOwner(null);</span>
+<span class="nc" id="L118">                jobService.updateJob(jobEntity);</span>
+<span class="nc" id="L119">                jobService.deleteJob(jobEntity);</span>
+<span class="nc" id="L120">            }</span>
+
+<span class="nc" id="L122">            return null;</span>
+        });
+
+<span class="nc" id="L125">        assertThat(listener.statesByEngine)</span>
+<span class="nc" id="L126">                .containsOnlyKeys(ScopeTypes.BPMN);</span>
+
+<span class="nc" id="L128">        assertThat(listener.statesByEngine.get(ScopeTypes.BPMN))</span>
+<span class="nc" id="L129">                .extracting(State::getJobsAcquired, State::getMaxTimerJobsPerAcquisition, State::getMillisToWait, State::getRemainingCapacity, State::isAcquireCycleStopped)</span>
+<span class="nc" id="L130">                .containsExactly(</span>
+                        // newest entries on top
+<span class="nc" id="L132">                        tuple(0, 1, 500L, 2048, true),</span>
+<span class="nc" id="L133">                        tuple(0, 1, 500L, 2048, true),</span>
+<span class="nc" id="L134">                        tuple(1, 1, 0L, 2048, true), // remaining capacity doesn't go down, cause the async executor isn't running</span>
+<span class="nc" id="L135">                        tuple(1, 1, 0L, 2048, true) // 0L for the millisToWait -&gt; after acquiring a job, the acquire should immediately try again</span>
+                );
+<span class="nc" id="L137">    }</span>
+
+    static class TestAcquireAsyncJobsDueLifecycleListener implements AcquireAsyncJobsDueLifecycleListener {
+
+        protected final CountDownLatch waitingLatch;
+<span class="nc" id="L142">        protected final Map&lt;String, Deque&lt;State&gt;&gt; statesByEngine = new LinkedHashMap&lt;&gt;();</span>
+
+<span class="nc" id="L144">        TestAcquireAsyncJobsDueLifecycleListener(CountDownLatch waitingLatch) {</span>
+<span class="nc" id="L145">            this.waitingLatch = waitingLatch;</span>
+<span class="nc" id="L146">        }</span>
+
+        @Override
+        public void startAcquiring(String engineName, int remainingCapacity, int maxAsyncJobsDuePerAcquisition) {
+<span class="nc" id="L150">            statesByEngine.computeIfAbsent(engineName, key -&gt; new LinkedList&lt;&gt;()).addFirst(new State(remainingCapacity));</span>
+<span class="nc" id="L151">        }</span>
+
+        @Override
+        public void stopAcquiring(String engineName) {
+<span class="nc" id="L155">            State state = statesByEngine.get(engineName).getFirst();</span>
+<span class="nc" id="L156">            state.acquireCycleStopped = true;</span>
+<span class="nc" id="L157">        }</span>
+
+        @Override
+        public void acquiredJobs(String engineName, int jobsAcquired, int maxAsyncJobsDuePerAcquisition) {
+<span class="nc" id="L161">            State state = statesByEngine.get(engineName).getFirst();</span>
+<span class="nc" id="L162">            state.jobsAcquired += jobsAcquired;</span>
+<span class="nc" id="L163">            state.maxTimerJobsPerAcquisition = maxAsyncJobsDuePerAcquisition;</span>
+<span class="nc" id="L164">        }</span>
+
+        @Override
+        public void rejectedJobs(String engineName, int jobsRejected, int jobsAcquired, int maxAsyncJobsDuePerAcquisition) {
+<span class="nc" id="L168">            State state = statesByEngine.get(engineName).getFirst();</span>
+<span class="nc" id="L169">            state.jobsRejected += jobsRejected;</span>
+<span class="nc" id="L170">        }</span>
+
+        @Override
+        public void optimistLockingException(String engineName, int maxAsyncJobsDuePerAcquisition) {
+
+<span class="nc" id="L175">        }</span>
+
+        @Override
+        public void startWaiting(String engineName, long millisToWait) {
+<span class="nc" id="L179">            State state = statesByEngine.get(engineName).getFirst();</span>
+<span class="nc" id="L180">            state.millisToWait = millisToWait;</span>
+<span class="nc" id="L181">            waitingLatch.countDown();</span>
+<span class="nc" id="L182">        }</span>
+    }
+
+    static class State {
+
+<span class="nc" id="L187">        protected int jobsAcquired = 0;</span>
+<span class="nc" id="L188">        protected int jobsRejected = 0;</span>
+<span class="nc" id="L189">        protected int maxTimerJobsPerAcquisition = 0;</span>
+<span class="nc" id="L190">        protected long millisToWait = 0;</span>
+        protected int remainingCapacity;
+        protected boolean acquireCycleStopped;
+
+<span class="nc" id="L194">        public State(int remainingCapacity) {</span>
+<span class="nc" id="L195">            this.remainingCapacity = remainingCapacity;</span>
+<span class="nc" id="L196">        }</span>
+
+        public int getJobsAcquired() {
+<span class="nc" id="L199">            return jobsAcquired;</span>
+        }
+
+        public int getMaxTimerJobsPerAcquisition() {
+<span class="nc" id="L203">            return maxTimerJobsPerAcquisition;</span>
+        }
+
+        public long getMillisToWait() {
+<span class="nc" id="L207">            return millisToWait;</span>
+        }
+
+        public int getRemainingCapacity() {
+<span class="nc" id="L211">            return remainingCapacity;</span>
+        }
+
+        public boolean isAcquireCycleStopped() {
+<span class="nc" id="L215">            return acquireCycleStopped;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

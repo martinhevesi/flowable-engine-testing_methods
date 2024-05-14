@@ -1,0 +1,1141 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ExecutionEntityManagerImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.persistence.entity</a> &gt; <span class="el_source">ExecutionEntityManagerImpl.java</span></div><h1>ExecutionEntityManagerImpl.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.flowable.engine.impl.persistence.entity;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.flowable.bpmn.model.CaseServiceTask;
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.FlowNode;
+import org.flowable.cmmn.api.CallbackTypes;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.FlowableObjectNotFoundException;
+import org.flowable.common.engine.api.constant.ReferenceTypes;
+import org.flowable.common.engine.api.delegate.event.FlowableEngineEventType;
+import org.flowable.common.engine.api.delegate.event.FlowableEventDispatcher;
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.impl.identity.Authentication;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.common.engine.impl.logging.LoggingSessionConstants;
+import org.flowable.common.engine.impl.persistence.cache.CachedEntityMatcher;
+import org.flowable.common.engine.impl.persistence.entity.ByteArrayEntityManager;
+import org.flowable.common.engine.impl.persistence.entity.ByteArrayRef;
+import org.flowable.engine.delegate.event.impl.FlowableEventBuilder;
+import org.flowable.engine.history.DeleteReason;
+import org.flowable.engine.impl.ExecutionQueryImpl;
+import org.flowable.engine.impl.ProcessInstanceQueryImpl;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.cmmn.CaseInstanceService;
+import org.flowable.engine.impl.delegate.InterruptibleActivityBehaviour;
+import org.flowable.engine.impl.delegate.SubProcessActivityBehavior;
+import org.flowable.engine.impl.history.HistoryManager;
+import org.flowable.engine.impl.persistence.CountingExecutionEntity;
+import org.flowable.engine.impl.persistence.entity.data.ExecutionDataManager;
+import org.flowable.engine.impl.runtime.callback.ProcessInstanceState;
+import org.flowable.engine.impl.util.BpmnLoggingSessionUtil;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.engine.impl.util.CountingEntityUtil;
+import org.flowable.engine.impl.util.EventUtil;
+import org.flowable.engine.impl.util.ProcessDefinitionUtil;
+import org.flowable.engine.impl.util.ProcessInstanceHelper;
+import org.flowable.engine.impl.util.TaskHelper;
+import org.flowable.engine.repository.ProcessDefinition;
+import org.flowable.engine.runtime.Execution;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.entitylink.api.EntityLink;
+import org.flowable.entitylink.api.EntityLinkService;
+import org.flowable.entitylink.service.impl.persistence.entity.EntityLinkEntity;
+import org.flowable.eventsubscription.service.EventSubscriptionService;
+import org.flowable.eventsubscription.service.impl.persistence.entity.EventSubscriptionEntity;
+import org.flowable.eventsubscription.service.impl.persistence.entity.MessageEventSubscriptionEntity;
+import org.flowable.identitylink.service.IdentityLinkService;
+import org.flowable.identitylink.service.impl.persistence.entity.IdentityLinkEntity;
+import org.flowable.identitylink.service.impl.persistence.entity.data.impl.cachematcher.IdentityLinksByProcessInstanceMatcher;
+import org.flowable.job.service.JobService;
+import org.flowable.job.service.event.impl.FlowableJobEventBuilder;
+import org.flowable.job.service.impl.asyncexecutor.AsyncExecutor;
+import org.flowable.job.service.impl.persistence.entity.ExternalWorkerJobEntity;
+import org.flowable.job.service.impl.persistence.entity.ExternalWorkerJobEntityManager;
+import org.flowable.variable.api.persistence.entity.VariableInstance;
+import org.flowable.variable.service.impl.persistence.entity.VariableInstanceEntity;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * @author Tom Baeyens
+ * @author Joram Barrez
+ */
+public class ExecutionEntityManagerImpl
+    extends AbstractProcessEngineEntityManager&lt;ExecutionEntity, ExecutionDataManager&gt;
+    implements ExecutionEntityManager {
+
+<span class="nc" id="L89">    private static final Logger LOGGER = LoggerFactory.getLogger(ExecutionEntityManagerImpl.class);</span>
+
+    public ExecutionEntityManagerImpl(ProcessEngineConfigurationImpl processEngineConfiguration, ExecutionDataManager executionDataManager) {
+<span class="nc" id="L92">        super(processEngineConfiguration, executionDataManager);</span>
+<span class="nc" id="L93">    }</span>
+
+    // Overriding the default delete methods to set the 'isDeleted' flag
+
+    @Override
+    public void delete(ExecutionEntity entity) {
+<span class="nc" id="L99">        delete(entity, true);</span>
+<span class="nc" id="L100">    }</span>
+
+    @Override
+    public void delete(ExecutionEntity entity, boolean fireDeleteEvent) {
+<span class="nc" id="L104">        super.delete(entity, fireDeleteEvent);</span>
+<span class="nc" id="L105">        entity.setDeleted(true);</span>
+<span class="nc" id="L106">    }</span>
+
+    // FIND METHODS
+
+    @Override
+    public ExecutionEntity findSubProcessInstanceBySuperExecutionId(String superExecutionId) {
+<span class="nc" id="L112">        return dataManager.findSubProcessInstanceBySuperExecutionId(superExecutionId);</span>
+    }
+
+    @Override
+    public List&lt;ExecutionEntity&gt; findChildExecutionsByParentExecutionId(String parentExecutionId) {
+<span class="nc" id="L117">        return dataManager.findChildExecutionsByParentExecutionId(parentExecutionId);</span>
+    }
+
+    @Override
+    public List&lt;ExecutionEntity&gt; findChildExecutionsByProcessInstanceId(String processInstanceId) {
+<span class="nc" id="L122">        return dataManager.findChildExecutionsByProcessInstanceId(processInstanceId);</span>
+    }
+
+    @Override
+    public List&lt;ExecutionEntity&gt; findExecutionsByParentExecutionAndActivityIds(final String parentExecutionId, final Collection&lt;String&gt; activityIds) {
+<span class="nc" id="L127">        return dataManager.findExecutionsByParentExecutionAndActivityIds(parentExecutionId, activityIds);</span>
+    }
+
+    @Override
+    public long findExecutionCountByQueryCriteria(ExecutionQueryImpl executionQuery) {
+<span class="nc" id="L132">        return dataManager.findExecutionCountByQueryCriteria(executionQuery);</span>
+    }
+
+    @Override
+    public List&lt;ExecutionEntity&gt; findExecutionsByQueryCriteria(ExecutionQueryImpl executionQuery) {
+<span class="nc" id="L137">        return dataManager.findExecutionsByQueryCriteria(executionQuery);</span>
+    }
+
+    @Override
+    public long findProcessInstanceCountByQueryCriteria(ProcessInstanceQueryImpl executionQuery) {
+<span class="nc" id="L142">        return dataManager.findProcessInstanceCountByQueryCriteria(executionQuery);</span>
+    }
+
+    @Override
+    public List&lt;ProcessInstance&gt; findProcessInstanceByQueryCriteria(ProcessInstanceQueryImpl executionQuery) {
+<span class="nc" id="L147">        return dataManager.findProcessInstanceByQueryCriteria(executionQuery);</span>
+    }
+
+    @Override
+    public ExecutionEntity findByRootProcessInstanceId(String rootProcessInstanceId) {
+<span class="nc" id="L152">        List&lt;ExecutionEntity&gt; executions = dataManager.findExecutionsByRootProcessInstanceId(rootProcessInstanceId);</span>
+<span class="nc" id="L153">        return processExecutionTree(rootProcessInstanceId, executions);</span>
+
+    }
+
+    /**
+     * Processes a collection of {@link ExecutionEntity} instances, which form on execution tree. All the executions share the same rootProcessInstanceId (which is provided). The return value will be
+     * the root {@link ExecutionEntity} instance, with all child {@link ExecutionEntity} instances populated and set using the {@link ExecutionEntity} instances from the provided collections
+     */
+    protected ExecutionEntity processExecutionTree(String rootProcessInstanceId, List&lt;ExecutionEntity&gt; executions) {
+<span class="nc" id="L162">        ExecutionEntity rootExecution = null;</span>
+
+        // Collect executions
+<span class="nc" id="L165">        Map&lt;String, ExecutionEntity&gt; executionMap = new HashMap&lt;&gt;(executions.size());</span>
+<span class="nc bnc" id="L166" title="All 2 branches missed.">        for (ExecutionEntity executionEntity : executions) {</span>
+<span class="nc bnc" id="L167" title="All 2 branches missed.">            if (executionEntity.getId().equals(rootProcessInstanceId)) {</span>
+<span class="nc" id="L168">                rootExecution = executionEntity;</span>
+            }
+<span class="nc" id="L170">            executionMap.put(executionEntity.getId(), executionEntity);</span>
+<span class="nc" id="L171">        }</span>
+
+        // Set relationships
+<span class="nc bnc" id="L174" title="All 2 branches missed.">        for (ExecutionEntity executionEntity : executions) {</span>
+
+            // Root process instance relationship
+<span class="nc bnc" id="L177" title="All 2 branches missed.">            if (executionEntity.getRootProcessInstanceId() != null) {</span>
+<span class="nc" id="L178">                executionEntity.setRootProcessInstance(executionMap.get(executionEntity.getRootProcessInstanceId()));</span>
+            }
+
+            // Process instance relationship
+<span class="nc bnc" id="L182" title="All 2 branches missed.">            if (executionEntity.getProcessInstanceId() != null) {</span>
+<span class="nc" id="L183">                executionEntity.setProcessInstance(executionMap.get(executionEntity.getProcessInstanceId()));</span>
+            }
+
+            // Parent - child relationship
+<span class="nc bnc" id="L187" title="All 2 branches missed.">            if (executionEntity.getParentId() != null) {</span>
+<span class="nc" id="L188">                ExecutionEntity parentExecutionEntity = executionMap.get(executionEntity.getParentId());</span>
+<span class="nc" id="L189">                executionEntity.setParent(parentExecutionEntity);</span>
+<span class="nc" id="L190">                parentExecutionEntity.addChildExecution(executionEntity);</span>
+            }
+
+            // Super - sub execution relationship
+<span class="nc bnc" id="L194" title="All 2 branches missed.">            if (executionEntity.getSuperExecution() != null) {</span>
+<span class="nc" id="L195">                ExecutionEntity superExecutionEntity = executionMap.get(executionEntity.getSuperExecutionId());</span>
+<span class="nc" id="L196">                executionEntity.setSuperExecution(superExecutionEntity);</span>
+<span class="nc" id="L197">                superExecutionEntity.setSubProcessInstance(executionEntity);</span>
+            }
+
+<span class="nc" id="L200">        }</span>
+<span class="nc" id="L201">        return rootExecution;</span>
+    }
+
+    @Override
+    public List&lt;ProcessInstance&gt; findProcessInstanceAndVariablesByQueryCriteria(ProcessInstanceQueryImpl executionQuery) {
+<span class="nc" id="L206">        return dataManager.findProcessInstanceAndVariablesByQueryCriteria(executionQuery);</span>
+    }
+
+    @Override
+    public Collection&lt;ExecutionEntity&gt; findInactiveExecutionsByProcessInstanceId(final String processInstanceId) {
+<span class="nc" id="L211">        return dataManager.findInactiveExecutionsByProcessInstanceId(processInstanceId);</span>
+    }
+
+    @Override
+    public Collection&lt;ExecutionEntity&gt; findInactiveExecutionsByActivityIdAndProcessInstanceId(final String activityId, final String processInstanceId) {
+<span class="nc" id="L216">        return dataManager.findInactiveExecutionsByActivityIdAndProcessInstanceId(activityId, processInstanceId);</span>
+    }
+
+    @Override
+    public List&lt;Execution&gt; findExecutionsByNativeQuery(Map&lt;String, Object&gt; parameterMap) {
+<span class="nc" id="L221">        return dataManager.findExecutionsByNativeQuery(parameterMap);</span>
+    }
+
+    @Override
+    public List&lt;ProcessInstance&gt; findProcessInstanceByNativeQuery(Map&lt;String, Object&gt; parameterMap) {
+<span class="nc" id="L226">        return dataManager.findProcessInstanceByNativeQuery(parameterMap);</span>
+    }
+
+    @Override
+    public long findExecutionCountByNativeQuery(Map&lt;String, Object&gt; parameterMap) {
+<span class="nc" id="L231">        return dataManager.findExecutionCountByNativeQuery(parameterMap);</span>
+    }
+    @Override
+    public long countActiveExecutionsByParentId(String parentId) {
+<span class="nc" id="L235">        return dataManager.countActiveExecutionsByParentId(parentId);</span>
+    }
+
+    // CREATE METHODS
+
+    @Override
+    public ExecutionEntity createProcessInstanceExecution(ProcessDefinition processDefinition, String predefinedProcessInstanceId, String businessKey,
+            String businessStatus, String processInstanceName, String callbackId, String callbackType, String referenceId, String referenceType,
+            String propagatedStageInstanceId, String tenantId, String initiatorVariableName, String startActivityId) {
+
+<span class="nc" id="L245">        ExecutionEntity processInstanceExecution = dataManager.create();</span>
+
+<span class="nc bnc" id="L247" title="All 2 branches missed.">        if (CountingEntityUtil.isExecutionRelatedEntityCountEnabledGlobally()) {</span>
+<span class="nc" id="L248">            ((CountingExecutionEntity) processInstanceExecution).setCountEnabled(true);</span>
+        }
+        
+<span class="nc bnc" id="L251" title="All 2 branches missed.">        if (predefinedProcessInstanceId != null) {</span>
+<span class="nc" id="L252">            processInstanceExecution.setId(predefinedProcessInstanceId);</span>
+        }
+
+<span class="nc" id="L255">        processInstanceExecution.setProcessDefinitionId(processDefinition.getId());</span>
+<span class="nc" id="L256">        processInstanceExecution.setProcessDefinitionKey(processDefinition.getKey());</span>
+<span class="nc" id="L257">        processInstanceExecution.setProcessDefinitionName(processDefinition.getName());</span>
+<span class="nc" id="L258">        processInstanceExecution.setProcessDefinitionVersion(processDefinition.getVersion());</span>
+<span class="nc" id="L259">        processInstanceExecution.setProcessDefinitionCategory(processDefinition.getCategory());</span>
+<span class="nc" id="L260">        processInstanceExecution.setDeploymentId(processDefinition.getDeploymentId());</span>
+<span class="nc" id="L261">        processInstanceExecution.setBusinessKey(businessKey);</span>
+<span class="nc" id="L262">        processInstanceExecution.setBusinessStatus(businessStatus);</span>
+<span class="nc" id="L263">        processInstanceExecution.setName(processInstanceName);</span>
+        
+        // Callbacks
+<span class="nc bnc" id="L266" title="All 2 branches missed.">        if (callbackId != null) {</span>
+<span class="nc" id="L267">            processInstanceExecution.setCallbackId(callbackId);</span>
+        }
+<span class="nc bnc" id="L269" title="All 2 branches missed.">        if (callbackType != null) {</span>
+<span class="nc" id="L270">            processInstanceExecution.setCallbackType(callbackType);</span>
+        }
+<span class="nc bnc" id="L272" title="All 2 branches missed.">        if (referenceId != null) {</span>
+<span class="nc" id="L273">            processInstanceExecution.setReferenceId(referenceId);</span>
+        }
+<span class="nc bnc" id="L275" title="All 2 branches missed.">        if (referenceType != null) {</span>
+<span class="nc" id="L276">            processInstanceExecution.setReferenceType(referenceType);</span>
+        }
+<span class="nc bnc" id="L278" title="All 2 branches missed.">        if (propagatedStageInstanceId != null) {</span>
+<span class="nc" id="L279">            processInstanceExecution.setPropagatedStageInstanceId(propagatedStageInstanceId);</span>
+        }
+        
+<span class="nc" id="L282">        processInstanceExecution.setScope(true); // process instance is always a scope for all child executions</span>
+
+        // Inherit tenant id (if any)
+<span class="nc bnc" id="L285" title="All 2 branches missed.">        if (tenantId != null) {</span>
+<span class="nc" id="L286">            processInstanceExecution.setTenantId(tenantId);</span>
+        }
+
+<span class="nc" id="L289">        String authenticatedUserId = Authentication.getAuthenticatedUserId();</span>
+
+<span class="nc" id="L291">        processInstanceExecution.setStartActivityId(startActivityId);</span>
+<span class="nc" id="L292">        processInstanceExecution.setStartTime(CommandContextUtil.getProcessEngineConfiguration().getClock().getCurrentTime());</span>
+<span class="nc" id="L293">        processInstanceExecution.setStartUserId(authenticatedUserId);</span>
+
+        // Store in database
+<span class="nc" id="L296">        insert(processInstanceExecution, false);</span>
+
+<span class="nc bnc" id="L298" title="All 2 branches missed.">        if (initiatorVariableName != null) {</span>
+<span class="nc" id="L299">            processInstanceExecution.setVariable(initiatorVariableName, authenticatedUserId);</span>
+        }
+
+        // Need to be after insert, cause we need the id
+<span class="nc" id="L303">        processInstanceExecution.setProcessInstanceId(processInstanceExecution.getId());</span>
+<span class="nc" id="L304">        processInstanceExecution.setRootProcessInstanceId(processInstanceExecution.getId());</span>
+        
+<span class="nc bnc" id="L306" title="All 2 branches missed.">        if (engineConfiguration.getIdentityLinkInterceptor() != null) {</span>
+<span class="nc" id="L307">            engineConfiguration.getIdentityLinkInterceptor().handleCreateProcessInstance(processInstanceExecution);</span>
+        }
+
+        // Fire events
+<span class="nc bnc" id="L311" title="All 4 branches missed.">        if (getEventDispatcher() != null &amp;&amp; getEventDispatcher().isEnabled()) {</span>
+<span class="nc" id="L312">            getEventDispatcher().dispatchEvent(FlowableEventBuilder.createEntityEvent(FlowableEngineEventType.ENTITY_CREATED, processInstanceExecution),</span>
+<span class="nc" id="L313">                    engineConfiguration.getEngineCfgKey());</span>
+        }
+
+<span class="nc" id="L316">        return processInstanceExecution;</span>
+    }
+
+    /**
+     * Creates a new execution. properties processDefinition, processInstance and activity will be initialized.
+     */
+    @Override
+    public ExecutionEntity createChildExecution(ExecutionEntity parentExecutionEntity) {
+<span class="nc" id="L324">        ExecutionEntity childExecution = dataManager.create();</span>
+<span class="nc" id="L325">        inheritCommonProperties(parentExecutionEntity, childExecution);</span>
+<span class="nc" id="L326">        childExecution.setParent(parentExecutionEntity);</span>
+<span class="nc" id="L327">        childExecution.setProcessDefinitionId(parentExecutionEntity.getProcessDefinitionId());</span>
+<span class="nc" id="L328">        childExecution.setProcessDefinitionKey(parentExecutionEntity.getProcessDefinitionKey());</span>
+<span class="nc bnc" id="L329" title="All 2 branches missed.">        childExecution.setProcessInstanceId(parentExecutionEntity.getProcessInstanceId() != null</span>
+<span class="nc" id="L330">                ? parentExecutionEntity.getProcessInstanceId() : parentExecutionEntity.getId());</span>
+<span class="nc" id="L331">        childExecution.setScope(false);</span>
+
+        // manage the bidirectional parent-child relation
+<span class="nc" id="L334">        parentExecutionEntity.addChildExecution(childExecution);</span>
+
+        // Insert the child execution
+<span class="nc" id="L337">        insert(childExecution, false);</span>
+
+<span class="nc bnc" id="L339" title="All 2 branches missed.">        if (LOGGER.isDebugEnabled()) {</span>
+<span class="nc" id="L340">            LOGGER.debug(&quot;Child execution {} created with parent {}&quot;, childExecution, parentExecutionEntity.getId());</span>
+        }
+
+<span class="nc bnc" id="L343" title="All 4 branches missed.">        if (getEventDispatcher() != null &amp;&amp; getEventDispatcher().isEnabled()) {</span>
+<span class="nc" id="L344">            getEventDispatcher().dispatchEvent(FlowableEventBuilder.createEntityEvent(FlowableEngineEventType.ENTITY_CREATED, childExecution),</span>
+<span class="nc" id="L345">                    engineConfiguration.getEngineCfgKey());</span>
+<span class="nc" id="L346">            getEventDispatcher().dispatchEvent(FlowableEventBuilder.createEntityEvent(FlowableEngineEventType.ENTITY_INITIALIZED, childExecution),</span>
+<span class="nc" id="L347">                    engineConfiguration.getEngineCfgKey());</span>
+        }
+
+<span class="nc" id="L350">        return childExecution;</span>
+    }
+
+    @Override
+    public ExecutionEntity createSubprocessInstance(ProcessDefinition processDefinition, ExecutionEntity superExecutionEntity,
+                                                    String businessKey, String activityId) {
+
+<span class="nc" id="L357">        ExecutionEntity subProcessInstance = dataManager.create();</span>
+<span class="nc" id="L358">        inheritCommonProperties(superExecutionEntity, subProcessInstance);</span>
+<span class="nc" id="L359">        subProcessInstance.setProcessDefinitionId(processDefinition.getId());</span>
+<span class="nc" id="L360">        subProcessInstance.setProcessDefinitionKey(processDefinition.getKey());</span>
+<span class="nc" id="L361">        subProcessInstance.setProcessDefinitionName(processDefinition.getName());</span>
+<span class="nc" id="L362">        subProcessInstance.setSuperExecution(superExecutionEntity);</span>
+<span class="nc" id="L363">        subProcessInstance.setRootProcessInstanceId(superExecutionEntity.getRootProcessInstanceId());</span>
+<span class="nc" id="L364">        subProcessInstance.setScope(true); // process instance is always a scope for all child executions</span>
+
+<span class="nc" id="L366">        String authenticatedUserId = Authentication.getAuthenticatedUserId();</span>
+
+<span class="nc" id="L368">        subProcessInstance.setStartActivityId(activityId);</span>
+<span class="nc" id="L369">        subProcessInstance.setStartUserId(authenticatedUserId);</span>
+<span class="nc" id="L370">        subProcessInstance.setBusinessKey(businessKey);</span>
+
+        // Store in database
+<span class="nc" id="L373">        insert(subProcessInstance, false);</span>
+
+<span class="nc bnc" id="L375" title="All 2 branches missed.">        if (LOGGER.isDebugEnabled()) {</span>
+<span class="nc" id="L376">            LOGGER.debug(&quot;Child execution {} created with super execution {}&quot;, subProcessInstance, superExecutionEntity.getId());</span>
+        }
+
+<span class="nc" id="L379">        subProcessInstance.setProcessInstanceId(subProcessInstance.getId());</span>
+<span class="nc" id="L380">        superExecutionEntity.setSubProcessInstance(subProcessInstance);</span>
+        
+<span class="nc bnc" id="L382" title="All 2 branches missed.">        if (engineConfiguration.getIdentityLinkInterceptor() != null) {</span>
+<span class="nc" id="L383">            engineConfiguration.getIdentityLinkInterceptor().handleCreateSubProcessInstance(subProcessInstance, superExecutionEntity);</span>
+        }
+
+<span class="nc" id="L386">        engineConfiguration.getProcessInstanceHelper().processAvailableEventSubProcesses(subProcessInstance,</span>
+<span class="nc" id="L387">            ProcessDefinitionUtil.getProcess(processDefinition.getId()),CommandContextUtil.getCommandContext());</span>
+
+<span class="nc" id="L389">        FlowableEventDispatcher flowableEventDispatcher = engineConfiguration.getEventDispatcher();</span>
+<span class="nc bnc" id="L390" title="All 4 branches missed.">        if (flowableEventDispatcher != null &amp;&amp; flowableEventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L391">            flowableEventDispatcher.dispatchEvent(FlowableEventBuilder.createEntityEvent(FlowableEngineEventType.ENTITY_CREATED, subProcessInstance),</span>
+<span class="nc" id="L392">                    engineConfiguration.getEngineCfgKey());</span>
+        }
+
+<span class="nc" id="L395">        return subProcessInstance;</span>
+    }
+
+    protected void inheritCommonProperties(ExecutionEntity parentExecutionEntity, ExecutionEntity childExecution) {
+
+        // Inherits the 'count' feature from the parent.
+        // If the parent was not 'counting', we can't make the child 'counting' again.
+<span class="nc bnc" id="L402" title="All 2 branches missed.">        if (parentExecutionEntity instanceof CountingExecutionEntity) {</span>
+<span class="nc" id="L403">            CountingExecutionEntity countingParentExecutionEntity = (CountingExecutionEntity) parentExecutionEntity;</span>
+<span class="nc" id="L404">            ((CountingExecutionEntity) childExecution).setCountEnabled(countingParentExecutionEntity.isCountEnabled());</span>
+        }
+
+        // inherit the stage instance id, if present
+<span class="nc" id="L408">        childExecution.setPropagatedStageInstanceId(parentExecutionEntity.getPropagatedStageInstanceId());</span>
+
+<span class="nc" id="L410">        childExecution.setRootProcessInstanceId(parentExecutionEntity.getRootProcessInstanceId());</span>
+<span class="nc" id="L411">        childExecution.setActive(true);</span>
+<span class="nc" id="L412">        childExecution.setStartTime(getClock().getCurrentTime());</span>
+
+<span class="nc bnc" id="L414" title="All 2 branches missed.">        if (parentExecutionEntity.getTenantId() != null) {</span>
+<span class="nc" id="L415">            childExecution.setTenantId(parentExecutionEntity.getTenantId());</span>
+        }
+
+<span class="nc" id="L418">    }</span>
+
+    // UPDATE METHODS
+
+    @Override
+    public void updateExecutionTenantIdForDeployment(String deploymentId, String newTenantId) {
+<span class="nc" id="L424">        dataManager.updateExecutionTenantIdForDeployment(deploymentId, newTenantId);</span>
+<span class="nc" id="L425">    }</span>
+
+    // DELETE METHODS
+
+    @Override
+    public void deleteProcessInstancesByProcessDefinition(String processDefinitionId, String deleteReason, boolean cascade) {
+<span class="nc" id="L431">        List&lt;String&gt; processInstanceIds = dataManager.findProcessInstanceIdsByProcessDefinitionId(processDefinitionId);</span>
+
+<span class="nc bnc" id="L433" title="All 2 branches missed.">        for (String processInstanceId : processInstanceIds) {</span>
+<span class="nc" id="L434">            deleteProcessInstanceCascade(findById(processInstanceId), deleteReason, cascade, true);</span>
+<span class="nc" id="L435">        }</span>
+
+<span class="nc bnc" id="L437" title="All 2 branches missed.">        if (cascade) {</span>
+<span class="nc" id="L438">            getHistoryManager().recordDeleteHistoricProcessInstancesByProcessDefinitionId(processDefinitionId);</span>
+        }
+<span class="nc" id="L440">    }</span>
+    
+    @Override
+    public void deleteProcessInstance(String processInstanceId, String deleteReason, boolean cascade) {
+<span class="nc" id="L444">        deleteProcessInstance(processInstanceId, deleteReason, cascade, false);</span>
+<span class="nc" id="L445">    }</span>
+    
+    @Override
+    public void deleteProcessInstance(String processInstanceId, String deleteReason, boolean cascade, boolean directDeleteInDatabase) {
+<span class="nc" id="L449">        ExecutionEntity processInstanceExecution = findById(processInstanceId);</span>
+
+<span class="nc bnc" id="L451" title="All 2 branches missed.">        if (processInstanceExecution == null) {</span>
+<span class="nc" id="L452">            throw new FlowableObjectNotFoundException(&quot;No process instance found for id '&quot; + processInstanceId + &quot;'&quot;, ProcessInstance.class);</span>
+        }
+
+<span class="nc" id="L455">        deleteProcessInstanceCascade(processInstanceExecution, deleteReason, cascade, directDeleteInDatabase);</span>
+        
+        // Special care needed for a process instance of a call activity: the parent process instance needs to be triggered for completion
+        // This can't be added to the deleteProcessInstanceCascade method, as this will also trigger all child and/or multi-instance
+        // process instances for child call activities, which shouldn't happen.
+<span class="nc bnc" id="L460" title="All 2 branches missed.">        if (processInstanceExecution.getSuperExecutionId() != null) {</span>
+<span class="nc" id="L461">            ExecutionEntity superExecution = processInstanceExecution.getSuperExecution();</span>
+<span class="nc bnc" id="L462" title="All 2 branches missed.">            if (superExecution != null</span>
+<span class="nc bnc" id="L463" title="All 2 branches missed.">                    &amp;&amp; superExecution.getCurrentFlowElement() instanceof FlowNode</span>
+<span class="nc bnc" id="L464" title="All 2 branches missed.">                    &amp;&amp; ((FlowNode) superExecution.getCurrentFlowElement()).getBehavior() instanceof SubProcessActivityBehavior) {</span>
+<span class="nc" id="L465">                SubProcessActivityBehavior subProcessActivityBehavior = (SubProcessActivityBehavior) ((FlowNode) superExecution.getCurrentFlowElement()).getBehavior();</span>
+                try {
+<span class="nc" id="L467">                    subProcessActivityBehavior.completing(superExecution, processInstanceExecution);</span>
+<span class="nc" id="L468">                    superExecution.setSubProcessInstance(null);</span>
+<span class="nc" id="L469">                    subProcessActivityBehavior.completed(superExecution);</span>
+<span class="nc" id="L470">                } catch (Exception e) {</span>
+<span class="nc" id="L471">                    throw new FlowableException(&quot;Could not complete parent process instance for call activity with process instance execution &quot; </span>
+                                + processInstanceExecution, e);
+<span class="nc" id="L473">                }</span>
+            }
+        }
+<span class="nc" id="L476">    }</span>
+
+    protected void deleteProcessInstanceCascade(ExecutionEntity execution, String deleteReason, boolean deleteHistory, boolean directDeleteInDatabase) {
+
+        // fill default reason if none provided
+<span class="nc bnc" id="L481" title="All 2 branches missed.">        if (deleteReason == null) {</span>
+<span class="nc" id="L482">            deleteReason = DeleteReason.PROCESS_INSTANCE_DELETED;</span>
+        }
+<span class="nc" id="L484">        getActivityInstanceEntityManager().deleteActivityInstancesByProcessInstanceId(execution.getId());</span>
+
+<span class="nc" id="L486">        List&lt;ExecutionEntity&gt; childExecutions = collectChildren(execution.getProcessInstance());</span>
+<span class="nc bnc" id="L487" title="All 2 branches missed.">        for (ExecutionEntity subExecutionEntity : childExecutions) {</span>
+            // We are treating the deletion of a process instance similar to an interruption
+            // The reason for that is that there might be variables that have to be persisted differently
+            // i.e. nrOfCompletedInstances / nrOfActiveInstance or variable aggregations
+<span class="nc" id="L491">            FlowElement subExecutionFlowElement = subExecutionEntity.getCurrentFlowElement();</span>
+<span class="nc bnc" id="L492" title="All 2 branches missed.">            if (subExecutionFlowElement instanceof FlowNode) {</span>
+<span class="nc" id="L493">                Object behavior = ((FlowNode) subExecutionFlowElement).getBehavior();</span>
+<span class="nc bnc" id="L494" title="All 2 branches missed.">                if (behavior instanceof InterruptibleActivityBehaviour) {</span>
+<span class="nc" id="L495">                    ((InterruptibleActivityBehaviour) behavior).interrupted(subExecutionEntity);</span>
+                }
+            }
+<span class="nc bnc" id="L498" title="All 2 branches missed.">            if (subExecutionEntity.isMultiInstanceRoot()) {</span>
+<span class="nc bnc" id="L499" title="All 2 branches missed.">                for (ExecutionEntity miExecutionEntity : subExecutionEntity.getExecutions()) {</span>
+<span class="nc bnc" id="L500" title="All 2 branches missed.">                    if (miExecutionEntity.getSubProcessInstance() != null) {</span>
+<span class="nc" id="L501">                        deleteProcessInstanceCascade(miExecutionEntity.getSubProcessInstance(), deleteReason, deleteHistory, directDeleteInDatabase);</span>
+
+<span class="nc bnc" id="L503" title="All 4 branches missed.">                        if (getEventDispatcher() != null &amp;&amp; getEventDispatcher().isEnabled()) {</span>
+<span class="nc" id="L504">                            FlowElement callActivityElement = miExecutionEntity.getCurrentFlowElement();</span>
+<span class="nc" id="L505">                            getEventDispatcher().dispatchEvent(FlowableEventBuilder.createActivityCancelledEvent(callActivityElement.getId(),</span>
+<span class="nc" id="L506">                                    callActivityElement.getName(), miExecutionEntity.getId(), miExecutionEntity.getProcessInstanceId(),</span>
+<span class="nc" id="L507">                                    miExecutionEntity.getProcessDefinitionId(), &quot;callActivity&quot;, deleteReason), engineConfiguration.getEngineCfgKey());</span>
+                        }
+                    }
+<span class="nc" id="L510">                }</span>
+
+<span class="nc bnc" id="L512" title="All 2 branches missed.">            } else if (subExecutionEntity.getSubProcessInstance() != null) {</span>
+<span class="nc" id="L513">                deleteProcessInstanceCascade(subExecutionEntity.getSubProcessInstance(), deleteReason, deleteHistory, directDeleteInDatabase);</span>
+
+<span class="nc bnc" id="L515" title="All 4 branches missed.">                if (getEventDispatcher() != null &amp;&amp; getEventDispatcher().isEnabled()) {</span>
+<span class="nc" id="L516">                    FlowElement callActivityElement = subExecutionEntity.getCurrentFlowElement();</span>
+<span class="nc" id="L517">                    getEventDispatcher().dispatchEvent(FlowableEventBuilder.createActivityCancelledEvent(callActivityElement.getId(),</span>
+<span class="nc" id="L518">                            callActivityElement.getName(), subExecutionEntity.getId(), subExecutionEntity.getProcessInstanceId(),</span>
+<span class="nc" id="L519">                            subExecutionEntity.getProcessDefinitionId(), &quot;callActivity&quot;, deleteReason), engineConfiguration.getEngineCfgKey());</span>
+                }
+            }
+<span class="nc" id="L522">        }</span>
+
+<span class="nc" id="L524">        TaskHelper.deleteTasksByProcessInstanceId(execution.getId(), deleteReason, deleteHistory);</span>
+
+<span class="nc bnc" id="L526" title="All 4 branches missed.">        if (getEventDispatcher() != null &amp;&amp; getEventDispatcher().isEnabled()) {</span>
+<span class="nc" id="L527">            getEventDispatcher().dispatchEvent(FlowableEventBuilder.createCancelledEvent(execution.getProcessInstanceId(),</span>
+<span class="nc" id="L528">                    execution.getProcessInstanceId(), execution.getProcessDefinitionId(), deleteReason), engineConfiguration.getEngineCfgKey());</span>
+        }
+
+        // delete the execution BEFORE we delete the history, otherwise we will
+        // produce orphan HistoricVariableInstance instances
+
+<span class="nc" id="L534">        ExecutionEntity processInstanceExecutionEntity = execution.getProcessInstance();</span>
+<span class="nc bnc" id="L535" title="All 2 branches missed.">        if (processInstanceExecutionEntity == null) {</span>
+<span class="nc" id="L536">            return;</span>
+        }
+
+<span class="nc bnc" id="L539" title="All 2 branches missed.">        for (int i = childExecutions.size() - 1; i &gt;= 0; i--) {</span>
+<span class="nc" id="L540">            ExecutionEntity childExecutionEntity = childExecutions.get(i);</span>
+<span class="nc" id="L541">            deleteExecutionAndRelatedData(childExecutionEntity, deleteReason, deleteHistory, directDeleteInDatabase);</span>
+        }
+
+<span class="nc" id="L544">        deleteExecutionAndRelatedData(execution, deleteReason, deleteHistory, directDeleteInDatabase, true, null);</span>
+
+<span class="nc bnc" id="L546" title="All 2 branches missed.">        if (deleteHistory) {</span>
+<span class="nc" id="L547">            getHistoryManager().recordProcessInstanceDeleted(execution.getId(), execution.getProcessDefinitionId(), execution.getTenantId());</span>
+        }
+
+<span class="nc" id="L550">        getHistoryManager().recordProcessInstanceEnd(processInstanceExecutionEntity, deleteReason, null, getClock().getCurrentTime());</span>
+<span class="nc" id="L551">        processInstanceExecutionEntity.setDeleted(true);</span>
+<span class="nc" id="L552">    }</span>
+
+    @Override
+    public void deleteExecutionAndRelatedData(ExecutionEntity executionEntity, String deleteReason, boolean deleteHistory, 
+            boolean directDeleteInDatabase, boolean cancel, FlowElement cancelActivity) {
+        
+<span class="nc bnc" id="L558" title="All 4 branches missed.">        if (!deleteHistory &amp;&amp; executionEntity.isActive()</span>
+<span class="nc bnc" id="L559" title="All 2 branches missed.">                &amp;&amp; executionEntity.getCurrentFlowElement() != null</span>
+<span class="nc bnc" id="L560" title="All 2 branches missed.">                &amp;&amp; !executionEntity.isMultiInstanceRoot()) {</span>
+            
+<span class="nc" id="L562">            CommandContextUtil.getActivityInstanceEntityManager().recordActivityEnd(executionEntity, deleteReason);</span>
+        }
+        
+<span class="nc" id="L565">        deleteRelatedDataForExecution(executionEntity, deleteReason, directDeleteInDatabase);</span>
+<span class="nc" id="L566">        delete(executionEntity);</span>
+
+<span class="nc bnc" id="L568" title="All 4 branches missed.">        if (cancel &amp;&amp; !executionEntity.isProcessInstanceType()) {</span>
+<span class="nc bnc" id="L569" title="All 2 branches missed.">            dispatchActivityCancelled(executionEntity, cancelActivity != null ? cancelActivity : executionEntity.getCurrentFlowElement());</span>
+        }
+        
+<span class="nc bnc" id="L572" title="All 4 branches missed.">        if (executionEntity.isProcessInstanceType() &amp;&amp; executionEntity.getCallbackId() != null) {</span>
+<span class="nc" id="L573">            CommandContext commandContext = CommandContextUtil.getCommandContext();</span>
+<span class="nc" id="L574">            ProcessInstanceHelper processInstanceHelper = CommandContextUtil.getProcessInstanceHelper(commandContext);</span>
+<span class="nc bnc" id="L575" title="All 2 branches missed.">            if (cancel) {</span>
+<span class="nc" id="L576">                processInstanceHelper.callCaseInstanceStateChangeCallbacks(commandContext, executionEntity,</span>
+                        ProcessInstanceState.RUNNING, ProcessInstanceState.CANCELLED);
+            } else {
+<span class="nc" id="L579">                processInstanceHelper.callCaseInstanceStateChangeCallbacks(commandContext, executionEntity,</span>
+                        ProcessInstanceState.RUNNING, ProcessInstanceState.COMPLETED);
+            }
+        }
+<span class="nc" id="L583">    }</span>
+    
+    @Override
+    public void deleteExecutionAndRelatedData(ExecutionEntity executionEntity, String deleteReason, boolean deleteHistory) {
+<span class="nc" id="L587">        deleteExecutionAndRelatedData(executionEntity, deleteReason, deleteHistory, false, false, null);</span>
+<span class="nc" id="L588">    }</span>
+
+    @Override
+    public void deleteExecutionAndRelatedData(ExecutionEntity executionEntity, String deleteReason, boolean deleteHistory, boolean directDeleteInDatabase) {
+<span class="nc" id="L592">        deleteExecutionAndRelatedData(executionEntity, deleteReason, deleteHistory, directDeleteInDatabase, false, null);</span>
+<span class="nc" id="L593">    }</span>
+
+    @Override
+    public void deleteProcessInstanceExecutionEntity(String processInstanceId, String currentFlowElementId, String deleteReason,
+            boolean cascade, boolean cancel, boolean fireEvents) {
+
+<span class="nc" id="L599">        ExecutionEntity processInstanceEntity = findById(processInstanceId);</span>
+
+<span class="nc bnc" id="L601" title="All 2 branches missed.">        if (processInstanceEntity == null) {</span>
+<span class="nc" id="L602">            throw new FlowableObjectNotFoundException(&quot;No process instance found for id '&quot; + processInstanceId + &quot;'&quot;, ProcessInstance.class);</span>
+        }
+
+<span class="nc bnc" id="L605" title="All 2 branches missed.">        if (processInstanceEntity.isDeleted()) {</span>
+<span class="nc" id="L606">            return;</span>
+        }
+
+        // Call activities
+<span class="nc bnc" id="L610" title="All 2 branches missed.">        for (ExecutionEntity subExecutionEntity : processInstanceEntity.getExecutions()) {</span>
+<span class="nc bnc" id="L611" title="All 4 branches missed.">            if (subExecutionEntity.getSubProcessInstance() != null &amp;&amp; !subExecutionEntity.isEnded()) {</span>
+<span class="nc" id="L612">                deleteProcessInstanceCascade(subExecutionEntity.getSubProcessInstance(), deleteReason, cascade, false);</span>
+
+<span class="nc bnc" id="L614" title="All 6 branches missed.">                if (getEventDispatcher() != null &amp;&amp; getEventDispatcher().isEnabled() &amp;&amp; fireEvents) {</span>
+<span class="nc" id="L615">                    FlowElement callActivityElement = subExecutionEntity.getCurrentFlowElement();</span>
+<span class="nc" id="L616">                    getEventDispatcher().dispatchEvent(FlowableEventBuilder.createActivityCancelledEvent(callActivityElement.getId(),</span>
+<span class="nc" id="L617">                            callActivityElement.getName(), subExecutionEntity.getId(), processInstanceId, subExecutionEntity.getProcessDefinitionId(),</span>
+<span class="nc" id="L618">                            &quot;callActivity&quot;, deleteReason), engineConfiguration.getEngineCfgKey());</span>
+                }
+            }
+<span class="nc" id="L621">        }</span>
+
+        // delete event scope executions
+<span class="nc bnc" id="L624" title="All 2 branches missed.">        for (ExecutionEntity childExecution : processInstanceEntity.getExecutions()) {</span>
+<span class="nc bnc" id="L625" title="All 2 branches missed.">            if (childExecution.isEventScope()) {</span>
+<span class="nc" id="L626">                deleteExecutionAndRelatedData(childExecution, null, cascade, false);</span>
+            }
+<span class="nc" id="L628">        }</span>
+
+<span class="nc" id="L630">        deleteChildExecutions(processInstanceEntity, deleteReason, cancel);</span>
+<span class="nc" id="L631">        deleteExecutionAndRelatedData(processInstanceEntity, deleteReason, cascade, false);</span>
+
+<span class="nc bnc" id="L633" title="All 6 branches missed.">        if (getEventDispatcher() != null &amp;&amp; getEventDispatcher().isEnabled() &amp;&amp; fireEvents) {</span>
+<span class="nc bnc" id="L634" title="All 2 branches missed.">            if (!cancel) {</span>
+<span class="nc" id="L635">                getEventDispatcher().dispatchEvent(FlowableEventBuilder.createEntityEvent(FlowableEngineEventType.PROCESS_COMPLETED, processInstanceEntity),</span>
+<span class="nc" id="L636">                        engineConfiguration.getEngineCfgKey());</span>
+            } else {
+<span class="nc" id="L638">                getEventDispatcher().dispatchEvent(FlowableEventBuilder.createCancelledEvent(processInstanceEntity.getId(),</span>
+<span class="nc" id="L639">                        processInstanceEntity.getId(), processInstanceEntity.getProcessDefinitionId(), deleteReason),</span>
+<span class="nc" id="L640">                        engineConfiguration.getEngineCfgKey());</span>
+            }
+        }
+        
+<span class="nc bnc" id="L644" title="All 2 branches missed.">        if (engineConfiguration.isLoggingSessionEnabled()) {</span>
+<span class="nc" id="L645">            BpmnLoggingSessionUtil.addLoggingData(LoggingSessionConstants.TYPE_PROCESS_COMPLETED, &quot;Completed process instance with id &quot; + processInstanceEntity.getId(), processInstanceEntity);</span>
+        }
+
+<span class="nc" id="L648">        getHistoryManager().recordProcessInstanceEnd(processInstanceEntity, deleteReason, currentFlowElementId, getClock().getCurrentTime());</span>
+<span class="nc" id="L649">        processInstanceEntity.setDeleted(true);</span>
+<span class="nc" id="L650">    }</span>
+
+    @Override
+    public void deleteChildExecutions(ExecutionEntity executionEntity, String deleteReason, boolean cancel) {
+<span class="nc" id="L654">        deleteChildExecutions(executionEntity, null, null, deleteReason, cancel, null);</span>
+<span class="nc" id="L655">    }</span>
+
+    @Override
+    public void deleteChildExecutions(ExecutionEntity executionEntity, Collection&lt;String&gt; executionIdsNotToDelete,
+            Collection&lt;String&gt; executionIdsNotToSendCancelledEventFor, String deleteReason, 
+            boolean cancel, FlowElement cancelActivity) {
+
+        // The children of an execution for a tree. For correct deletions (taking care of foreign keys between child-parent)
+        // the leafs of this tree must be deleted first before the parents elements.
+
+<span class="nc" id="L665">        List&lt;ExecutionEntity&gt; childExecutions = collectChildren(executionEntity, executionIdsNotToDelete);</span>
+<span class="nc bnc" id="L666" title="All 2 branches missed.">        for (int i = childExecutions.size() - 1; i &gt;= 0; i--) {</span>
+<span class="nc" id="L667">            ExecutionEntity childExecutionEntity = childExecutions.get(i);</span>
+<span class="nc bnc" id="L668" title="All 2 branches missed.">            if (!childExecutionEntity.isEnded()) {</span>
+<span class="nc bnc" id="L669" title="All 4 branches missed.">                if (executionIdsNotToDelete == null || !executionIdsNotToDelete.contains(childExecutionEntity.getId())) {</span>
+
+<span class="nc bnc" id="L671" title="All 2 branches missed.">                    if (childExecutionEntity.isProcessInstanceType()) {</span>
+<span class="nc" id="L672">                        deleteProcessInstanceExecutionEntity(childExecutionEntity.getId(),</span>
+<span class="nc bnc" id="L673" title="All 2 branches missed.">                                cancelActivity != null ? cancelActivity.getId() : null, deleteReason, true, cancel, true);</span>
+
+                    } else {
+<span class="nc bnc" id="L676" title="All 8 branches missed.">                        if (cancel &amp;&amp; (childExecutionEntity.isActive() || childExecutionEntity.isMultiInstanceRoot()) </span>
+<span class="nc bnc" id="L677" title="All 2 branches missed.">                                &amp;&amp; (executionIdsNotToSendCancelledEventFor == null || !executionIdsNotToSendCancelledEventFor.contains(childExecutionEntity.getId()))) {</span>
+<span class="nc" id="L678">                            dispatchExecutionCancelled(childExecutionEntity,</span>
+<span class="nc bnc" id="L679" title="All 2 branches missed.">                                    cancelActivity != null ? cancelActivity : childExecutionEntity.getCurrentFlowElement());</span>
+                        }
+                    }
+<span class="nc" id="L682">                    deleteExecutionAndRelatedData(childExecutionEntity, deleteReason, false, false);</span>
+                }
+
+            }
+        }
+<span class="nc" id="L687">    }</span>
+
+    @Override
+    public List&lt;ExecutionEntity&gt; collectChildren(ExecutionEntity executionEntity) {
+<span class="nc" id="L691">        return collectChildren(executionEntity, null);</span>
+    }
+
+    protected List&lt;ExecutionEntity&gt; collectChildren(ExecutionEntity executionEntity, Collection&lt;String&gt; executionIdsToExclude) {
+<span class="nc" id="L695">        List&lt;ExecutionEntity&gt; childExecutions = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L696" title="All 2 branches missed.">        collectChildren(executionEntity, childExecutions, executionIdsToExclude != null ? executionIdsToExclude : Collections.emptyList());</span>
+<span class="nc" id="L697">        return childExecutions;</span>
+    }
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    protected void collectChildren(ExecutionEntity executionEntity, List&lt;ExecutionEntity&gt; collectedChildExecution, Collection&lt;String&gt; executionIdsToExclude) {
+<span class="nc" id="L702">        List&lt;ExecutionEntity&gt; childExecutions = (List&lt;ExecutionEntity&gt;) executionEntity.getExecutions();</span>
+<span class="nc bnc" id="L703" title="All 4 branches missed.">        if (childExecutions != null &amp;&amp; childExecutions.size() &gt; 0) {</span>
+
+            // Have a fixed ordering of child executions (important for the order in which events are sent)
+<span class="nc" id="L706">            childExecutions.sort(ExecutionEntity.EXECUTION_ENTITY_START_TIME_ASC_COMPARATOR);</span>
+
+<span class="nc bnc" id="L708" title="All 2 branches missed.">            for (ExecutionEntity childExecution : childExecutions) {</span>
+<span class="nc bnc" id="L709" title="All 2 branches missed.">                if (!executionIdsToExclude.contains(childExecution.getId())) {</span>
+<span class="nc bnc" id="L710" title="All 2 branches missed.">                    if (!childExecution.isDeleted()) {</span>
+<span class="nc" id="L711">                        collectedChildExecution.add(childExecution);</span>
+                    }
+
+<span class="nc" id="L714">                    collectChildren(childExecution, collectedChildExecution, executionIdsToExclude);</span>
+                }
+<span class="nc" id="L716">            }</span>
+        }
+
+<span class="nc" id="L719">        ExecutionEntity subProcessInstance = executionEntity.getSubProcessInstance();</span>
+<span class="nc bnc" id="L720" title="All 4 branches missed.">        if (subProcessInstance != null &amp;&amp; !executionIdsToExclude.contains(subProcessInstance.getId())) {</span>
+<span class="nc bnc" id="L721" title="All 2 branches missed.">            if (!subProcessInstance.isDeleted()) {</span>
+<span class="nc" id="L722">                collectedChildExecution.add(subProcessInstance);</span>
+            }
+
+<span class="nc" id="L725">            collectChildren(subProcessInstance, collectedChildExecution, executionIdsToExclude);</span>
+        }
+<span class="nc" id="L727">    }</span>
+
+    protected void dispatchExecutionCancelled(ExecutionEntity execution, FlowElement cancelActivity) {
+
+<span class="nc" id="L731">        ExecutionEntityManager executionEntityManager = engineConfiguration.getExecutionEntityManager();</span>
+
+        // subprocesses
+<span class="nc bnc" id="L734" title="All 2 branches missed.">        for (ExecutionEntity subExecution : executionEntityManager.findChildExecutionsByParentExecutionId(execution.getId())) {</span>
+<span class="nc" id="L735">            dispatchExecutionCancelled(subExecution, cancelActivity);</span>
+<span class="nc" id="L736">        }</span>
+
+        // call activities
+<span class="nc" id="L739">        ExecutionEntity subProcessInstance = engineConfiguration.getExecutionEntityManager().findSubProcessInstanceBySuperExecutionId(execution.getId());</span>
+<span class="nc bnc" id="L740" title="All 2 branches missed.">        if (subProcessInstance != null) {</span>
+<span class="nc" id="L741">            dispatchExecutionCancelled(subProcessInstance, cancelActivity);</span>
+        }
+
+        // activity with message/signal boundary events
+<span class="nc" id="L745">        FlowElement currentFlowElement = execution.getCurrentFlowElement();</span>
+<span class="nc bnc" id="L746" title="All 2 branches missed.">        if (currentFlowElement instanceof FlowNode) {</span>
+
+<span class="nc bnc" id="L748" title="All 2 branches missed.">            if (execution.isMultiInstanceRoot()) {</span>
+<span class="nc" id="L749">                dispatchMultiInstanceActivityCancelled(execution, cancelActivity);</span>
+            }
+            else {
+<span class="nc" id="L752">                dispatchActivityCancelled(execution, cancelActivity);</span>
+            }
+        }
+<span class="nc" id="L755">    }</span>
+
+    protected void dispatchActivityCancelled(ExecutionEntity execution, FlowElement cancelActivity) {
+<span class="nc" id="L758">        FlowableEventDispatcher eventDispatcher = engineConfiguration.getEventDispatcher();</span>
+<span class="nc bnc" id="L759" title="All 4 branches missed.">        if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L760">              eventDispatcher.dispatchEvent(</span>
+<span class="nc" id="L761">                      FlowableEventBuilder.createActivityCancelledEvent(execution.getCurrentFlowElement().getId(),</span>
+<span class="nc" id="L762">                              execution.getCurrentFlowElement().getName(), execution.getId(), execution.getProcessInstanceId(),</span>
+<span class="nc" id="L763">                              execution.getProcessDefinitionId(), getActivityType(execution.getCurrentFlowElement()), cancelActivity),</span>
+<span class="nc" id="L764">                      engineConfiguration.getEngineCfgKey());</span>
+        }
+
+
+<span class="nc" id="L768">    }</span>
+
+    protected void dispatchMultiInstanceActivityCancelled(ExecutionEntity execution, FlowElement cancelActivity) {
+<span class="nc" id="L771">        FlowableEventDispatcher eventDispatcher = engineConfiguration.getEventDispatcher();</span>
+<span class="nc bnc" id="L772" title="All 4 branches missed.">        if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L773">            eventDispatcher.dispatchEvent(</span>
+<span class="nc" id="L774">                FlowableEventBuilder.createMultiInstanceActivityCancelledEvent(execution.getCurrentFlowElement().getId(),</span>
+<span class="nc" id="L775">                    execution.getCurrentFlowElement().getName(), execution.getId(), execution.getProcessInstanceId(),</span>
+<span class="nc" id="L776">                    execution.getProcessDefinitionId(), getActivityType(execution.getCurrentFlowElement()), cancelActivity),</span>
+<span class="nc" id="L777">                engineConfiguration.getEngineCfgKey());</span>
+        }
+<span class="nc" id="L779">    }</span>
+
+    protected String getActivityType(FlowElement flowNode) {
+<span class="nc" id="L782">        String elementType = flowNode.getClass().getSimpleName();</span>
+<span class="nc" id="L783">        elementType = elementType.substring(0, 1).toLowerCase() + elementType.substring(1);</span>
+<span class="nc" id="L784">        return elementType;</span>
+    }
+
+    @Override
+    public ExecutionEntity findFirstScope(ExecutionEntity executionEntity) {
+<span class="nc" id="L789">        ExecutionEntity currentExecutionEntity = executionEntity;</span>
+<span class="nc bnc" id="L790" title="All 2 branches missed.">        while (currentExecutionEntity != null) {</span>
+<span class="nc bnc" id="L791" title="All 2 branches missed.">            if (currentExecutionEntity.isScope()) {</span>
+<span class="nc" id="L792">                return currentExecutionEntity;</span>
+            }
+
+<span class="nc" id="L795">            ExecutionEntity parentExecutionEntity = currentExecutionEntity.getParent();</span>
+<span class="nc bnc" id="L796" title="All 2 branches missed.">            if (parentExecutionEntity == null) {</span>
+<span class="nc" id="L797">                parentExecutionEntity = currentExecutionEntity.getSuperExecution();</span>
+            }
+<span class="nc" id="L799">            currentExecutionEntity = parentExecutionEntity;</span>
+<span class="nc" id="L800">        }</span>
+<span class="nc" id="L801">        return null;</span>
+    }
+
+    @Override
+    public ExecutionEntity findFirstMultiInstanceRoot(ExecutionEntity executionEntity) {
+<span class="nc" id="L806">        ExecutionEntity currentExecutionEntity = executionEntity;</span>
+<span class="nc bnc" id="L807" title="All 2 branches missed.">        while (currentExecutionEntity != null) {</span>
+<span class="nc bnc" id="L808" title="All 2 branches missed.">            if (currentExecutionEntity.isMultiInstanceRoot()) {</span>
+<span class="nc" id="L809">                return currentExecutionEntity;</span>
+            }
+
+<span class="nc" id="L812">            ExecutionEntity parentExecutionEntity = currentExecutionEntity.getParent();</span>
+<span class="nc bnc" id="L813" title="All 2 branches missed.">            if (parentExecutionEntity == null) {</span>
+<span class="nc" id="L814">                parentExecutionEntity = currentExecutionEntity.getSuperExecution();</span>
+            }
+<span class="nc" id="L816">            currentExecutionEntity = parentExecutionEntity;</span>
+<span class="nc" id="L817">        }</span>
+<span class="nc" id="L818">        return null;</span>
+    }
+    
+<span class="nc" id="L821">    protected CachedEntityMatcher&lt;IdentityLinkEntity&gt; identityLinkByProcessInstanceMatcher = new IdentityLinksByProcessInstanceMatcher();</span>
+    
+    @Override
+    public void deleteRelatedDataForExecution(ExecutionEntity executionEntity, String deleteReason, boolean directDeleteInDatabase) {
+<span class="nc bnc" id="L825" title="All 2 branches missed.">        if (LOGGER.isDebugEnabled()) {</span>
+<span class="nc" id="L826">            LOGGER.debug(&quot;Ending and deleting execution {} Reason: {}&quot;, executionEntity, deleteReason);</span>
+        }
+        // To start, deactivate the current incoming execution
+<span class="nc" id="L829">        executionEntity.setEnded(true);</span>
+<span class="nc" id="L830">        executionEntity.setActive(false);</span>
+        
+<span class="nc" id="L832">        CommandContext commandContext = CommandContextUtil.getCommandContext();</span>
+<span class="nc" id="L833">        boolean enableExecutionRelationshipCounts = CountingEntityUtil.isExecutionRelatedEntityCountEnabled(executionEntity);</span>
+        
+        // If event dispatching is disabled, related entities can be deleted in bulk. Otherwise, they need to be fetched
+        // and events need to be sent for each of them separately (the bulk delete still happens).
+<span class="nc" id="L837">        FlowableEventDispatcher eventDispatcher = CommandContextUtil.getProcessEngineConfiguration(commandContext).getEventDispatcher();</span>
+<span class="nc bnc" id="L838" title="All 4 branches missed.">        boolean eventDispatcherEnabled = eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled();</span>
+        
+<span class="nc" id="L840">        deleteIdentityLinks(executionEntity, commandContext, eventDispatcherEnabled);</span>
+<span class="nc" id="L841">        deleteEntityLinks(executionEntity, commandContext, eventDispatcherEnabled);</span>
+<span class="nc" id="L842">        deleteVariables(executionEntity, commandContext, enableExecutionRelationshipCounts, eventDispatcherEnabled);</span>
+<span class="nc" id="L843">        deleteUserTasks(executionEntity, deleteReason, commandContext, enableExecutionRelationshipCounts, eventDispatcherEnabled);</span>
+<span class="nc" id="L844">        deleteJobs(executionEntity, commandContext, enableExecutionRelationshipCounts, eventDispatcherEnabled);</span>
+<span class="nc" id="L845">        deleteEventSubScriptions(executionEntity, enableExecutionRelationshipCounts, eventDispatcherEnabled);</span>
+<span class="nc" id="L846">        deleteActivityInstances(executionEntity, commandContext);</span>
+<span class="nc" id="L847">        deleteSubCases(executionEntity, directDeleteInDatabase, commandContext);</span>
+<span class="nc" id="L848">    }</span>
+
+    protected void deleteSubCases(ExecutionEntity executionEntity, boolean directDeleteInDatabase, CommandContext commandContext) {
+<span class="nc" id="L851">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc" id="L852">        CaseInstanceService caseInstanceService = processEngineConfiguration.getCaseInstanceService();</span>
+<span class="nc bnc" id="L853" title="All 2 branches missed.">        if (caseInstanceService != null) {</span>
+<span class="nc bnc" id="L854" title="All 4 branches missed.">            if (executionEntity.getReferenceId() != null &amp;&amp; ReferenceTypes.EXECUTION_CHILD_CASE.equals(executionEntity.getReferenceType())) {</span>
+<span class="nc bnc" id="L855" title="All 2 branches missed.">                if (directDeleteInDatabase) {</span>
+<span class="nc" id="L856">                    caseInstanceService.deleteCaseInstanceWithoutAgenda(executionEntity.getReferenceId());</span>
+                } else {
+<span class="nc" id="L858">                    caseInstanceService.deleteCaseInstance(executionEntity.getReferenceId());</span>
+                }
+                
+<span class="nc bnc" id="L861" title="All 2 branches missed.">            } else if (executionEntity.getCurrentFlowElement() instanceof CaseServiceTask) {</span>
+                // backwards compatibility in case there is no reference
+                // (cases created before the double reference in the execution) was added
+<span class="nc" id="L864">                caseInstanceService.deleteCaseInstancesForExecutionId(executionEntity.getId());</span>
+            }
+        }
+<span class="nc" id="L867">    }</span>
+
+    protected void deleteActivityInstances(ExecutionEntity executionEntity, CommandContext commandContext) {
+<span class="nc bnc" id="L870" title="All 2 branches missed.">        if (executionEntity.isProcessInstanceType()) {</span>
+<span class="nc" id="L871">            engineConfiguration.getActivityInstanceEntityManager().deleteActivityInstancesByProcessInstanceId(executionEntity.getId());</span>
+        }
+<span class="nc" id="L873">    }</span>
+
+    protected void deleteIdentityLinks(ExecutionEntity executionEntity, CommandContext commandContext, boolean eventDispatcherEnabled) {
+<span class="nc bnc" id="L876" title="All 2 branches missed.">        if (executionEntity.isProcessInstanceType()) {</span>
+<span class="nc" id="L877">            IdentityLinkService identityLinkService = engineConfiguration.getIdentityLinkServiceConfiguration().getIdentityLinkService();</span>
+<span class="nc" id="L878">            boolean deleteIdentityLinks = true;</span>
+<span class="nc bnc" id="L879" title="All 2 branches missed.">            if (eventDispatcherEnabled) {</span>
+<span class="nc" id="L880">                Collection&lt;IdentityLinkEntity&gt; identityLinks = identityLinkService.findIdentityLinksByProcessInstanceId(executionEntity.getId());</span>
+<span class="nc bnc" id="L881" title="All 2 branches missed.">                for (IdentityLinkEntity identityLink : identityLinks) {</span>
+<span class="nc" id="L882">                    fireEntityDeletedEvent(identityLink);</span>
+<span class="nc" id="L883">                }</span>
+<span class="nc bnc" id="L884" title="All 2 branches missed.">                deleteIdentityLinks = !identityLinks.isEmpty();</span>
+            }
+            
+<span class="nc bnc" id="L887" title="All 2 branches missed.">            if (deleteIdentityLinks) {</span>
+<span class="nc" id="L888">                identityLinkService.deleteIdentityLinksByProcessInstanceId(executionEntity.getId());</span>
+            }
+        }
+<span class="nc" id="L891">    }</span>
+    
+    protected void deleteEntityLinks(ExecutionEntity executionEntity, CommandContext commandContext, boolean eventDispatcherEnabled) {
+        // Entity links are deleted by a root instance only.
+        // (A callback id is set for a child process instance of a case instance.
+        // A super execution id is set for a child process instance of a process instance)
+        // Can't simply check for callBackId being null however, as other usages of callbackType still need to be cleaned up
+<span class="nc bnc" id="L898" title="All 6 branches missed.">        if (engineConfiguration.isEnableEntityLinks() &amp;&amp; executionEntity.isProcessInstanceType() &amp;&amp; isRootProcessInstance(executionEntity)) {</span>
+
+<span class="nc" id="L900">            EntityLinkService entityLinkService = engineConfiguration.getEntityLinkServiceConfiguration().getEntityLinkService();</span>
+<span class="nc" id="L901">            boolean deleteEntityLinks = true;</span>
+<span class="nc bnc" id="L902" title="All 2 branches missed.">            if (eventDispatcherEnabled) {</span>
+<span class="nc" id="L903">                List&lt;EntityLink&gt; entityLinks = entityLinkService.findEntityLinksByRootScopeIdAndRootType(executionEntity.getId(), ScopeTypes.BPMN);</span>
+<span class="nc bnc" id="L904" title="All 2 branches missed.">                for (EntityLink entityLink : entityLinks) {</span>
+<span class="nc" id="L905">                    fireEntityDeletedEvent((EntityLinkEntity) entityLink);</span>
+<span class="nc" id="L906">                }</span>
+<span class="nc bnc" id="L907" title="All 2 branches missed.">                deleteEntityLinks = !entityLinks.isEmpty();</span>
+            }
+            
+<span class="nc bnc" id="L910" title="All 2 branches missed.">            if (deleteEntityLinks) {</span>
+<span class="nc" id="L911">                entityLinkService.deleteEntityLinksByRootScopeIdAndType(executionEntity.getId(), ScopeTypes.BPMN);</span>
+            }
+        }
+
+<span class="nc" id="L915">    }</span>
+
+    protected boolean isRootProcessInstance(ExecutionEntity executionEntity) {
+        // An execution is a root process instance when it doesn't have a super execution and,
+        // it has no callback or it is not a child of a case instance
+<span class="nc bnc" id="L920" title="All 2 branches missed.">        return executionEntity.getSuperExecutionId() == null</span>
+<span class="nc bnc" id="L921" title="All 4 branches missed.">            &amp;&amp; (executionEntity.getCallbackId() == null || !CallbackTypes.PLAN_ITEM_CHILD_PROCESS.equals(executionEntity.getCallbackType()));</span>
+    }
+
+    protected void deleteVariables(ExecutionEntity executionEntity, CommandContext commandContext, boolean enableExecutionRelationshipCounts, boolean eventDispatcherEnabled) {
+<span class="nc bnc" id="L925" title="All 4 branches missed.">        if (!enableExecutionRelationshipCounts ||</span>
+<span class="nc bnc" id="L926" title="All 2 branches missed.">                (enableExecutionRelationshipCounts &amp;&amp; ((CountingExecutionEntity) executionEntity).getVariableCount() &gt; 0)) {</span>
+            
+<span class="nc" id="L928">            Collection&lt;VariableInstance&gt; executionVariables = executionEntity.getVariableInstancesLocal().values();</span>
+<span class="nc bnc" id="L929" title="All 2 branches missed.">            if (!executionVariables.isEmpty()) {</span>
+                
+<span class="nc" id="L931">                List&lt;ByteArrayRef&gt; variableByteArrayRefs = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L932" title="All 2 branches missed.">                for (VariableInstance variableInstance : executionVariables) {</span>
+<span class="nc bnc" id="L933" title="All 2 branches missed.">                    if (variableInstance instanceof VariableInstanceEntity) {</span>
+<span class="nc" id="L934">                        VariableInstanceEntity variableInstanceEntity = (VariableInstanceEntity) variableInstance;</span>
+                        
+<span class="nc bnc" id="L936" title="All 4 branches missed.">                        if (variableInstanceEntity.getByteArrayRef() != null &amp;&amp; variableInstanceEntity.getByteArrayRef().getId() != null) {</span>
+<span class="nc" id="L937">                            variableByteArrayRefs.add(variableInstanceEntity.getByteArrayRef());</span>
+                        }
+                        
+<span class="nc bnc" id="L940" title="All 2 branches missed.">                        if (eventDispatcherEnabled) {</span>
+<span class="nc" id="L941">                            FlowableEventDispatcher eventDispatcher = engineConfiguration.getEventDispatcher();</span>
+<span class="nc bnc" id="L942" title="All 2 branches missed.">                            if (eventDispatcher != null) {</span>
+<span class="nc" id="L943">                                eventDispatcher.dispatchEvent(EventUtil.createVariableDeleteEvent(variableInstanceEntity),</span>
+<span class="nc" id="L944">                                        engineConfiguration.getEngineCfgKey());</span>
+<span class="nc" id="L945">                                eventDispatcher.dispatchEvent(FlowableEventBuilder.createEntityEvent(FlowableEngineEventType.ENTITY_DELETED, variableInstance),</span>
+<span class="nc" id="L946">                                        engineConfiguration.getEngineCfgKey());</span>
+                            }
+                        }
+                    }
+<span class="nc" id="L950">                }</span>
+                
+                // First byte arrays that reference variable, then variables in bulk
+<span class="nc bnc" id="L953" title="All 2 branches missed.">                for (ByteArrayRef variableByteArrayRef : variableByteArrayRefs) {</span>
+<span class="nc" id="L954">                    getByteArrayEntityManager().deleteByteArrayById(variableByteArrayRef.getId());</span>
+<span class="nc" id="L955">                }</span>
+                
+<span class="nc" id="L957">                engineConfiguration.getVariableServiceConfiguration().getVariableService().deleteVariablesByExecutionId(executionEntity.getId());</span>
+            }
+
+<span class="nc" id="L960">            List&lt;VariableInstanceEntity&gt; variableInstances = engineConfiguration.getVariableServiceConfiguration().getVariableService()</span>
+<span class="nc" id="L961">                    .createInternalVariableInstanceQuery()</span>
+<span class="nc" id="L962">                    .subScopeId(executionEntity.getId())</span>
+<span class="nc" id="L963">                    .scopeTypes(engineConfiguration.getDependentScopeTypes())</span>
+<span class="nc" id="L964">                    .list();</span>
+<span class="nc bnc" id="L965" title="All 2 branches missed.">            boolean deleteVariableInstances = !variableInstances.isEmpty();</span>
+
+<span class="nc bnc" id="L967" title="All 2 branches missed.">            for (VariableInstanceEntity variableInstance : variableInstances) {</span>
+<span class="nc bnc" id="L968" title="All 2 branches missed.">                if (eventDispatcherEnabled) {</span>
+<span class="nc" id="L969">                    FlowableEventDispatcher eventDispatcher = CommandContextUtil.getEventDispatcher(commandContext);</span>
+<span class="nc bnc" id="L970" title="All 2 branches missed.">                    if (eventDispatcher != null) {</span>
+<span class="nc" id="L971">                        eventDispatcher.dispatchEvent(EventUtil.createVariableDeleteEvent(variableInstance),</span>
+<span class="nc" id="L972">                                engineConfiguration.getEngineCfgKey());</span>
+<span class="nc" id="L973">                        eventDispatcher.dispatchEvent(FlowableEventBuilder.createEntityEvent(FlowableEngineEventType.ENTITY_DELETED, variableInstance),</span>
+<span class="nc" id="L974">                                engineConfiguration.getEngineCfgKey());</span>
+                    }
+                }
+
+<span class="nc bnc" id="L978" title="All 4 branches missed.">                if (variableInstance.getByteArrayRef() != null &amp;&amp; variableInstance.getByteArrayRef().getId() != null) {</span>
+<span class="nc" id="L979">                    variableInstance.getByteArrayRef().delete(engineConfiguration.getEngineCfgKey());</span>
+                }
+<span class="nc" id="L981">            }</span>
+
+<span class="nc bnc" id="L983" title="All 2 branches missed.">            if (deleteVariableInstances) {</span>
+<span class="nc" id="L984">                engineConfiguration.getVariableServiceConfiguration().getVariableInstanceEntityManager()</span>
+<span class="nc" id="L985">                        .deleteBySubScopeIdAndScopeTypes(executionEntity.getId(), engineConfiguration.getDependentScopeTypes());</span>
+            }
+
+        }
+
+<span class="nc" id="L990">    }</span>
+
+    protected void deleteUserTasks(ExecutionEntity executionEntity, String deleteReason, CommandContext commandContext, 
+            boolean enableExecutionRelationshipCounts, boolean eventDispatcherEnabled) {
+<span class="nc bnc" id="L994" title="All 4 branches missed.">        if (!enableExecutionRelationshipCounts ||</span>
+<span class="nc bnc" id="L995" title="All 2 branches missed.">                (enableExecutionRelationshipCounts &amp;&amp; ((CountingExecutionEntity) executionEntity).getTaskCount() &gt; 0)) {</span>
+<span class="nc" id="L996">            TaskHelper.deleteTasksForExecution(executionEntity, </span>
+<span class="nc" id="L997">                    engineConfiguration.getTaskServiceConfiguration().getTaskService().findTasksByExecutionId(executionEntity.getId()), deleteReason);</span>
+        }
+<span class="nc" id="L999">    }</span>
+    
+    protected void deleteJobs(ExecutionEntity executionEntity, CommandContext commandContext, boolean enableExecutionRelationshipCounts, boolean eventDispatcherEnabled) {
+        
+        // Jobs have byte array references that don't store the execution id. 
+        // This means a bulk delete is not done for jobs. Generally there aren't many jobs / execution either.
+        
+<span class="nc bnc" id="L1006" title="All 4 branches missed.">        if (!enableExecutionRelationshipCounts</span>
+<span class="nc bnc" id="L1007" title="All 2 branches missed.">                || (enableExecutionRelationshipCounts &amp;&amp; ((CountingExecutionEntity) executionEntity).getTimerJobCount() &gt; 0)) {</span>
+<span class="nc" id="L1008">            engineConfiguration.getJobServiceConfiguration().getTimerJobService().deleteTimerJobsByExecutionId(executionEntity.getId());</span>
+        }
+
+<span class="nc" id="L1011">        JobService jobService = engineConfiguration.getJobServiceConfiguration().getJobService();</span>
+<span class="nc bnc" id="L1012" title="All 4 branches missed.">        if (!enableExecutionRelationshipCounts</span>
+<span class="nc bnc" id="L1013" title="All 2 branches missed.">                || (enableExecutionRelationshipCounts &amp;&amp; ((CountingExecutionEntity) executionEntity).getJobCount() &gt; 0)) {</span>
+<span class="nc" id="L1014">            jobService.deleteJobsByExecutionId(executionEntity.getId());</span>
+        }
+
+<span class="nc bnc" id="L1017" title="All 4 branches missed.">        if (!enableExecutionRelationshipCounts</span>
+<span class="nc bnc" id="L1018" title="All 2 branches missed.">                || (enableExecutionRelationshipCounts &amp;&amp; ((CountingExecutionEntity) executionEntity).getSuspendedJobCount() &gt; 0)) {</span>
+<span class="nc" id="L1019">            jobService.deleteSuspendedJobsByExecutionId(executionEntity.getId());</span>
+        }
+
+<span class="nc bnc" id="L1022" title="All 4 branches missed.">        if (!enableExecutionRelationshipCounts</span>
+<span class="nc bnc" id="L1023" title="All 2 branches missed.">                || (enableExecutionRelationshipCounts &amp;&amp; ((CountingExecutionEntity) executionEntity).getDeadLetterJobCount() &gt; 0)) {</span>
+<span class="nc" id="L1024">            jobService.deleteDeadLetterJobsByExecutionId(executionEntity.getId());</span>
+        }
+
+<span class="nc bnc" id="L1027" title="All 4 branches missed.">        if (!enableExecutionRelationshipCounts || ((CountingExecutionEntity) executionEntity).getExternalWorkerJobCount() &gt; 0) {</span>
+<span class="nc" id="L1028">            Collection&lt;ExternalWorkerJobEntity&gt; externalWorkerJobsForExecution = jobService.findExternalWorkerJobsByExecutionId(executionEntity.getId());</span>
+
+<span class="nc" id="L1030">            ExternalWorkerJobEntityManager externalWorkerJobEntityManager = engineConfiguration.getJobServiceConfiguration()</span>
+<span class="nc" id="L1031">                    .getExternalWorkerJobEntityManager();</span>
+<span class="nc" id="L1032">            IdentityLinkService identityLinkService = engineConfiguration.getIdentityLinkServiceConfiguration().getIdentityLinkService();</span>
+<span class="nc bnc" id="L1033" title="All 2 branches missed.">            for (ExternalWorkerJobEntity job : externalWorkerJobsForExecution) {</span>
+<span class="nc" id="L1034">                externalWorkerJobEntityManager.delete(job);</span>
+<span class="nc" id="L1035">                identityLinkService.deleteIdentityLinksByScopeIdAndType(job.getCorrelationId(), ScopeTypes.EXTERNAL_WORKER);</span>
+<span class="nc bnc" id="L1036" title="All 4 branches missed.">                if (getEventDispatcher() != null &amp;&amp; getEventDispatcher().isEnabled()) {</span>
+<span class="nc" id="L1037">                    getEventDispatcher().dispatchEvent(FlowableJobEventBuilder.createEntityEvent(FlowableEngineEventType.JOB_CANCELED, job),</span>
+<span class="nc" id="L1038">                            engineConfiguration.getEngineCfgKey());</span>
+                }
+<span class="nc" id="L1040">            }</span>
+        }
+<span class="nc" id="L1042">    }</span>
+
+    protected void deleteEventSubScriptions(ExecutionEntity executionEntity, boolean enableExecutionRelationshipCounts, boolean eventDispatcherEnabled) {
+<span class="nc bnc" id="L1045" title="All 4 branches missed.">        if (!enableExecutionRelationshipCounts</span>
+<span class="nc bnc" id="L1046" title="All 2 branches missed.">                || (enableExecutionRelationshipCounts &amp;&amp; ((CountingExecutionEntity) executionEntity).getEventSubscriptionCount() &gt; 0)) {</span>
+            
+<span class="nc" id="L1048">            EventSubscriptionService eventSubscriptionService = engineConfiguration.getEventSubscriptionServiceConfiguration().getEventSubscriptionService();</span>
+            
+<span class="nc" id="L1050">            boolean deleteEventSubscriptions = true;</span>
+<span class="nc bnc" id="L1051" title="All 2 branches missed.">            if (eventDispatcherEnabled) {</span>
+<span class="nc" id="L1052">                List&lt;EventSubscriptionEntity&gt; eventSubscriptions = eventSubscriptionService.findEventSubscriptionsByExecution(executionEntity.getId());</span>
+<span class="nc bnc" id="L1053" title="All 2 branches missed.">                for (EventSubscriptionEntity eventSubscription : eventSubscriptions) {</span>
+                    
+<span class="nc" id="L1055">                    fireEntityDeletedEvent(eventSubscription);</span>
+<span class="nc bnc" id="L1056" title="All 2 branches missed.">                    if (MessageEventSubscriptionEntity.EVENT_TYPE.equals(eventSubscription.getEventType())) {</span>
+<span class="nc" id="L1057">                        getEventDispatcher().dispatchEvent(FlowableEventBuilder.createMessageEvent(FlowableEngineEventType.ACTIVITY_MESSAGE_CANCELLED,</span>
+<span class="nc" id="L1058">                                eventSubscription.getActivityId(), eventSubscription.getEventName(), null, eventSubscription.getExecutionId(),</span>
+<span class="nc" id="L1059">                                eventSubscription.getProcessInstanceId(), eventSubscription.getProcessDefinitionId()),</span>
+<span class="nc" id="L1060">                                engineConfiguration.getEngineCfgKey());</span>
+                    }
+<span class="nc" id="L1062">                }</span>
+                
+<span class="nc bnc" id="L1064" title="All 2 branches missed.">                deleteEventSubscriptions = !eventSubscriptions.isEmpty();</span>
+            }
+            
+<span class="nc bnc" id="L1067" title="All 2 branches missed.">            if (deleteEventSubscriptions) {</span>
+<span class="nc" id="L1068">                eventSubscriptionService.deleteEventSubscriptionsByExecutionId(executionEntity.getId());</span>
+            }
+        }
+<span class="nc" id="L1071">    }</span>
+
+    // OTHER METHODS
+
+    @Override
+    public void updateProcessInstanceLockTime(String processInstanceId, String lockOwner, Date lockTime) {
+<span class="nc" id="L1077">        Date expirationTime = getClock().getCurrentTime();</span>
+
+<span class="nc" id="L1079">        dataManager.updateProcessInstanceLockTime(processInstanceId, lockTime, lockOwner, expirationTime);</span>
+<span class="nc" id="L1080">    }</span>
+
+    @Override
+    public void clearProcessInstanceLockTime(String processInstanceId) {
+<span class="nc" id="L1084">        dataManager.clearProcessInstanceLockTime(processInstanceId);</span>
+<span class="nc" id="L1085">    }</span>
+
+    @Override
+    public void clearAllProcessInstanceLockTimes(String lockOwner) {
+<span class="nc" id="L1089">        dataManager.clearAllProcessInstanceLockTimes(lockOwner);</span>
+<span class="nc" id="L1090">    }</span>
+    
+    @Override
+    public String updateProcessInstanceBusinessKey(ExecutionEntity executionEntity, String businessKey) {
+<span class="nc bnc" id="L1094" title="All 4 branches missed.">        if (executionEntity.isProcessInstanceType() &amp;&amp; businessKey != null) {</span>
+<span class="nc" id="L1095">            executionEntity.setBusinessKey(businessKey);</span>
+<span class="nc" id="L1096">            getHistoryManager().updateProcessBusinessKeyInHistory(executionEntity);</span>
+
+<span class="nc bnc" id="L1098" title="All 4 branches missed.">            if (getEventDispatcher() != null &amp;&amp; getEventDispatcher().isEnabled()) {</span>
+<span class="nc" id="L1099">                getEventDispatcher().dispatchEvent(FlowableEventBuilder.createEntityEvent(FlowableEngineEventType.ENTITY_UPDATED, executionEntity),</span>
+<span class="nc" id="L1100">                        engineConfiguration.getEngineCfgKey());</span>
+            }
+
+<span class="nc" id="L1103">            return businessKey;</span>
+        }
+<span class="nc" id="L1105">        return null;</span>
+    }
+    
+    @Override
+    public String updateProcessInstanceBusinessStatus(ExecutionEntity executionEntity, String businessStatus) {
+<span class="nc bnc" id="L1110" title="All 4 branches missed.">        if (executionEntity.isProcessInstanceType() &amp;&amp; businessStatus != null) {</span>
+<span class="nc" id="L1111">            executionEntity.setBusinessStatus(businessStatus);</span>
+<span class="nc" id="L1112">            getHistoryManager().updateProcessBusinessStatusInHistory(executionEntity);</span>
+
+<span class="nc bnc" id="L1114" title="All 4 branches missed.">            if (getEventDispatcher() != null &amp;&amp; getEventDispatcher().isEnabled()) {</span>
+<span class="nc" id="L1115">                getEventDispatcher().dispatchEvent(FlowableEventBuilder.createEntityEvent(FlowableEngineEventType.ENTITY_UPDATED, executionEntity),</span>
+<span class="nc" id="L1116">                        engineConfiguration.getEngineCfgKey());</span>
+            }
+
+<span class="nc" id="L1119">            return businessStatus;</span>
+        }
+<span class="nc" id="L1121">        return null;</span>
+    }
+
+    protected HistoryManager getHistoryManager() {
+<span class="nc" id="L1125">        return engineConfiguration.getHistoryManager();</span>
+    }
+
+    protected AsyncExecutor getAsyncExecutor() {
+<span class="nc" id="L1129">        return engineConfiguration.getAsyncExecutor();</span>
+    }
+
+    protected ByteArrayEntityManager getByteArrayEntityManager() {
+<span class="nc" id="L1133">        return engineConfiguration.getByteArrayEntityManager();</span>
+    }
+
+    protected ActivityInstanceEntityManager getActivityInstanceEntityManager() {
+<span class="nc" id="L1137">        return engineConfiguration.getActivityInstanceEntityManager();</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

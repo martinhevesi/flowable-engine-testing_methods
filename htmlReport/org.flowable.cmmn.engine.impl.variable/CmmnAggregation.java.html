@@ -1,0 +1,307 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CmmnAggregation.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.cmmn.engine.impl.variable</a> &gt; <span class="el_source">CmmnAggregation.java</span></div><h1>CmmnAggregation.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.cmmn.engine.impl.variable;
+
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.cmmn.api.delegate.DelegatePlanItemInstance;
+import org.flowable.cmmn.api.delegate.PlanItemVariableAggregator;
+import org.flowable.cmmn.api.delegate.PlanItemVariableAggregatorContext;
+import org.flowable.cmmn.api.runtime.PlanItemInstanceState;
+import org.flowable.cmmn.engine.CmmnEngineConfiguration;
+import org.flowable.cmmn.engine.impl.delegate.BaseVariableAggregatorContext;
+import org.flowable.cmmn.engine.impl.persistence.entity.PlanItemInstanceEntity;
+import org.flowable.cmmn.engine.impl.util.CommandContextUtil;
+import org.flowable.cmmn.engine.impl.util.DelegateExpressionUtil;
+import org.flowable.cmmn.engine.impl.util.ExpressionUtil;
+import org.flowable.cmmn.model.ImplementationType;
+import org.flowable.cmmn.model.RepetitionRule;
+import org.flowable.cmmn.model.VariableAggregationDefinition;
+import org.flowable.cmmn.model.VariableAggregationDefinitions;
+import org.flowable.common.engine.api.FlowableIllegalArgumentException;
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.variable.api.delegate.VariableScope;
+import org.flowable.variable.api.persistence.entity.VariableInstance;
+import org.flowable.variable.service.VariableService;
+import org.flowable.variable.service.VariableServiceConfiguration;
+import org.flowable.variable.service.impl.persistence.entity.VariableInstanceEntity;
+
+/**
+ * @author Filip Hrisafov
+ */
+public class CmmnAggregation {
+
+    public static final String COUNTER_VAR_PREFIX = &quot;__flowableCounter__&quot;;
+    public static final String COUNTER_VAR_VALUE_SEPARATOR = &quot;###&quot;;
+
+    protected final String planItemInstanceId;
+
+<span class="nc" id="L58">    public CmmnAggregation(String planItemInstanceId) {</span>
+<span class="nc" id="L59">        this.planItemInstanceId = planItemInstanceId;</span>
+<span class="nc" id="L60">    }</span>
+
+    public String getPlanItemInstanceId() {
+<span class="nc" id="L63">        return planItemInstanceId;</span>
+    }
+
+    /**
+     * Create an aggregated variable instance for a completed plan item.
+     *
+     * @param planItemInstance the planItemInstance which completed
+     * @param aggregation the aggregation definition
+     * @param cmmnEngineConfiguration the cmmn engine configuration
+     * @return the created variables (not yet saved), or {@code null} if no name could be resolved for the variable
+     */
+    public static VariableInstanceEntity aggregateComplete(DelegatePlanItemInstance planItemInstance,
+            VariableAggregationDefinition aggregation, CmmnEngineConfiguration cmmnEngineConfiguration) {
+<span class="nc" id="L76">        return aggregate(planItemInstance, BaseVariableAggregatorContext.complete(aggregation), cmmnEngineConfiguration);</span>
+    }
+
+    /**
+     * Create an aggregated variable instance for the given aggregation context.
+     *
+     * @param planItemInstance the planItemInstance
+     * @param aggregationContext the aggregation context
+     * @param cmmnEngineConfiguration the cmmn engine configuration
+     * @return the created variables (not yet saved), or {@code null} if no name could be resolved for the variable
+     */
+    public static VariableInstanceEntity aggregate(DelegatePlanItemInstance planItemInstance,
+            PlanItemVariableAggregatorContext aggregationContext, CmmnEngineConfiguration cmmnEngineConfiguration) {
+<span class="nc" id="L89">        VariableAggregationDefinition aggregation = aggregationContext.getDefinition();</span>
+<span class="nc" id="L90">        PlanItemVariableAggregator aggregator = resolveVariableAggregator(aggregation, planItemInstance);</span>
+<span class="nc" id="L91">        String targetVarName = getAggregationTargetVarName(aggregation, planItemInstance, cmmnEngineConfiguration);</span>
+
+<span class="nc bnc" id="L93" title="All 2 branches missed.">        if (targetVarName != null) {</span>
+<span class="nc" id="L94">            return aggregate(planItemInstance, aggregationContext, cmmnEngineConfiguration, aggregator, targetVarName);</span>
+        }
+
+<span class="nc" id="L97">        return null;</span>
+    }
+
+    /**
+     * @param planItemInstance the planItemInstance
+     * @param aggregationContext the aggregation context
+     * @param cmmnEngineConfiguration the cmmn engine configuration
+     * @param aggregator the aggregator that should be used to perform the aggregation
+     * @param targetVarName the name of the variable, never {@code null}
+     * @return the created variables (not yet saved), or {@code null} if no name could be resolved for the variable
+     */
+    public static VariableInstanceEntity aggregate(DelegatePlanItemInstance planItemInstance,
+            PlanItemVariableAggregatorContext aggregationContext, CmmnEngineConfiguration cmmnEngineConfiguration, PlanItemVariableAggregator aggregator,
+            String targetVarName) {
+
+<span class="nc" id="L112">        VariableServiceConfiguration variableServiceConfiguration = cmmnEngineConfiguration.getVariableServiceConfiguration();</span>
+
+<span class="nc" id="L114">        Object aggregatedValue = aggregator.aggregateSingleVariable(planItemInstance, aggregationContext);</span>
+
+<span class="nc" id="L116">        String caseInstanceId = planItemInstance.getCaseInstanceId();</span>
+<span class="nc" id="L117">        String subScopeId = planItemInstance.getStageInstanceId();</span>
+<span class="nc bnc" id="L118" title="All 2 branches missed.">        if (subScopeId == null) {</span>
+<span class="nc" id="L119">            subScopeId = caseInstanceId;</span>
+        }
+
+<span class="nc" id="L122">        return createScopedVariableAggregationVariableInstance(planItemInstance.getTenantId(), targetVarName, caseInstanceId, subScopeId, aggregatedValue, variableServiceConfiguration);</span>
+    }
+
+    /**
+     * Aggregate an overview value for the scope and variable name
+     *
+     * @param parentScopeId the id of the scope for which the overview needs to be done
+     * @param targetVarName the name of the variable
+     * @return the aggregated variable value
+     */
+    public static Object aggregateOverview(String parentScopeId, String targetVarName, CommandContext commandContext) {
+<span class="nc" id="L133">        CmmnEngineConfiguration cmmnEngineConfiguration = CommandContextUtil.getCmmnEngineConfiguration(commandContext);</span>
+<span class="nc" id="L134">        PlanItemInstanceEntity parent = cmmnEngineConfiguration.getPlanItemInstanceEntityManager()</span>
+<span class="nc" id="L135">                .findById(parentScopeId);</span>
+
+<span class="nc" id="L137">        RepetitionRule repetitionRule = ExpressionUtil.getRepetitionRule(parent);</span>
+<span class="nc bnc" id="L138" title="All 2 branches missed.">        if (repetitionRule != null) {</span>
+<span class="nc" id="L139">            return aggregateOverviewForRepetition(parent, repetitionRule, targetVarName, cmmnEngineConfiguration);</span>
+        }
+
+        // TODO aggregation overview for non multi instance
+<span class="nc" id="L143">        return null;</span>
+
+    }
+
+    /**
+     * Create an overview value for a repetition plan item
+     *
+     * @param planItemInstance one of the repetition plan item instances
+     * @param targetVarName the name of the variable
+     * @param cmmnEngineConfiguration the cmmn engine configuration
+     * @return the overview value for repetition plan items
+     */
+    public static Object aggregateOverviewForRepetition(PlanItemInstanceEntity planItemInstance, RepetitionRule repetitionRule, String targetVarName,
+            CmmnEngineConfiguration cmmnEngineConfiguration) {
+<span class="nc" id="L157">        VariableAggregationDefinitions aggregations = repetitionRule.getAggregations();</span>
+<span class="nc bnc" id="L158" title="All 2 branches missed.">        if (aggregations == null) {</span>
+            // This should never happen as the planItemInstance is a repetition and we are doing an aggregation, but we are being extra safe
+<span class="nc" id="L160">            return null;</span>
+        }
+
+<span class="nc" id="L163">        String subScopeId = planItemInstance.getStageInstanceId();</span>
+        List&lt;PlanItemInstanceEntity&gt; repetitionPlanItems;
+<span class="nc bnc" id="L165" title="All 2 branches missed.">        if (subScopeId == null) {</span>
+<span class="nc" id="L166">            subScopeId = planItemInstance.getCaseInstanceId();</span>
+<span class="nc" id="L167">            repetitionPlanItems = cmmnEngineConfiguration.getPlanItemInstanceEntityManager()</span>
+<span class="nc" id="L168">                    .findByCaseInstanceIdAndPlanItemId(subScopeId, planItemInstance.getPlanItem().getId());</span>
+        } else {
+<span class="nc" id="L170">            repetitionPlanItems = cmmnEngineConfiguration.getPlanItemInstanceEntityManager()</span>
+<span class="nc" id="L171">                    .findByStageInstanceIdAndPlanItemId(subScopeId, planItemInstance.getPlanItem().getId());</span>
+        }
+
+<span class="nc" id="L174">        VariableServiceConfiguration variableServiceConfiguration = cmmnEngineConfiguration.getVariableServiceConfiguration();</span>
+<span class="nc" id="L175">        VariableService variableService = variableServiceConfiguration.getVariableService();</span>
+        // Find all variable instances for already plan item instances with the same sub scope
+<span class="nc" id="L177">        List&lt;VariableInstanceEntity&gt; instances = variableService.createInternalVariableInstanceQuery()</span>
+<span class="nc" id="L178">                .subScopeId(subScopeId)</span>
+<span class="nc" id="L179">                .scopeType(ScopeTypes.CMMN_VARIABLE_AGGREGATION)</span>
+<span class="nc" id="L180">                .names(Arrays.asList(targetVarName, COUNTER_VAR_PREFIX + targetVarName))</span>
+<span class="nc" id="L181">                .list();</span>
+
+<span class="nc" id="L183">        String elementIndexVariable = repetitionRule.getRepetitionCounterVariableName();</span>
+
+<span class="nc" id="L185">        VariableScope parentVariableScope = planItemInstance.getParentVariableScope();</span>
+
+<span class="nc" id="L187">        Map&lt;String, VariableAggregationDefinition&gt; aggregationsByTarget = groupAggregationsByTarget(parentVariableScope, aggregations.getOverviewAggregations(), cmmnEngineConfiguration);</span>
+<span class="nc" id="L188">        VariableAggregationDefinition aggregation = aggregationsByTarget.get(targetVarName);</span>
+<span class="nc" id="L189">        PlanItemVariableAggregator aggregator = resolveVariableAggregator(aggregation, planItemInstance);</span>
+
+<span class="nc" id="L191">        PlanItemVariableAggregatorContext aggregationContext = BaseVariableAggregatorContext.overview(aggregation);</span>
+
+<span class="nc bnc" id="L193" title="All 2 branches missed.">        for (PlanItemInstanceEntity repetitionPlanItem : repetitionPlanItems) {</span>
+            // We need to create overview values for every single active child plan item
+<span class="nc bnc" id="L195" title="All 2 branches missed.">            if (PlanItemInstanceState.ACTIVE_STATES.contains(repetitionPlanItem.getState())) {</span>
+
+<span class="nc" id="L197">                VariableInstanceEntity aggregatedVarInstance = aggregate(repetitionPlanItem,</span>
+                        aggregationContext, cmmnEngineConfiguration, aggregator, targetVarName);
+<span class="nc" id="L199">                aggregatedVarInstance.setId(repetitionPlanItem.getId() + targetVarName);</span>
+<span class="nc" id="L200">                instances.add(aggregatedVarInstance);</span>
+
+<span class="nc" id="L202">                Integer elementIndexValue = repetitionPlanItem.getVariable(elementIndexVariable, Integer.class);</span>
+<span class="nc bnc" id="L203" title="All 2 branches missed.">                if (elementIndexValue == null) {</span>
+<span class="nc" id="L204">                    elementIndexValue = 0;</span>
+                }
+<span class="nc" id="L206">                String counterValue = aggregatedVarInstance.getId() + COUNTER_VAR_VALUE_SEPARATOR + elementIndexValue;</span>
+<span class="nc" id="L207">                VariableInstanceEntity counterVarInstance = createScopedVariableAggregationVariableInstance(repetitionPlanItem.getTenantId(),COUNTER_VAR_PREFIX + targetVarName,</span>
+<span class="nc" id="L208">                        aggregatedVarInstance.getScopeId(), aggregatedVarInstance.getSubScopeId(), counterValue, variableServiceConfiguration);</span>
+<span class="nc" id="L209">                instances.add(counterVarInstance);</span>
+            }
+<span class="nc" id="L211">        }</span>
+
+<span class="nc bnc" id="L213" title="All 2 branches missed.">        if (!instances.isEmpty()) {</span>
+<span class="nc" id="L214">            Map&lt;String, List&lt;VariableInstance&gt;&gt; instancesByName = groupVariableInstancesByName(instances);</span>
+
+<span class="nc" id="L216">            List&lt;VariableInstance&gt; targetVariableInstances = instancesByName.get(targetVarName);</span>
+<span class="nc" id="L217">            List&lt;VariableInstance&gt; counterVariables = instancesByName.getOrDefault(COUNTER_VAR_PREFIX + targetVarName, Collections</span>
+<span class="nc" id="L218">                    .emptyList());</span>
+
+<span class="nc" id="L220">            sortVariablesByCounter(targetVariableInstances, counterVariables);</span>
+
+<span class="nc" id="L222">            return aggregator.aggregateMultiVariables(planItemInstance, targetVariableInstances, aggregationContext);</span>
+        }
+
+<span class="nc" id="L225">        return null;</span>
+    }
+
+    public static VariableInstanceEntity createScopedVariableAggregationVariableInstance(String tenantId, String varName, String scopeId, String subScopeId, Object value,
+            VariableServiceConfiguration variableServiceConfiguration) {
+
+<span class="nc" id="L231">        VariableService variableService = variableServiceConfiguration.getVariableService();</span>
+
+<span class="nc" id="L233">        VariableInstanceEntity variableInstance = variableService.createVariableInstance(varName);</span>
+<span class="nc" id="L234">        variableInstance.setScopeId(scopeId);</span>
+<span class="nc" id="L235">        variableInstance.setSubScopeId(subScopeId);</span>
+<span class="nc" id="L236">        variableInstance.setScopeType(ScopeTypes.CMMN_VARIABLE_AGGREGATION);</span>
+<span class="nc" id="L237">        variableServiceConfiguration.getVariableInstanceValueModifier().setVariableValue(variableInstance, value, tenantId);</span>
+<span class="nc" id="L238">        return variableInstance;</span>
+    }
+
+    public static Map&lt;String, List&lt;VariableInstance&gt;&gt; groupVariableInstancesByName(List&lt;? extends VariableInstance&gt; instances) {
+<span class="nc" id="L242">        return instances.stream().collect(Collectors.groupingBy(VariableInstance::getName));</span>
+    }
+
+    public static PlanItemVariableAggregator resolveVariableAggregator(VariableAggregationDefinition aggregation, DelegatePlanItemInstance planItemInstance) {
+<span class="nc" id="L246">        CmmnEngineConfiguration cmmnEngineConfiguration = CommandContextUtil.getCmmnEngineConfiguration();</span>
+<span class="nc bnc" id="L247" title="All 2 branches missed.">        if (ImplementationType.IMPLEMENTATION_TYPE_CLASS.equalsIgnoreCase(aggregation.getImplementationType())) {</span>
+<span class="nc" id="L248">            return cmmnEngineConfiguration.getClassDelegateFactory().create(aggregation.getImplementation(), null);</span>
+<span class="nc bnc" id="L249" title="All 2 branches missed.">        } else if (ImplementationType.IMPLEMENTATION_TYPE_DELEGATEEXPRESSION.equalsIgnoreCase(aggregation.getImplementationType())) {</span>
+<span class="nc" id="L250">            Object delegate = DelegateExpressionUtil.resolveDelegateExpression(</span>
+<span class="nc" id="L251">                    cmmnEngineConfiguration.getExpressionManager().createExpression(aggregation.getImplementation()),</span>
+                    planItemInstance, null);
+
+<span class="nc bnc" id="L254" title="All 2 branches missed.">            if (delegate instanceof PlanItemVariableAggregator) {</span>
+<span class="nc" id="L255">                return (PlanItemVariableAggregator) delegate;</span>
+            }
+
+<span class="nc" id="L258">            throw new FlowableIllegalArgumentException(&quot;Delegate expression &quot; + aggregation.getImplementation() + &quot; did not resolve to an implementation of &quot; + PlanItemVariableAggregator.class);</span>
+        } else {
+<span class="nc" id="L260">            return cmmnEngineConfiguration.getVariableAggregator();</span>
+        }
+    }
+
+    public static void sortVariablesByCounter(List&lt;VariableInstance&gt; variableInstances, List&lt;VariableInstance&gt; counterVariableInstances) {
+<span class="nc bnc" id="L265" title="All 4 branches missed.">        if (counterVariableInstances == null || counterVariableInstances.isEmpty()) {</span>
+<span class="nc" id="L266">            return;</span>
+        }
+<span class="nc" id="L268">        Map&lt;String, Integer&gt; sortOrder = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L269" title="All 2 branches missed.">        for (VariableInstance counterVariable : counterVariableInstances) {</span>
+<span class="nc" id="L270">            Object value = counterVariable.getValue();</span>
+<span class="nc" id="L271">            String[] values = value.toString().split(COUNTER_VAR_VALUE_SEPARATOR);</span>
+<span class="nc" id="L272">            String variableInstanceId = values[0];</span>
+<span class="nc" id="L273">            int order = Integer.parseInt(values[1]);</span>
+<span class="nc" id="L274">            sortOrder.put(variableInstanceId, order);</span>
+<span class="nc" id="L275">        }</span>
+
+<span class="nc" id="L277">        variableInstances.sort(Comparator.comparingInt(o -&gt; sortOrder.getOrDefault(o.getId(), 0)));</span>
+<span class="nc" id="L278">    }</span>
+
+    public static Map&lt;String, VariableAggregationDefinition&gt; groupAggregationsByTarget(VariableScope scope,
+            Collection&lt;VariableAggregationDefinition&gt; aggregations, CmmnEngineConfiguration cmmnEngineConfiguration) {
+<span class="nc" id="L282">        Map&lt;String, VariableAggregationDefinition&gt; aggregationsByTarget = new HashMap&lt;&gt;();</span>
+
+<span class="nc bnc" id="L284" title="All 2 branches missed.">        for (VariableAggregationDefinition aggregation : aggregations) {</span>
+<span class="nc" id="L285">            String targetVarName = getAggregationTargetVarName(aggregation, scope, cmmnEngineConfiguration);</span>
+<span class="nc" id="L286">            aggregationsByTarget.put(targetVarName, aggregation);</span>
+<span class="nc" id="L287">        }</span>
+<span class="nc" id="L288">        return aggregationsByTarget;</span>
+    }
+
+    public static String getAggregationTargetVarName(VariableAggregationDefinition aggregation, VariableScope parentScope,
+            CmmnEngineConfiguration cmmnEngineConfiguration) {
+<span class="nc" id="L293">        String targetVarName = null;</span>
+<span class="nc bnc" id="L294" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(aggregation.getTargetExpression())) {</span>
+<span class="nc" id="L295">            Object value = cmmnEngineConfiguration.getExpressionManager()</span>
+<span class="nc" id="L296">                    .createExpression(aggregation.getTargetExpression())</span>
+<span class="nc" id="L297">                    .getValue(parentScope);</span>
+<span class="nc bnc" id="L298" title="All 2 branches missed.">            if (value != null) {</span>
+<span class="nc" id="L299">                targetVarName = value.toString();</span>
+            }
+<span class="nc bnc" id="L301" title="All 2 branches missed.">        } else if (StringUtils.isNotEmpty(aggregation.getTarget())) {</span>
+<span class="nc" id="L302">            targetVarName = aggregation.getTarget();</span>
+        }
+<span class="nc" id="L304">        return targetVarName;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,294 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DefaultAsyncJobExecutor.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.job.service.impl.asyncexecutor</a> &gt; <span class="el_source">DefaultAsyncJobExecutor.java</span></div><h1>DefaultAsyncJobExecutor.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.job.service.impl.asyncexecutor;
+
+import java.util.concurrent.RejectedExecutionException;
+
+import org.flowable.common.engine.api.async.AsyncTaskExecutor;
+import org.flowable.common.engine.api.delegate.event.FlowableEngineEventType;
+import org.flowable.common.engine.api.delegate.event.FlowableEventDispatcher;
+import org.flowable.common.engine.impl.async.DefaultAsyncTaskExecutor;
+import org.flowable.common.engine.impl.cfg.TransactionPropagation;
+import org.flowable.common.engine.impl.interceptor.Command;
+import org.flowable.common.engine.impl.interceptor.CommandConfig;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.job.api.JobInfo;
+import org.flowable.job.service.event.impl.FlowableJobEventBuilder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * @author Joram Barrez
+ * @author Tijs Rademakers
+ */
+public class DefaultAsyncJobExecutor extends AbstractAsyncExecutor {
+
+<span class="nc" id="L36">    private static final Logger LOGGER = LoggerFactory.getLogger(DefaultAsyncJobExecutor.class);</span>
+
+    /**
+     * Thread responsible for async job acquisition.
+     */
+    protected Thread asyncJobAcquisitionThread;
+
+    /**
+     * Thread responsible for timer job acquisition.
+     */
+    protected Thread timerJobAcquisitionThread;
+
+    /**
+     * Thread responsible for resetting the expired jobs.
+     */
+    protected Thread resetExpiredJobThread;
+
+    /**
+     * The async task executor used for job execution.
+     */
+    protected AsyncTaskExecutor taskExecutor;
+    protected boolean shutdownTaskExecutor;
+
+    public DefaultAsyncJobExecutor() {
+<span class="nc" id="L60">        super();</span>
+<span class="nc" id="L61">    }</span>
+
+    public DefaultAsyncJobExecutor(AsyncJobExecutorConfiguration configuration) {
+<span class="nc" id="L64">        super(configuration);</span>
+<span class="nc" id="L65">    }</span>
+
+    @Override
+    protected boolean executeAsyncJob(final JobInfo job, Runnable runnable) {
+        try {
+<span class="nc" id="L70">            taskExecutor.execute(runnable);</span>
+<span class="nc" id="L71">            return true;</span>
+
+<span class="nc" id="L73">        } catch (RejectedExecutionException e) {</span>
+<span class="nc" id="L74">            sendRejectedEvent(job);</span>
+<span class="nc" id="L75">            unacquireJobAfterRejection(job);</span>
+
+            // Job queue full, returning false so (if wanted) the acquiring can be throttled
+<span class="nc" id="L78">            return false;</span>
+        }
+    }
+
+    protected void sendRejectedEvent(JobInfo job) {
+<span class="nc" id="L83">        FlowableEventDispatcher eventDispatcher = jobServiceConfiguration.getEventDispatcher();</span>
+<span class="nc bnc" id="L84" title="All 4 branches missed.">        if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L85">            eventDispatcher.dispatchEvent(FlowableJobEventBuilder.createEntityEvent(</span>
+<span class="nc" id="L86">                FlowableEngineEventType.JOB_REJECTED, job), jobServiceConfiguration.getEngineName());</span>
+        }
+<span class="nc" id="L88">    }</span>
+
+    protected void unacquireJobAfterRejection(final JobInfo job) {
+
+        // When a RejectedExecutionException is caught, this means that the
+        // queue for holding the jobs that are to be executed is full and can't store more.
+        // The job is now 'unlocked', meaning that the lock owner/time is set to null,
+        // so other executors can pick the job up (or this async executor, the next time the
+        // acquire query is executed.
+
+<span class="nc" id="L98">        CommandConfig commandConfig = new CommandConfig(false, TransactionPropagation.REQUIRES_NEW);</span>
+<span class="nc" id="L99">        jobServiceConfiguration.getCommandExecutor().execute(commandConfig, new Command&lt;Void&gt;() {</span>
+            @Override
+            public Void execute(CommandContext commandContext) {
+<span class="nc" id="L102">                jobServiceConfiguration.getJobManager().unacquire(job);</span>
+<span class="nc" id="L103">                return null;</span>
+            }
+        });
+<span class="nc" id="L106">    }</span>
+
+    @Override
+    protected void startAdditionalComponents() {
+<span class="nc bnc" id="L110" title="All 2 branches missed.">        if (configuration.isUnlockOwnedJobs()) {</span>
+<span class="nc" id="L111">            unlockOwnedJobs();</span>
+        }
+
+<span class="nc" id="L114">        initAsyncJobExecutionThreadPool();</span>
+<span class="nc" id="L115">        startJobAcquisitionThread();</span>
+
+<span class="nc bnc" id="L117" title="All 2 branches missed.">        if (configuration.isTimerRunnableNeeded()) {</span>
+<span class="nc" id="L118">            startTimerAcquisitionThread();</span>
+        }
+<span class="nc" id="L120">        startResetExpiredJobsThread();</span>
+<span class="nc" id="L121">    }</span>
+
+    @Override
+    protected void shutdownAdditionalComponents() {
+<span class="nc" id="L125">        stopResetExpiredJobsThread();</span>
+<span class="nc" id="L126">        stopTimerAcquisitionThread();</span>
+<span class="nc" id="L127">        stopJobAcquisitionThread();</span>
+<span class="nc" id="L128">        stopExecutingAsyncJobs();</span>
+
+<span class="nc bnc" id="L130" title="All 2 branches missed.">        if (configuration.isUnlockOwnedJobs()) {</span>
+<span class="nc" id="L131">            unlockOwnedJobs();</span>
+        }
+
+<span class="nc" id="L134">    }</span>
+
+    @Override
+    protected ResetExpiredJobsRunnable createResetExpiredJobsRunnable(String resetRunnableName) {
+<span class="nc" id="L138">        return new ResetExpiredJobsRunnable(resetRunnableName, this,</span>
+<span class="nc" id="L139">                jobServiceConfiguration.getJobEntityManager(),</span>
+<span class="nc" id="L140">                jobServiceConfiguration.getTimerJobEntityManager(),</span>
+<span class="nc" id="L141">                jobServiceConfiguration.getExternalWorkerJobEntityManager()</span>
+        );
+    }
+
+    protected void initAsyncJobExecutionThreadPool() {
+<span class="nc bnc" id="L146" title="All 2 branches missed.">        if (taskExecutor == null) {</span>
+            // This is for backwards compatibility
+            // If there is no task executor then use the Default one and start it immediately.
+<span class="nc" id="L149">            DefaultAsyncTaskExecutor defaultAsyncTaskExecutor = new DefaultAsyncTaskExecutor();</span>
+<span class="nc" id="L150">            defaultAsyncTaskExecutor.start();</span>
+<span class="nc" id="L151">            this.taskExecutor = defaultAsyncTaskExecutor;</span>
+<span class="nc" id="L152">            this.shutdownTaskExecutor = true;</span>
+        }
+<span class="nc" id="L154">    }</span>
+
+    protected void stopExecutingAsyncJobs() {
+<span class="nc bnc" id="L157" title="All 4 branches missed.">        if (taskExecutor != null &amp;&amp; shutdownTaskExecutor) {</span>
+<span class="nc" id="L158">            taskExecutor.shutdown();</span>
+<span class="nc" id="L159">            taskExecutor = null;</span>
+        }
+<span class="nc" id="L161">    }</span>
+
+    /** Starts the acquisition thread */
+    protected void startJobAcquisitionThread() {
+<span class="nc bnc" id="L165" title="All 2 branches missed.">        if (configuration.isAsyncJobAcquisitionEnabled()) {</span>
+<span class="nc bnc" id="L166" title="All 2 branches missed.">            if (asyncJobAcquisitionThread == null) {</span>
+<span class="nc" id="L167">                asyncJobAcquisitionThread = new Thread(asyncJobsDueRunnable);</span>
+            }
+<span class="nc" id="L169">            asyncJobAcquisitionThread.start();</span>
+        }
+<span class="nc" id="L171">    }</span>
+
+    protected void startTimerAcquisitionThread() {
+<span class="nc bnc" id="L174" title="All 2 branches missed.">        if (configuration.isTimerJobAcquisitionEnabled()) {</span>
+<span class="nc bnc" id="L175" title="All 2 branches missed.">            if (timerJobAcquisitionThread == null) {</span>
+<span class="nc" id="L176">                timerJobAcquisitionThread = new Thread(timerJobRunnable);</span>
+            }
+<span class="nc" id="L178">            timerJobAcquisitionThread.start();</span>
+        }
+<span class="nc" id="L180">    }</span>
+
+    /** Stops the acquisition thread */
+    protected void stopJobAcquisitionThread() {
+<span class="nc bnc" id="L184" title="All 2 branches missed.">        if (asyncJobAcquisitionThread != null) {</span>
+            try {
+<span class="nc" id="L186">                asyncJobAcquisitionThread.join();</span>
+<span class="nc" id="L187">            } catch (InterruptedException e) {</span>
+<span class="nc" id="L188">                LOGGER.warn(&quot;Interrupted while waiting for the async job acquisition thread to terminate&quot;, e);</span>
+<span class="nc" id="L189">            }</span>
+<span class="nc" id="L190">            asyncJobAcquisitionThread = null;</span>
+        }
+<span class="nc" id="L192">    }</span>
+
+    protected void stopTimerAcquisitionThread() {
+<span class="nc bnc" id="L195" title="All 2 branches missed.">        if (timerJobAcquisitionThread != null) {</span>
+            try {
+<span class="nc" id="L197">                timerJobAcquisitionThread.join();</span>
+<span class="nc" id="L198">            } catch (InterruptedException e) {</span>
+<span class="nc" id="L199">                LOGGER.warn(&quot;Interrupted while waiting for the timer job acquisition thread to terminate&quot;, e);</span>
+<span class="nc" id="L200">            }</span>
+<span class="nc" id="L201">            timerJobAcquisitionThread = null;</span>
+        }
+<span class="nc" id="L203">    }</span>
+
+    /** Starts the reset expired jobs thread */
+    protected void startResetExpiredJobsThread() {
+<span class="nc bnc" id="L207" title="All 2 branches missed.">        if (configuration.isResetExpiredJobEnabled()) {</span>
+<span class="nc bnc" id="L208" title="All 2 branches missed.">            if (resetExpiredJobThread == null) {</span>
+<span class="nc" id="L209">                resetExpiredJobThread = new Thread(resetExpiredJobsRunnable);</span>
+            }
+<span class="nc" id="L211">            resetExpiredJobThread.start();</span>
+        }
+<span class="nc" id="L213">    }</span>
+
+    /** Stops the reset expired jobs thread */
+    protected void stopResetExpiredJobsThread() {
+<span class="nc bnc" id="L217" title="All 2 branches missed.">        if (resetExpiredJobThread != null) {</span>
+            try {
+<span class="nc" id="L219">                resetExpiredJobThread.join();</span>
+<span class="nc" id="L220">            } catch (InterruptedException e) {</span>
+<span class="nc" id="L221">                LOGGER.warn(&quot;Interrupted while waiting for the reset expired jobs thread to terminate&quot;, e);</span>
+<span class="nc" id="L222">            }</span>
+
+<span class="nc" id="L224">            resetExpiredJobThread = null;</span>
+        }
+<span class="nc" id="L226">    }</span>
+
+    public boolean isAsyncJobAcquisitionEnabled() {
+<span class="nc" id="L229">        return configuration.isAsyncJobAcquisitionEnabled();</span>
+    }
+
+    public void setAsyncJobAcquisitionEnabled(boolean isAsyncJobAcquisitionEnabled) {
+<span class="nc" id="L233">        configuration.setAsyncJobAcquisitionEnabled(isAsyncJobAcquisitionEnabled);</span>
+<span class="nc" id="L234">    }</span>
+
+    public boolean isTimerJobAcquisitionEnabled() {
+<span class="nc" id="L237">        return configuration.isTimerJobAcquisitionEnabled();</span>
+    }
+
+    public void setTimerJobAcquisitionEnabled(boolean isTimerJobAcquisitionEnabled) {
+<span class="nc" id="L241">        configuration.setTimerJobAcquisitionEnabled(isTimerJobAcquisitionEnabled);</span>
+<span class="nc" id="L242">    }</span>
+
+    public boolean isResetExpiredJobEnabled() {
+<span class="nc" id="L245">        return configuration.isResetExpiredJobEnabled();</span>
+    }
+
+    public void setResetExpiredJobEnabled(boolean isResetExpiredJobEnabled) {
+<span class="nc" id="L249">        configuration.setResetExpiredJobEnabled(isResetExpiredJobEnabled);</span>
+<span class="nc" id="L250">    }</span>
+
+    public Thread getTimerJobAcquisitionThread() {
+<span class="nc" id="L253">        return timerJobAcquisitionThread;</span>
+    }
+
+    public void setTimerJobAcquisitionThread(Thread timerJobAcquisitionThread) {
+<span class="nc" id="L257">        this.timerJobAcquisitionThread = timerJobAcquisitionThread;</span>
+<span class="nc" id="L258">    }</span>
+
+    public Thread getAsyncJobAcquisitionThread() {
+<span class="nc" id="L261">        return asyncJobAcquisitionThread;</span>
+    }
+
+    public void setAsyncJobAcquisitionThread(Thread asyncJobAcquisitionThread) {
+<span class="nc" id="L265">        this.asyncJobAcquisitionThread = asyncJobAcquisitionThread;</span>
+<span class="nc" id="L266">    }</span>
+
+    public Thread getResetExpiredJobThread() {
+<span class="nc" id="L269">        return resetExpiredJobThread;</span>
+    }
+
+    public void setResetExpiredJobThread(Thread resetExpiredJobThread) {
+<span class="nc" id="L273">        this.resetExpiredJobThread = resetExpiredJobThread;</span>
+<span class="nc" id="L274">    }</span>
+
+    public boolean isUnlockOwnedJobs() {
+<span class="nc" id="L277">        return configuration.isUnlockOwnedJobs();</span>
+    }
+
+    public void setUnlockOwnedJobs(boolean unlockOwnedJobs) {
+<span class="nc" id="L281">        configuration.setUnlockOwnedJobs(unlockOwnedJobs);</span>
+<span class="nc" id="L282">    }</span>
+
+    @Override
+    public AsyncTaskExecutor getTaskExecutor() {
+<span class="nc" id="L286">        return taskExecutor;</span>
+    }
+
+    @Override
+    public void setTaskExecutor(AsyncTaskExecutor taskExecutor) {
+<span class="nc" id="L291">        this.taskExecutor = taskExecutor;</span>
+<span class="nc" id="L292">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

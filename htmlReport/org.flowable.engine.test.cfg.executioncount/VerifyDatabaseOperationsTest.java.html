@@ -1,0 +1,870 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>VerifyDatabaseOperationsTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.cfg.executioncount</a> &gt; <span class="el_source">VerifyDatabaseOperationsTest.java</span></div><h1>VerifyDatabaseOperationsTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.test.cfg.executioncount;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+
+import org.flowable.common.engine.impl.cfg.CommandExecutorImpl;
+import org.flowable.common.engine.impl.db.DbSqlSessionFactory;
+import org.flowable.common.engine.impl.history.HistoryLevel;
+import org.flowable.common.engine.impl.interceptor.CommandInterceptor;
+import org.flowable.common.engine.impl.interceptor.EngineConfigurationConstants;
+import org.flowable.engine.history.HistoricActivityInstance;
+import org.flowable.engine.impl.db.EntityDependencyOrder;
+import org.flowable.engine.impl.test.PluggableFlowableTestCase;
+import org.flowable.engine.repository.Deployment;
+import org.flowable.engine.test.profiler.CommandStats;
+import org.flowable.engine.test.profiler.ConsoleLogger;
+import org.flowable.engine.test.profiler.FlowableProfiler;
+import org.flowable.engine.test.profiler.ProfileSession;
+import org.flowable.engine.test.profiler.ProfilingDbSqlSessionFactory;
+import org.flowable.engine.test.profiler.TotalExecutionTimeCommandInterceptor;
+import org.flowable.job.api.Job;
+import org.flowable.task.service.TaskServiceConfiguration;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledIfSystemProperty;
+
+/**
+ * @author Joram Barrez
+ */
+@DisabledIfSystemProperty(named = &quot;disableWhen&quot;, matches = &quot;cockroachdb&quot;)
+<span class="nc" id="L48">public class VerifyDatabaseOperationsTest extends PluggableFlowableTestCase {</span>
+
+    protected boolean oldIsBulkInsertableValue;
+    protected boolean oldExecutionTreeFetchValue;
+    protected boolean oldExecutionRelationshipCountValue;
+    protected boolean oldTaskRelationshipCountValue;
+    protected boolean oldenableProcessDefinitionInfoCacheValue;
+    protected CommandInterceptor oldFirstCommandInterceptor;
+    protected DbSqlSessionFactory oldDbSqlSessionFactory;
+    protected HistoryLevel oldHistoryLevel;
+
+    @BeforeEach
+    protected void setUp() throws Exception {
+
+        // Enable flags
+<span class="nc" id="L63">        this.oldIsBulkInsertableValue = processEngineConfiguration.isBulkInsertEnabled();</span>
+<span class="nc" id="L64">        this.oldExecutionTreeFetchValue = processEngineConfiguration.getPerformanceSettings().isEnableEagerExecutionTreeFetching();</span>
+<span class="nc" id="L65">        this.oldExecutionRelationshipCountValue = processEngineConfiguration.getPerformanceSettings().isEnableExecutionRelationshipCounts();</span>
+<span class="nc" id="L66">        this.oldTaskRelationshipCountValue = processEngineConfiguration.getPerformanceSettings().isEnableTaskRelationshipCounts();</span>
+<span class="nc" id="L67">        this.oldenableProcessDefinitionInfoCacheValue = processEngineConfiguration.isEnableProcessDefinitionInfoCache();</span>
+<span class="nc" id="L68">        oldHistoryLevel = processEngineConfiguration.getHistoryLevel();</span>
+
+<span class="nc" id="L70">        processEngineConfiguration.setBulkInsertEnabled(true);</span>
+
+<span class="nc" id="L72">        processEngineConfiguration.getPerformanceSettings().setEnableEagerExecutionTreeFetching(true);</span>
+<span class="nc" id="L73">        processEngineConfiguration.getPerformanceSettings().setEnableExecutionRelationshipCounts(true);</span>
+<span class="nc" id="L74">        processEngineConfiguration.getPerformanceSettings().setEnableTaskRelationshipCounts(true);</span>
+
+<span class="nc" id="L76">        TaskServiceConfiguration TaskServiceConfiguration = (TaskServiceConfiguration) processEngineConfiguration.getServiceConfigurations().get(EngineConfigurationConstants.KEY_TASK_SERVICE_CONFIG);</span>
+<span class="nc" id="L77">        TaskServiceConfiguration.setEnableTaskRelationshipCounts(true);</span>
+
+<span class="nc" id="L79">        processEngineConfiguration.setEnableProcessDefinitionInfoCache(false);</span>
+<span class="nc" id="L80">        processEngineConfiguration.setHistoryLevel(HistoryLevel.AUDIT);</span>
+
+        // The time interceptor should be first
+<span class="nc" id="L83">        CommandExecutorImpl commandExecutor = ((CommandExecutorImpl) processEngineConfiguration.getCommandExecutor());</span>
+<span class="nc" id="L84">        this.oldFirstCommandInterceptor = commandExecutor.getFirst();</span>
+
+<span class="nc" id="L86">        TotalExecutionTimeCommandInterceptor timeCommandInterceptor = new TotalExecutionTimeCommandInterceptor();</span>
+<span class="nc" id="L87">        timeCommandInterceptor.setNext(oldFirstCommandInterceptor);</span>
+<span class="nc" id="L88">        commandExecutor.setFirst(timeCommandInterceptor);</span>
+
+        // Add dbsqlSession factory that captures CRUD operations
+<span class="nc" id="L91">        this.oldDbSqlSessionFactory = processEngineConfiguration.getDbSqlSessionFactory();</span>
+<span class="nc" id="L92">        DbSqlSessionFactory newDbSqlSessionFactory = new ProfilingDbSqlSessionFactory(processEngineConfiguration.isUsePrefixId());</span>
+<span class="nc" id="L93">        newDbSqlSessionFactory.setBulkInserteableEntityClasses(new HashSet&lt;&gt;(EntityDependencyOrder.INSERT_ORDER));</span>
+<span class="nc" id="L94">        newDbSqlSessionFactory.setInsertionOrder(oldDbSqlSessionFactory.getInsertionOrder());</span>
+<span class="nc" id="L95">        newDbSqlSessionFactory.setDeletionOrder(oldDbSqlSessionFactory.getDeletionOrder());</span>
+<span class="nc" id="L96">        newDbSqlSessionFactory.setDatabaseType(oldDbSqlSessionFactory.getDatabaseType());</span>
+<span class="nc" id="L97">        newDbSqlSessionFactory.setDatabaseTablePrefix(oldDbSqlSessionFactory.getDatabaseTablePrefix());</span>
+<span class="nc" id="L98">        newDbSqlSessionFactory.setTablePrefixIsSchema(oldDbSqlSessionFactory.isTablePrefixIsSchema());</span>
+<span class="nc" id="L99">        newDbSqlSessionFactory.setDatabaseCatalog(oldDbSqlSessionFactory.getDatabaseCatalog());</span>
+<span class="nc" id="L100">        newDbSqlSessionFactory.setDatabaseSchema(oldDbSqlSessionFactory.getDatabaseSchema());</span>
+<span class="nc" id="L101">        newDbSqlSessionFactory.setSqlSessionFactory(oldDbSqlSessionFactory.getSqlSessionFactory());</span>
+<span class="nc" id="L102">        newDbSqlSessionFactory.setDbHistoryUsed(oldDbSqlSessionFactory.isDbHistoryUsed());</span>
+<span class="nc" id="L103">        newDbSqlSessionFactory.setDatabaseSpecificStatements(oldDbSqlSessionFactory.getDatabaseSpecificStatements());</span>
+<span class="nc" id="L104">        newDbSqlSessionFactory.setLogicalNameToClassMapping(oldDbSqlSessionFactory.getLogicalNameToClassMapping());</span>
+<span class="nc" id="L105">        processEngineConfiguration.addSessionFactory(newDbSqlSessionFactory);</span>
+<span class="nc" id="L106">    }</span>
+
+    @AfterEach
+    protected void tearDown() throws Exception {
+
+<span class="nc" id="L111">        processEngineConfiguration.setBulkInsertEnabled(oldIsBulkInsertableValue);</span>
+<span class="nc" id="L112">        processEngineConfiguration.getPerformanceSettings().setEnableEagerExecutionTreeFetching(oldExecutionTreeFetchValue);</span>
+<span class="nc" id="L113">        processEngineConfiguration.getPerformanceSettings().setEnableExecutionRelationshipCounts(oldExecutionRelationshipCountValue);</span>
+<span class="nc" id="L114">        processEngineConfiguration.getPerformanceSettings().setEnableTaskRelationshipCounts(oldTaskRelationshipCountValue);</span>
+
+<span class="nc" id="L116">        TaskServiceConfiguration TaskServiceConfiguration = (TaskServiceConfiguration) processEngineConfiguration.getServiceConfigurations().get(EngineConfigurationConstants.KEY_TASK_SERVICE_CONFIG);</span>
+<span class="nc" id="L117">        TaskServiceConfiguration.setEnableTaskRelationshipCounts(oldTaskRelationshipCountValue);</span>
+
+<span class="nc" id="L119">        processEngineConfiguration.setEnableProcessDefinitionInfoCache(oldenableProcessDefinitionInfoCacheValue);</span>
+<span class="nc" id="L120">        processEngineConfiguration.setHistoryLevel(oldHistoryLevel);</span>
+
+<span class="nc" id="L122">        ((CommandExecutorImpl) processEngineConfiguration.getCommandExecutor()).setFirst(oldFirstCommandInterceptor);</span>
+
+<span class="nc" id="L124">        processEngineConfiguration.addSessionFactory(oldDbSqlSessionFactory);</span>
+
+        // Validate (cause this tended to be screwed up)
+<span class="nc" id="L127">        List&lt;HistoricActivityInstance&gt; historicActivityInstances = historyService.createHistoricActivityInstanceQuery().list();</span>
+<span class="nc bnc" id="L128" title="All 2 branches missed.">        for (HistoricActivityInstance historicActivityInstance : historicActivityInstances) {</span>
+<span class="nc" id="L129">            assertThat(historicActivityInstance.getStartTime()).isNotNull();</span>
+<span class="nc" id="L130">            assertThat(historicActivityInstance.getEndTime()).isNotNull();</span>
+<span class="nc" id="L131">        }</span>
+
+<span class="nc" id="L133">        FlowableProfiler.getInstance().reset();</span>
+
+<span class="nc bnc" id="L135" title="All 2 branches missed.">        for (Deployment deployment : repositoryService.createDeploymentQuery().list()) {</span>
+<span class="nc" id="L136">            repositoryService.deleteDeployment(deployment.getId(), true);</span>
+<span class="nc" id="L137">        }</span>
+
+<span class="nc" id="L139">        assertThat(runtimeService.createActivityInstanceQuery().count()).isZero();</span>
+<span class="nc" id="L140">    }</span>
+
+    @Test
+    public void testStartToEnd() {
+<span class="nc bnc" id="L144" title="All 2 branches missed.">        if (!processEngineConfiguration.isAsyncHistoryEnabled()) {</span>
+<span class="nc" id="L145">            deployStartProcessInstanceAndProfile(&quot;process01.bpmn20.xml&quot;, &quot;process01&quot;);</span>
+
+<span class="nc" id="L147">            assertDatabaseSelects(&quot;StartProcessInstanceCmd&quot;,</span>
+<span class="nc" id="L148">                    &quot;selectLatestProcessDefinitionByKey&quot;, 1L,</span>
+<span class="nc" id="L149">                    &quot;selectVariablesByQuery&quot;, 1L,</span>
+<span class="nc" id="L150">                    &quot;selectEntityLinksByQuery&quot;, 1L);</span>
+
+<span class="nc" id="L152">            assertDatabaseInserts(&quot;StartProcessInstanceCmd&quot;,</span>
+<span class="nc" id="L153">                    &quot;HistoricActivityInstanceEntityImpl-bulk-with-3&quot;, 1L,</span>
+<span class="nc" id="L154">                    &quot;HistoricProcessInstanceEntityImpl&quot;, 1L);</span>
+
+<span class="nc" id="L156">            assertNoUpdatesAndDeletes(&quot;StartProcessInstanceCmd&quot;);</span>
+
+<span class="nc" id="L158">            assertThat(runtimeService.createProcessInstanceQuery().count()).isZero();</span>
+<span class="nc" id="L159">            assertThat(historyService.createHistoricProcessInstanceQuery().finished().count()).isEqualTo(1);</span>
+        }
+<span class="nc" id="L161">    }</span>
+
+    @Test
+    public void testVariablesAndPassthrough() {
+<span class="nc bnc" id="L165" title="All 2 branches missed.">        if (!processEngineConfiguration.isAsyncHistoryEnabled()) {</span>
+<span class="nc" id="L166">            deployStartProcessInstanceAndProfile(&quot;process-variables-servicetask01.bpmn20.xml&quot;, &quot;process-variables-servicetask01&quot;);</span>
+
+<span class="nc" id="L168">            assertDatabaseSelects(&quot;StartProcessInstanceCmd&quot;,</span>
+<span class="nc" id="L169">                    &quot;selectLatestProcessDefinitionByKey&quot;, 1L,</span>
+<span class="nc" id="L170">                    &quot;selectVariablesByQuery&quot;, 1L,</span>
+<span class="nc" id="L171">                    &quot;selectEntityLinksByQuery&quot;, 1L);</span>
+<span class="nc" id="L172">            assertDatabaseInserts(&quot;StartProcessInstanceCmd&quot;,</span>
+<span class="nc" id="L173">                    &quot;HistoricVariableInstanceEntityImpl-bulk-with-4&quot;, 1L,</span>
+<span class="nc" id="L174">                    &quot;HistoricProcessInstanceEntityImpl&quot;, 1L,</span>
+<span class="nc" id="L175">                    &quot;HistoricActivityInstanceEntityImpl-bulk-with-17&quot;, 1L);</span>
+<span class="nc" id="L176">            assertNoUpdatesAndDeletes(&quot;StartProcessInstanceCmd&quot;);</span>
+
+<span class="nc" id="L178">            assertThat(runtimeService.createProcessInstanceQuery().count()).isZero();</span>
+<span class="nc" id="L179">            assertThat(historyService.createHistoricProcessInstanceQuery().finished().count()).isEqualTo(1);</span>
+        }
+<span class="nc" id="L181">    }</span>
+
+    @Test
+    public void testManyVariablesViaServiceTaskAndPassthroughs() {
+<span class="nc bnc" id="L185" title="All 2 branches missed.">        if (!processEngineConfiguration.isAsyncHistoryEnabled()) {</span>
+<span class="nc" id="L186">            deployStartProcessInstanceAndProfile(&quot;process-variables-servicetask02.bpmn20.xml&quot;, &quot;process-variables-servicetask02&quot;);</span>
+
+<span class="nc" id="L188">            assertDatabaseSelects(&quot;StartProcessInstanceCmd&quot;,</span>
+<span class="nc" id="L189">                    &quot;selectLatestProcessDefinitionByKey&quot;, 1L,</span>
+<span class="nc" id="L190">                    &quot;selectVariablesByQuery&quot;, 1L,</span>
+<span class="nc" id="L191">                    &quot;selectEntityLinksByQuery&quot;, 1L);</span>
+<span class="nc" id="L192">            assertDatabaseInserts(&quot;StartProcessInstanceCmd&quot;,</span>
+<span class="nc" id="L193">                    &quot;HistoricVariableInstanceEntityImpl-bulk-with-50&quot;, 1L,</span>
+<span class="nc" id="L194">                    &quot;HistoricProcessInstanceEntityImpl&quot;, 1L,</span>
+<span class="nc" id="L195">                    &quot;HistoricActivityInstanceEntityImpl-bulk-with-17&quot;, 1L);</span>
+<span class="nc" id="L196">            assertNoUpdatesAndDeletes(&quot;StartProcessInstanceCmd&quot;);</span>
+
+<span class="nc" id="L198">            assertThat(runtimeService.createProcessInstanceQuery().count()).isZero();</span>
+<span class="nc" id="L199">            assertThat(historyService.createHistoricProcessInstanceQuery().finished().count()).isEqualTo(1);</span>
+        }
+<span class="nc" id="L201">    }</span>
+
+    @Test
+    public void testOnlyPassThroughs() {
+<span class="nc bnc" id="L205" title="All 2 branches missed.">        if (!processEngineConfiguration.isAsyncHistoryEnabled()) {</span>
+<span class="nc" id="L206">            deployStartProcessInstanceAndProfile(&quot;process02.bpmn20.xml&quot;, &quot;process02&quot;);</span>
+
+<span class="nc" id="L208">            assertDatabaseSelects(&quot;StartProcessInstanceCmd&quot;,</span>
+<span class="nc" id="L209">                    &quot;selectLatestProcessDefinitionByKey&quot;, 1L,</span>
+<span class="nc" id="L210">                    &quot;selectVariablesByQuery&quot;, 1L,</span>
+<span class="nc" id="L211">                    &quot;selectEntityLinksByQuery&quot;, 1L);</span>
+<span class="nc" id="L212">            assertDatabaseInserts(&quot;StartProcessInstanceCmd&quot;,</span>
+<span class="nc" id="L213">                    &quot;HistoricActivityInstanceEntityImpl-bulk-with-17&quot;, 1L,</span>
+<span class="nc" id="L214">                    &quot;HistoricProcessInstanceEntityImpl&quot;, 1L);</span>
+<span class="nc" id="L215">            assertNoUpdatesAndDeletes(&quot;StartProcessInstanceCmd&quot;);</span>
+
+<span class="nc" id="L217">            assertThat(runtimeService.createProcessInstanceQuery().count()).isZero();</span>
+<span class="nc" id="L218">            assertThat(historyService.createHistoricProcessInstanceQuery().finished().count()).isEqualTo(1);</span>
+        }
+<span class="nc" id="L220">    }</span>
+
+    @Test
+    public void testParallelForkAndJoin() {
+<span class="nc bnc" id="L224" title="All 2 branches missed.">        if (!processEngineConfiguration.isAsyncHistoryEnabled()) {</span>
+<span class="nc" id="L225">            deployStartProcessInstanceAndProfile(&quot;process03.bpmn20.xml&quot;, &quot;process03&quot;);</span>
+
+<span class="nc" id="L227">            assertDatabaseSelects(&quot;StartProcessInstanceCmd&quot;,</span>
+<span class="nc" id="L228">                    &quot;selectLatestProcessDefinitionByKey&quot;, 1L,</span>
+<span class="nc" id="L229">                    &quot;selectVariablesByQuery&quot;, 1L,</span>
+<span class="nc" id="L230">                    &quot;selectEntityLinksByQuery&quot;, 1L);</span>
+<span class="nc" id="L231">            assertDatabaseInserts(&quot;StartProcessInstanceCmd&quot;,</span>
+<span class="nc" id="L232">                    &quot;HistoricActivityInstanceEntityImpl-bulk-with-13&quot;, 1L,</span>
+<span class="nc" id="L233">                    &quot;HistoricProcessInstanceEntityImpl&quot;, 1L);</span>
+<span class="nc" id="L234">            assertNoUpdatesAndDeletes(&quot;StartProcessInstanceCmd&quot;);</span>
+
+<span class="nc" id="L236">            assertThat(runtimeService.createProcessInstanceQuery().count()).isZero();</span>
+<span class="nc" id="L237">            assertThat(historyService.createHistoricProcessInstanceQuery().finished().count()).isEqualTo(1);</span>
+        }
+<span class="nc" id="L239">    }</span>
+
+    @Test
+    public void testParallelForkAndJoinWithAsyncJobs() {
+<span class="nc bnc" id="L243" title="All 2 branches missed.">        if (!processEngineConfiguration.isAsyncHistoryEnabled()) {</span>
+<span class="nc" id="L244">            deployStartProcessInstanceAndProfile(&quot;parallelForkAndJoinWithAsyncTasks.bpmn20.xml&quot;, &quot;parallelForkAndJoin&quot;);</span>
+
+<span class="nc" id="L246">            assertDatabaseSelects(&quot;StartProcessInstanceCmd&quot;,</span>
+<span class="nc" id="L247">                    &quot;selectLatestProcessDefinitionByKey&quot;, 1L);</span>
+
+<span class="nc" id="L249">            assertDatabaseInserts(&quot;StartProcessInstanceCmd&quot;,</span>
+<span class="nc" id="L250">                    &quot;JobEntityImpl-bulk-with-2&quot;, 1L,</span>
+<span class="nc" id="L251">                    &quot;ExecutionEntityImpl-bulk-with-3&quot;, 1L,</span>
+<span class="nc" id="L252">                    &quot;ActivityInstanceEntityImpl-bulk-with-5&quot;, 1L,</span>
+<span class="nc" id="L253">                    &quot;HistoricActivityInstanceEntityImpl-bulk-with-5&quot;, 1L,</span>
+<span class="nc" id="L254">                    &quot;HistoricProcessInstanceEntityImpl&quot;, 1L);</span>
+<span class="nc" id="L255">            assertNoUpdatesAndDeletes(&quot;StartProcessInstanceCmd&quot;);</span>
+
+<span class="nc" id="L257">            Job job  = managementService.createJobQuery().elementId(&quot;left&quot;).singleResult();</span>
+
+<span class="nc" id="L259">            restartProfiling(&quot;execute Left Job&quot;);</span>
+<span class="nc" id="L260">            managementService.executeJob(job.getId());</span>
+
+<span class="nc" id="L262">            assertDatabaseSelects(&quot;org.flowable.job.service.impl.cmd.ExecuteJobCmd&quot;,</span>
+<span class="nc" id="L263">                    &quot;selectById org.flowable.engine.impl.persistence.entity.ExecutionEntityImpl&quot;, 1L,</span>
+<span class="nc" id="L264">                    &quot;selectById org.flowable.job.service.impl.persistence.entity.JobEntityImpl&quot;, 1L,</span>
+<span class="nc" id="L265">                    &quot;selectExecutionsWithSameRootProcessInstanceId&quot;, 1L,</span>
+<span class="nc" id="L266">                    &quot;selectUnfinishedActivityInstanceExecutionIdAndActivityId&quot;, 2L);</span>
+
+<span class="nc" id="L268">            assertDatabaseInserts(&quot;org.flowable.job.service.impl.cmd.ExecuteJobCmd&quot;,</span>
+<span class="nc" id="L269">                    &quot;ActivityInstanceEntityImpl-bulk-with-3&quot;, 1L,</span>
+<span class="nc" id="L270">                    &quot;HistoricActivityInstanceEntityImpl-bulk-with-3&quot;, 1L);</span>
+
+<span class="nc" id="L272">            assertDatabaseDeletes(&quot;org.flowable.job.service.impl.cmd.ExecuteJobCmd&quot;,</span>
+<span class="nc" id="L273">                    &quot;JobEntityImpl&quot;, 1L);</span>
+
+<span class="nc" id="L275">            assertDatabaseUpdates(&quot;org.flowable.job.service.impl.cmd.ExecuteJobCmd&quot;,</span>
+<span class="nc" id="L276">                    &quot;org.flowable.engine.impl.persistence.entity.ExecutionEntityImpl&quot;, 2L</span>
+                    );
+
+<span class="nc" id="L279">            stopProfiling();</span>
+
+<span class="nc" id="L281">            job = managementService.createJobQuery().elementId(&quot;right&quot;).singleResult();</span>
+<span class="nc" id="L282">            restartProfiling(&quot;execute Right Job&quot;);</span>
+<span class="nc" id="L283">            managementService.executeJob(job.getId());</span>
+
+<span class="nc" id="L285">            assertDatabaseSelects(&quot;org.flowable.job.service.impl.cmd.ExecuteJobCmd&quot;,</span>
+<span class="nc" id="L286">                    &quot;selectById org.flowable.engine.impl.persistence.entity.ExecutionEntityImpl&quot;, 1L,</span>
+<span class="nc" id="L287">                    &quot;selectById org.flowable.engine.impl.persistence.entity.HistoricProcessInstanceEntityImpl&quot;, 1L,</span>
+<span class="nc" id="L288">                    &quot;selectById org.flowable.job.service.impl.persistence.entity.JobEntityImpl&quot;, 1L,</span>
+                    // Almost all selectXXXByExecutionId are needed when the process instance is deleted
+<span class="nc" id="L290">                    &quot;selectDeadLetterJobsByExecutionId&quot;, 1L,</span>
+<span class="nc" id="L291">                    &quot;selectEntityLinksByQuery&quot;, 1L,</span>
+<span class="nc" id="L292">                    &quot;selectEventSubscriptionsByExecution&quot;, 1L,</span>
+<span class="nc" id="L293">                    &quot;selectExecutionsWithSameRootProcessInstanceId&quot;, 1L,</span>
+<span class="nc" id="L294">                    &quot;selectExternalWorkerJobsByExecutionId&quot;, 1L,</span>
+<span class="nc" id="L295">                    &quot;selectIdentityLinksByProcessInstance&quot;, 1L,</span>
+<span class="nc" id="L296">                    &quot;selectJobsByExecutionId&quot;, 1L,</span>
+<span class="nc" id="L297">                    &quot;selectSuspendedJobsByExecutionId&quot;, 1L,</span>
+<span class="nc" id="L298">                    &quot;selectTasksByExecutionId&quot;, 1L,</span>
+<span class="nc" id="L299">                    &quot;selectTimerJobsByExecutionId&quot;, 1L,</span>
+<span class="nc" id="L300">                    &quot;selectUnfinishedActivityInstanceExecutionIdAndActivityId&quot;, 3L,</span>
+<span class="nc" id="L301">                    &quot;selectVariablesByQuery&quot;, 2L);</span>
+
+<span class="nc" id="L303">            assertDatabaseInserts(&quot;org.flowable.job.service.impl.cmd.ExecuteJobCmd&quot;,</span>
+<span class="nc" id="L304">                    &quot;HistoricActivityInstanceEntityImpl-bulk-with-5&quot;, 1L);</span>
+
+<span class="nc" id="L306">            assertDatabaseDeletes(&quot;org.flowable.job.service.impl.cmd.ExecuteJobCmd&quot;,</span>
+<span class="nc" id="L307">                    &quot;JobEntityImpl&quot;, 1L,</span>
+<span class="nc" id="L308">                    &quot;ExecutionEntityImpl&quot;, 3L,</span>
+<span class="nc" id="L309">                    &quot;Bulk-delete-deleteTasksByExecutionId&quot;, 1L,</span>
+<span class="nc" id="L310">                    &quot;Bulk-delete-deleteActivityInstancesByProcessInstanceId&quot;, 1L);</span>
+
+<span class="nc" id="L312">            assertDatabaseUpdates(&quot;org.flowable.job.service.impl.cmd.ExecuteJobCmd&quot;,</span>
+<span class="nc" id="L313">                    &quot;org.flowable.engine.impl.persistence.entity.ExecutionEntityImpl&quot;, 2L,</span>
+<span class="nc" id="L314">                    &quot;org.flowable.engine.impl.persistence.entity.HistoricProcessInstanceEntityImpl&quot;, 1L);</span>
+<span class="nc" id="L315">            stopProfiling();</span>
+
+<span class="nc" id="L317">            assertThat(runtimeService.createProcessInstanceQuery().count()).isZero();</span>
+<span class="nc" id="L318">            assertThat(historyService.createHistoricProcessInstanceQuery().finished().count()).isEqualTo(1);</span>
+        }
+<span class="nc" id="L320">    }</span>
+
+    @Test
+    public void testNestedParallelForkAndJoin() {
+<span class="nc bnc" id="L324" title="All 2 branches missed.">        if (!processEngineConfiguration.isAsyncHistoryEnabled()) {</span>
+<span class="nc" id="L325">            deployStartProcessInstanceAndProfile(&quot;process04.bpmn20.xml&quot;, &quot;process04&quot;);</span>
+
+<span class="nc" id="L327">            assertDatabaseSelects(&quot;StartProcessInstanceCmd&quot;,</span>
+<span class="nc" id="L328">                    &quot;selectLatestProcessDefinitionByKey&quot;, 1L,</span>
+<span class="nc" id="L329">                    &quot;selectVariablesByQuery&quot;, 1L,</span>
+<span class="nc" id="L330">                    &quot;selectEntityLinksByQuery&quot;, 1L);</span>
+            
+<span class="nc" id="L332">            assertDatabaseInserts(&quot;StartProcessInstanceCmd&quot;,</span>
+<span class="nc" id="L333">                    &quot;HistoricActivityInstanceEntityImpl-bulk-with-41&quot;, 1L,</span>
+<span class="nc" id="L334">                    &quot;HistoricProcessInstanceEntityImpl&quot;, 1L);</span>
+<span class="nc" id="L335">            assertNoUpdatesAndDeletes(&quot;StartProcessInstanceCmd&quot;);</span>
+
+<span class="nc" id="L337">            assertThat(runtimeService.createProcessInstanceQuery().count()).isZero();</span>
+<span class="nc" id="L338">            assertThat(historyService.createHistoricProcessInstanceQuery().finished().count()).isEqualTo(1);</span>
+        }
+<span class="nc" id="L340">    }</span>
+
+    @Test
+    public void testExclusiveGateway() {
+<span class="nc bnc" id="L344" title="All 2 branches missed.">        if (!processEngineConfiguration.isAsyncHistoryEnabled()) {</span>
+<span class="nc" id="L345">            deployStartProcessInstanceAndProfile(&quot;process05.bpmn20.xml&quot;, &quot;process05&quot;);</span>
+
+<span class="nc" id="L347">            assertDatabaseSelects(&quot;StartProcessInstanceCmd&quot;,</span>
+<span class="nc" id="L348">                    &quot;selectLatestProcessDefinitionByKey&quot;, 1L,</span>
+<span class="nc" id="L349">                    &quot;selectVariablesByQuery&quot;, 1L,</span>
+<span class="nc" id="L350">                    &quot;selectEntityLinksByQuery&quot;, 1L);</span>
+<span class="nc" id="L351">            assertDatabaseInserts(&quot;StartProcessInstanceCmd&quot;,</span>
+<span class="nc" id="L352">                    &quot;HistoricActivityInstanceEntityImpl-bulk-with-9&quot;, 1L,</span>
+<span class="nc" id="L353">                    &quot;HistoricProcessInstanceEntityImpl&quot;, 1L,</span>
+<span class="nc" id="L354">                    &quot;HistoricVariableInstanceEntityImpl&quot;, 1L);</span>
+<span class="nc" id="L355">            assertNoUpdatesAndDeletes(&quot;StartProcessInstanceCmd&quot;);</span>
+
+<span class="nc" id="L357">            assertThat(runtimeService.createProcessInstanceQuery().count()).isZero();</span>
+<span class="nc" id="L358">            assertThat(historyService.createHistoricProcessInstanceQuery().finished().count()).isEqualTo(1);</span>
+        }
+<span class="nc" id="L360">    }</span>
+
+    @Test
+    public void testAsyncJob() {
+<span class="nc bnc" id="L364" title="All 2 branches missed.">        if (!processEngineConfiguration.isAsyncHistoryEnabled()) {</span>
+<span class="nc" id="L365">            deployStartProcessInstanceAndProfile(&quot;process06.bpmn20.xml&quot;, &quot;process06&quot;, false);</span>
+
+<span class="nc" id="L367">            Job job  = managementService.createJobQuery().singleResult();</span>
+<span class="nc" id="L368">            managementService.executeJob(job.getId());</span>
+
+<span class="nc" id="L370">            stopProfiling();</span>
+
+<span class="nc" id="L372">            assertDatabaseSelects(&quot;StartProcessInstanceCmd&quot;,</span>
+<span class="nc" id="L373">                            &quot;selectLatestProcessDefinitionByKey&quot;, 1L);</span>
+
+<span class="nc" id="L375">            assertDatabaseInserts(&quot;StartProcessInstanceCmd&quot;,</span>
+<span class="nc" id="L376">                    &quot;JobEntityImpl&quot;, 1L,</span>
+<span class="nc" id="L377">                    &quot;ExecutionEntityImpl-bulk-with-2&quot;, 1L,</span>
+<span class="nc" id="L378">                    &quot;ActivityInstanceEntityImpl-bulk-with-2&quot;, 1L,</span>
+<span class="nc" id="L379">                    &quot;HistoricActivityInstanceEntityImpl-bulk-with-2&quot;, 1L,</span>
+<span class="nc" id="L380">                    &quot;HistoricProcessInstanceEntityImpl&quot;, 1L);</span>
+<span class="nc" id="L381">            assertNoUpdatesAndDeletes(&quot;StartProcessInstanceCmd&quot;);</span>
+
+<span class="nc" id="L383">            assertDatabaseInserts(&quot;org.flowable.job.service.impl.cmd.ExecuteJobCmd&quot;,</span>
+<span class="nc" id="L384">                            &quot;HistoricActivityInstanceEntityImpl-bulk-with-3&quot;, 1L);</span>
+
+<span class="nc" id="L386">            assertDatabaseDeletes(&quot;org.flowable.job.service.impl.cmd.ExecuteJobCmd&quot;,</span>
+<span class="nc" id="L387">                            &quot;JobEntityImpl&quot;, 1L,</span>
+<span class="nc" id="L388">                            &quot;ExecutionEntityImpl&quot;, 2L,</span>
+<span class="nc" id="L389">                            &quot;Bulk-delete-deleteTasksByExecutionId&quot;, 1L,</span>
+<span class="nc" id="L390">                            &quot;Bulk-delete-deleteActivityInstancesByProcessInstanceId&quot;, 1L);</span>
+
+<span class="nc" id="L392">            assertThat(runtimeService.createProcessInstanceQuery().count()).isZero();</span>
+<span class="nc" id="L393">            assertThat(historyService.createHistoricProcessInstanceQuery().finished().count()).isEqualTo(1);</span>
+        }
+<span class="nc" id="L395">    }</span>
+
+    @Test
+    public void testOneTaskProcess() {
+<span class="nc bnc" id="L399" title="All 2 branches missed.">        if (!processEngineConfiguration.isAsyncHistoryEnabled()) {</span>
+<span class="nc" id="L400">            deployStartProcessInstanceAndProfile(&quot;process-usertask-01.bpmn20.xml&quot;, &quot;process-usertask-01&quot;, false);</span>
+<span class="nc" id="L401">            org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L402">            taskService.complete(task.getId());</span>
+<span class="nc" id="L403">            stopProfiling();</span>
+
+<span class="nc" id="L405">            assertExecutedCommands(&quot;StartProcessInstanceCmd&quot;, &quot;org.flowable.task.service.impl.TaskQueryImpl&quot;, &quot;CompleteTaskCmd&quot;);</span>
+
+            // Start process instance
+<span class="nc" id="L408">            assertDatabaseSelects(&quot;StartProcessInstanceCmd&quot;, </span>
+<span class="nc" id="L409">                            &quot;selectLatestProcessDefinitionByKey&quot;, 1L,</span>
+<span class="nc" id="L410">                            &quot;selectEntityLinksByQuery&quot;, 1L);</span>
+<span class="nc" id="L411">            assertDatabaseInserts(&quot;StartProcessInstanceCmd&quot;,</span>
+<span class="nc" id="L412">                    &quot;ExecutionEntityImpl-bulk-with-2&quot;, 1L,</span>
+<span class="nc" id="L413">                    &quot;TaskEntityImpl&quot;, 1L,</span>
+<span class="nc" id="L414">                    &quot;EntityLinkEntityImpl&quot;, 1L,</span>
+<span class="nc" id="L415">                    &quot;ActivityInstanceEntityImpl-bulk-with-3&quot;, 1L,</span>
+<span class="nc" id="L416">                    &quot;HistoricActivityInstanceEntityImpl-bulk-with-3&quot;, 1L,</span>
+<span class="nc" id="L417">                    &quot;HistoricTaskInstanceEntityImpl&quot;, 1L,</span>
+<span class="nc" id="L418">                    &quot;HistoricTaskLogEntryEntityImpl&quot;, 1L,</span>
+<span class="nc" id="L419">                    &quot;HistoricProcessInstanceEntityImpl&quot;, 1L,</span>
+<span class="nc" id="L420">                    &quot;HistoricEntityLinkEntityImpl&quot;, 1L);</span>
+<span class="nc" id="L421">            assertNoUpdatesAndDeletes(&quot;StartProcessInstanceCmd&quot;);</span>
+
+            // org.flowable.task.service.Task Query
+<span class="nc" id="L424">            assertDatabaseSelects(&quot;org.flowable.task.service.impl.TaskQueryImpl&quot;, &quot;selectTaskByQueryCriteria&quot;, 1L);</span>
+<span class="nc" id="L425">            assertNoInserts(&quot;org.flowable.task.service.impl.TaskQueryImpl&quot;);</span>
+<span class="nc" id="L426">            assertNoUpdates(&quot;org.flowable.task.service.impl.TaskQueryImpl&quot;);</span>
+<span class="nc" id="L427">            assertNoDeletes(&quot;org.flowable.task.service.impl.TaskQueryImpl&quot;);</span>
+
+            // org.flowable.task.service.Task Complete
+
+<span class="nc" id="L431">            assertDatabaseSelects(&quot;CompleteTaskCmd&quot;,</span>
+<span class="nc" id="L432">                    &quot;selectById org.flowable.engine.impl.persistence.entity.HistoricProcessInstanceEntityImpl&quot;, 1L,</span>
+<span class="nc" id="L433">                    &quot;selectById org.flowable.task.service.impl.persistence.entity.HistoricTaskInstanceEntityImpl&quot;, 1L,</span>
+<span class="nc" id="L434">                    &quot;selectById org.flowable.task.service.impl.persistence.entity.TaskEntityImpl&quot;, 1L,</span>
+<span class="nc" id="L435">                    &quot;selectById org.flowable.engine.impl.persistence.entity.ExecutionEntityImpl&quot;, 1L,</span>
+<span class="nc" id="L436">                    &quot;selectById org.flowable.engine.impl.persistence.entity.HistoricActivityInstanceEntityImpl&quot;, 1L,</span>
+<span class="nc" id="L437">                    &quot;selectUnfinishedActivityInstanceExecutionIdAndActivityId&quot;, 2L,</span>
+<span class="nc" id="L438">                    &quot;selectExecutionsWithSameRootProcessInstanceId&quot;, 1L,</span>
+<span class="nc" id="L439">                    &quot;selectTasksByExecutionId&quot;, 2L,</span>
+<span class="nc" id="L440">                    &quot;selectVariablesByQuery&quot;, 2L,</span>
+<span class="nc" id="L441">                    &quot;selectIdentityLinksByProcessInstance&quot;, 1L,</span>
+<span class="nc" id="L442">                    &quot;selectEntityLinksByQuery&quot;, 1L,</span>
+<span class="nc" id="L443">                    &quot;selectEventSubscriptionsByExecution&quot;, 1L,</span>
+<span class="nc" id="L444">                    &quot;selectTimerJobsByExecutionId&quot;, 1L,</span>
+<span class="nc" id="L445">                    &quot;selectSuspendedJobsByExecutionId&quot;, 1L,</span>
+<span class="nc" id="L446">                    &quot;selectDeadLetterJobsByExecutionId&quot;, 1L,</span>
+<span class="nc" id="L447">                    &quot;selectExternalWorkerJobsByExecutionId&quot;, 1L,</span>
+<span class="nc" id="L448">                    &quot;selectJobsByExecutionId&quot;, 1L);</span>
+
+<span class="nc" id="L450">            assertDatabaseInserts(&quot;CompleteTaskCmd&quot;,</span>
+<span class="nc" id="L451">                    &quot;HistoricActivityInstanceEntityImpl-bulk-with-2&quot;, 1L,</span>
+<span class="nc" id="L452">                    &quot;HistoricTaskLogEntryEntityImpl&quot;, 1L</span>
+            );
+
+<span class="nc" id="L455">            assertDatabaseUpdates(&quot;CompleteTaskCmd&quot;, &quot;org.flowable.task.service.impl.persistence.entity.HistoricTaskInstanceEntityImpl&quot;, 1L,</span>
+<span class="nc" id="L456">                    &quot;org.flowable.engine.impl.persistence.entity.ExecutionEntityImpl&quot;, 2L,</span>
+<span class="nc" id="L457">                    &quot;org.flowable.engine.impl.persistence.entity.HistoricActivityInstanceEntityImpl&quot;, 1L,</span>
+<span class="nc" id="L458">                    &quot;org.flowable.engine.impl.persistence.entity.HistoricProcessInstanceEntityImpl&quot;, 1L);</span>
+
+<span class="nc" id="L460">            assertDatabaseDeletes(&quot;CompleteTaskCmd&quot;, </span>
+<span class="nc" id="L461">                    &quot;TaskEntityImpl&quot;, 1L, </span>
+<span class="nc" id="L462">                    &quot;ExecutionEntityImpl&quot;, 2L,</span>
+<span class="nc" id="L463">                    &quot;Bulk-delete-deleteTasksByExecutionId&quot;, 1L,</span>
+<span class="nc" id="L464">                    &quot;Bulk-delete-deleteEntityLinksByRootScopeIdAndRootScopeType&quot;, 1L,</span>
+<span class="nc" id="L465">                    &quot;Bulk-delete-deleteActivityInstancesByProcessInstanceId&quot;, 1L);</span>
+        }
+<span class="nc" id="L467">    }</span>
+
+    @Test
+    public void testOneTaskWithBoundaryTimerProcess() {
+<span class="nc bnc" id="L471" title="All 2 branches missed.">        if (!processEngineConfiguration.isAsyncHistoryEnabled()) {</span>
+<span class="nc" id="L472">            deployStartProcessInstanceAndProfile(&quot;process-usertask-02.bpmn20.xml&quot;, &quot;process-usertask-02&quot;, false);</span>
+<span class="nc" id="L473">            org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+<span class="nc" id="L474">            taskService.complete(task.getId());</span>
+<span class="nc" id="L475">            stopProfiling();</span>
+
+<span class="nc" id="L477">            assertExecutedCommands(&quot;StartProcessInstanceCmd&quot;, &quot;org.flowable.task.service.impl.TaskQueryImpl&quot;, &quot;CompleteTaskCmd&quot;);</span>
+
+            // Start process instance
+<span class="nc" id="L480">            assertDatabaseSelects(&quot;StartProcessInstanceCmd&quot;, </span>
+<span class="nc" id="L481">                    &quot;selectLatestProcessDefinitionByKey&quot;, 1L,</span>
+<span class="nc" id="L482">                    &quot;selectEntityLinksByQuery&quot;, 1L);</span>
+            
+<span class="nc" id="L484">            assertDatabaseInserts(&quot;StartProcessInstanceCmd&quot;,</span>
+<span class="nc" id="L485">                    &quot;ExecutionEntityImpl-bulk-with-3&quot;, 1L,</span>
+<span class="nc" id="L486">                    &quot;TaskEntityImpl&quot;, 1L,</span>
+<span class="nc" id="L487">                    &quot;TimerJobEntityImpl&quot;, 1L,</span>
+<span class="nc" id="L488">                    &quot;EntityLinkEntityImpl&quot;, 1L,</span>
+<span class="nc" id="L489">                    &quot;ActivityInstanceEntityImpl-bulk-with-4&quot;, 1L,</span>
+<span class="nc" id="L490">                    &quot;HistoricActivityInstanceEntityImpl-bulk-with-4&quot;, 1L,</span>
+<span class="nc" id="L491">                    &quot;HistoricTaskInstanceEntityImpl&quot;, 1L,</span>
+<span class="nc" id="L492">                    &quot;HistoricTaskLogEntryEntityImpl&quot;, 1L,</span>
+<span class="nc" id="L493">                    &quot;HistoricProcessInstanceEntityImpl&quot;, 1L,</span>
+<span class="nc" id="L494">                    &quot;HistoricEntityLinkEntityImpl&quot;, 1L);</span>
+<span class="nc" id="L495">            assertNoUpdatesAndDeletes(&quot;StartProcessInstanceCmd&quot;);</span>
+
+            // org.flowable.task.service.Task Complete
+
+<span class="nc" id="L499">            assertDatabaseDeletes(&quot;CompleteTaskCmd&quot;,</span>
+<span class="nc" id="L500">                    &quot;TaskEntityImpl&quot;, 1L,</span>
+<span class="nc" id="L501">                    &quot;TimerJobEntityImpl&quot;, 1L,</span>
+<span class="nc" id="L502">                    &quot;ExecutionEntityImpl&quot;, 3L,</span>
+<span class="nc" id="L503">                    &quot;Bulk-delete-deleteTasksByExecutionId&quot;, 1L,</span>
+<span class="nc" id="L504">                    &quot;Bulk-delete-deleteEntityLinksByRootScopeIdAndRootScopeType&quot;, 1L,</span>
+<span class="nc" id="L505">                    &quot;Bulk-delete-deleteActivityInstancesByProcessInstanceId&quot;, 1L);</span>
+        }
+<span class="nc" id="L507">    }</span>
+
+    @Test
+    public void testRemoveTaskVariables() {
+<span class="nc bnc" id="L511" title="All 2 branches missed.">        if (!processEngineConfiguration.isAsyncHistoryEnabled()) {</span>
+            // TODO: move to separate class
+<span class="nc" id="L513">            deployStartProcessInstanceAndProfile(&quot;process-usertask-01.bpmn20.xml&quot;, &quot;process-usertask-01&quot;, false);</span>
+<span class="nc" id="L514">            org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+
+<span class="nc" id="L516">            long variableCount = 3;</span>
+
+<span class="nc" id="L518">            Map&lt;String, Object&gt; vars = createVariables(variableCount, &quot;local&quot;);</span>
+
+<span class="nc" id="L520">            taskService.setVariablesLocal(task.getId(), vars);</span>
+
+<span class="nc" id="L522">            vars.put(&quot;someRandomVariable&quot;, &quot;someRandomValue&quot;);</span>
+            // remove existing variables
+<span class="nc" id="L524">            taskService.removeVariablesLocal(task.getId(), vars.keySet());</span>
+
+            // try to remove when variable count is zero (nothing left to remove). DB should not be hit.
+<span class="nc" id="L527">            taskService.removeVariablesLocal(task.getId(), vars.keySet());</span>
+<span class="nc" id="L528">            taskService.removeVariablesLocal(task.getId(), vars.keySet());</span>
+
+<span class="nc" id="L530">            taskService.complete(task.getId());</span>
+<span class="nc" id="L531">            stopProfiling();</span>
+
+<span class="nc" id="L533">            assertExecutedCommands(&quot;StartProcessInstanceCmd&quot;, &quot;org.flowable.task.service.impl.TaskQueryImpl&quot;, &quot;SetTaskVariablesCmd&quot;, &quot;RemoveTaskVariablesCmd&quot;,</span>
+                    &quot;CompleteTaskCmd&quot;);
+
+<span class="nc" id="L536">            assertDatabaseInserts(&quot;SetTaskVariablesCmd&quot;, &quot;HistoricVariableInstanceEntityImpl-bulk-with-3&quot;, 1L, &quot;VariableInstanceEntityImpl-bulk-with-3&quot;, 1L);</span>
+
+            // check that only &quot;variableCount&quot; number of delete statements have been executed
+<span class="nc" id="L539">            assertDatabaseDeletes(&quot;RemoveTaskVariablesCmd&quot;, &quot;VariableInstanceEntityImpl&quot;, variableCount, &quot;HistoricVariableInstanceEntityImpl&quot;, variableCount);</span>
+        }
+<span class="nc" id="L541">    }</span>
+
+    @Test
+    public void testClaimTask() {
+<span class="nc bnc" id="L545" title="All 2 branches missed.">        if (!processEngineConfiguration.isAsyncHistoryEnabled()) {</span>
+            // TODO: move to separate class
+<span class="nc" id="L547">            deployStartProcessInstanceAndProfile(&quot;process-usertask-01.bpmn20.xml&quot;, &quot;process-usertask-01&quot;, false);</span>
+<span class="nc" id="L548">            org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+
+<span class="nc" id="L550">            taskService.claim(task.getId(), &quot;firstUser&quot;);</span>
+<span class="nc" id="L551">            taskService.unclaim(task.getId());</span>
+
+<span class="nc" id="L553">            taskService.complete(task.getId());</span>
+<span class="nc" id="L554">            stopProfiling();</span>
+
+<span class="nc" id="L556">            assertExecutedCommands(&quot;StartProcessInstanceCmd&quot;, &quot;org.flowable.task.service.impl.TaskQueryImpl&quot;, &quot;ClaimTaskCmd&quot;, &quot;CompleteTaskCmd&quot;);</span>
+
+<span class="nc" id="L558">            assertNoDeletes(&quot;ClaimTaskCmd&quot;);</span>
+<span class="nc" id="L559">            assertDatabaseInserts(&quot;ClaimTaskCmd&quot;,</span>
+<span class="nc" id="L560">                &quot;HistoricTaskLogEntryEntityImpl&quot;, 2L,</span>
+<span class="nc" id="L561">                &quot;CommentEntityImpl&quot;, 2L,</span>
+<span class="nc" id="L562">                &quot;HistoricIdentityLinkEntityImpl-bulk-with-2&quot;, 1L,</span>
+<span class="nc" id="L563">                &quot;IdentityLinkEntityImpl&quot;, 1L,</span>
+<span class="nc" id="L564">                &quot;HistoricIdentityLinkEntityImpl&quot;, 1L);</span>
+        }
+<span class="nc" id="L566">    }</span>
+
+    @Test
+    public void testTaskCandidateUsers() {
+<span class="nc bnc" id="L570" title="All 2 branches missed.">        if (!processEngineConfiguration.isAsyncHistoryEnabled()) {</span>
+            // TODO: move to separate class
+<span class="nc" id="L572">            deployStartProcessInstanceAndProfile(&quot;process-usertask-01.bpmn20.xml&quot;, &quot;process-usertask-01&quot;, false);</span>
+<span class="nc" id="L573">            org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+
+<span class="nc" id="L575">            taskService.addCandidateUser(task.getId(), &quot;user01&quot;);</span>
+<span class="nc" id="L576">            taskService.addCandidateUser(task.getId(), &quot;user02&quot;);</span>
+
+<span class="nc" id="L578">            taskService.deleteCandidateUser(task.getId(), &quot;user01&quot;);</span>
+<span class="nc" id="L579">            taskService.deleteCandidateUser(task.getId(), &quot;user02&quot;);</span>
+
+            // Try to remove candidate users that are no (longer) part of the identity links for the task
+            // Identity Link Count is zero. The DB should not be hit.
+<span class="nc" id="L583">            taskService.deleteCandidateUser(task.getId(), &quot;user02&quot;);</span>
+<span class="nc" id="L584">            taskService.deleteCandidateUser(task.getId(), &quot;user03&quot;);</span>
+<span class="nc" id="L585">            taskService.deleteCandidateUser(task.getId(), &quot;user04&quot;);</span>
+
+<span class="nc" id="L587">            taskService.complete(task.getId());</span>
+<span class="nc" id="L588">            stopProfiling();</span>
+
+<span class="nc" id="L590">            assertExecutedCommands(&quot;StartProcessInstanceCmd&quot;, &quot;org.flowable.task.service.impl.TaskQueryImpl&quot;, &quot;AddIdentityLinkCmd&quot;, &quot;DeleteIdentityLinkCmd&quot;,</span>
+                    &quot;CompleteTaskCmd&quot;);
+
+            // Check &quot;AddIdentityLinkCmd&quot; (2 invocations)
+<span class="nc" id="L594">            assertNoDeletes(&quot;AddIdentityLinkCmd&quot;);</span>
+<span class="nc" id="L595">            assertDatabaseInserts(&quot;AddIdentityLinkCmd&quot;,</span>
+<span class="nc" id="L596">                &quot;HistoricTaskLogEntryEntityImpl&quot;, 2L,</span>
+<span class="nc" id="L597">                    &quot;CommentEntityImpl&quot;, 2L,</span>
+<span class="nc" id="L598">                    &quot;HistoricIdentityLinkEntityImpl-bulk-with-2&quot;, 2L, </span>
+<span class="nc" id="L599">                    &quot;IdentityLinkEntityImpl-bulk-with-2&quot;, 2L);</span>
+<span class="nc" id="L600">            assertDatabaseSelects(&quot;AddIdentityLinkCmd&quot;, </span>
+<span class="nc" id="L601">                    &quot;selectById org.flowable.task.service.impl.persistence.entity.TaskEntityImpl&quot;, 2L, </span>
+<span class="nc" id="L602">                    &quot;selectById org.flowable.engine.impl.persistence.entity.ExecutionEntityImpl&quot;, 2L,</span>
+<span class="nc" id="L603">                    &quot;selectExecutionsWithSameRootProcessInstanceId&quot;, 2L,</span>
+<span class="nc" id="L604">                    &quot;selectIdentityLinksByProcessInstance&quot;, 2L);</span>
+<span class="nc" id="L605">            assertDatabaseUpdates(&quot;AddIdentityLinkCmd&quot;, </span>
+<span class="nc" id="L606">                    &quot;org.flowable.task.service.impl.persistence.entity.TaskEntityImpl&quot;, 2L);</span>
+
+            // Check &quot;DeleteIdentityLinkCmd&quot;
+            // not sure if the HistoricIdentityLinkEntityImpl should be deleted
+<span class="nc" id="L610">            assertDatabaseDeletes(&quot;DeleteIdentityLinkCmd&quot;, &quot;IdentityLinkEntityImpl&quot;, 2L, &quot;HistoricIdentityLinkEntityImpl&quot;, 2L);</span>
+<span class="nc" id="L611">            assertDatabaseInserts(&quot;DeleteIdentityLinkCmd&quot;,</span>
+<span class="nc" id="L612">                &quot;CommentEntityImpl&quot;, 5L,</span>
+<span class="nc" id="L613">                &quot;HistoricTaskLogEntryEntityImpl&quot;, 2L</span>
+            );
+<span class="nc" id="L615">            assertDatabaseSelects(&quot;DeleteIdentityLinkCmd&quot;, &quot;selectById org.flowable.task.service.impl.persistence.entity.TaskEntityImpl&quot;, 5L,</span>
+<span class="nc" id="L616">                    &quot;selectIdentityLinkByTaskUserGroupAndType&quot;, 5L, </span>
+<span class="nc" id="L617">                    &quot;selectById org.flowable.identitylink.service.impl.persistence.entity.HistoricIdentityLinkEntityImpl&quot;, 2L,</span>
+<span class="nc" id="L618">                    &quot;selectIdentityLinksByTaskId&quot;, 5L);</span>
+<span class="nc" id="L619">            assertDatabaseUpdates(&quot;DeleteIdentityLinkCmd&quot;, &quot;org.flowable.task.service.impl.persistence.entity.TaskEntityImpl&quot;, 2L);</span>
+        }
+<span class="nc" id="L621">    }</span>
+
+    @Test
+    public void testTaskCandidateGroups() {
+<span class="nc bnc" id="L625" title="All 2 branches missed.">        if (!processEngineConfiguration.isAsyncHistoryEnabled()) {</span>
+            // TODO: move to separate class
+<span class="nc" id="L627">            deployStartProcessInstanceAndProfile(&quot;process-usertask-01.bpmn20.xml&quot;, &quot;process-usertask-01&quot;, false);</span>
+<span class="nc" id="L628">            org.flowable.task.api.Task task = taskService.createTaskQuery().singleResult();</span>
+
+<span class="nc" id="L630">            taskService.addCandidateGroup(task.getId(), &quot;group01&quot;);</span>
+<span class="nc" id="L631">            taskService.addCandidateGroup(task.getId(), &quot;group02&quot;);</span>
+
+<span class="nc" id="L633">            taskService.deleteCandidateGroup(task.getId(), &quot;group01&quot;);</span>
+<span class="nc" id="L634">            taskService.deleteCandidateGroup(task.getId(), &quot;group02&quot;);</span>
+
+            // Try to remove candidate Groups that are no (longer) part of the identity links for the task
+            // Identity Link Count is zero. The DB should not be hit.
+<span class="nc" id="L638">            taskService.deleteCandidateGroup(task.getId(), &quot;group02&quot;);</span>
+<span class="nc" id="L639">            taskService.deleteCandidateGroup(task.getId(), &quot;group03&quot;);</span>
+<span class="nc" id="L640">            taskService.deleteCandidateGroup(task.getId(), &quot;group04&quot;);</span>
+
+<span class="nc" id="L642">            taskService.complete(task.getId());</span>
+<span class="nc" id="L643">            stopProfiling();</span>
+
+<span class="nc" id="L645">            assertExecutedCommands(&quot;StartProcessInstanceCmd&quot;, &quot;org.flowable.task.service.impl.TaskQueryImpl&quot;, &quot;AddIdentityLinkCmd&quot;, &quot;DeleteIdentityLinkCmd&quot;,</span>
+                    &quot;CompleteTaskCmd&quot;);
+
+            // Check &quot;AddIdentityLinkCmd&quot;
+<span class="nc" id="L649">            assertNoDeletes(&quot;AddIdentityLinkCmd&quot;);</span>
+<span class="nc" id="L650">            assertDatabaseInserts(&quot;AddIdentityLinkCmd&quot;,</span>
+<span class="nc" id="L651">                &quot;CommentEntityImpl&quot;, 2L,</span>
+<span class="nc" id="L652">                &quot;HistoricTaskLogEntryEntityImpl&quot;, 2L,</span>
+<span class="nc" id="L653">                &quot;IdentityLinkEntityImpl&quot;, 2L,</span>
+<span class="nc" id="L654">                &quot;HistoricIdentityLinkEntityImpl&quot;, 2L</span>
+            );
+<span class="nc" id="L656">            assertDatabaseSelects(&quot;AddIdentityLinkCmd&quot;, &quot;selectById org.flowable.task.service.impl.persistence.entity.TaskEntityImpl&quot;, 2L);</span>
+<span class="nc" id="L657">            assertDatabaseUpdates(&quot;AddIdentityLinkCmd&quot;, &quot;org.flowable.task.service.impl.persistence.entity.TaskEntityImpl&quot;, 2L);</span>
+
+            // Check &quot;DeleteIdentityLinkCmd&quot;
+            // not sure if the HistoricIdentityLinkEntityImpl should be deleted
+<span class="nc" id="L661">            assertDatabaseDeletes(&quot;DeleteIdentityLinkCmd&quot;, &quot;IdentityLinkEntityImpl&quot;, 2L, &quot;HistoricIdentityLinkEntityImpl&quot;, 2L);</span>
+<span class="nc" id="L662">            assertDatabaseInserts(&quot;DeleteIdentityLinkCmd&quot;,</span>
+<span class="nc" id="L663">                &quot;CommentEntityImpl&quot;, 5L,</span>
+<span class="nc" id="L664">                &quot;HistoricTaskLogEntryEntityImpl&quot;, 2L</span>
+            );
+<span class="nc" id="L666">            assertDatabaseSelects(&quot;DeleteIdentityLinkCmd&quot;, </span>
+<span class="nc" id="L667">                    &quot;selectById org.flowable.task.service.impl.persistence.entity.TaskEntityImpl&quot;, 5L,</span>
+<span class="nc" id="L668">                    &quot;selectIdentityLinkByTaskUserGroupAndType&quot;, 5L, </span>
+<span class="nc" id="L669">                    &quot;selectById org.flowable.identitylink.service.impl.persistence.entity.HistoricIdentityLinkEntityImpl&quot;, 2L,</span>
+<span class="nc" id="L670">                    &quot;selectIdentityLinksByTaskId&quot;, 5L);</span>
+<span class="nc" id="L671">            assertDatabaseUpdates(&quot;DeleteIdentityLinkCmd&quot;, &quot;org.flowable.task.service.impl.persistence.entity.TaskEntityImpl&quot;, 2L);</span>
+        }
+<span class="nc" id="L673">    }</span>
+
+   private Map&lt;String, Object&gt; createVariables(long count, String prefix) {
+<span class="nc" id="L676">        Map&lt;String, Object&gt; vars = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L677" title="All 2 branches missed.">        for (int i = 0; i &lt; count; i++) {</span>
+<span class="nc" id="L678">            vars.put(prefix + &quot;_var0&quot; + i, prefix + &quot;+values0&quot; + i);</span>
+        }
+<span class="nc" id="L680">        return vars;</span>
+    }
+
+    // ---------------------------------
+    // HELPERS
+    // ---------------------------------
+
+    protected void assertExecutedCommands(String... commands) {
+<span class="nc" id="L688">        ProfileSession profileSession = FlowableProfiler.getInstance().getProfileSessions().get(0);</span>
+<span class="nc" id="L689">        Map&lt;String, CommandStats&gt; allStats = profileSession.calculateSummaryStatistics();</span>
+
+<span class="nc bnc" id="L691" title="All 2 branches missed.">        if (commands.length != allStats.size()) {</span>
+<span class="nc" id="L692">            System.out.println(&quot;Following commands were found: &quot;);</span>
+<span class="nc bnc" id="L693" title="All 2 branches missed.">            for (String command : allStats.keySet()) {</span>
+<span class="nc" id="L694">                System.out.println(command);</span>
+<span class="nc" id="L695">            }</span>
+        }
+<span class="nc" id="L697">        assertThat(allStats).hasSameSizeAs(commands);</span>
+
+<span class="nc bnc" id="L699" title="All 2 branches missed.">        for (String command : commands) {</span>
+<span class="nc" id="L700">            assertThat(getStatsForCommand(command, allStats)).as(&quot;Could not get stats for &quot; + command).isNotNull();</span>
+        }
+<span class="nc" id="L702">    }</span>
+
+    protected void assertDatabaseSelects(String commandClass, Object... expectedSelects) {
+<span class="nc" id="L705">        CommandStats stats = getStats(commandClass);</span>
+
+<span class="nc" id="L707">        assertThat(stats.getDbSelects())</span>
+<span class="nc" id="L708">                .as(&quot;Unexpected number of database selects for &quot; + commandClass + &quot;. &quot;)</span>
+<span class="nc" id="L709">                .hasSize(expectedSelects.length / 2);</span>
+
+<span class="nc bnc" id="L711" title="All 2 branches missed.">        for (int i = 0; i &lt; expectedSelects.length; i += 2) {</span>
+<span class="nc" id="L712">            String dbSelect = (String) expectedSelects[i];</span>
+<span class="nc" id="L713">            Long count = (Long) expectedSelects[i + 1];</span>
+
+<span class="nc" id="L715">            assertThat(stats.getDbSelects())</span>
+<span class="nc" id="L716">                    .as(&quot;Wrong select count for &quot; + dbSelect)</span>
+<span class="nc" id="L717">                    .containsEntry(dbSelect, count);</span>
+        }
+<span class="nc" id="L719">    }</span>
+
+    protected void assertDatabaseUpdates(String commandClass, Object... expectedUpdates) {
+<span class="nc" id="L722">        CommandStats stats = getStats(commandClass);</span>
+<span class="nc" id="L723">        assertThat(stats.getDbUpdates())</span>
+<span class="nc" id="L724">                .as(&quot;Unexpected number of database updates for &quot; + commandClass + &quot;. &quot;)</span>
+<span class="nc" id="L725">                .hasSize(expectedUpdates.length / 2);</span>
+
+<span class="nc bnc" id="L727" title="All 2 branches missed.">        for (int i = 0; i &lt; expectedUpdates.length; i += 2) {</span>
+<span class="nc" id="L728">            String dbUpdate = (String) expectedUpdates[i];</span>
+<span class="nc" id="L729">            Long count = (Long) expectedUpdates[i + 1];</span>
+
+<span class="nc" id="L731">            assertThat(stats.getDbUpdates())</span>
+<span class="nc" id="L732">                    .as(&quot;Wrong update count for &quot; + dbUpdate)</span>
+<span class="nc" id="L733">                    .containsEntry(dbUpdate, count);</span>
+        }
+<span class="nc" id="L735">    }</span>
+
+    protected void assertDatabaseInserts(String commandClass, Object... expectedInserts) {
+<span class="nc" id="L738">        CommandStats stats = getStats(commandClass);</span>
+
+<span class="nc" id="L740">        assertThat(stats.getDbInserts())</span>
+<span class="nc" id="L741">                .as(&quot;Unexpected number of database inserts : &quot; + stats.getDbInserts().size() + &quot;, but expected &quot; + expectedInserts.length / 2)</span>
+<span class="nc" id="L742">                .hasSize(expectedInserts.length / 2);</span>
+
+<span class="nc bnc" id="L744" title="All 2 branches missed.">        for (int i = 0; i &lt; expectedInserts.length; i += 2) {</span>
+<span class="nc" id="L745">            String dbInsert = (String) expectedInserts[i];</span>
+<span class="nc" id="L746">            Long count = (Long) expectedInserts[i + 1];</span>
+
+<span class="nc" id="L748">            assertThat(stats.getDbInserts())</span>
+<span class="nc" id="L749">                    .as(&quot;Insert count for &quot; + dbInsert + &quot; not correct&quot;)</span>
+<span class="nc" id="L750">                    .containsEntry(getQualifiedClassName(dbInsert), count);</span>
+        }
+<span class="nc" id="L752">    }</span>
+
+    protected void assertDatabaseDeletes(String commandClass, Object... expectedDeletes) {
+<span class="nc" id="L755">        CommandStats stats = getStats(commandClass);</span>
+
+<span class="nc" id="L757">        assertThat(stats.getDbDeletes())</span>
+<span class="nc" id="L758">                .as(&quot;Unexpected number of database deletes : &quot; + stats.getDbDeletes().size() + &quot;, expected: &quot; + (expectedDeletes.length/2))</span>
+<span class="nc" id="L759">                .hasSize(expectedDeletes.length / 2);</span>
+
+<span class="nc bnc" id="L761" title="All 2 branches missed.">        for (int i = 0; i &lt; expectedDeletes.length; i += 2) {</span>
+<span class="nc" id="L762">            String dbDelete = (String) expectedDeletes[i];</span>
+<span class="nc" id="L763">            Long count = (Long) expectedDeletes[i + 1];</span>
+
+<span class="nc" id="L765">            assertThat(stats.getDbDeletes())</span>
+<span class="nc" id="L766">                    .as(&quot;Delete count count for &quot; + dbDelete + &quot; not correct&quot;)</span>
+<span class="nc" id="L767">                    .containsEntry(getQualifiedClassName(dbDelete), count);</span>
+        }
+<span class="nc" id="L769">    }</span>
+
+    protected void assertNoInserts(String commandClass) {
+<span class="nc" id="L772">        CommandStats stats = getStats(commandClass);</span>
+<span class="nc" id="L773">        assertThat(stats.getDbInserts()).isEmpty();</span>
+<span class="nc" id="L774">    }</span>
+
+    protected void assertNoUpdatesAndDeletes(String commandClass) {
+<span class="nc" id="L777">        assertNoDeletes(commandClass);</span>
+<span class="nc" id="L778">        assertNoUpdates(commandClass);</span>
+<span class="nc" id="L779">    }</span>
+
+    protected void assertNoDeletes(String commandClass) {
+<span class="nc" id="L782">        CommandStats stats = getStats(commandClass);</span>
+<span class="nc" id="L783">        assertThat(stats.getDbDeletes()).isEmpty();</span>
+<span class="nc" id="L784">    }</span>
+
+    protected void assertNoUpdates(String commandClass) {
+<span class="nc" id="L787">        CommandStats stats = getStats(commandClass);</span>
+<span class="nc" id="L788">        assertThat(stats.getDbUpdates()).isEmpty();</span>
+<span class="nc" id="L789">    }</span>
+
+    protected CommandStats getStats(String commandClass) {
+<span class="nc" id="L792">        ProfileSession profileSession = FlowableProfiler.getInstance().getProfileSessions().get(0);</span>
+<span class="nc" id="L793">        Map&lt;String, CommandStats&gt; allStats = profileSession.calculateSummaryStatistics();</span>
+<span class="nc" id="L794">        CommandStats stats = getStatsForCommand(commandClass, allStats);</span>
+<span class="nc" id="L795">        return stats;</span>
+    }
+
+    protected CommandStats getStatsForCommand(String commandClass, Map&lt;String, CommandStats&gt; allStats) {
+<span class="nc" id="L799">        String clazz = commandClass;</span>
+<span class="nc bnc" id="L800" title="All 2 branches missed.">        if (!clazz.startsWith(&quot;org.flowable&quot;)) {</span>
+<span class="nc" id="L801">            clazz = &quot;org.flowable.engine.impl.cmd.&quot; + clazz;</span>
+        }
+<span class="nc" id="L803">        CommandStats stats = allStats.get(clazz);</span>
+<span class="nc" id="L804">        return stats;</span>
+    }
+
+    // HELPERS
+
+    protected FlowableProfiler deployStartProcessInstanceAndProfile(String path, String processDefinitionKey) {
+<span class="nc" id="L810">        return deployStartProcessInstanceAndProfile(path, processDefinitionKey, true);</span>
+    }
+
+    protected FlowableProfiler deployStartProcessInstanceAndProfile(String path, String processDefinitionKey, boolean stopProfilingAfterStart) {
+<span class="nc" id="L814">        deploy(path);</span>
+<span class="nc" id="L815">        FlowableProfiler activitiProfiler = startProcessInstanceAndProfile(processDefinitionKey);</span>
+<span class="nc bnc" id="L816" title="All 2 branches missed.">        if (stopProfilingAfterStart) {</span>
+<span class="nc" id="L817">            stopProfiling();</span>
+        }
+<span class="nc" id="L819">        return activitiProfiler;</span>
+    }
+
+    protected void deploy(String path) {
+<span class="nc" id="L823">        repositoryService.createDeployment().addClasspathResource(&quot;org/flowable/engine/test/cfg/executioncount/&quot; + path).deploy();</span>
+<span class="nc" id="L824">    }</span>
+
+    protected FlowableProfiler startProcessInstanceAndProfile(String processDefinitionKey) {
+<span class="nc" id="L827">        FlowableProfiler flowableProfiler = restartProfiling(&quot;Profiling session&quot;);</span>
+<span class="nc" id="L828">        runtimeService.startProcessInstanceByKey(processDefinitionKey);</span>
+<span class="nc" id="L829">        return flowableProfiler;</span>
+    }
+
+    protected FlowableProfiler restartProfiling(String sessionName) {
+<span class="nc" id="L833">        FlowableProfiler flowableProfiler = FlowableProfiler.getInstance();</span>
+<span class="nc" id="L834">        flowableProfiler.reset();</span>
+<span class="nc" id="L835">        flowableProfiler.startProfileSession(sessionName);</span>
+<span class="nc" id="L836">        return flowableProfiler;</span>
+    }
+
+    protected void stopProfiling() {
+<span class="nc" id="L840">        FlowableProfiler profiler = FlowableProfiler.getInstance();</span>
+<span class="nc" id="L841">        profiler.stopCurrentProfileSession();</span>
+<span class="nc" id="L842">        new ConsoleLogger(profiler).log();</span>
+<span class="nc" id="L843">    }</span>
+
+    protected String getQualifiedClassName(String className) {
+<span class="nc bnc" id="L846" title="All 4 branches missed.">        if (className.startsWith(&quot;VariableInstanceEntityImpl&quot;) || className.startsWith(&quot;HistoricVariableInstanceEntityImpl&quot;)) {</span>
+<span class="nc" id="L847">            return &quot;org.flowable.variable.service.impl.persistence.entity.&quot; + className;</span>
+
+<span class="nc bnc" id="L849" title="All 6 branches missed.">        } else if (className.startsWith(&quot;TaskEntityImpl&quot;) || className.startsWith(&quot;HistoricTaskInstanceEntityImpl&quot;) || className.startsWith(&quot;HistoricTaskLogEntryEntityImpl&quot;)) {</span>
+<span class="nc" id="L850">            return &quot;org.flowable.task.service.impl.persistence.entity.&quot; + className;</span>
+
+<span class="nc bnc" id="L852" title="All 4 branches missed.">        } else if (className.startsWith(&quot;JobEntityImpl&quot;) || className.startsWith(&quot;TimerJobEntityImpl&quot;)) {</span>
+<span class="nc" id="L853">            return &quot;org.flowable.job.service.impl.persistence.entity.&quot; + className;</span>
+
+<span class="nc bnc" id="L855" title="All 4 branches missed.">        } else if (className.startsWith(&quot;IdentityLinkEntityImpl&quot;) || className.startsWith(&quot;HistoricIdentityLinkEntityImpl&quot;)) {</span>
+<span class="nc" id="L856">            return &quot;org.flowable.identitylink.service.impl.persistence.entity.&quot; + className;</span>
+            
+<span class="nc bnc" id="L858" title="All 4 branches missed.">        } else if (className.startsWith(&quot;EntityLinkEntityImpl&quot;) || className.startsWith(&quot;HistoricEntityLinkEntityImpl&quot;)) {</span>
+<span class="nc" id="L859">            return &quot;org.flowable.entitylink.service.impl.persistence.entity.&quot; + className;</span>
+            
+<span class="nc bnc" id="L861" title="All 2 branches missed.">        } else if (className.startsWith(&quot;Bulk-delete-&quot;)) {</span>
+<span class="nc" id="L862">            return className;</span>
+
+        } else {
+<span class="nc" id="L865">            return &quot;org.flowable.engine.impl.persistence.entity.&quot; + className;</span>
+        }
+        
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

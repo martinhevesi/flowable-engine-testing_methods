@@ -1,0 +1,636 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ErrorPropagation.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.bpmn.helper</a> &gt; <span class="el_source">ErrorPropagation.java</span></div><h1>ErrorPropagation.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.flowable.engine.impl.bpmn.helper;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.StringJoiner;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
+import org.flowable.bpmn.model.BoundaryEvent;
+import org.flowable.bpmn.model.BpmnModel;
+import org.flowable.bpmn.model.CallActivity;
+import org.flowable.bpmn.model.ErrorEventDefinition;
+import org.flowable.bpmn.model.Event;
+import org.flowable.bpmn.model.EventDefinition;
+import org.flowable.bpmn.model.EventSubProcess;
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.FlowElementsContainer;
+import org.flowable.bpmn.model.MapExceptionEntry;
+import org.flowable.bpmn.model.Process;
+import org.flowable.bpmn.model.StartEvent;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.delegate.event.FlowableEngineEventType;
+import org.flowable.common.engine.api.delegate.event.FlowableEventDispatcher;
+import org.flowable.common.engine.api.variable.VariableContainer;
+import org.flowable.common.engine.impl.el.ExpressionManager;
+import org.flowable.common.engine.impl.util.CollectionUtil;
+import org.flowable.common.engine.impl.util.ReflectUtil;
+import org.flowable.engine.delegate.BpmnError;
+import org.flowable.engine.delegate.DelegateExecution;
+import org.flowable.engine.delegate.event.impl.FlowableEventBuilder;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntity;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntityManager;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.engine.impl.util.IOParameterUtil;
+import org.flowable.engine.impl.util.ProcessDefinitionUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * This class is responsible for finding and executing error handlers for BPMN Errors.
+ * &lt;p&gt;
+ * Possible error handlers include Error Intermediate Events and Error Event Sub-Processes.
+ *
+ * @author Tijs Rademakers
+ * @author Saeid Mirzaei
+ */
+<span class="nc" id="L65">public class ErrorPropagation {</span>
+
+<span class="nc" id="L67">    private static final Logger LOGGER = LoggerFactory.getLogger(ErrorPropagation.class);</span>
+
+    public static void propagateError(BpmnError error, DelegateExecution execution) {
+<span class="nc" id="L70">        propagateError(new BpmnErrorVariableContainer(error, execution.getTenantId()), execution);</span>
+<span class="nc" id="L71">    }</span>
+
+    public static void propagateError(String errorCode, DelegateExecution execution) {
+<span class="nc" id="L74">        propagateError(new BpmnErrorVariableContainer(errorCode, execution.getTenantId()), execution);</span>
+<span class="nc" id="L75">    }</span>
+
+    protected static void propagateError(String errorCode, Throwable exception, DelegateExecution execution) {
+<span class="nc" id="L78">        propagateError(new BpmnErrorVariableContainer(errorCode, exception, execution.getTenantId()), execution);</span>
+<span class="nc" id="L79">    }</span>
+
+    protected static void propagateError(BpmnErrorVariableContainer errorVariableContainer, DelegateExecution execution) {
+<span class="nc" id="L82">        Map&lt;String, List&lt;Event&gt;&gt; eventMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L83">        Set&lt;String&gt; rootProcessDefinitionIds = new HashSet&lt;&gt;();</span>
+<span class="nc" id="L84">        String errorCode = errorVariableContainer.getErrorCode();</span>
+<span class="nc bnc" id="L85" title="All 2 branches missed.">        if (!execution.getProcessInstanceId().equals(execution.getRootProcessInstanceId())) {</span>
+<span class="nc" id="L86">            ExecutionEntity parentExecution = (ExecutionEntity) execution;</span>
+<span class="nc bnc" id="L87" title="All 4 branches missed.">            while (parentExecution.getParentId() != null || parentExecution.getSuperExecutionId() != null) {</span>
+<span class="nc bnc" id="L88" title="All 2 branches missed.">                if (parentExecution.getParentId() != null) {</span>
+<span class="nc" id="L89">                    parentExecution = parentExecution.getParent();</span>
+                } else {
+<span class="nc" id="L91">                    parentExecution = parentExecution.getSuperExecution();</span>
+<span class="nc" id="L92">                    rootProcessDefinitionIds.add(parentExecution.getProcessDefinitionId());</span>
+                }
+            }
+        }
+
+<span class="nc bnc" id="L97" title="All 2 branches missed.">        if (rootProcessDefinitionIds.size() &gt; 0) {</span>
+<span class="nc bnc" id="L98" title="All 2 branches missed.">            for (String processDefinitionId : rootProcessDefinitionIds) {</span>
+<span class="nc" id="L99">                eventMap.putAll(findCatchingEventsForProcess(processDefinitionId, errorCode));</span>
+<span class="nc" id="L100">            }</span>
+        }
+
+<span class="nc" id="L103">        eventMap.putAll(findCatchingEventsForProcess(execution.getProcessDefinitionId(), errorCode));</span>
+<span class="nc bnc" id="L104" title="All 2 branches missed.">        if (eventMap.size() &gt; 0) {</span>
+<span class="nc" id="L105">            executeCatch(eventMap, execution, errorVariableContainer);</span>
+        }
+
+<span class="nc bnc" id="L108" title="All 2 branches missed.">        if (eventMap.size() == 0) {</span>
+<span class="nc" id="L109">            BpmnError bpmnError = new BpmnError(errorCode,</span>
+                    &quot;No catching boundary event found for error with errorCode '&quot; + errorCode + &quot;', neither in same process nor in parent process&quot;);
+<span class="nc" id="L111">            bpmnError.setAdditionalDataContainer(errorVariableContainer);</span>
+<span class="nc" id="L112">            throw bpmnError;</span>
+        }
+<span class="nc" id="L114">    }</span>
+
+    protected static void executeCatch(Map&lt;String, List&lt;Event&gt;&gt; eventMap, DelegateExecution delegateExecution,
+            BpmnErrorVariableContainer errorVariableContainer) {
+<span class="nc" id="L118">        Set&lt;String&gt; toDeleteProcessInstanceIds = new HashSet&lt;&gt;();</span>
+<span class="nc" id="L119">        String errorId = errorVariableContainer.getErrorCode();</span>
+<span class="nc" id="L120">        LOGGER.debug(&quot;Executing error catch for error={}, execution={}, eventMap={}&quot;, errorId, delegateExecution, eventMap);</span>
+<span class="nc" id="L121">        Event matchingEvent = null;</span>
+<span class="nc" id="L122">        ExecutionEntity currentExecution = (ExecutionEntity) delegateExecution;</span>
+<span class="nc" id="L123">        ExecutionEntity parentExecution = null;</span>
+
+        /* Only use boundary event, when error handling is not being executed as result of listener invocation.
+         * The reason is the lifecycle of 'executions':
+         * For example, when the 'end' execution listeners are invoked, the corresponding
+         * boundary execution has already been deleted / ended.
+         * For the 'start' listener, the corresponding boundary executions might not have been created yet.
+         * Therefore, when a BPMNError is thrown out listeners, we only search parent executions for a matching
+         * error handler.
+         * When an BPMNError is thrown as a result of a list
+         *  */
+<span class="nc bnc" id="L134" title="All 4 branches missed.">        if (delegateExecution.getCurrentFlowableListener() == null &amp;&amp; eventMap.containsKey(currentExecution.getActivityId() + &quot;#&quot; + currentExecution.getProcessDefinitionId())) {</span>
+            // Check for multi instance
+<span class="nc bnc" id="L136" title="All 4 branches missed.">            if (currentExecution.getParentId() != null &amp;&amp; currentExecution.getParent().isMultiInstanceRoot()) {</span>
+<span class="nc" id="L137">                parentExecution = currentExecution.getParent();</span>
+            } else {
+<span class="nc" id="L139">                parentExecution = currentExecution;</span>
+            }
+
+<span class="nc" id="L142">            matchingEvent = getCatchEventFromList(eventMap.get(currentExecution.getActivityId() +</span>
+<span class="nc" id="L143">                            &quot;#&quot; + currentExecution.getProcessDefinitionId()), parentExecution);</span>
+
+        } else {
+<span class="nc" id="L146">            parentExecution = currentExecution.getParent();</span>
+
+            // Traverse parents until one is found that is a scope and matches the activity the boundary event is defined on
+<span class="nc bnc" id="L149" title="All 4 branches missed.">            while (matchingEvent == null &amp;&amp; parentExecution != null) {</span>
+<span class="nc" id="L150">                FlowElementsContainer currentContainer = null;</span>
+<span class="nc bnc" id="L151" title="All 2 branches missed.">                if (parentExecution.getCurrentFlowElement() instanceof FlowElementsContainer) {</span>
+<span class="nc" id="L152">                    currentContainer = (FlowElementsContainer) parentExecution.getCurrentFlowElement();</span>
+<span class="nc bnc" id="L153" title="All 2 branches missed.">                } else if (parentExecution.getId().equals(parentExecution.getProcessInstanceId())) {</span>
+<span class="nc" id="L154">                    currentContainer = ProcessDefinitionUtil.getProcess(parentExecution.getProcessDefinitionId());</span>
+                }
+
+<span class="nc bnc" id="L157" title="All 2 branches missed.">                if (currentContainer != null) {</span>
+<span class="nc bnc" id="L158" title="All 2 branches missed.">                    for (String refId : eventMap.keySet()) {</span>
+<span class="nc" id="L159">                        List&lt;Event&gt; events = eventMap.get(refId);</span>
+<span class="nc bnc" id="L160" title="All 4 branches missed.">                        if (CollectionUtil.isNotEmpty(events) &amp;&amp; events.get(0) instanceof StartEvent) {</span>
+<span class="nc" id="L161">                            String refActivityId = refId.substring(0, refId.indexOf('#'));</span>
+<span class="nc" id="L162">                            String refProcessDefinitionId = refId.substring(refId.indexOf('#') + 1);</span>
+<span class="nc bnc" id="L163" title="All 2 branches missed.">                            if (parentExecution.getProcessDefinitionId().equals(refProcessDefinitionId) &amp;&amp;</span>
+<span class="nc bnc" id="L164" title="All 2 branches missed.">                                            currentContainer.getFlowElement(refActivityId) != null) {</span>
+
+<span class="nc" id="L166">                                matchingEvent = getCatchEventFromList(events, parentExecution);</span>
+<span class="nc" id="L167">                                String errorCode = getErrorCodeFromErrorEventDefinition(matchingEvent);</span>
+<span class="nc bnc" id="L168" title="All 2 branches missed.">                                if (StringUtils.isNotEmpty(errorCode)) {</span>
+<span class="nc" id="L169">                                    break;</span>
+                                }
+                            }
+                        }
+<span class="nc" id="L173">                    }</span>
+                }
+
+<span class="nc bnc" id="L176" title="All 2 branches missed.">                if (matchingEvent == null) {</span>
+<span class="nc bnc" id="L177" title="All 2 branches missed.">                    if (eventMap.containsKey(parentExecution.getActivityId() + &quot;#&quot; + parentExecution.getProcessDefinitionId())) {</span>
+                        // Check for multi instance
+<span class="nc bnc" id="L179" title="All 4 branches missed.">                        if (parentExecution.getParentId() != null &amp;&amp; parentExecution.getParent().isMultiInstanceRoot()) {</span>
+<span class="nc" id="L180">                            parentExecution = parentExecution.getParent();</span>
+                        }
+
+<span class="nc" id="L183">                        matchingEvent = getCatchEventFromList(eventMap.get(parentExecution.getActivityId() +</span>
+<span class="nc" id="L184">                                        &quot;#&quot; + parentExecution.getProcessDefinitionId()), parentExecution);</span>
+
+<span class="nc bnc" id="L186" title="All 2 branches missed.">                    } else if (StringUtils.isNotEmpty(parentExecution.getParentId())) {</span>
+<span class="nc" id="L187">                        parentExecution = parentExecution.getParent();</span>
+
+                    } else {
+<span class="nc bnc" id="L190" title="All 2 branches missed.">                        if (parentExecution.getProcessInstanceId().equals(parentExecution.getRootProcessInstanceId()) == false) {</span>
+<span class="nc" id="L191">                            toDeleteProcessInstanceIds.add(parentExecution.getProcessInstanceId());</span>
+<span class="nc" id="L192">                            parentExecution = parentExecution.getSuperExecution();</span>
+                        } else {
+<span class="nc" id="L194">                            parentExecution = null;</span>
+                        }
+                    }
+                }
+<span class="nc" id="L198">            }</span>
+        }
+
+<span class="nc bnc" id="L201" title="All 4 branches missed.">        if (matchingEvent != null &amp;&amp; parentExecution != null) {</span>
+
+<span class="nc bnc" id="L203" title="All 2 branches missed.">            for (String processInstanceId : toDeleteProcessInstanceIds) {</span>
+<span class="nc" id="L204">                ExecutionEntityManager executionEntityManager = CommandContextUtil.getExecutionEntityManager();</span>
+<span class="nc" id="L205">                ExecutionEntity processInstanceEntity = executionEntityManager.findById(processInstanceId);</span>
+
+                // Delete
+<span class="nc" id="L208">                executionEntityManager.deleteProcessInstanceExecutionEntity(processInstanceEntity.getId(),</span>
+<span class="nc bnc" id="L209" title="All 2 branches missed.">                                currentExecution.getCurrentFlowElement() != null ? currentExecution.getCurrentFlowElement().getId() : null,</span>
+                                                &quot;ERROR_EVENT &quot; + errorId, false, false, false);
+
+                // Event
+<span class="nc" id="L213">                ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration();</span>
+<span class="nc" id="L214">                FlowableEventDispatcher eventDispatcher = null;</span>
+<span class="nc bnc" id="L215" title="All 2 branches missed.">                if (processEngineConfiguration != null) {</span>
+<span class="nc" id="L216">                    eventDispatcher = processEngineConfiguration.getEventDispatcher();</span>
+                }
+<span class="nc bnc" id="L218" title="All 4 branches missed.">                if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L219">                    processEngineConfiguration.getEventDispatcher()</span>
+<span class="nc" id="L220">                            .dispatchEvent(FlowableEventBuilder.createEntityEvent(FlowableEngineEventType.PROCESS_COMPLETED_WITH_ERROR_END_EVENT, processInstanceEntity),</span>
+<span class="nc" id="L221">                                    processEngineConfiguration.getEngineCfgKey());</span>
+                }
+<span class="nc" id="L223">            }</span>
+
+<span class="nc" id="L225">            executeEventHandler(matchingEvent, parentExecution, currentExecution, errorVariableContainer);</span>
+
+        } else {
+<span class="nc" id="L228">            throw new FlowableException(&quot;No matching parent execution for error code &quot; + errorId + &quot; found for &quot; + delegateExecution);</span>
+        }
+<span class="nc" id="L230">    }</span>
+
+    protected static void executeEventHandler(Event event, ExecutionEntity parentExecution, ExecutionEntity currentExecution,
+            BpmnErrorVariableContainer errorVariableContainer) {
+<span class="nc" id="L234">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration();</span>
+<span class="nc" id="L235">        FlowableEventDispatcher eventDispatcher = null;</span>
+
+<span class="nc" id="L237">        String errorId = errorVariableContainer.getErrorCode();</span>
+<span class="nc" id="L238">        String errorCode = errorId;</span>
+<span class="nc" id="L239">        BpmnModel bpmnModel = ProcessDefinitionUtil.getBpmnModel(parentExecution.getProcessDefinitionId());</span>
+<span class="nc bnc" id="L240" title="All 2 branches missed.">        if (bpmnModel != null) {</span>
+<span class="nc" id="L241">            String modelError = bpmnModel.getErrors().get(errorId);</span>
+<span class="nc bnc" id="L242" title="All 2 branches missed.">            if (modelError != null) {</span>
+<span class="nc" id="L243">                errorCode = modelError;</span>
+<span class="nc" id="L244">                errorVariableContainer.setErrorCode(errorCode);</span>
+            }
+        }
+
+<span class="nc bnc" id="L248" title="All 2 branches missed.">        if (processEngineConfiguration != null) {</span>
+<span class="nc" id="L249">            eventDispatcher = processEngineConfiguration.getEventDispatcher();</span>
+        }
+
+<span class="nc bnc" id="L252" title="All 4 branches missed.">        if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L253">            processEngineConfiguration.getEventDispatcher().dispatchEvent(</span>
+<span class="nc" id="L254">                    FlowableEventBuilder.createErrorEvent(FlowableEngineEventType.ACTIVITY_ERROR_RECEIVED, event.getId(), errorId, errorCode, parentExecution.getId(),</span>
+<span class="nc" id="L255">                            parentExecution.getProcessInstanceId(), parentExecution.getProcessDefinitionId()),</span>
+<span class="nc" id="L256">                    processEngineConfiguration.getEngineCfgKey());</span>
+        }
+
+<span class="nc bnc" id="L259" title="All 2 branches missed.">        if (event instanceof StartEvent) {</span>
+<span class="nc" id="L260">            ExecutionEntityManager executionEntityManager = CommandContextUtil.getExecutionEntityManager();</span>
+
+<span class="nc bnc" id="L262" title="All 2 branches missed.">            if (parentExecution.isProcessInstanceType()) {</span>
+<span class="nc" id="L263">                LOGGER.debug(</span>
+                        &quot;Ending and deleting child executions for parent execution '{}'. Reason: Parent Execution is processIntanceType. Current Execution '{}'&quot;,
+                        parentExecution, currentExecution);
+<span class="nc" id="L266">                executionEntityManager.deleteChildExecutions(parentExecution, null, true);</span>
+<span class="nc bnc" id="L267" title="All 2 branches missed.">            } else if (!currentExecution.getParentId().equals(parentExecution.getId())) {</span>
+<span class="nc" id="L268">                LOGGER.debug(&quot;Planing destroyScopeOperation for execution {}. Reason: {}. Parent execution: {}&quot;, currentExecution,</span>
+                        &quot;Current execution parentId odes not match parentExecution id&quot;, parentExecution);
+<span class="nc" id="L270">                CommandContextUtil.getAgenda().planDestroyScopeOperation(currentExecution);</span>
+            } else {
+<span class="nc" id="L272">                LOGGER.debug(&quot;Deleting execution and related data for execution {}.&quot;, currentExecution);</span>
+<span class="nc" id="L273">                executionEntityManager.deleteExecutionAndRelatedData(currentExecution, null, false);</span>
+            }
+
+<span class="nc" id="L276">            ExecutionEntity eventSubProcessExecution = executionEntityManager.createChildExecution(parentExecution);</span>
+<span class="nc" id="L277">            injectErrorContext(event, eventSubProcessExecution, errorVariableContainer, processEngineConfiguration.getExpressionManager());</span>
+<span class="nc bnc" id="L278" title="All 2 branches missed.">            if (event.getSubProcess() != null) {</span>
+<span class="nc" id="L279">                eventSubProcessExecution.setCurrentFlowElement(event.getSubProcess());</span>
+<span class="nc" id="L280">                CommandContextUtil.getActivityInstanceEntityManager().recordActivityStart(eventSubProcessExecution);</span>
+<span class="nc" id="L281">                ExecutionEntity subProcessStartEventExecution = executionEntityManager.createChildExecution(eventSubProcessExecution);</span>
+<span class="nc" id="L282">                subProcessStartEventExecution.setCurrentFlowElement(event);</span>
+<span class="nc" id="L283">                LOGGER.debug(&quot;Error StartEvent SubProcess handler {}{} for errorCode {} continueProcessOperation with execution {}&quot;, event,</span>
+<span class="nc" id="L284">                        event.getSubProcess(), errorCode,</span>
+                        subProcessStartEventExecution);
+<span class="nc" id="L286">                CommandContextUtil.getAgenda().planContinueProcessOperation(subProcessStartEventExecution);</span>
+
+<span class="nc" id="L288">            } else {</span>
+<span class="nc" id="L289">                LOGGER.debug(&quot;Error StartEvent handler {} for errorCode {} continueProcessOperation with execution {}&quot;, event, errorCode,</span>
+                        eventSubProcessExecution);
+<span class="nc" id="L291">                eventSubProcessExecution.setCurrentFlowElement(event);</span>
+<span class="nc" id="L292">                CommandContextUtil.getAgenda().planContinueProcessOperation(eventSubProcessExecution);</span>
+            }
+
+<span class="nc" id="L295">        } else {</span>
+            // boundary event
+<span class="nc" id="L297">            ExecutionEntity boundaryExecution = null;</span>
+<span class="nc" id="L298">            List&lt;? extends ExecutionEntity&gt; childExecutions = parentExecution.getExecutions();</span>
+<span class="nc bnc" id="L299" title="All 2 branches missed.">            for (ExecutionEntity childExecution : childExecutions) {</span>
+<span class="nc bnc" id="L300" title="All 2 branches missed.">                if (childExecution != null</span>
+<span class="nc bnc" id="L301" title="All 2 branches missed.">                        &amp;&amp; childExecution.getActivityId() != null</span>
+<span class="nc bnc" id="L302" title="All 2 branches missed.">                        &amp;&amp; childExecution.getActivityId().equals(event.getId())) {</span>
+<span class="nc" id="L303">                    boundaryExecution = childExecution;</span>
+                }
+<span class="nc" id="L305">            }</span>
+<span class="nc" id="L306">            injectErrorContext(event, boundaryExecution, errorVariableContainer, processEngineConfiguration.getExpressionManager());</span>
+<span class="nc" id="L307">            CommandContextUtil.getAgenda().planTriggerExecutionOperation(boundaryExecution);</span>
+        }
+<span class="nc" id="L309">    }</span>
+
+    protected static Map&lt;String, List&lt;Event&gt;&gt; findCatchingEventsForProcess(String processDefinitionId, String errorCode) {
+<span class="nc" id="L312">        Map&lt;String, List&lt;Event&gt;&gt; eventMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L313">        Process process = ProcessDefinitionUtil.getProcess(processDefinitionId);</span>
+<span class="nc" id="L314">        BpmnModel bpmnModel = ProcessDefinitionUtil.getBpmnModel(processDefinitionId);</span>
+
+<span class="nc" id="L316">        String compareErrorCode = retrieveErrorCode(bpmnModel, errorCode);</span>
+
+<span class="nc" id="L318">        List&lt;EventSubProcess&gt; subProcesses = process.findFlowElementsOfType(EventSubProcess.class, true);</span>
+<span class="nc bnc" id="L319" title="All 2 branches missed.">        for (EventSubProcess eventSubProcess : subProcesses) {</span>
+<span class="nc bnc" id="L320" title="All 2 branches missed.">            for (FlowElement flowElement : eventSubProcess.getFlowElements()) {</span>
+<span class="nc bnc" id="L321" title="All 2 branches missed.">                if (flowElement instanceof StartEvent) {</span>
+<span class="nc" id="L322">                    StartEvent startEvent = (StartEvent) flowElement;</span>
+<span class="nc bnc" id="L323" title="All 4 branches missed.">                    if (CollectionUtil.isNotEmpty(startEvent.getEventDefinitions()) &amp;&amp; startEvent.getEventDefinitions().get(0) instanceof ErrorEventDefinition) {</span>
+<span class="nc" id="L324">                        ErrorEventDefinition errorEventDef = (ErrorEventDefinition) startEvent.getEventDefinitions().get(0);</span>
+<span class="nc" id="L325">                        String eventErrorCode = retrieveErrorCode(bpmnModel, errorEventDef.getErrorCode());</span>
+
+<span class="nc bnc" id="L327" title="All 6 branches missed.">                        if (eventErrorCode == null || compareErrorCode == null || eventErrorCode.equals(compareErrorCode)) {</span>
+<span class="nc" id="L328">                            List&lt;Event&gt; startEvents = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L329">                            startEvents.add(startEvent);</span>
+<span class="nc" id="L330">                            eventMap.put(eventSubProcess.getId() + &quot;#&quot; + processDefinitionId, startEvents);</span>
+                        }
+                    }
+                }
+<span class="nc" id="L334">            }</span>
+<span class="nc" id="L335">        }</span>
+
+<span class="nc" id="L337">        List&lt;BoundaryEvent&gt; boundaryEvents = process.findFlowElementsOfType(BoundaryEvent.class, true);</span>
+<span class="nc bnc" id="L338" title="All 2 branches missed.">        for (BoundaryEvent boundaryEvent : boundaryEvents) {</span>
+<span class="nc bnc" id="L339" title="All 4 branches missed.">            if (boundaryEvent.getAttachedToRefId() != null &amp;&amp; CollectionUtil.isNotEmpty(boundaryEvent.getEventDefinitions()) &amp;&amp; boundaryEvent</span>
+<span class="nc bnc" id="L340" title="All 4 branches missed.">                    .getEventDefinitions().get(0) instanceof ErrorEventDefinition &amp;&amp; !(boundaryEvent.getAttachedToRef() instanceof EventSubProcess)) {</span>
+
+<span class="nc" id="L342">                ErrorEventDefinition errorEventDef = (ErrorEventDefinition) boundaryEvent.getEventDefinitions().get(0);</span>
+<span class="nc" id="L343">                String eventErrorCode = retrieveErrorCode(bpmnModel, errorEventDef.getErrorCode());</span>
+
+<span class="nc bnc" id="L345" title="All 6 branches missed.">                if (eventErrorCode == null || compareErrorCode == null || eventErrorCode.equals(compareErrorCode)) {</span>
+<span class="nc" id="L346">                    List&lt;Event&gt; elementBoundaryEvents = null;</span>
+<span class="nc bnc" id="L347" title="All 2 branches missed.">                    if (!eventMap.containsKey(boundaryEvent.getAttachedToRefId() + &quot;#&quot; + processDefinitionId)) {</span>
+<span class="nc" id="L348">                        elementBoundaryEvents = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L349">                        eventMap.put(boundaryEvent.getAttachedToRefId() + &quot;#&quot; + processDefinitionId, elementBoundaryEvents);</span>
+                    } else {
+<span class="nc" id="L351">                        elementBoundaryEvents = eventMap.get(boundaryEvent.getAttachedToRefId() + &quot;#&quot; + processDefinitionId);</span>
+                    }
+<span class="nc" id="L353">                    elementBoundaryEvents.add(boundaryEvent);</span>
+                }
+            }
+<span class="nc" id="L356">        }</span>
+<span class="nc" id="L357">        return eventMap;</span>
+    }
+
+    public static boolean mapException(Exception e, ExecutionEntity execution, List&lt;MapExceptionEntry&gt; exceptionMap) {
+<span class="nc" id="L361">        String errorCode = findMatchingExceptionMapping(e, exceptionMap);</span>
+<span class="nc bnc" id="L362" title="All 2 branches missed.">        if (errorCode != null) {</span>
+<span class="nc" id="L363">            propagateError(errorCode, e, execution);</span>
+<span class="nc" id="L364">            return true;</span>
+        } else {
+<span class="nc" id="L366">            ExecutionEntity callActivityExecution = null;</span>
+<span class="nc" id="L367">            ExecutionEntity parentExecution = execution.getParent();</span>
+<span class="nc bnc" id="L368" title="All 4 branches missed.">            while (parentExecution != null &amp;&amp; callActivityExecution == null) {</span>
+<span class="nc bnc" id="L369" title="All 2 branches missed.">                if (parentExecution.getId().equals(parentExecution.getProcessInstanceId())) {</span>
+<span class="nc bnc" id="L370" title="All 2 branches missed.">                    if (parentExecution.getSuperExecution() != null) {</span>
+<span class="nc" id="L371">                        callActivityExecution = parentExecution.getSuperExecution();</span>
+                    } else {
+<span class="nc" id="L373">                        parentExecution = null;</span>
+                    }
+                } else {
+<span class="nc" id="L376">                    parentExecution = parentExecution.getParent();</span>
+                }
+            }
+
+<span class="nc bnc" id="L380" title="All 2 branches missed.">            if (callActivityExecution != null) {</span>
+<span class="nc" id="L381">                CallActivity callActivity = (CallActivity) callActivityExecution.getCurrentFlowElement();</span>
+<span class="nc bnc" id="L382" title="All 2 branches missed.">                if (CollectionUtil.isNotEmpty(callActivity.getMapExceptions())) {</span>
+<span class="nc" id="L383">                    errorCode = findMatchingExceptionMapping(e, callActivity.getMapExceptions());</span>
+<span class="nc bnc" id="L384" title="All 2 branches missed.">                    if (errorCode != null) {</span>
+<span class="nc" id="L385">                        propagateError(errorCode, e, callActivityExecution);</span>
+<span class="nc" id="L386">                        return true;</span>
+                    }
+                }
+            }
+
+<span class="nc" id="L391">            return false;</span>
+        }
+    }
+
+    public static String findMatchingExceptionMapping(Exception e, List&lt;MapExceptionEntry&gt; exceptionMap) {
+<span class="nc" id="L396">        String defaultExceptionMapping = null;</span>
+
+<span class="nc bnc" id="L398" title="All 2 branches missed.">        for (MapExceptionEntry me : exceptionMap) {</span>
+<span class="nc" id="L399">            String exceptionClass = me.getClassName();</span>
+<span class="nc" id="L400">            String errorCode = me.getErrorCode();</span>
+<span class="nc" id="L401">            String rootCause = me.getRootCause();</span>
+
+            // save the first mapping with no exception class as default map
+<span class="nc bnc" id="L404" title="All 6 branches missed.">            if (StringUtils.isNotEmpty(errorCode) &amp;&amp; StringUtils.isEmpty(exceptionClass) &amp;&amp; defaultExceptionMapping == null) {</span>
+                // if rootCause is set, check if it matches the exception
+<span class="nc bnc" id="L406" title="All 2 branches missed.">                if (StringUtils.isNotEmpty(rootCause)) {</span>
+<span class="nc bnc" id="L407" title="All 2 branches missed.">                    if (ExceptionUtils.getRootCause(e).getClass().getName().equals(rootCause)) {</span>
+<span class="nc" id="L408">                        defaultExceptionMapping = errorCode;</span>
+<span class="nc" id="L409">                        continue;</span>
+                    }
+                } else {
+<span class="nc" id="L412">                    defaultExceptionMapping = errorCode;</span>
+<span class="nc" id="L413">                    continue;</span>
+                }
+            }
+
+            // ignore if error code or class are not defined
+<span class="nc bnc" id="L418" title="All 4 branches missed.">            if (StringUtils.isEmpty(errorCode) || StringUtils.isEmpty(exceptionClass)) {</span>
+<span class="nc" id="L419">                continue;</span>
+            }
+
+<span class="nc bnc" id="L422" title="All 2 branches missed.">            if (e.getClass().getName().equals(exceptionClass)) {</span>
+<span class="nc bnc" id="L423" title="All 2 branches missed.">                if (StringUtils.isNotEmpty(rootCause)) {</span>
+<span class="nc bnc" id="L424" title="All 2 branches missed.">                    if (ExceptionUtils.getRootCause(e).getClass().getName().equals(rootCause)) {</span>
+<span class="nc" id="L425">                        return errorCode;</span>
+                    }
+                    continue;
+                }
+<span class="nc" id="L429">                return errorCode;</span>
+            }
+
+<span class="nc bnc" id="L432" title="All 2 branches missed.">            if (me.isAndChildren()) {</span>
+<span class="nc" id="L433">                Class&lt;?&gt; exceptionClassClass = ReflectUtil.loadClass(exceptionClass);</span>
+<span class="nc bnc" id="L434" title="All 2 branches missed.">                if (exceptionClassClass.isAssignableFrom(e.getClass())) {</span>
+<span class="nc bnc" id="L435" title="All 2 branches missed.">                    if (StringUtils.isNotEmpty(rootCause)) {</span>
+<span class="nc bnc" id="L436" title="All 2 branches missed.">                        if (ExceptionUtils.getRootCause(e).getClass().getName().equals(rootCause)) {</span>
+<span class="nc" id="L437">                            return errorCode;</span>
+                        }
+                    } else {
+<span class="nc" id="L440">                        return errorCode;</span>
+                    }
+                }
+            }
+<span class="nc" id="L444">        }</span>
+
+<span class="nc" id="L446">        return defaultExceptionMapping;</span>
+    }
+
+    protected static Event getCatchEventFromList(List&lt;Event&gt; events, ExecutionEntity parentExecution) {
+<span class="nc" id="L450">        Event selectedEvent = null;</span>
+<span class="nc" id="L451">        String selectedEventErrorCode = null;</span>
+
+<span class="nc" id="L453">        BpmnModel bpmnModel = ProcessDefinitionUtil.getBpmnModel(parentExecution.getProcessDefinitionId());</span>
+<span class="nc bnc" id="L454" title="All 2 branches missed.">        for (Event event : events) {</span>
+<span class="nc" id="L455">            String errorCode = getErrorCodeFromErrorEventDefinition(event);</span>
+<span class="nc bnc" id="L456" title="All 2 branches missed.">            if (bpmnModel != null) {</span>
+<span class="nc" id="L457">                errorCode = retrieveErrorCode(bpmnModel, errorCode);</span>
+            }
+
+<span class="nc bnc" id="L460" title="All 6 branches missed.">            if (selectedEvent == null || (StringUtils.isEmpty(selectedEventErrorCode) &amp;&amp; StringUtils.isNotEmpty(errorCode))) {</span>
+<span class="nc" id="L461">                selectedEvent = event;</span>
+<span class="nc" id="L462">                selectedEventErrorCode = errorCode;</span>
+            }
+<span class="nc" id="L464">        }</span>
+
+<span class="nc" id="L466">        return selectedEvent;</span>
+    }
+
+    protected static String getErrorCodeFromErrorEventDefinition(Event event) {
+<span class="nc bnc" id="L470" title="All 2 branches missed.">        for (EventDefinition eventDefinition : event.getEventDefinitions()) {</span>
+<span class="nc bnc" id="L471" title="All 2 branches missed.">            if (eventDefinition instanceof ErrorEventDefinition) {</span>
+<span class="nc" id="L472">                return ((ErrorEventDefinition) eventDefinition).getErrorCode();</span>
+            }
+<span class="nc" id="L474">        }</span>
+
+<span class="nc" id="L476">        return null;</span>
+    }
+
+    protected static String retrieveErrorCode(BpmnModel bpmnModel, String errorCode) {
+<span class="nc" id="L480">        String finalErrorCode = null;</span>
+<span class="nc bnc" id="L481" title="All 4 branches missed.">        if (errorCode != null &amp;&amp; bpmnModel.containsErrorRef(errorCode)) {</span>
+<span class="nc" id="L482">            finalErrorCode = bpmnModel.getErrors().get(errorCode);</span>
+        } else {
+<span class="nc" id="L484">            finalErrorCode = errorCode;</span>
+        }
+<span class="nc" id="L486">        return finalErrorCode;</span>
+    }
+
+    public static &lt;E extends Throwable&gt; void handleException(Throwable exc, ExecutionEntity execution, List&lt;MapExceptionEntry&gt; exceptionMap) throws E {
+<span class="nc" id="L490">        Throwable cause = exc;</span>
+<span class="nc" id="L491">        BpmnError error = null;</span>
+<span class="nc bnc" id="L492" title="All 2 branches missed.">        while (cause != null) {</span>
+<span class="nc bnc" id="L493" title="All 2 branches missed.">            if (cause instanceof BpmnError) {</span>
+<span class="nc" id="L494">                error = (BpmnError) cause;</span>
+<span class="nc" id="L495">                break;</span>
+<span class="nc bnc" id="L496" title="All 2 branches missed.">            } else if (cause instanceof Exception) {</span>
+<span class="nc bnc" id="L497" title="All 2 branches missed.">                if (ErrorPropagation.mapException((Exception) cause, (ExecutionEntity) execution, exceptionMap)) {</span>
+<span class="nc" id="L498">                    return;</span>
+                }
+            }
+<span class="nc" id="L501">            cause = cause.getCause();</span>
+        }
+
+<span class="nc bnc" id="L504" title="All 2 branches missed.">        if (error != null) {</span>
+<span class="nc" id="L505">            ErrorPropagation.propagateError(error, execution);</span>
+        } else {
+<span class="nc" id="L507">            throw (E) exc;</span>
+        }
+<span class="nc" id="L509">    }</span>
+
+    protected static void injectErrorContext(Event event, ExecutionEntity execution, BpmnErrorVariableContainer errorSourceContainer,
+            ExpressionManager expressionManager) {
+
+<span class="nc bnc" id="L514" title="All 2 branches missed.">        for (EventDefinition eventDefinition : event.getEventDefinitions()) {</span>
+<span class="nc bnc" id="L515" title="All 2 branches missed.">            if (!(eventDefinition instanceof ErrorEventDefinition)) {</span>
+<span class="nc" id="L516">                continue;</span>
+            }
+
+<span class="nc" id="L519">            ErrorEventDefinition definition = (ErrorEventDefinition) eventDefinition;</span>
+<span class="nc" id="L520">            IOParameterUtil.processInParameters(event.getInParameters(), errorSourceContainer, execution, expressionManager);</span>
+
+<span class="nc" id="L522">            String variableName = definition.getErrorVariableName();</span>
+
+<span class="nc bnc" id="L524" title="All 4 branches missed.">            if (variableName == null || variableName.isEmpty()) {</span>
+<span class="nc" id="L525">                continue;</span>
+            }
+
+<span class="nc" id="L528">            String errorCode = errorSourceContainer.getErrorCode();</span>
+
+<span class="nc bnc" id="L530" title="All 4 branches missed.">            if (definition.getErrorVariableTransient() != null &amp;&amp; definition.getErrorVariableTransient()) {</span>
+<span class="nc bnc" id="L531" title="All 4 branches missed.">                if (definition.getErrorVariableLocalScope() != null &amp;&amp; definition.getErrorVariableLocalScope()) {</span>
+<span class="nc" id="L532">                    execution.setTransientVariableLocal(variableName, errorCode);</span>
+                } else {
+<span class="nc" id="L534">                    execution.setTransientVariable(variableName, errorCode);</span>
+                }
+            } else {
+<span class="nc bnc" id="L537" title="All 4 branches missed.">                if (definition.getErrorVariableLocalScope() != null &amp;&amp; definition.getErrorVariableLocalScope()) {</span>
+<span class="nc" id="L538">                    execution.setVariableLocal(variableName, errorCode);</span>
+                } else {
+<span class="nc" id="L540">                    execution.setVariable(variableName, errorCode);</span>
+                }
+            }
+<span class="nc" id="L543">        }</span>
+<span class="nc" id="L544">    }</span>
+
+    protected static class BpmnErrorVariableContainer implements VariableContainer {
+
+        private static final String ERROR_CODE_VARIABLE_NAME = &quot;errorCode&quot;;
+        private static final String ERROR_VARIABLE_NAME = &quot;error&quot;;
+        private static final String ERROR_MESSAGE_VARIABLE_NAME = &quot;errorMessage&quot;;
+
+        protected String errorCode;
+        protected Throwable error;
+        protected VariableContainer additionalDataContainer;
+        protected String tenantId;
+
+<span class="nc" id="L557">        protected BpmnErrorVariableContainer(String errorCode, String tenantId) {</span>
+<span class="nc" id="L558">            this.errorCode = errorCode;</span>
+<span class="nc" id="L559">            this.tenantId = tenantId;</span>
+<span class="nc" id="L560">        }</span>
+
+<span class="nc" id="L562">        protected BpmnErrorVariableContainer(BpmnError error, String tenantId) {</span>
+<span class="nc" id="L563">            this.error = error;</span>
+<span class="nc" id="L564">            this.additionalDataContainer = error.getAdditionalDataContainer();</span>
+<span class="nc" id="L565">            this.errorCode = error.getErrorCode();</span>
+<span class="nc" id="L566">            this.tenantId = tenantId;</span>
+<span class="nc" id="L567">        }</span>
+
+<span class="nc" id="L569">        protected BpmnErrorVariableContainer(String errorCode, Throwable error, String tenantId) {</span>
+<span class="nc" id="L570">            this.error = error;</span>
+<span class="nc bnc" id="L571" title="All 2 branches missed.">            if (error instanceof BpmnError) {</span>
+<span class="nc" id="L572">                this.additionalDataContainer = ((BpmnError) error).getAdditionalDataContainer();</span>
+            }
+<span class="nc" id="L574">            this.errorCode = errorCode;</span>
+<span class="nc" id="L575">            this.tenantId = tenantId;</span>
+<span class="nc" id="L576">        }</span>
+
+        protected String getErrorCode() {
+<span class="nc" id="L579">            return errorCode;</span>
+        }
+
+        protected void setErrorCode(String errorCode) {
+<span class="nc" id="L583">            this.errorCode = errorCode;</span>
+<span class="nc" id="L584">        }</span>
+
+        @Override
+        public boolean hasVariable(String variableName) {
+<span class="nc bnc" id="L588" title="All 6 branches missed.">            if (ERROR_CODE_VARIABLE_NAME.equals(variableName) || ERROR_VARIABLE_NAME.equals(variableName) || ERROR_MESSAGE_VARIABLE_NAME.equals(variableName)) {</span>
+<span class="nc" id="L589">                return true;</span>
+<span class="nc bnc" id="L590" title="All 2 branches missed.">            } else if (additionalDataContainer != null) {</span>
+<span class="nc" id="L591">                return additionalDataContainer.hasVariable(variableName);</span>
+            }
+<span class="nc" id="L593">            return false;</span>
+        }
+
+        @Override
+        public Object getVariable(String variableName) {
+<span class="nc bnc" id="L598" title="All 2 branches missed.">            if (ERROR_CODE_VARIABLE_NAME.equals(variableName)) {</span>
+<span class="nc" id="L599">                return errorCode;</span>
+<span class="nc bnc" id="L600" title="All 2 branches missed.">            } else if (ERROR_VARIABLE_NAME.equals(variableName)) {</span>
+<span class="nc" id="L601">                return error;</span>
+<span class="nc bnc" id="L602" title="All 2 branches missed.">            } else if (ERROR_MESSAGE_VARIABLE_NAME.equals(variableName)) {</span>
+<span class="nc bnc" id="L603" title="All 2 branches missed.">                return error != null ? error.getMessage() : null;</span>
+<span class="nc bnc" id="L604" title="All 2 branches missed.">            } else if (additionalDataContainer != null) {</span>
+<span class="nc" id="L605">                return additionalDataContainer.getVariable(variableName);</span>
+            }
+
+<span class="nc" id="L608">            return null;</span>
+        }
+
+        @Override
+        public void setVariable(String variableName, Object variableValue) {
+<span class="nc" id="L613">            throw new UnsupportedOperationException(&quot;Not allowed to set variables in a bpmn error variable container&quot;);</span>
+        }
+
+        @Override
+        public void setTransientVariable(String variableName, Object variableValue) {
+<span class="nc" id="L618">            throw new UnsupportedOperationException(&quot;Not allowed to set variables in a bpmn error variable container&quot;);</span>
+        }
+
+        @Override
+        public String getTenantId() {
+<span class="nc" id="L623">            return tenantId;</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L628">            return new StringJoiner(&quot;, &quot;, getClass().getSimpleName() + &quot;[&quot;, &quot;]&quot;)</span>
+<span class="nc" id="L629">                    .add(&quot;additionalDataContainer=&quot; + additionalDataContainer)</span>
+<span class="nc" id="L630">                    .add(&quot;tenantId='&quot; + tenantId + &quot;'&quot;)</span>
+<span class="nc" id="L631">                    .toString();</span>
+        }
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

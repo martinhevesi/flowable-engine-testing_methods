@@ -1,0 +1,277 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TimerUtil.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.util</a> &gt; <span class="el_source">TimerUtil.java</span></div><h1>TimerUtil.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.impl.util;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.Date;
+import java.util.List;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.bpmn.model.BoundaryEvent;
+import org.flowable.bpmn.model.BpmnModel;
+import org.flowable.bpmn.model.Event;
+import org.flowable.bpmn.model.ExtensionElement;
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.IntermediateCatchEvent;
+import org.flowable.bpmn.model.TimerEventDefinition;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.delegate.Expression;
+import org.flowable.common.engine.api.delegate.event.FlowableEngineEventType;
+import org.flowable.common.engine.api.delegate.event.FlowableEventDispatcher;
+import org.flowable.common.engine.impl.calendar.BusinessCalendar;
+import org.flowable.common.engine.impl.calendar.CycleBusinessCalendar;
+import org.flowable.common.engine.impl.calendar.DueDateBusinessCalendar;
+import org.flowable.common.engine.impl.calendar.DurationBusinessCalendar;
+import org.flowable.common.engine.impl.el.ExpressionManager;
+import org.flowable.common.engine.impl.runtime.Clock;
+import org.flowable.engine.delegate.event.impl.FlowableEventBuilder;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.jobexecutor.TimerEventHandler;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntity;
+import org.flowable.job.service.TimerJobService;
+import org.flowable.job.service.event.impl.FlowableJobEventBuilder;
+import org.flowable.job.service.impl.persistence.entity.JobEntity;
+import org.flowable.job.service.impl.persistence.entity.TimerJobEntity;
+import org.flowable.variable.api.delegate.VariableScope;
+import org.flowable.variable.service.impl.el.NoExecutionVariableScope;
+import org.joda.time.DateTime;
+import org.joda.time.DateTimeZone;
+import org.joda.time.format.DateTimeFormatter;
+import org.joda.time.format.ISODateTimeFormat;
+
+/**
+ * @author Joram Barrez
+ */
+<span class="nc" id="L59">public class TimerUtil {</span>
+
+    /**
+     * The event definition on which the timer is based.
+     * 
+     * Takes in an optional execution, if missing the {@link NoExecutionVariableScope} will be used (eg Timer start event)
+     */
+    public static TimerJobEntity createTimerEntityForTimerEventDefinition(TimerEventDefinition timerEventDefinition, 
+            FlowElement currentFlowElement, boolean isInterruptingTimer,
+            ExecutionEntity executionEntity, String jobHandlerType, String jobHandlerConfig) {
+
+<span class="nc" id="L70">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration();</span>
+
+<span class="nc" id="L72">        String businessCalendarRef = null;</span>
+<span class="nc" id="L73">        Expression expression = null;</span>
+<span class="nc" id="L74">        ExpressionManager expressionManager = processEngineConfiguration.getExpressionManager();</span>
+
+        // ACT-1415: timer-declaration on start-event may contain expressions NOT
+        // evaluating variables but other context, evaluating should happen nevertheless
+<span class="nc" id="L78">        VariableScope scopeForExpression = executionEntity;</span>
+<span class="nc bnc" id="L79" title="All 2 branches missed.">        if (scopeForExpression == null) {</span>
+<span class="nc" id="L80">            scopeForExpression = NoExecutionVariableScope.getSharedInstance();</span>
+        }
+
+<span class="nc bnc" id="L83" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(timerEventDefinition.getTimeDate())) {</span>
+
+<span class="nc" id="L85">            businessCalendarRef = DueDateBusinessCalendar.NAME;</span>
+<span class="nc" id="L86">            expression = expressionManager.createExpression(timerEventDefinition.getTimeDate());</span>
+
+<span class="nc bnc" id="L88" title="All 2 branches missed.">        } else if (StringUtils.isNotEmpty(timerEventDefinition.getTimeCycle())) {</span>
+
+<span class="nc" id="L90">            businessCalendarRef = CycleBusinessCalendar.NAME;</span>
+<span class="nc" id="L91">            expression = expressionManager.createExpression(timerEventDefinition.getTimeCycle());</span>
+
+<span class="nc bnc" id="L93" title="All 2 branches missed.">        } else if (StringUtils.isNotEmpty(timerEventDefinition.getTimeDuration())) {</span>
+
+<span class="nc" id="L95">            businessCalendarRef = DurationBusinessCalendar.NAME;</span>
+<span class="nc" id="L96">            expression = expressionManager.createExpression(timerEventDefinition.getTimeDuration());</span>
+        }
+
+<span class="nc bnc" id="L99" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(timerEventDefinition.getCalendarName())) {</span>
+<span class="nc" id="L100">            businessCalendarRef = timerEventDefinition.getCalendarName();</span>
+<span class="nc" id="L101">            Expression businessCalendarExpression = expressionManager.createExpression(businessCalendarRef);</span>
+<span class="nc" id="L102">            businessCalendarRef = businessCalendarExpression.getValue(scopeForExpression).toString();</span>
+        }
+
+<span class="nc bnc" id="L105" title="All 2 branches missed.">        if (expression == null) {</span>
+<span class="nc" id="L106">            throw new FlowableException(&quot;Timer needs configuration (either timeDate, timeCycle or timeDuration is needed) (&quot; + timerEventDefinition.getId() + &quot;)&quot;);</span>
+        }
+
+<span class="nc" id="L109">        BusinessCalendar businessCalendar = processEngineConfiguration.getBusinessCalendarManager().getBusinessCalendar(businessCalendarRef);</span>
+
+<span class="nc" id="L111">        String dueDateString = null;</span>
+<span class="nc" id="L112">        Date duedate = null;</span>
+
+<span class="nc" id="L114">        Object dueDateValue = expression.getValue(scopeForExpression);</span>
+<span class="nc bnc" id="L115" title="All 2 branches missed.">        if (dueDateValue instanceof String) {</span>
+<span class="nc" id="L116">            dueDateString = (String) dueDateValue;</span>
+
+<span class="nc bnc" id="L118" title="All 2 branches missed.">        } else if (dueDateValue instanceof Date) {</span>
+<span class="nc" id="L119">            duedate = (Date) dueDateValue;</span>
+
+<span class="nc bnc" id="L121" title="All 2 branches missed.">        } else if (dueDateValue instanceof DateTime) {</span>
+            // JodaTime support
+<span class="nc" id="L123">            duedate = ((DateTime) dueDateValue).toDate();</span>
+
+<span class="nc bnc" id="L125" title="All 2 branches missed.">        } else if (dueDateValue instanceof Duration) {</span>
+<span class="nc" id="L126">        	dueDateString = ((Duration) dueDateValue).toString();</span>
+
+<span class="nc bnc" id="L128" title="All 2 branches missed.">        } else if (dueDateValue instanceof Instant) {</span>
+<span class="nc" id="L129">            duedate = Date.from((Instant) dueDateValue);</span>
+            
+<span class="nc bnc" id="L131" title="All 2 branches missed.">        } else if (dueDateValue instanceof LocalDate) {</span>
+<span class="nc" id="L132">            duedate = Date.from(((LocalDate) dueDateValue).atStartOfDay().atZone(ZoneId.systemDefault()).toInstant());</span>
+
+<span class="nc bnc" id="L134" title="All 2 branches missed.">        } else if (dueDateValue instanceof LocalDateTime) {</span>
+<span class="nc" id="L135">            duedate = Date.from(((LocalDateTime) dueDateValue).atZone(ZoneId.systemDefault()).toInstant());</span>
+
+<span class="nc bnc" id="L137" title="All 2 branches missed.">        } else if (dueDateValue != null) {</span>
+<span class="nc" id="L138">            throw new FlowableException(&quot;Timer '&quot; + executionEntity.getActivityId()</span>
+                    + &quot;' in &quot; + executionEntity + &quot; was not configured with a valid duration/time, either hand in a java.util.Date, java.time.LocalDate, java.time.LocalDateTime or a java.time.Instant or a org.joda.time.DateTime or a String in format 'yyyy-MM-dd'T'hh:mm:ss'&quot;);
+        }
+
+<span class="nc bnc" id="L142" title="All 4 branches missed.">        if (duedate == null &amp;&amp; dueDateString != null) {</span>
+<span class="nc" id="L143">            duedate = businessCalendar.resolveDuedate(dueDateString);</span>
+        }
+
+<span class="nc" id="L146">        TimerJobEntity timer = null;</span>
+<span class="nc bnc" id="L147" title="All 2 branches missed.">        if (duedate != null) {</span>
+            
+<span class="nc" id="L149">            String jobCategoryElementText = null;</span>
+<span class="nc" id="L150">            List&lt;ExtensionElement&gt; jobCategoryElements = currentFlowElement.getExtensionElements().get(&quot;jobCategory&quot;);</span>
+<span class="nc bnc" id="L151" title="All 4 branches missed.">            if (jobCategoryElements != null &amp;&amp; jobCategoryElements.size() &gt; 0) {</span>
+<span class="nc" id="L152">                ExtensionElement jobCategoryElement = jobCategoryElements.get(0);</span>
+<span class="nc bnc" id="L153" title="All 2 branches missed.">                if (StringUtils.isNotEmpty(jobCategoryElement.getElementText())) {</span>
+<span class="nc" id="L154">                    jobCategoryElementText = jobCategoryElement.getElementText();</span>
+                }
+            }
+            
+<span class="nc" id="L158">            timer = processEngineConfiguration.getJobServiceConfiguration().getTimerJobService().createTimerJob();</span>
+<span class="nc" id="L159">            timer.setJobType(JobEntity.JOB_TYPE_TIMER);</span>
+<span class="nc" id="L160">            timer.setRevision(1);</span>
+<span class="nc" id="L161">            timer.setJobHandlerType(jobHandlerType);</span>
+<span class="nc" id="L162">            timer.setJobHandlerConfiguration(jobHandlerConfig);</span>
+<span class="nc" id="L163">            timer.setExclusive(true);</span>
+<span class="nc" id="L164">            timer.setRetries(processEngineConfiguration.getAsyncExecutorNumberOfRetries());</span>
+<span class="nc" id="L165">            timer.setDuedate(duedate);</span>
+<span class="nc bnc" id="L166" title="All 2 branches missed.">            if (executionEntity != null) {</span>
+<span class="nc" id="L167">                timer.setExecutionId(executionEntity.getId());</span>
+<span class="nc" id="L168">                timer.setProcessDefinitionId(executionEntity.getProcessDefinitionId());</span>
+<span class="nc" id="L169">                timer.setProcessInstanceId(executionEntity.getProcessInstanceId());</span>
+
+                // Inherit tenant identifier (if applicable)
+<span class="nc bnc" id="L172" title="All 2 branches missed.">                if (executionEntity.getTenantId() != null) {</span>
+<span class="nc" id="L173">                    timer.setTenantId(executionEntity.getTenantId());</span>
+                }
+                
+<span class="nc bnc" id="L176" title="All 2 branches missed.">                if (jobCategoryElementText != null) {</span>
+<span class="nc" id="L177">                    Expression categoryExpression = processEngineConfiguration.getExpressionManager().createExpression(jobCategoryElementText);</span>
+<span class="nc" id="L178">                    Object categoryValue = categoryExpression.getValue(executionEntity);</span>
+<span class="nc bnc" id="L179" title="All 2 branches missed.">                    if (categoryValue != null) {</span>
+<span class="nc" id="L180">                        timer.setCategory(categoryValue.toString());</span>
+                    }
+<span class="nc" id="L182">                }</span>
+            
+<span class="nc bnc" id="L184" title="All 2 branches missed.">            } else if (jobCategoryElementText != null) {</span>
+<span class="nc" id="L185">                timer.setCategory(jobCategoryElementText);</span>
+            }
+            
+<span class="nc" id="L188">        } else {</span>
+<span class="nc" id="L189">            StringBuilder sb = new StringBuilder(&quot;Due date could not be determined for timer job &quot;).append(dueDateString);</span>
+<span class="nc bnc" id="L190" title="All 2 branches missed.">            if (executionEntity != null) {</span>
+<span class="nc" id="L191">                sb.append(&quot; for &quot;).append(executionEntity);</span>
+            }
+<span class="nc" id="L193">            throw new FlowableException(sb.toString());</span>
+        }
+
+<span class="nc bnc" id="L196" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(timerEventDefinition.getTimeCycle())) {</span>
+            // See ACT-1427: A boundary timer with a cancelActivity='true', doesn't need to repeat itself
+<span class="nc bnc" id="L198" title="All 2 branches missed.">            boolean repeat = !isInterruptingTimer;</span>
+
+            // ACT-1951: intermediate catching timer events shouldn't repeat according to spec
+<span class="nc bnc" id="L201" title="All 2 branches missed.">            if (executionEntity != null) {</span>
+<span class="nc" id="L202">                FlowElement currentElement = executionEntity.getCurrentFlowElement();</span>
+<span class="nc bnc" id="L203" title="All 2 branches missed.">                if (currentElement instanceof IntermediateCatchEvent) {</span>
+<span class="nc" id="L204">                    repeat = false;</span>
+                }
+            }
+
+<span class="nc bnc" id="L208" title="All 2 branches missed.">            if (repeat) {</span>
+<span class="nc" id="L209">                String prepared = prepareRepeat(dueDateString);</span>
+<span class="nc" id="L210">                timer.setRepeat(prepared);</span>
+            }
+        }
+
+<span class="nc bnc" id="L214" title="All 4 branches missed.">        if (timer != null &amp;&amp; executionEntity != null) {</span>
+<span class="nc" id="L215">            timer.setExecutionId(executionEntity.getId());</span>
+<span class="nc" id="L216">            timer.setProcessDefinitionId(executionEntity.getProcessDefinitionId());</span>
+<span class="nc" id="L217">            timer.setProcessInstanceId(executionEntity.getProcessInstanceId());</span>
+<span class="nc" id="L218">            timer.setElementId(executionEntity.getCurrentFlowElement().getId());</span>
+<span class="nc" id="L219">            timer.setElementName(executionEntity.getCurrentFlowElement().getName());</span>
+            
+            // Inherit tenant identifier (if applicable)
+<span class="nc bnc" id="L222" title="All 2 branches missed.">            if (executionEntity.getTenantId() != null) {</span>
+<span class="nc" id="L223">                timer.setTenantId(executionEntity.getTenantId());</span>
+            }
+        }
+
+<span class="nc" id="L227">        return timer;</span>
+    }
+    
+    public static TimerJobEntity rescheduleTimerJob(String timerJobId, TimerEventDefinition timerEventDefinition) {
+<span class="nc" id="L231">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration();</span>
+<span class="nc" id="L232">        TimerJobService timerJobService = processEngineConfiguration.getJobServiceConfiguration().getTimerJobService();</span>
+<span class="nc" id="L233">        TimerJobEntity timerJob = timerJobService.findTimerJobById(timerJobId);</span>
+<span class="nc bnc" id="L234" title="All 2 branches missed.">        if (timerJob != null) {</span>
+<span class="nc" id="L235">            BpmnModel bpmnModel = ProcessDefinitionUtil.getBpmnModel(timerJob.getProcessDefinitionId());</span>
+<span class="nc" id="L236">            Event eventElement = (Event) bpmnModel.getFlowElement(TimerEventHandler.getActivityIdFromConfiguration(timerJob.getJobHandlerConfiguration()));</span>
+<span class="nc" id="L237">            boolean isInterruptingTimer = false;</span>
+<span class="nc bnc" id="L238" title="All 2 branches missed.">            if (eventElement instanceof BoundaryEvent) {</span>
+<span class="nc" id="L239">                isInterruptingTimer = ((BoundaryEvent) eventElement).isCancelActivity();</span>
+            }
+
+<span class="nc" id="L242">            ExecutionEntity execution = processEngineConfiguration.getExecutionEntityManager().findById(timerJob.getExecutionId());</span>
+<span class="nc" id="L243">            TimerJobEntity rescheduledTimerJob = TimerUtil.createTimerEntityForTimerEventDefinition(timerEventDefinition, </span>
+                    eventElement, isInterruptingTimer, execution,
+<span class="nc" id="L245">                    timerJob.getJobHandlerType(), timerJob.getJobHandlerConfiguration());</span>
+
+<span class="nc" id="L247">            timerJobService.deleteTimerJob(timerJob);</span>
+<span class="nc" id="L248">            timerJobService.insertTimerJob(rescheduledTimerJob);</span>
+
+<span class="nc" id="L250">            FlowableEventDispatcher eventDispatcher = processEngineConfiguration.getEventDispatcher();</span>
+<span class="nc bnc" id="L251" title="All 4 branches missed.">            if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L252">                eventDispatcher.dispatchEvent(FlowableEventBuilder.createJobRescheduledEvent(FlowableEngineEventType.JOB_RESCHEDULED, </span>
+<span class="nc" id="L253">                        rescheduledTimerJob, timerJob.getId()), processEngineConfiguration.getEngineCfgKey());</span>
+                
+             // job rescheduled event should occur before new timer scheduled event
+<span class="nc" id="L256">                eventDispatcher.dispatchEvent(FlowableJobEventBuilder.createEntityEvent(FlowableEngineEventType.TIMER_SCHEDULED, rescheduledTimerJob),</span>
+<span class="nc" id="L257">                                processEngineConfiguration.getEngineCfgKey());</span>
+            }
+
+<span class="nc" id="L260">            return rescheduledTimerJob;</span>
+        }
+<span class="nc" id="L262">        return null;</span>
+    }
+
+    public static String prepareRepeat(String dueDate) {
+<span class="nc bnc" id="L266" title="All 4 branches missed.">        if (dueDate.startsWith(&quot;R&quot;) &amp;&amp; dueDate.split(&quot;/&quot;).length == 2) {</span>
+<span class="nc" id="L267">            DateTimeFormatter fmt = ISODateTimeFormat.dateTime();</span>
+<span class="nc" id="L268">            Clock clock = CommandContextUtil.getProcessEngineConfiguration().getClock();</span>
+<span class="nc" id="L269">            Date now = clock.getCurrentTime();</span>
+<span class="nc" id="L270">            return dueDate.replace(&quot;/&quot;, &quot;/&quot; + fmt.print(new DateTime(now,</span>
+<span class="nc" id="L271">                    DateTimeZone.forTimeZone(clock.getCurrentTimeZone()))) + &quot;/&quot;);</span>
+        }
+<span class="nc" id="L273">        return dueDate;</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

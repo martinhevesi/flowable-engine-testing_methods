@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ProcessDefinitionCacheTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.cache</a> &gt; <span class="el_source">ProcessDefinitionCacheTest.java</span></div><h1>ProcessDefinitionCacheTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.flowable.engine.test.cache;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.util.List;
+
+import org.flowable.engine.ProcessEngine;
+import org.flowable.engine.ProcessEngineConfiguration;
+import org.flowable.engine.ProcessEngines;
+import org.flowable.engine.RepositoryService;
+import org.flowable.engine.RuntimeService;
+import org.flowable.engine.TaskService;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.cfg.StandaloneInMemProcessEngineConfiguration;
+import org.flowable.engine.impl.cfg.StandaloneProcessEngineConfiguration;
+import org.flowable.engine.impl.test.AbstractTestCase;
+import org.flowable.engine.repository.ProcessDefinition;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.junit.jupiter.api.Test;
+
+/**
+ * Test cases for testing functionality when the process engine is rebooted.
+ * 
+ * @author Joram Barrez
+ */
+<span class="nc" id="L39">public class ProcessDefinitionCacheTest extends AbstractTestCase {</span>
+
+    // Test for a bug: when the process engine is rebooted the cache is cleaned and the deployed process definition is
+    // removed from the process cache. This led to problems because the id wasn't fetched from the DB after a redeploy.
+    @Test
+    public void testStartProcessInstanceByIdAfterReboot() {
+
+        // In case this test is run in a test suite, previous engines might have been initialized and cached. First we close the
+        // existing process engines to make sure that the db is clean and that there are no existing process engines involved.
+<span class="nc" id="L48">        ProcessEngines.destroy();</span>
+
+        // Creating the DB schema (without building a process engine)
+<span class="nc" id="L51">        ProcessEngineConfigurationImpl processEngineConfiguration = new StandaloneInMemProcessEngineConfiguration();</span>
+<span class="nc" id="L52">        processEngineConfiguration.setEngineName(&quot;reboot-test-schema&quot;);</span>
+<span class="nc" id="L53">        processEngineConfiguration.setJdbcUrl(&quot;jdbc:h2:mem:activiti-reboot-test;DB_CLOSE_DELAY=1000&quot;);</span>
+<span class="nc" id="L54">        ProcessEngine schemaProcessEngine = processEngineConfiguration.buildProcessEngine();</span>
+
+        // Create process engine and deploy test process
+<span class="nc" id="L57">        ProcessEngine processEngine = new StandaloneProcessEngineConfiguration().setEngineName(&quot;reboot-test&quot;).setDatabaseSchemaUpdate(ProcessEngineConfiguration.DB_SCHEMA_UPDATE_FALSE)</span>
+<span class="nc" id="L58">                .setJdbcUrl(&quot;jdbc:h2:mem:activiti-reboot-test;DB_CLOSE_DELAY=1000&quot;).setAsyncExecutorActivate(false).buildProcessEngine();</span>
+
+<span class="nc" id="L60">        processEngine.getRepositoryService().createDeployment().addClasspathResource(&quot;org/flowable/engine/test/cache/originalProcess.bpmn20.xml&quot;).deploy();</span>
+
+        // verify existence of process definition
+<span class="nc" id="L63">        List&lt;ProcessDefinition&gt; processDefinitions = processEngine.getRepositoryService().createProcessDefinitionQuery().list();</span>
+
+<span class="nc" id="L65">        assertThat(processDefinitions).hasSize(1);</span>
+
+        // Start a new Process instance
+<span class="nc" id="L68">        ProcessInstance processInstance = processEngine.getRuntimeService().startProcessInstanceById(processDefinitions.get(0).getId());</span>
+<span class="nc" id="L69">        String processInstanceId = processInstance.getId();</span>
+<span class="nc" id="L70">        assertThat(processInstance).isNotNull();</span>
+
+        // Close the process engine
+<span class="nc" id="L73">        processEngine.close();</span>
+<span class="nc" id="L74">        assertThat(processEngine.getRuntimeService()).isNotNull();</span>
+
+        // Reboot the process engine
+<span class="nc" id="L77">        processEngine = new StandaloneProcessEngineConfiguration().setEngineName(&quot;reboot-test&quot;).setDatabaseSchemaUpdate(org.flowable.engine.ProcessEngineConfiguration.DB_SCHEMA_UPDATE_FALSE)</span>
+<span class="nc" id="L78">                .setJdbcUrl(&quot;jdbc:h2:mem:activiti-reboot-test;DB_CLOSE_DELAY=1000&quot;).setAsyncExecutorActivate(false).buildProcessEngine();</span>
+
+        // Check if the existing process instance is still alive
+<span class="nc" id="L81">        processInstance = processEngine.getRuntimeService().createProcessInstanceQuery().processInstanceId(processInstanceId).singleResult();</span>
+
+<span class="nc" id="L83">        assertThat(processInstance).isNotNull();</span>
+
+        // Complete the task. That will end the process instance
+<span class="nc" id="L86">        TaskService taskService = processEngine.getTaskService();</span>
+<span class="nc" id="L87">        org.flowable.task.api.Task task = taskService.createTaskQuery().list().get(0);</span>
+<span class="nc" id="L88">        taskService.complete(task.getId());</span>
+
+        // Check if the process instance has really ended. This means that the
+        // process definition has re-loaded into the process definition cache
+<span class="nc" id="L92">        processInstance = processEngine.getRuntimeService().createProcessInstanceQuery().processInstanceId(processInstanceId).singleResult();</span>
+
+<span class="nc" id="L94">        assertThat(processInstance).isNull();</span>
+
+        // Extra check to see if a new process instance can be started as well
+<span class="nc" id="L97">        processInstance = processEngine.getRuntimeService().startProcessInstanceById(processDefinitions.get(0).getId());</span>
+<span class="nc" id="L98">        assertThat(processInstance).isNotNull();</span>
+
+        // close the process engine
+<span class="nc" id="L101">        processEngine.close();</span>
+
+        // Cleanup schema
+<span class="nc" id="L104">        schemaProcessEngine.close();</span>
+<span class="nc" id="L105">    }</span>
+
+    @Test
+    public void testDeployRevisedProcessAfterDeleteOnOtherProcessEngine() {
+
+        // Setup both process engines
+<span class="nc" id="L111">        ProcessEngine processEngine1 = new StandaloneProcessEngineConfiguration().setEngineName(&quot;reboot-test-schema&quot;)</span>
+<span class="nc" id="L112">                .setDatabaseSchemaUpdate(org.flowable.engine.ProcessEngineConfiguration.DB_SCHEMA_UPDATE_TRUE).setJdbcUrl(&quot;jdbc:h2:mem:activiti-process-cache-test;DB_CLOSE_DELAY=1000&quot;)</span>
+<span class="nc" id="L113">                .setAsyncExecutorActivate(false).buildProcessEngine();</span>
+<span class="nc" id="L114">        RepositoryService repositoryService1 = processEngine1.getRepositoryService();</span>
+
+<span class="nc" id="L116">        ProcessEngine processEngine2 = new StandaloneProcessEngineConfiguration().setEngineName(&quot;reboot-test&quot;)</span>
+<span class="nc" id="L117">                .setDatabaseSchemaUpdate(org.flowable.engine.ProcessEngineConfiguration.DB_SCHEMA_UPDATE_FALSE).setJdbcUrl(&quot;jdbc:h2:mem:activiti-process-cache-test;DB_CLOSE_DELAY=1000&quot;)</span>
+<span class="nc" id="L118">                .setAsyncExecutorActivate(false).buildProcessEngine();</span>
+<span class="nc" id="L119">        RepositoryService repositoryService2 = processEngine2.getRepositoryService();</span>
+<span class="nc" id="L120">        RuntimeService runtimeService2 = processEngine2.getRuntimeService();</span>
+<span class="nc" id="L121">        TaskService taskService2 = processEngine2.getTaskService();</span>
+
+        // Deploy first version of process: start-&gt;originalTask-&gt;end on first
+        // process engine
+<span class="nc" id="L125">        String deploymentId = repositoryService1.createDeployment().addClasspathResource(&quot;org/flowable/engine/test/cache/originalProcess.bpmn20.xml&quot;).deploy().getId();</span>
+
+        // Start process instance on second engine
+<span class="nc" id="L128">        String processDefinitionId = repositoryService2.createProcessDefinitionQuery().singleResult().getId();</span>
+<span class="nc" id="L129">        runtimeService2.startProcessInstanceById(processDefinitionId);</span>
+<span class="nc" id="L130">        org.flowable.task.api.Task task = taskService2.createTaskQuery().singleResult();</span>
+<span class="nc" id="L131">        assertThat(task.getName()).isEqualTo(&quot;original task&quot;);</span>
+
+        // Delete the deployment on second process engine
+<span class="nc" id="L134">        repositoryService2.deleteDeployment(deploymentId, true);</span>
+<span class="nc" id="L135">        assertThat(repositoryService2.createDeploymentQuery().count()).isZero();</span>
+<span class="nc" id="L136">        assertThat(runtimeService2.createProcessInstanceQuery().count()).isZero();</span>
+
+        // deploy a revised version of the process: start-&gt;revisedTask-&gt;end on first process engine
+        //
+        // Before the bugfix, this would set the cache on the first process
+        // engine, but the second process engine still has the original process
+        // definition in his cache. Since there is a deployment delete in between, the new generated
+        // process definition id is the same as in the original deployment, making the second process engine using
+        // the old cached process definition.
+<span class="nc" id="L145">        deploymentId = repositoryService1.createDeployment().addClasspathResource(&quot;org/flowable/engine/test/cache/revisedProcess.bpmn20.xml&quot;).deploy().getId();</span>
+
+        // Start process instance on second process engine -&gt; must use revised process definition
+<span class="nc" id="L148">        repositoryService2.createProcessDefinitionQuery().singleResult().getId();</span>
+<span class="nc" id="L149">        runtimeService2.startProcessInstanceByKey(&quot;oneTaskProcess&quot;);</span>
+<span class="nc" id="L150">        task = taskService2.createTaskQuery().singleResult();</span>
+<span class="nc" id="L151">        assertThat(task.getName()).isEqualTo(&quot;revised task&quot;);</span>
+
+        // cleanup
+<span class="nc" id="L154">        repositoryService1.deleteDeployment(deploymentId, true);</span>
+<span class="nc" id="L155">        processEngine1.close();</span>
+<span class="nc" id="L156">        processEngine2.close();</span>
+<span class="nc" id="L157">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

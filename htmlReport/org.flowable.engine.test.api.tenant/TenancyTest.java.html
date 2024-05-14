@@ -1,0 +1,1093 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TenancyTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.api.tenant</a> &gt; <span class="el_source">TenancyTest.java</span></div><h1>TenancyTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.test.api.tenant;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.ibatis.exceptions.PersistenceException;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.impl.history.HistoryLevel;
+import org.flowable.common.engine.impl.util.CollectionUtil;
+import org.flowable.engine.ProcessEngineConfiguration;
+import org.flowable.engine.history.HistoricActivityInstance;
+import org.flowable.engine.impl.test.HistoryTestHelper;
+import org.flowable.engine.impl.test.PluggableFlowableTestCase;
+import org.flowable.engine.repository.Deployment;
+import org.flowable.engine.repository.MergeMode;
+import org.flowable.engine.repository.Model;
+import org.flowable.engine.repository.ProcessDefinition;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.job.api.Job;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+/**
+ * A test case for the various implications of the tenancy support (tenant id column to entities + query support)
+ *
+ * @author jbarrez
+ */
+<span class="nc" id="L44">public class TenancyTest extends PluggableFlowableTestCase {</span>
+
+    private static final String TEST_TENANT_ID = &quot;myTenantId&quot;;
+
+<span class="nc" id="L48">    private List&lt;String&gt; autoCleanedUpDeploymentIds = new ArrayList&lt;&gt;();</span>
+
+    @BeforeEach
+    protected void setUp() throws Exception {
+<span class="nc" id="L52">        this.autoCleanedUpDeploymentIds.clear();</span>
+<span class="nc" id="L53">    }</span>
+
+    @AfterEach
+    protected void tearDown() throws Exception {
+
+<span class="nc bnc" id="L58" title="All 2 branches missed.">        if (!autoCleanedUpDeploymentIds.isEmpty()) {</span>
+<span class="nc bnc" id="L59" title="All 2 branches missed.">            for (String deploymentId : autoCleanedUpDeploymentIds) {</span>
+<span class="nc" id="L60">                deleteDeployment(deploymentId);</span>
+<span class="nc" id="L61">            }</span>
+        }
+<span class="nc" id="L63">    }</span>
+
+    /**
+     * Deploys the one task process with the test tenant id.
+     *
+     * @return The process definition id of the deployed process definition.
+     */
+    private String deployTestProcessWithTestTenant() {
+<span class="nc" id="L71">        return deployTestProcessWithTestTenant(TEST_TENANT_ID);</span>
+    }
+
+    private String deployTestProcessWithTestTenant(String tenantId) {
+<span class="nc" id="L75">        String id = repositoryService.createDeployment().addBpmnModel(&quot;testProcess.bpmn20.xml&quot;, createOneTaskTestProcess()).tenantId(tenantId).deploy().getId();</span>
+
+<span class="nc" id="L77">        autoCleanedUpDeploymentIds.add(id);</span>
+
+<span class="nc" id="L79">        return repositoryService.createProcessDefinitionQuery().deploymentId(id).singleResult().getId();</span>
+    }
+
+    private String deployTestProcessWithTwoTasksWithTestTenant() {
+<span class="nc" id="L83">        String id = repositoryService.createDeployment().addBpmnModel(&quot;testProcess.bpmn20.xml&quot;, createTwoTasksTestProcess()).tenantId(TEST_TENANT_ID).deploy()</span>
+<span class="nc" id="L84">                .getId();</span>
+
+<span class="nc" id="L86">        autoCleanedUpDeploymentIds.add(id);</span>
+
+<span class="nc" id="L88">        return repositoryService.createProcessDefinitionQuery().deploymentId(id).singleResult().getId();</span>
+    }
+
+    private String deployTestProcessWithTwoTasksNoTenant() {
+<span class="nc" id="L92">        String id = repositoryService.createDeployment().addBpmnModel(&quot;testProcess.bpmn20.xml&quot;, createTwoTasksTestProcess()).deploy().getId();</span>
+
+<span class="nc" id="L94">        autoCleanedUpDeploymentIds.add(id);</span>
+
+<span class="nc" id="L96">        return repositoryService.createProcessDefinitionQuery().deploymentId(id).singleResult().getId();</span>
+    }
+
+    @Test
+    public void testDeploymentTenancy() {
+
+<span class="nc" id="L102">        deployTestProcessWithTestTenant();</span>
+
+<span class="nc" id="L104">        assertThat(repositoryService.createDeploymentQuery().singleResult().getTenantId()).isEqualTo(TEST_TENANT_ID);</span>
+<span class="nc" id="L105">        assertThat(repositoryService.createDeploymentQuery().deploymentTenantId(TEST_TENANT_ID).list()).hasSize(1);</span>
+<span class="nc" id="L106">        assertThat(repositoryService.createDeploymentQuery().deploymentId(autoCleanedUpDeploymentIds.get(0)).deploymentTenantId(TEST_TENANT_ID).list())</span>
+<span class="nc" id="L107">                .hasSize(1);</span>
+<span class="nc" id="L108">        assertThat(repositoryService.createDeploymentQuery().deploymentTenantIdLike(&quot;my%&quot;).list()).hasSize(1);</span>
+<span class="nc" id="L109">        assertThat(repositoryService.createDeploymentQuery().deploymentTenantIdLike(&quot;%TenantId&quot;).list()).hasSize(1);</span>
+<span class="nc" id="L110">        assertThat(repositoryService.createDeploymentQuery().deploymentTenantIdLike(&quot;m%Ten%&quot;).list()).hasSize(1);</span>
+<span class="nc" id="L111">        assertThat(repositoryService.createDeploymentQuery().deploymentTenantIdLike(&quot;noexisting%&quot;).list()).isEmpty();</span>
+<span class="nc" id="L112">        assertThat(repositoryService.createDeploymentQuery().deploymentWithoutTenantId().list()).isEmpty();</span>
+<span class="nc" id="L113">    }</span>
+
+    @Test
+    public void testProcessDefinitionTenancy() {
+
+        // Deploy a process with tenant and verify
+
+<span class="nc" id="L120">        String processDefinitionIdWithTenant = deployTestProcessWithTestTenant();</span>
+<span class="nc" id="L121">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionId(processDefinitionIdWithTenant).singleResult().getTenantId())</span>
+<span class="nc" id="L122">                .isEqualTo(TEST_TENANT_ID);</span>
+<span class="nc" id="L123">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionTenantId(TEST_TENANT_ID).list()).hasSize(1);</span>
+<span class="nc" id="L124">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionTenantIdLike(&quot;m%&quot;).list()).hasSize(1);</span>
+<span class="nc" id="L125">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionTenantIdLike(&quot;somethingElse%&quot;).list()).isEmpty();</span>
+<span class="nc" id="L126">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionWithoutTenantId().list()).isEmpty();</span>
+
+        // Deploy another process, without tenant
+<span class="nc" id="L129">        String processDefinitionIdWithoutTenant = deployOneTaskTestProcess();</span>
+<span class="nc" id="L130">        assertThat(repositoryService.createProcessDefinitionQuery().list()).hasSize(2);</span>
+<span class="nc" id="L131">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionTenantId(TEST_TENANT_ID).list()).hasSize(1);</span>
+<span class="nc" id="L132">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionTenantIdLike(&quot;m%&quot;).list()).hasSize(1);</span>
+<span class="nc" id="L133">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionTenantIdLike(&quot;somethingElse%&quot;).list()).isEmpty();</span>
+<span class="nc" id="L134">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionWithoutTenantId().list()).hasSize(1);</span>
+
+        // Deploy another process with the same tenant
+<span class="nc" id="L137">        String processDefinitionIdWithTenant2 = deployTestProcessWithTestTenant();</span>
+<span class="nc" id="L138">        assertThat(repositoryService.createProcessDefinitionQuery().list()).hasSize(3);</span>
+<span class="nc" id="L139">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionTenantId(TEST_TENANT_ID).list()).hasSize(2);</span>
+<span class="nc" id="L140">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionTenantIdLike(&quot;m%&quot;).list()).hasSize(2);</span>
+<span class="nc" id="L141">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionTenantIdLike(&quot;somethingElse%&quot;).list()).isEmpty();</span>
+<span class="nc" id="L142">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionWithoutTenantId().list()).hasSize(1);</span>
+
+        // Extra check: we deployed the one task process twice, but once with
+        // tenant and once without. The latest query should show this.
+<span class="nc" id="L146">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionKey(&quot;oneTaskProcess&quot;).processDefinitionTenantId(TEST_TENANT_ID)</span>
+<span class="nc" id="L147">                .latestVersion()</span>
+<span class="nc" id="L148">                .singleResult().getId()).isEqualTo(processDefinitionIdWithTenant2);</span>
+<span class="nc" id="L149">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionKey(&quot;oneTaskProcess&quot;).processDefinitionTenantId(&quot;Not a tenant&quot;)</span>
+<span class="nc" id="L150">                .latestVersion().count()).isZero();</span>
+<span class="nc" id="L151">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionKey(&quot;oneTaskProcess&quot;).processDefinitionWithoutTenantId().latestVersion()</span>
+<span class="nc" id="L152">                .singleResult().getId()).isEqualTo(processDefinitionIdWithoutTenant);</span>
+
+<span class="nc" id="L154">    }</span>
+
+    @Test
+    public void testProcessInstanceTenancy() {
+
+        // Start a number of process instances with tenant
+<span class="nc" id="L160">        String processDefinitionId = deployTestProcessWithTestTenant();</span>
+<span class="nc" id="L161">        int nrOfProcessInstancesWithTenant = 6;</span>
+<span class="nc bnc" id="L162" title="All 2 branches missed.">        for (int i = 0; i &lt; nrOfProcessInstancesWithTenant; i++) {</span>
+<span class="nc" id="L163">            runtimeService.startProcessInstanceById(processDefinitionId);</span>
+        }
+
+        // Start a number of process instance without tenantid
+<span class="nc" id="L167">        String processDefinitionIdNoTenant = deployOneTaskTestProcess();</span>
+<span class="nc" id="L168">        int nrOfProcessInstancesNoTenant = 8;</span>
+<span class="nc bnc" id="L169" title="All 2 branches missed.">        for (int i = 0; i &lt; nrOfProcessInstancesNoTenant; i++) {</span>
+<span class="nc" id="L170">            runtimeService.startProcessInstanceById(processDefinitionIdNoTenant);</span>
+        }
+
+        // Check the query results
+<span class="nc" id="L174">        assertThat(runtimeService.createProcessInstanceQuery().processDefinitionId(processDefinitionId).list().get(0).getTenantId()).isEqualTo(TEST_TENANT_ID);</span>
+<span class="nc" id="L175">        assertThat(runtimeService.createProcessInstanceQuery().list()).hasSize(nrOfProcessInstancesNoTenant + nrOfProcessInstancesWithTenant);</span>
+<span class="nc" id="L176">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceWithoutTenantId().list()).hasSize(nrOfProcessInstancesNoTenant);</span>
+<span class="nc" id="L177">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceTenantId(TEST_TENANT_ID).list()).hasSize(nrOfProcessInstancesWithTenant);</span>
+<span class="nc" id="L178">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceTenantIdLike(&quot;%enan%&quot;).list()).hasSize(nrOfProcessInstancesWithTenant);</span>
+
+<span class="nc" id="L180">    }</span>
+
+    @Test
+    public void testExecutionTenancy() {
+
+        // Start a number of process instances with tenant
+<span class="nc" id="L186">        String processDefinitionId = deployTestProcessWithTwoTasksWithTestTenant();</span>
+<span class="nc" id="L187">        int nrOfProcessInstancesWithTenant = 4;</span>
+<span class="nc bnc" id="L188" title="All 2 branches missed.">        for (int i = 0; i &lt; nrOfProcessInstancesWithTenant; i++) {</span>
+<span class="nc" id="L189">            runtimeService.startProcessInstanceById(processDefinitionId);</span>
+        }
+
+        // Start a number of process instance without tenantid
+<span class="nc" id="L193">        String processDefinitionIdNoTenant = deployTwoTasksTestProcess();</span>
+<span class="nc" id="L194">        int nrOfProcessInstancesNoTenant = 2;</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">        for (int i = 0; i &lt; nrOfProcessInstancesNoTenant; i++) {</span>
+<span class="nc" id="L196">            runtimeService.startProcessInstanceById(processDefinitionIdNoTenant);</span>
+        }
+
+        // Check the query results:
+        // note: 3 executions per process instance due to parallelism!
+<span class="nc" id="L201">        assertThat(runtimeService.createExecutionQuery().processDefinitionId(processDefinitionId).list().get(0).getTenantId()).isEqualTo(TEST_TENANT_ID);</span>
+<span class="nc" id="L202">        assertThat(runtimeService.createExecutionQuery().processDefinitionId(processDefinitionIdNoTenant).list().get(0).getTenantId()).isBlank();</span>
+<span class="nc" id="L203">        assertThat(runtimeService.createExecutionQuery().list()).hasSize(3 * (nrOfProcessInstancesNoTenant + nrOfProcessInstancesWithTenant));</span>
+<span class="nc" id="L204">        assertThat(runtimeService.createExecutionQuery().executionWithoutTenantId().list()).hasSize(3 * nrOfProcessInstancesNoTenant);</span>
+<span class="nc" id="L205">        assertThat(runtimeService.createExecutionQuery().executionTenantId(TEST_TENANT_ID).list()).hasSize(3 * nrOfProcessInstancesWithTenant);</span>
+<span class="nc" id="L206">        assertThat(runtimeService.createExecutionQuery().executionTenantIdLike(&quot;%en%&quot;).list()).hasSize(3 * nrOfProcessInstancesWithTenant);</span>
+
+        // Check the process instance query results, just to be sure
+<span class="nc" id="L209">        assertThat(runtimeService.createProcessInstanceQuery().processDefinitionId(processDefinitionId).list().get(0).getTenantId()).isEqualTo(TEST_TENANT_ID);</span>
+<span class="nc" id="L210">        assertThat(runtimeService.createProcessInstanceQuery().list()).hasSize(nrOfProcessInstancesNoTenant + nrOfProcessInstancesWithTenant);</span>
+<span class="nc" id="L211">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceWithoutTenantId().list()).hasSize(nrOfProcessInstancesNoTenant);</span>
+<span class="nc" id="L212">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceTenantId(TEST_TENANT_ID).list()).hasSize(nrOfProcessInstancesWithTenant);</span>
+<span class="nc" id="L213">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceTenantIdLike(&quot;%en%&quot;).list()).hasSize(nrOfProcessInstancesWithTenant);</span>
+<span class="nc" id="L214">    }</span>
+
+    @Test
+    public void testTaskTenancy() {
+
+        // Generate 10 tasks with tenant
+<span class="nc" id="L220">        String processDefinitionIdWithTenant = deployTestProcessWithTwoTasksWithTestTenant();</span>
+<span class="nc" id="L221">        int nrOfProcessInstancesWithTenant = 5;</span>
+<span class="nc bnc" id="L222" title="All 2 branches missed.">        for (int i = 0; i &lt; nrOfProcessInstancesWithTenant; i++) {</span>
+<span class="nc" id="L223">            runtimeService.startProcessInstanceById(processDefinitionIdWithTenant);</span>
+        }
+
+        // Generate 4 tasks without tenant
+<span class="nc" id="L227">        String processDefinitionIdNoTenant = deployTwoTasksTestProcess();</span>
+<span class="nc" id="L228">        int nrOfProcessInstancesNoTenant = 2;</span>
+<span class="nc bnc" id="L229" title="All 2 branches missed.">        for (int i = 0; i &lt; nrOfProcessInstancesNoTenant; i++) {</span>
+<span class="nc" id="L230">            runtimeService.startProcessInstanceById(processDefinitionIdNoTenant);</span>
+        }
+
+        // Check the query results
+<span class="nc" id="L234">        assertThat(taskService.createTaskQuery().processDefinitionId(processDefinitionIdWithTenant).list().get(0).getTenantId()).isEqualTo(TEST_TENANT_ID);</span>
+<span class="nc" id="L235">        assertThat(taskService.createTaskQuery().processDefinitionId(processDefinitionIdNoTenant).list().get(0).getTenantId()).isBlank();</span>
+
+<span class="nc" id="L237">        assertThat(taskService.createTaskQuery().list()).hasSize(14);</span>
+<span class="nc" id="L238">        assertThat(taskService.createTaskQuery().taskTenantId(TEST_TENANT_ID).list()).hasSize(10);</span>
+<span class="nc" id="L239">        assertThat(taskService.createTaskQuery().taskTenantId(&quot;Another&quot;).list()).isEmpty();</span>
+<span class="nc" id="L240">        assertThat(taskService.createTaskQuery().taskTenantIdLike(&quot;my%&quot;).list()).hasSize(10);</span>
+<span class="nc" id="L241">        assertThat(taskService.createTaskQuery().taskWithoutTenantId().list()).hasSize(4);</span>
+
+<span class="nc" id="L243">    }</span>
+
+    @Test
+    public void testJobTenancy() {
+
+        // Deploy process with a timer and an async step AND with a tenant
+<span class="nc" id="L249">        String deploymentId = repositoryService.createDeployment()</span>
+<span class="nc" id="L250">                .addClasspathResource(&quot;org/flowable/engine/test/api/tenant/TenancyTest.testJobTenancy.bpmn20.xml&quot;).tenantId(TEST_TENANT_ID).deploy()</span>
+<span class="nc" id="L251">                .getId();</span>
+
+        // verify job (timer start)
+<span class="nc" id="L254">        Job job = managementService.createTimerJobQuery().singleResult();</span>
+<span class="nc" id="L255">        assertThat(job.getTenantId()).isEqualTo(TEST_TENANT_ID);</span>
+<span class="nc" id="L256">        managementService.moveTimerToExecutableJob(job.getId());</span>
+<span class="nc" id="L257">        managementService.executeJob(job.getId());</span>
+
+        // Verify Job tenancy (process intermediary timer)
+<span class="nc" id="L260">        job = managementService.createTimerJobQuery().singleResult();</span>
+<span class="nc" id="L261">        assertThat(job.getTenantId()).isEqualTo(TEST_TENANT_ID);</span>
+
+        // Start process, and verify async job has correct tenant id
+<span class="nc" id="L264">        managementService.moveTimerToExecutableJob(job.getId());</span>
+<span class="nc" id="L265">        managementService.executeJob(job.getId());</span>
+<span class="nc" id="L266">        job = managementService.createJobQuery().singleResult();</span>
+<span class="nc" id="L267">        assertThat(job.getTenantId()).isEqualTo(TEST_TENANT_ID);</span>
+
+        // Finish process
+<span class="nc" id="L270">        managementService.executeJob(job.getId());</span>
+
+        // Do the same, but now without a tenant
+<span class="nc" id="L273">        String deploymentId2 = repositoryService.createDeployment()</span>
+<span class="nc" id="L274">                .addClasspathResource(&quot;org/flowable/engine/test/api/tenant/TenancyTest.testJobTenancy.bpmn20.xml&quot;).deploy().getId();</span>
+
+<span class="nc" id="L276">        job = managementService.createTimerJobQuery().singleResult();</span>
+<span class="nc" id="L277">        assertThat(job.getTenantId()).isBlank();</span>
+<span class="nc" id="L278">        managementService.moveTimerToExecutableJob(job.getId());</span>
+<span class="nc" id="L279">        managementService.executeJob(job.getId());</span>
+<span class="nc" id="L280">        job = managementService.createTimerJobQuery().singleResult();</span>
+<span class="nc" id="L281">        assertThat(job.getTenantId()).isBlank();</span>
+<span class="nc" id="L282">        managementService.moveTimerToExecutableJob(job.getId());</span>
+<span class="nc" id="L283">        managementService.executeJob(job.getId());</span>
+<span class="nc" id="L284">        job = managementService.createJobQuery().singleResult();</span>
+<span class="nc" id="L285">        assertThat(job.getTenantId()).isBlank();</span>
+
+        // clean up
+<span class="nc" id="L288">        repositoryService.deleteDeployment(deploymentId, true);</span>
+<span class="nc" id="L289">        repositoryService.deleteDeployment(deploymentId2, true);</span>
+<span class="nc" id="L290">    }</span>
+
+    @Test
+    public void testModelTenancy() {
+
+        // Create a few models with tenant
+<span class="nc" id="L296">        int nrOfModelsWithTenant = 3;</span>
+<span class="nc bnc" id="L297" title="All 2 branches missed.">        for (int i = 0; i &lt; nrOfModelsWithTenant; i++) {</span>
+<span class="nc" id="L298">            Model model = repositoryService.newModel();</span>
+<span class="nc" id="L299">            model.setName(String.valueOf(i));</span>
+<span class="nc" id="L300">            model.setTenantId(TEST_TENANT_ID);</span>
+<span class="nc" id="L301">            repositoryService.saveModel(model);</span>
+        }
+
+        // Create a few models without tenant
+<span class="nc" id="L305">        int nrOfModelsWithoutTenant = 5;</span>
+<span class="nc bnc" id="L306" title="All 2 branches missed.">        for (int i = 0; i &lt; nrOfModelsWithoutTenant; i++) {</span>
+<span class="nc" id="L307">            Model model = repositoryService.newModel();</span>
+<span class="nc" id="L308">            model.setName(String.valueOf(i));</span>
+<span class="nc" id="L309">            repositoryService.saveModel(model);</span>
+        }
+
+        // Check query
+<span class="nc" id="L313">        assertThat(repositoryService.createModelQuery().list()).hasSize(nrOfModelsWithoutTenant + nrOfModelsWithTenant);</span>
+<span class="nc" id="L314">        assertThat(repositoryService.createModelQuery().modelWithoutTenantId().list()).hasSize(nrOfModelsWithoutTenant);</span>
+<span class="nc" id="L315">        assertThat(repositoryService.createModelQuery().modelTenantId(TEST_TENANT_ID).list()).hasSize(nrOfModelsWithTenant);</span>
+<span class="nc" id="L316">        assertThat(repositoryService.createModelQuery().modelTenantIdLike(&quot;my%&quot;).list()).hasSize(nrOfModelsWithTenant);</span>
+<span class="nc" id="L317">        assertThat(repositoryService.createModelQuery().modelTenantId(&quot;a%&quot;).list()).isEmpty();</span>
+
+        // Clean up
+<span class="nc bnc" id="L320" title="All 2 branches missed.">        for (Model model : repositoryService.createModelQuery().list()) {</span>
+<span class="nc" id="L321">            repositoryService.deleteModel(model.getId());</span>
+<span class="nc" id="L322">        }</span>
+
+<span class="nc" id="L324">    }</span>
+
+    @Test
+    public void testChangeDeploymentTenantId() {
+
+        // Generate 8 tasks with tenant
+<span class="nc" id="L330">        String processDefinitionIdWithTenant = deployTestProcessWithTwoTasksWithTestTenant();</span>
+<span class="nc" id="L331">        int nrOfProcessInstancesWithTenant = 4;</span>
+<span class="nc bnc" id="L332" title="All 2 branches missed.">        for (int i = 0; i &lt; nrOfProcessInstancesWithTenant; i++) {</span>
+<span class="nc" id="L333">            runtimeService.startProcessInstanceById(processDefinitionIdWithTenant);</span>
+        }
+
+        // Generate 10 tasks without tenant
+<span class="nc" id="L337">        String processDefinitionIdNoTenant = deployTwoTasksTestProcess();</span>
+<span class="nc" id="L338">        int nrOfProcessInstancesNoTenant = 5;</span>
+<span class="nc bnc" id="L339" title="All 2 branches missed.">        for (int i = 0; i &lt; nrOfProcessInstancesNoTenant; i++) {</span>
+<span class="nc" id="L340">            runtimeService.startProcessInstanceById(processDefinitionIdNoTenant);</span>
+        }
+
+        // Migrate deployment with tenant to another tenant
+<span class="nc" id="L344">        String newTenantId = &quot;NEW TENANT ID&quot;;</span>
+
+<span class="nc" id="L346">        String deploymentId = repositoryService.createProcessDefinitionQuery().processDefinitionId(processDefinitionIdWithTenant).singleResult()</span>
+<span class="nc" id="L347">                .getDeploymentId();</span>
+<span class="nc" id="L348">        repositoryService.changeDeploymentTenantId(deploymentId, newTenantId);</span>
+
+        // Verify tenant id
+<span class="nc" id="L351">        Deployment deployment = repositoryService.createDeploymentQuery().deploymentId(deploymentId).singleResult();</span>
+<span class="nc" id="L352">        assertThat(deployment.getTenantId()).isEqualTo(newTenantId);</span>
+
+        // Verify deployment
+<span class="nc" id="L355">        assertThat(repositoryService.createDeploymentQuery().list()).hasSize(2);</span>
+<span class="nc" id="L356">        assertThat(repositoryService.createDeploymentQuery().deploymentTenantId(TEST_TENANT_ID).list()).isEmpty();</span>
+<span class="nc" id="L357">        assertThat(repositoryService.createDeploymentQuery().deploymentTenantId(newTenantId).list()).hasSize(1);</span>
+<span class="nc" id="L358">        assertThat(repositoryService.createDeploymentQuery().deploymentWithoutTenantId().list()).hasSize(1);</span>
+
+        // Verify process definition
+<span class="nc" id="L361">        assertThat(repositoryService.createProcessDefinitionQuery().list()).hasSize(2);</span>
+<span class="nc" id="L362">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionTenantId(TEST_TENANT_ID).list()).isEmpty();</span>
+<span class="nc" id="L363">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionTenantId(newTenantId).list()).hasSize(1);</span>
+
+        // Verify process instances
+<span class="nc" id="L366">        assertThat(runtimeService.createProcessInstanceQuery().list()).hasSize(nrOfProcessInstancesNoTenant + nrOfProcessInstancesWithTenant);</span>
+<span class="nc" id="L367">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceTenantId(TEST_TENANT_ID).list()).isEmpty();</span>
+<span class="nc" id="L368">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceTenantId(newTenantId).list()).hasSize(nrOfProcessInstancesWithTenant);</span>
+<span class="nc" id="L369">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceWithoutTenantId().list()).hasSize(nrOfProcessInstancesNoTenant);</span>
+
+        // Verify executions
+<span class="nc" id="L372">        assertThat(runtimeService.createExecutionQuery().list()).hasSize(3 * (nrOfProcessInstancesNoTenant + nrOfProcessInstancesWithTenant));</span>
+<span class="nc" id="L373">        assertThat(runtimeService.createExecutionQuery().executionWithoutTenantId().list()).hasSize(3 * nrOfProcessInstancesNoTenant);</span>
+<span class="nc" id="L374">        assertThat(runtimeService.createExecutionQuery().executionTenantId(TEST_TENANT_ID).list()).isEmpty();</span>
+<span class="nc" id="L375">        assertThat(runtimeService.createExecutionQuery().executionTenantId(newTenantId).list()).hasSize(3 * nrOfProcessInstancesWithTenant);</span>
+<span class="nc" id="L376">        assertThat(runtimeService.createExecutionQuery().executionTenantIdLike(&quot;NEW%&quot;).list()).hasSize(3 * nrOfProcessInstancesWithTenant);</span>
+
+        // Verify tasks
+<span class="nc" id="L379">        assertThat(taskService.createTaskQuery().list()).hasSize(2 * (nrOfProcessInstancesNoTenant + nrOfProcessInstancesWithTenant));</span>
+<span class="nc" id="L380">        assertThat(taskService.createTaskQuery().taskTenantId(TEST_TENANT_ID).list()).isEmpty();</span>
+<span class="nc" id="L381">        assertThat(taskService.createTaskQuery().taskTenantId(newTenantId).list()).hasSize(2 * nrOfProcessInstancesWithTenant);</span>
+<span class="nc" id="L382">        assertThat(taskService.createTaskQuery().taskWithoutTenantId().list()).hasSize(2 * nrOfProcessInstancesNoTenant);</span>
+
+        // Remove the tenant id and verify results
+        // should clash: there is already a process definition with the same key
+<span class="nc" id="L386">        assertThatThrownBy(() -&gt; repositoryService.changeDeploymentTenantId(deploymentId, &quot;&quot;));</span>
+<span class="nc" id="L387">    }</span>
+
+    @Test
+    public void testChangeDeploymentIdWithClash() {
+<span class="nc" id="L391">        String processDefinitionIdWithTenant = deployTestProcessWithTestTenant(&quot;tenantA&quot;);</span>
+<span class="nc" id="L392">        deployOneTaskTestProcess();</span>
+<span class="nc" id="L393">        String deploymentId = this.repositoryService.createProcessDefinitionQuery().processDefinitionId(processDefinitionIdWithTenant).singleResult()</span>
+<span class="nc" id="L394">                .getDeploymentId();</span>
+
+        // Changing the one with tenant now back to one without should clash,
+        // cause there already exists one
+<span class="nc" id="L398">        assertThatThrownBy(() -&gt; repositoryService.changeDeploymentTenantId(deploymentId, &quot;&quot;))</span>
+<span class="nc" id="L399">                .isInstanceOf(PersistenceException.class);</span>
+
+        // Deploying another version should just up the version
+<span class="nc" id="L402">        String processDefinitionIdNoTenant2 = deployOneTaskTestProcess();</span>
+<span class="nc" id="L403">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionId(processDefinitionIdNoTenant2).singleResult().getVersion()).isEqualTo(2);</span>
+
+<span class="nc" id="L405">    }</span>
+
+    @Test
+    public void testChangeDeploymentTenantId_withMergingTwoTenantsAsANewDeployment_ensureDeploymentsOrderedCorrectly() {
+<span class="nc" id="L409">        String processDefinitionIdWithTenant = deployTestProcessWithTestTenant(&quot;tenantA&quot;);</span>
+<span class="nc" id="L410">        deployOneTaskTestProcess();</span>
+<span class="nc" id="L411">        String deploymentId = this.repositoryService.createProcessDefinitionQuery()</span>
+<span class="nc" id="L412">                .processDefinitionId(processDefinitionIdWithTenant)</span>
+<span class="nc" id="L413">                .singleResult()</span>
+<span class="nc" id="L414">                .getDeploymentId();</span>
+
+        // Act
+<span class="nc" id="L417">        repositoryService.changeDeploymentTenantId(deploymentId, &quot;&quot;, MergeMode.AS_NEW);</span>
+
+        // Assert
+        // Since we are using the &quot;as-new&quot; merge strategy, the version number should be increased
+<span class="nc" id="L421">        ProcessDefinition mergedProcessDefinition = this.repositoryService.createProcessDefinitionQuery().processDefinitionId(processDefinitionIdWithTenant)</span>
+<span class="nc" id="L422">                .singleResult();</span>
+<span class="nc" id="L423">        assertThat(mergedProcessDefinition).isNotNull();</span>
+<span class="nc" id="L424">        assertThat(mergedProcessDefinition.getVersion()).isEqualTo(2);</span>
+
+        // Deploying another version should just up the version
+<span class="nc" id="L427">        String processDefinitionIdNoTenant2 = deployOneTaskTestProcess();</span>
+<span class="nc" id="L428">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionId(processDefinitionIdNoTenant2).singleResult().getVersion())</span>
+<span class="nc" id="L429">                .isEqualTo(3);</span>
+<span class="nc" id="L430">    }</span>
+
+    @Test
+    public void testChangeDeploymentTenantId_withMergingTwoTenantsAsAnOldDeployment_ensureDeploymentsOrderedCorrectly() {
+<span class="nc" id="L434">        String processDefinitionIdWithTenant = deployTestProcessWithTestTenant(&quot;tenantA&quot;);</span>
+<span class="nc" id="L435">        String originalProcessDefinitionId = deployOneTaskTestProcess();</span>
+<span class="nc" id="L436">        String deploymentId = this.repositoryService.createProcessDefinitionQuery().processDefinitionId(processDefinitionIdWithTenant).singleResult()</span>
+<span class="nc" id="L437">                .getDeploymentId();</span>
+
+        // Act
+<span class="nc" id="L440">        repositoryService.changeDeploymentTenantId(deploymentId, &quot;&quot;, MergeMode.AS_OLD);</span>
+
+        // Assert
+        // Since we are using the &quot;as-old&quot; merge strategy, the version number of the original one should be increased
+<span class="nc" id="L444">        ProcessDefinition mergedProcessDefinition = this.repositoryService.createProcessDefinitionQuery().processDefinitionId(processDefinitionIdWithTenant)</span>
+<span class="nc" id="L445">                .singleResult();</span>
+<span class="nc" id="L446">        assertThat(mergedProcessDefinition).isNotNull();</span>
+<span class="nc" id="L447">        assertThat(mergedProcessDefinition.getVersion()).isEqualTo(1);</span>
+
+<span class="nc" id="L449">        ProcessDefinition originalProcessDefinition = this.repositoryService.createProcessDefinitionQuery().processDefinitionId(originalProcessDefinitionId)</span>
+<span class="nc" id="L450">                .singleResult();</span>
+<span class="nc" id="L451">        assertThat(originalProcessDefinition).isNotNull();</span>
+<span class="nc" id="L452">        assertThat(originalProcessDefinition.getVersion()).isEqualTo(2);</span>
+
+        // Deploying another version should just up the version
+<span class="nc" id="L455">        String processDefinitionIdNoTenant2 = deployOneTaskTestProcess();</span>
+<span class="nc" id="L456">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionId(processDefinitionIdNoTenant2).singleResult().getVersion())</span>
+<span class="nc" id="L457">                .isEqualTo(3);</span>
+<span class="nc" id="L458">    }</span>
+
+    @Test
+    public void testChangeDeploymentTenantId_withMergingTwoTenantsByDateOfdeployment_ensureDeploymentsOrderedCorrectly() {
+<span class="nc" id="L462">        List&lt;String&gt; expectedOrderOfProcessDefinitionIds = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L463">        expectedOrderOfProcessDefinitionIds.add(deployOneTaskTestProcess());</span>
+<span class="nc" id="L464">        expectedOrderOfProcessDefinitionIds.add(deployOneTaskTestProcess());</span>
+<span class="nc" id="L465">        String processDefinitionIdWithTenant = deployTestProcessWithTestTenant(&quot;tenantA&quot;);</span>
+<span class="nc" id="L466">        expectedOrderOfProcessDefinitionIds.add(processDefinitionIdWithTenant);</span>
+<span class="nc" id="L467">        expectedOrderOfProcessDefinitionIds.add(deployOneTaskTestProcess());</span>
+<span class="nc" id="L468">        expectedOrderOfProcessDefinitionIds.add(deployOneTaskTestProcess());</span>
+<span class="nc" id="L469">        ProcessDefinition processDefinitionToBeMerged = this.repositoryService.createProcessDefinitionQuery()</span>
+<span class="nc" id="L470">                .processDefinitionId(processDefinitionIdWithTenant)</span>
+<span class="nc" id="L471">                .singleResult();</span>
+<span class="nc" id="L472">        String processDefinitionKey = processDefinitionToBeMerged.getKey();</span>
+<span class="nc" id="L473">        String deploymentId = processDefinitionToBeMerged.getDeploymentId();</span>
+
+        // Act
+<span class="nc" id="L476">        repositoryService.changeDeploymentTenantId(deploymentId, &quot;&quot;, MergeMode.BY_DATE);</span>
+
+        // Assert
+        // Since we are using the &quot;by-date&quot; merge strategy, the version number of the original one should be matches
+<span class="nc" id="L480">        List&lt;ProcessDefinition&gt; allDeployedProcessDefinitions = this.repositoryService.createProcessDefinitionQuery()</span>
+<span class="nc" id="L481">                .processDefinitionKey(processDefinitionKey)</span>
+<span class="nc" id="L482">                .processDefinitionWithoutTenantId()</span>
+<span class="nc" id="L483">                .orderByProcessDefinitionVersion()</span>
+<span class="nc" id="L484">                .asc()</span>
+<span class="nc" id="L485">                .list();</span>
+<span class="nc" id="L486">        assertThat(allDeployedProcessDefinitions).hasSize(5);</span>
+<span class="nc" id="L487">        assertThat(allDeployedProcessDefinitions)</span>
+<span class="nc" id="L488">                .extracting(ProcessDefinition::getId)</span>
+<span class="nc" id="L489">                .containsExactlyElementsOf(expectedOrderOfProcessDefinitionIds);</span>
+<span class="nc" id="L490">        assertThat(allDeployedProcessDefinitions)</span>
+<span class="nc" id="L491">                .extracting(ProcessDefinition::getVersion)</span>
+<span class="nc" id="L492">                .containsExactly(1, 2, 3, 4, 5);</span>
+
+<span class="nc" id="L494">        assertThat(this.repositoryService.createProcessDefinitionQuery()</span>
+<span class="nc" id="L495">                .processDefinitionTenantId(&quot;tenantA&quot;)</span>
+<span class="nc" id="L496">                .count()).isZero();</span>
+
+        // Deploying another version should just up the version
+<span class="nc" id="L499">        String processDefinitionIdNoTenant2 = deployOneTaskTestProcess();</span>
+<span class="nc" id="L500">        assertThat(repositoryService.createProcessDefinitionQuery()</span>
+<span class="nc" id="L501">                .processDefinitionId(processDefinitionIdNoTenant2)</span>
+<span class="nc" id="L502">                .singleResult()</span>
+<span class="nc" id="L503">                .getVersion())</span>
+<span class="nc" id="L504">                .isEqualTo(6);</span>
+<span class="nc" id="L505">    }</span>
+
+    @Test
+    public void testJobTenancyAfterTenantChange() {
+
+        // Deploy process with a timer and an async step AND with a tenant
+<span class="nc" id="L511">        String deploymentId = repositoryService.createDeployment()</span>
+<span class="nc" id="L512">                .addClasspathResource(&quot;org/flowable/engine/test/api/tenant/TenancyTest.testJobTenancy.bpmn20.xml&quot;).tenantId(TEST_TENANT_ID).deploy()</span>
+<span class="nc" id="L513">                .getId();</span>
+
+<span class="nc" id="L515">        String newTenant = &quot;newTenant&quot;;</span>
+<span class="nc" id="L516">        repositoryService.changeDeploymentTenantId(deploymentId, newTenant);</span>
+
+        // verify job (timer start)
+<span class="nc" id="L519">        Job job = managementService.createTimerJobQuery().singleResult();</span>
+<span class="nc" id="L520">        assertThat(job.getTenantId()).isEqualTo(newTenant);</span>
+<span class="nc" id="L521">        managementService.moveTimerToExecutableJob(job.getId());</span>
+<span class="nc" id="L522">        managementService.executeJob(job.getId());</span>
+
+        // Verify Job tenancy (process intermediary timer)
+<span class="nc" id="L525">        job = managementService.createTimerJobQuery().singleResult();</span>
+<span class="nc" id="L526">        assertThat(job.getTenantId()).isEqualTo(newTenant);</span>
+
+        // Start process, and verify async job has correct tenant id
+<span class="nc" id="L529">        managementService.moveTimerToExecutableJob(job.getId());</span>
+<span class="nc" id="L530">        managementService.executeJob(job.getId());</span>
+<span class="nc" id="L531">        job = managementService.createJobQuery().singleResult();</span>
+<span class="nc" id="L532">        assertThat(job.getTenantId()).isEqualTo(newTenant);</span>
+
+        // Finish process
+<span class="nc" id="L535">        managementService.executeJob(job.getId());</span>
+
+        // clean up
+<span class="nc" id="L538">        repositoryService.deleteDeployment(deploymentId, true);</span>
+<span class="nc" id="L539">    }</span>
+
+    @Test
+    public void testHistoryTenancy() {
+
+<span class="nc bnc" id="L544" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.AUDIT, processEngineConfiguration)) {</span>
+
+            // Generate 3 tasks with tenant
+<span class="nc" id="L547">            String processDefinitionIdWithTenant = deployTestProcessWithTestTenant();</span>
+<span class="nc" id="L548">            int nrOfProcessInstancesWithTenant = 3;</span>
+<span class="nc bnc" id="L549" title="All 2 branches missed.">            for (int i = 0; i &lt; nrOfProcessInstancesWithTenant; i++) {</span>
+<span class="nc" id="L550">                runtimeService.startProcessInstanceById(processDefinitionIdWithTenant);</span>
+            }
+
+            // Generate 2 tasks without tenant
+<span class="nc" id="L554">            String processDefinitionIdNoTenant = deployOneTaskTestProcess();</span>
+<span class="nc" id="L555">            int nrOfProcessInstancesNoTenant = 2;</span>
+<span class="nc bnc" id="L556" title="All 2 branches missed.">            for (int i = 0; i &lt; nrOfProcessInstancesNoTenant; i++) {</span>
+<span class="nc" id="L557">                runtimeService.startProcessInstanceById(processDefinitionIdNoTenant);</span>
+            }
+
+            // Complete all tasks
+<span class="nc bnc" id="L561" title="All 2 branches missed.">            for (org.flowable.task.api.Task task : taskService.createTaskQuery().list()) {</span>
+<span class="nc" id="L562">                taskService.complete(task.getId());</span>
+<span class="nc" id="L563">            }</span>
+
+<span class="nc" id="L565">            waitForHistoryJobExecutorToProcessAllJobs(7000, 100);</span>
+
+            // Verify process instances
+<span class="nc" id="L568">            assertThat(historyService.createHistoricProcessInstanceQuery().processDefinitionId(processDefinitionIdWithTenant).list().get(0).getTenantId())</span>
+<span class="nc" id="L569">                    .isEqualTo(TEST_TENANT_ID);</span>
+<span class="nc" id="L570">            assertThat(historyService.createHistoricProcessInstanceQuery().processDefinitionId(processDefinitionIdNoTenant).list().get(0).getTenantId())</span>
+<span class="nc" id="L571">                    .isBlank();</span>
+<span class="nc" id="L572">            assertThat(historyService.createHistoricProcessInstanceQuery().list()).hasSize(nrOfProcessInstancesWithTenant + nrOfProcessInstancesNoTenant);</span>
+<span class="nc" id="L573">            assertThat(historyService.createHistoricProcessInstanceQuery().processInstanceTenantId(TEST_TENANT_ID).list())</span>
+<span class="nc" id="L574">                    .hasSize(nrOfProcessInstancesWithTenant);</span>
+<span class="nc" id="L575">            assertThat(historyService.createHistoricProcessInstanceQuery().processInstanceTenantIdLike(&quot;%e%&quot;).list()).hasSize(nrOfProcessInstancesWithTenant);</span>
+<span class="nc" id="L576">            assertThat(historyService.createHistoricProcessInstanceQuery().processInstanceWithoutTenantId().list()).hasSize(nrOfProcessInstancesNoTenant);</span>
+
+            // verify tasks
+<span class="nc" id="L579">            assertThat(historyService.createHistoricTaskInstanceQuery().processDefinitionId(processDefinitionIdWithTenant).list().get(0).getTenantId())</span>
+<span class="nc" id="L580">                    .isEqualTo(TEST_TENANT_ID);</span>
+<span class="nc" id="L581">            assertThat(historyService.createHistoricTaskInstanceQuery().processDefinitionId(processDefinitionIdNoTenant).list().get(0).getTenantId())</span>
+<span class="nc" id="L582">                    .isBlank();</span>
+<span class="nc" id="L583">            assertThat(historyService.createHistoricTaskInstanceQuery().list()).hasSize(nrOfProcessInstancesWithTenant + nrOfProcessInstancesNoTenant);</span>
+<span class="nc" id="L584">            assertThat(historyService.createHistoricTaskInstanceQuery().taskTenantId(TEST_TENANT_ID).list()).hasSize(nrOfProcessInstancesWithTenant);</span>
+<span class="nc" id="L585">            assertThat(historyService.createHistoricTaskInstanceQuery().taskTenantIdLike(&quot;my%&quot;).list()).hasSize(nrOfProcessInstancesWithTenant);</span>
+<span class="nc" id="L586">            assertThat(historyService.createHistoricTaskInstanceQuery().taskWithoutTenantId().list()).hasSize(nrOfProcessInstancesNoTenant);</span>
+
+            // verify activities
+<span class="nc" id="L589">            List&lt;HistoricActivityInstance&gt; activityInstances = historyService.createHistoricActivityInstanceQuery()</span>
+<span class="nc" id="L590">                    .processDefinitionId(processDefinitionIdWithTenant).list();</span>
+<span class="nc bnc" id="L591" title="All 2 branches missed.">            for (HistoricActivityInstance historicActivityInstance : activityInstances) {</span>
+<span class="nc" id="L592">                assertThat(historicActivityInstance.getTenantId()).isEqualTo(TEST_TENANT_ID);</span>
+<span class="nc" id="L593">            }</span>
+<span class="nc" id="L594">            assertThat(historyService.createHistoricActivityInstanceQuery().processDefinitionId(processDefinitionIdNoTenant).list().get(0).getTenantId())</span>
+<span class="nc" id="L595">                    .isBlank();</span>
+<span class="nc" id="L596">            assertThat(historyService.createHistoricActivityInstanceQuery().list())</span>
+<span class="nc" id="L597">                    .hasSize(5 * (nrOfProcessInstancesWithTenant + nrOfProcessInstancesNoTenant));</span>
+<span class="nc" id="L598">            assertThat(historyService.createHistoricActivityInstanceQuery().activityTenantId(TEST_TENANT_ID).list())</span>
+<span class="nc" id="L599">                    .hasSize(5 * nrOfProcessInstancesWithTenant);</span>
+<span class="nc" id="L600">            assertThat(historyService.createHistoricActivityInstanceQuery().activityTenantIdLike(&quot;my%&quot;).list()).hasSize(5 * nrOfProcessInstancesWithTenant);</span>
+<span class="nc" id="L601">            assertThat(historyService.createHistoricActivityInstanceQuery().activityWithoutTenantId().list()).hasSize(5 * nrOfProcessInstancesNoTenant);</span>
+
+        }
+
+<span class="nc" id="L605">    }</span>
+
+    @Test
+    public void testProcessDefinitionKeyClashBetweenTenants() {
+
+<span class="nc" id="L610">        String tentanA = &quot;tenantA&quot;;</span>
+<span class="nc" id="L611">        String tenantB = &quot;tenantB&quot;;</span>
+
+        // Deploy the same process (same process definition key) for two
+        // different tenants.
+<span class="nc" id="L615">        String procDefIdA = deployTestProcessWithTestTenant(tentanA);</span>
+<span class="nc" id="L616">        String procDefIdB = deployTestProcessWithTestTenant(tenantB);</span>
+
+        // verify query
+<span class="nc" id="L619">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionId(procDefIdA).singleResult().getKey()).isEqualTo(&quot;oneTaskProcess&quot;);</span>
+<span class="nc" id="L620">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionId(procDefIdA).singleResult().getVersion()).isEqualTo(1);</span>
+<span class="nc" id="L621">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionId(procDefIdB).singleResult().getKey()).isEqualTo(&quot;oneTaskProcess&quot;);</span>
+<span class="nc" id="L622">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionId(procDefIdB).singleResult().getVersion()).isEqualTo(1);</span>
+<span class="nc" id="L623">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionKey(&quot;oneTaskProcess&quot;).list()).hasSize(2);</span>
+<span class="nc" id="L624">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionKey(&quot;oneTaskProcess&quot;).processDefinitionTenantId(tentanA).list())</span>
+<span class="nc" id="L625">                .hasSize(1);</span>
+<span class="nc" id="L626">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionKey(&quot;oneTaskProcess&quot;).processDefinitionTenantId(tenantB).list())</span>
+<span class="nc" id="L627">                .hasSize(1);</span>
+<span class="nc" id="L628">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionKey(&quot;oneTaskProcess&quot;).processDefinitionWithoutTenantId().list()).isEmpty();</span>
+
+        // Deploy second version
+<span class="nc" id="L631">        procDefIdA = deployTestProcessWithTestTenant(tentanA);</span>
+
+<span class="nc" id="L633">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionId(procDefIdA).singleResult().getKey()).isEqualTo(&quot;oneTaskProcess&quot;);</span>
+<span class="nc" id="L634">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionId(procDefIdA).singleResult().getVersion()).isEqualTo(2);</span>
+<span class="nc" id="L635">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionKey(&quot;oneTaskProcess&quot;).processDefinitionTenantId(tentanA).latestVersion()</span>
+<span class="nc" id="L636">                .singleResult().getVersion()).isEqualTo(2);</span>
+<span class="nc" id="L637">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionId(procDefIdB).singleResult().getKey()).isEqualTo(&quot;oneTaskProcess&quot;);</span>
+<span class="nc" id="L638">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionId(procDefIdB).singleResult().getVersion()).isEqualTo(1);</span>
+<span class="nc" id="L639">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionKey(&quot;oneTaskProcess&quot;).list()).hasSize(3);</span>
+<span class="nc" id="L640">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionKey(&quot;oneTaskProcess&quot;).processDefinitionTenantId(tentanA).list())</span>
+<span class="nc" id="L641">                .hasSize(2);</span>
+<span class="nc" id="L642">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionKey(&quot;oneTaskProcess&quot;).processDefinitionTenantId(tenantB).list())</span>
+<span class="nc" id="L643">                .hasSize(1);</span>
+<span class="nc" id="L644">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionKey(&quot;oneTaskProcess&quot;).processDefinitionTenantId(tentanA).latestVersion()</span>
+<span class="nc" id="L645">                .list()).hasSize(1);</span>
+<span class="nc" id="L646">        assertThat(repositoryService.createProcessDefinitionQuery().processDefinitionKey(&quot;oneTaskProcess&quot;).processDefinitionWithoutTenantId().list()).isEmpty();</span>
+
+        // Now, start process instances by process definition key (no tenant)
+        // there is no process definition with that key that has no tenant, it has to give an exception
+<span class="nc" id="L650">        assertThatThrownBy(() -&gt; runtimeService.startProcessInstanceByKey(&quot;oneTaskProcess&quot;));</span>
+
+<span class="nc" id="L652">        ProcessInstance processInstance = runtimeService.startProcessInstanceByKeyAndTenantId(&quot;oneTaskProcess&quot;, tentanA);</span>
+<span class="nc" id="L653">        assertThat(processInstance.getProcessDefinitionId()).isEqualTo(procDefIdA);</span>
+
+<span class="nc" id="L655">        processInstance = runtimeService.startProcessInstanceByKeyAndTenantId(&quot;oneTaskProcess&quot;, tenantB);</span>
+<span class="nc" id="L656">        assertThat(processInstance.getProcessDefinitionId()).isEqualTo(procDefIdB);</span>
+<span class="nc" id="L657">    }</span>
+
+    @Test
+    public void testSuspendProcessDefinitionTenancy() {
+
+        // Deploy one process definition for tenant A, and two process
+        // definitions versions for tenant B
+<span class="nc" id="L664">        String tentanA = &quot;tenantA&quot;;</span>
+<span class="nc" id="L665">        String tenantB = &quot;tenantB&quot;;</span>
+
+<span class="nc" id="L667">        String procDefIdA = deployTestProcessWithTestTenant(tentanA);</span>
+<span class="nc" id="L668">        String procDefIdB = deployTestProcessWithTestTenant(tenantB);</span>
+<span class="nc" id="L669">        String procDefIdB2 = deployTestProcessWithTestTenant(tenantB);</span>
+
+        // Suspend process definition B
+<span class="nc" id="L672">        repositoryService.suspendProcessDefinitionByKey(&quot;oneTaskProcess&quot;, tenantB);</span>
+
+        // Shouldn't be able to start proc defs for tenant B
+<span class="nc" id="L675">        assertThatThrownBy(() -&gt; runtimeService.startProcessInstanceById(procDefIdB))</span>
+<span class="nc" id="L676">                .isInstanceOf(FlowableException.class);</span>
+
+<span class="nc" id="L678">        assertThatThrownBy(() -&gt; runtimeService.startProcessInstanceById(procDefIdB2))</span>
+<span class="nc" id="L679">                .isInstanceOf(FlowableException.class);</span>
+
+<span class="nc" id="L681">        ProcessInstance processInstance = runtimeService.startProcessInstanceById(procDefIdA);</span>
+<span class="nc" id="L682">        assertThat(processInstance).isNotNull();</span>
+
+        // Activate process again
+<span class="nc" id="L685">        repositoryService.activateProcessDefinitionByKey(&quot;oneTaskProcess&quot;, tenantB);</span>
+
+<span class="nc" id="L687">        processInstance = runtimeService.startProcessInstanceById(procDefIdB);</span>
+<span class="nc" id="L688">        assertThat(processInstance).isNotNull();</span>
+
+<span class="nc" id="L690">        processInstance = runtimeService.startProcessInstanceById(procDefIdB2);</span>
+<span class="nc" id="L691">        assertThat(processInstance).isNotNull();</span>
+
+<span class="nc" id="L693">        processInstance = runtimeService.startProcessInstanceById(procDefIdA);</span>
+<span class="nc" id="L694">        assertThat(processInstance).isNotNull();</span>
+
+        // Suspending with NO tenant id should give an error, cause they both
+        // have tenants
+<span class="nc" id="L698">        assertThatThrownBy(() -&gt; repositoryService.suspendProcessDefinitionByKey(&quot;oneTaskProcess&quot;))</span>
+<span class="nc" id="L699">                .isInstanceOf(FlowableException.class);</span>
+<span class="nc" id="L700">    }</span>
+
+    @Test
+    public void testSignalFromProcessTenancy() {
+
+        // Deploy process both with and without tenant
+<span class="nc" id="L706">        repositoryService.createDeployment().addClasspathResource(&quot;org/flowable/engine/test/api/tenant/TenancyTest.testMultiTenancySignals.bpmn20.xml&quot;)</span>
+<span class="nc" id="L707">                .deploy();</span>
+<span class="nc" id="L708">        repositoryService.createDeployment().addClasspathResource(&quot;org/flowable/engine/test/api/tenant/TenancyTest.testMultiTenancySignals.bpmn20.xml&quot;)</span>
+<span class="nc" id="L709">                .tenantId(TEST_TENANT_ID).deploy();</span>
+
+        // Start 3 proc instances for the one with a tenant and 2 for the one
+        // without tenant
+<span class="nc" id="L713">        runtimeService.startProcessInstanceByKeyAndTenantId(&quot;testMtSignalCatch&quot;, TEST_TENANT_ID);</span>
+<span class="nc" id="L714">        runtimeService.startProcessInstanceByKeyAndTenantId(&quot;testMtSignalCatch&quot;, TEST_TENANT_ID);</span>
+<span class="nc" id="L715">        runtimeService.startProcessInstanceByKeyAndTenantId(&quot;testMtSignalCatch&quot;, TEST_TENANT_ID);</span>
+<span class="nc" id="L716">        runtimeService.startProcessInstanceByKey(&quot;testMtSignalCatch&quot;);</span>
+<span class="nc" id="L717">        runtimeService.startProcessInstanceByKey(&quot;testMtSignalCatch&quot;);</span>
+
+        // verify
+<span class="nc" id="L720">        assertThat(taskService.createTaskQuery().taskName(&quot;My task&quot;).taskTenantId(TEST_TENANT_ID).count()).isEqualTo(3);</span>
+<span class="nc" id="L721">        assertThat(taskService.createTaskQuery().taskName(&quot;My task&quot;).taskWithoutTenantId().count()).isEqualTo(2);</span>
+
+        // Now, start 1 process instance that fires a signal event (not in
+        // tenant context), it should only continue those without tenant
+<span class="nc" id="L725">        runtimeService.startProcessInstanceByKey(&quot;testMtSignalFiring&quot;);</span>
+<span class="nc" id="L726">        assertThat(taskService.createTaskQuery().taskName(&quot;Task after signal&quot;).taskTenantId(TEST_TENANT_ID).count()).isZero();</span>
+<span class="nc" id="L727">        assertThat(taskService.createTaskQuery().taskName(&quot;Task after signal&quot;).taskWithoutTenantId().count()).isEqualTo(2);</span>
+
+        // Start a process instance that is running in tenant context
+<span class="nc" id="L730">        runtimeService.startProcessInstanceByKeyAndTenantId(&quot;testMtSignalFiring&quot;, TEST_TENANT_ID);</span>
+<span class="nc" id="L731">        assertThat(taskService.createTaskQuery().taskName(&quot;Task after signal&quot;).taskTenantId(TEST_TENANT_ID).count()).isEqualTo(3);</span>
+<span class="nc" id="L732">        assertThat(taskService.createTaskQuery().taskName(&quot;Task after signal&quot;).taskWithoutTenantId().count()).isEqualTo(2);</span>
+
+        // Cleanup
+<span class="nc bnc" id="L735" title="All 2 branches missed.">        for (Deployment deployment : repositoryService.createDeploymentQuery().list()) {</span>
+<span class="nc" id="L736">            repositoryService.deleteDeployment(deployment.getId(), true);</span>
+<span class="nc" id="L737">        }</span>
+
+<span class="nc" id="L739">    }</span>
+
+    @Test
+    public void testSignalThroughApiTenancy() {
+
+        // Deploy process both with and without tenant
+<span class="nc" id="L745">        repositoryService.createDeployment().addClasspathResource(&quot;org/flowable/engine/test/api/tenant/TenancyTest.testMultiTenancySignals.bpmn20.xml&quot;)</span>
+<span class="nc" id="L746">                .deploy();</span>
+<span class="nc" id="L747">        repositoryService.createDeployment().addClasspathResource(&quot;org/flowable/engine/test/api/tenant/TenancyTest.testMultiTenancySignals.bpmn20.xml&quot;)</span>
+<span class="nc" id="L748">                .tenantId(TEST_TENANT_ID).deploy();</span>
+
+        // Start 4 proc instances for the one with a tenant and 5 for the one
+        // without tenant
+<span class="nc" id="L752">        runtimeService.startProcessInstanceByKeyAndTenantId(&quot;testMtSignalCatch&quot;, TEST_TENANT_ID);</span>
+<span class="nc" id="L753">        runtimeService.startProcessInstanceByKeyAndTenantId(&quot;testMtSignalCatch&quot;, TEST_TENANT_ID);</span>
+<span class="nc" id="L754">        runtimeService.startProcessInstanceByKeyAndTenantId(&quot;testMtSignalCatch&quot;, TEST_TENANT_ID);</span>
+<span class="nc" id="L755">        runtimeService.startProcessInstanceByKeyAndTenantId(&quot;testMtSignalCatch&quot;, TEST_TENANT_ID);</span>
+<span class="nc" id="L756">        runtimeService.startProcessInstanceByKey(&quot;testMtSignalCatch&quot;);</span>
+<span class="nc" id="L757">        runtimeService.startProcessInstanceByKey(&quot;testMtSignalCatch&quot;);</span>
+<span class="nc" id="L758">        runtimeService.startProcessInstanceByKey(&quot;testMtSignalCatch&quot;);</span>
+<span class="nc" id="L759">        runtimeService.startProcessInstanceByKey(&quot;testMtSignalCatch&quot;);</span>
+<span class="nc" id="L760">        runtimeService.startProcessInstanceByKey(&quot;testMtSignalCatch&quot;);</span>
+
+        // Verify
+<span class="nc" id="L763">        assertThat(taskService.createTaskQuery().taskName(&quot;My task&quot;).taskTenantId(TEST_TENANT_ID).count()).isEqualTo(4);</span>
+<span class="nc" id="L764">        assertThat(taskService.createTaskQuery().taskName(&quot;My task&quot;).taskWithoutTenantId().count()).isEqualTo(5);</span>
+
+        // Signal through API (with tenant)
+<span class="nc" id="L767">        runtimeService.signalEventReceivedWithTenantId(&quot;The Signal&quot;, TEST_TENANT_ID);</span>
+<span class="nc" id="L768">        assertThat(taskService.createTaskQuery().taskName(&quot;Task after signal&quot;).taskTenantId(TEST_TENANT_ID).count()).isEqualTo(4);</span>
+<span class="nc" id="L769">        assertThat(taskService.createTaskQuery().taskName(&quot;Task after signal&quot;).taskWithoutTenantId().count()).isZero();</span>
+
+        // Signal through API (without tenant)
+<span class="nc" id="L772">        runtimeService.signalEventReceived(&quot;The Signal&quot;);</span>
+<span class="nc" id="L773">        assertThat(taskService.createTaskQuery().taskName(&quot;Task after signal&quot;).taskTenantId(TEST_TENANT_ID).count()).isEqualTo(4);</span>
+<span class="nc" id="L774">        assertThat(taskService.createTaskQuery().taskName(&quot;Task after signal&quot;).taskWithoutTenantId().count()).isEqualTo(5);</span>
+
+        // Cleanup
+<span class="nc bnc" id="L777" title="All 2 branches missed.">        for (Deployment deployment : repositoryService.createDeploymentQuery().list()) {</span>
+<span class="nc" id="L778">            repositoryService.deleteDeployment(deployment.getId(), true);</span>
+<span class="nc" id="L779">        }</span>
+<span class="nc" id="L780">    }</span>
+
+    @Test
+    public void testSignalThroughApiTenancyReversed() { // cause reversing the
+        // order of calling DID
+        // leave to an error!
+
+        // Deploy process both with and without tenant
+<span class="nc" id="L788">        repositoryService.createDeployment().addClasspathResource(&quot;org/flowable/engine/test/api/tenant/TenancyTest.testMultiTenancySignals.bpmn20.xml&quot;)</span>
+<span class="nc" id="L789">                .deploy();</span>
+<span class="nc" id="L790">        repositoryService.createDeployment().addClasspathResource(&quot;org/flowable/engine/test/api/tenant/TenancyTest.testMultiTenancySignals.bpmn20.xml&quot;)</span>
+<span class="nc" id="L791">                .tenantId(TEST_TENANT_ID).deploy();</span>
+
+        // Start 4 proc instances for the one with a tenant and 5 for the one
+        // without tenant
+<span class="nc" id="L795">        runtimeService.startProcessInstanceByKeyAndTenantId(&quot;testMtSignalCatch&quot;, TEST_TENANT_ID);</span>
+<span class="nc" id="L796">        runtimeService.startProcessInstanceByKeyAndTenantId(&quot;testMtSignalCatch&quot;, TEST_TENANT_ID);</span>
+<span class="nc" id="L797">        runtimeService.startProcessInstanceByKeyAndTenantId(&quot;testMtSignalCatch&quot;, TEST_TENANT_ID);</span>
+<span class="nc" id="L798">        runtimeService.startProcessInstanceByKeyAndTenantId(&quot;testMtSignalCatch&quot;, TEST_TENANT_ID);</span>
+<span class="nc" id="L799">        runtimeService.startProcessInstanceByKey(&quot;testMtSignalCatch&quot;);</span>
+<span class="nc" id="L800">        runtimeService.startProcessInstanceByKey(&quot;testMtSignalCatch&quot;);</span>
+<span class="nc" id="L801">        runtimeService.startProcessInstanceByKey(&quot;testMtSignalCatch&quot;);</span>
+<span class="nc" id="L802">        runtimeService.startProcessInstanceByKey(&quot;testMtSignalCatch&quot;);</span>
+<span class="nc" id="L803">        runtimeService.startProcessInstanceByKey(&quot;testMtSignalCatch&quot;);</span>
+
+        // Verify
+<span class="nc" id="L806">        assertThat(taskService.createTaskQuery().taskName(&quot;My task&quot;).taskTenantId(TEST_TENANT_ID).count()).isEqualTo(4);</span>
+<span class="nc" id="L807">        assertThat(taskService.createTaskQuery().taskName(&quot;My task&quot;).taskWithoutTenantId().count()).isEqualTo(5);</span>
+
+        // Signal through API (without tenant)
+<span class="nc" id="L810">        runtimeService.signalEventReceived(&quot;The Signal&quot;);</span>
+<span class="nc" id="L811">        assertThat(taskService.createTaskQuery().taskName(&quot;Task after signal&quot;).taskTenantId(TEST_TENANT_ID).count()).isZero();</span>
+<span class="nc" id="L812">        assertThat(taskService.createTaskQuery().taskName(&quot;Task after signal&quot;).taskWithoutTenantId().count()).isEqualTo(5);</span>
+
+        // Signal through API (with tenant)
+<span class="nc" id="L815">        runtimeService.signalEventReceivedWithTenantId(&quot;The Signal&quot;, TEST_TENANT_ID);</span>
+<span class="nc" id="L816">        assertThat(taskService.createTaskQuery().taskName(&quot;Task after signal&quot;).taskTenantId(TEST_TENANT_ID).count()).isEqualTo(4);</span>
+<span class="nc" id="L817">        assertThat(taskService.createTaskQuery().taskName(&quot;Task after signal&quot;).taskWithoutTenantId().count()).isEqualTo(5);</span>
+
+        // Cleanup
+<span class="nc bnc" id="L820" title="All 2 branches missed.">        for (Deployment deployment : repositoryService.createDeploymentQuery().list()) {</span>
+<span class="nc" id="L821">            repositoryService.deleteDeployment(deployment.getId(), true);</span>
+<span class="nc" id="L822">        }</span>
+<span class="nc" id="L823">    }</span>
+
+    @Test
+    public void testSignalAsyncThroughApiTenancy() {
+
+        // Deploy process both with and without tenant
+<span class="nc" id="L829">        repositoryService.createDeployment().addClasspathResource(&quot;org/flowable/engine/test/api/tenant/TenancyTest.testMultiTenancySignals.bpmn20.xml&quot;)</span>
+<span class="nc" id="L830">                .deploy();</span>
+<span class="nc" id="L831">        repositoryService.createDeployment().addClasspathResource(&quot;org/flowable/engine/test/api/tenant/TenancyTest.testMultiTenancySignals.bpmn20.xml&quot;)</span>
+<span class="nc" id="L832">                .tenantId(TEST_TENANT_ID).deploy();</span>
+
+        // Start 4 proc instances for the one with a tenant and 5 for the one
+        // without tenant
+<span class="nc" id="L836">        runtimeService.startProcessInstanceByKeyAndTenantId(&quot;testMtSignalCatch&quot;, TEST_TENANT_ID);</span>
+<span class="nc" id="L837">        runtimeService.startProcessInstanceByKeyAndTenantId(&quot;testMtSignalCatch&quot;, TEST_TENANT_ID);</span>
+<span class="nc" id="L838">        runtimeService.startProcessInstanceByKeyAndTenantId(&quot;testMtSignalCatch&quot;, TEST_TENANT_ID);</span>
+<span class="nc" id="L839">        runtimeService.startProcessInstanceByKeyAndTenantId(&quot;testMtSignalCatch&quot;, TEST_TENANT_ID);</span>
+<span class="nc" id="L840">        runtimeService.startProcessInstanceByKey(&quot;testMtSignalCatch&quot;);</span>
+<span class="nc" id="L841">        runtimeService.startProcessInstanceByKey(&quot;testMtSignalCatch&quot;);</span>
+<span class="nc" id="L842">        runtimeService.startProcessInstanceByKey(&quot;testMtSignalCatch&quot;);</span>
+<span class="nc" id="L843">        runtimeService.startProcessInstanceByKey(&quot;testMtSignalCatch&quot;);</span>
+<span class="nc" id="L844">        runtimeService.startProcessInstanceByKey(&quot;testMtSignalCatch&quot;);</span>
+
+        // Verify
+<span class="nc" id="L847">        assertThat(taskService.createTaskQuery().taskName(&quot;My task&quot;).taskTenantId(TEST_TENANT_ID).count()).isEqualTo(4);</span>
+<span class="nc" id="L848">        assertThat(taskService.createTaskQuery().taskName(&quot;My task&quot;).taskWithoutTenantId().count()).isEqualTo(5);</span>
+
+        // Signal through API (with tenant)
+<span class="nc" id="L851">        runtimeService.signalEventReceivedAsyncWithTenantId(&quot;The Signal&quot;, TEST_TENANT_ID);</span>
+<span class="nc" id="L852">        assertThat(taskService.createTaskQuery().taskName(&quot;Task after signal&quot;).taskTenantId(TEST_TENANT_ID).count()).isZero();</span>
+<span class="nc" id="L853">        assertThat(taskService.createTaskQuery().taskName(&quot;Task after signal&quot;).taskWithoutTenantId().count()).isZero();</span>
+
+<span class="nc bnc" id="L855" title="All 2 branches missed.">        for (Job job : managementService.createJobQuery().list()) {</span>
+<span class="nc" id="L856">            managementService.executeJob(job.getId());</span>
+<span class="nc" id="L857">        }</span>
+
+<span class="nc" id="L859">        assertThat(taskService.createTaskQuery().taskName(&quot;Task after signal&quot;).taskTenantId(TEST_TENANT_ID).count()).isEqualTo(4);</span>
+<span class="nc" id="L860">        assertThat(taskService.createTaskQuery().taskName(&quot;Task after signal&quot;).taskWithoutTenantId().count()).isZero();</span>
+
+        // Signal through API (without tenant)
+<span class="nc" id="L863">        runtimeService.signalEventReceivedAsync(&quot;The Signal&quot;);</span>
+
+<span class="nc" id="L865">        assertThat(taskService.createTaskQuery().taskName(&quot;Task after signal&quot;).taskTenantId(TEST_TENANT_ID).count()).isEqualTo(4);</span>
+<span class="nc" id="L866">        assertThat(taskService.createTaskQuery().taskName(&quot;Task after signal&quot;).taskWithoutTenantId().count()).isZero();</span>
+
+<span class="nc bnc" id="L868" title="All 2 branches missed.">        for (Job job : managementService.createJobQuery().list()) {</span>
+<span class="nc" id="L869">            managementService.executeJob(job.getId());</span>
+<span class="nc" id="L870">        }</span>
+
+<span class="nc" id="L872">        assertThat(taskService.createTaskQuery().taskName(&quot;Task after signal&quot;).taskTenantId(TEST_TENANT_ID).count()).isEqualTo(4);</span>
+<span class="nc" id="L873">        assertThat(taskService.createTaskQuery().taskName(&quot;Task after signal&quot;).taskWithoutTenantId().count()).isEqualTo(5);</span>
+
+        // Cleanup
+<span class="nc bnc" id="L876" title="All 2 branches missed.">        for (Deployment deployment : repositoryService.createDeploymentQuery().list()) {</span>
+<span class="nc" id="L877">            repositoryService.deleteDeployment(deployment.getId(), true);</span>
+<span class="nc" id="L878">        }</span>
+<span class="nc" id="L879">    }</span>
+
+    @Test
+    public void testStartProcessInstanceBySignalTenancy() {
+
+        // Deploy process both with and without tenant
+<span class="nc" id="L885">        repositoryService.createDeployment()</span>
+<span class="nc" id="L886">                .addClasspathResource(&quot;org/flowable/engine/test/api/tenant/TenancyTest.testStartProcessInstanceBySignalTenancy.bpmn20.xml&quot;).deploy();</span>
+<span class="nc" id="L887">        repositoryService.createDeployment()</span>
+<span class="nc" id="L888">                .addClasspathResource(&quot;org/flowable/engine/test/api/tenant/TenancyTest.testStartProcessInstanceBySignalTenancy.bpmn20.xml&quot;)</span>
+<span class="nc" id="L889">                .tenantId(TEST_TENANT_ID).deploy();</span>
+
+        // Signaling without tenant
+<span class="nc" id="L892">        runtimeService.signalEventReceived(&quot;The Signal&quot;);</span>
+<span class="nc" id="L893">        assertThat(runtimeService.createProcessInstanceQuery().count()).isEqualTo(3);</span>
+<span class="nc" id="L894">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceWithoutTenantId().count()).isEqualTo(3);</span>
+<span class="nc" id="L895">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceTenantId(TEST_TENANT_ID).count()).isZero();</span>
+
+        // Signalling with tenant
+<span class="nc" id="L898">        runtimeService.signalEventReceivedWithTenantId(&quot;The Signal&quot;, TEST_TENANT_ID);</span>
+<span class="nc" id="L899">        assertThat(runtimeService.createProcessInstanceQuery().count()).isEqualTo(6);</span>
+<span class="nc" id="L900">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceWithoutTenantId().count()).isEqualTo(3);</span>
+<span class="nc" id="L901">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceTenantId(TEST_TENANT_ID).count()).isEqualTo(3);</span>
+
+        // Start a process instance with a boundary catch (with and without
+        // tenant)
+<span class="nc" id="L905">        runtimeService.startProcessInstanceByKey(&quot;processWithSignalCatch&quot;);</span>
+<span class="nc" id="L906">        runtimeService.startProcessInstanceByKeyAndTenantId(&quot;processWithSignalCatch&quot;, TEST_TENANT_ID);</span>
+
+<span class="nc" id="L908">        runtimeService.signalEventReceived(&quot;The Signal&quot;);</span>
+<span class="nc" id="L909">        assertThat(runtimeService.createProcessInstanceQuery().count()).isEqualTo(11);</span>
+<span class="nc" id="L910">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceWithoutTenantId().count()).isEqualTo(7);</span>
+<span class="nc" id="L911">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceTenantId(TEST_TENANT_ID).count()).isEqualTo(4);</span>
+
+<span class="nc" id="L913">        runtimeService.signalEventReceivedWithTenantId(&quot;The Signal&quot;, TEST_TENANT_ID);</span>
+<span class="nc" id="L914">        assertThat(runtimeService.createProcessInstanceQuery().count()).isEqualTo(14);</span>
+<span class="nc" id="L915">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceWithoutTenantId().count()).isEqualTo(7);</span>
+<span class="nc" id="L916">        assertThat(runtimeService.createProcessInstanceQuery().processInstanceTenantId(TEST_TENANT_ID).count()).isEqualTo(7);</span>
+
+        // Cleanup
+<span class="nc bnc" id="L919" title="All 2 branches missed.">        for (Deployment deployment : repositoryService.createDeploymentQuery().list()) {</span>
+<span class="nc" id="L920">            repositoryService.deleteDeployment(deployment.getId(), true);</span>
+<span class="nc" id="L921">        }</span>
+<span class="nc" id="L922">    }</span>
+
+    @Test
+    public void testStartProcessInstanceByMessageTenancy() {
+
+        // Deploy process both with and without tenant
+<span class="nc" id="L928">        repositoryService.createDeployment().addClasspathResource(&quot;org/flowable/engine/test/api/tenant/TenancyTest.testMessageTenancy.bpmn20.xml&quot;).deploy();</span>
+<span class="nc" id="L929">        repositoryService.createDeployment().addClasspathResource(&quot;org/flowable/engine/test/api/tenant/TenancyTest.testMessageTenancy.bpmn20.xml&quot;)</span>
+<span class="nc" id="L930">                .tenantId(TEST_TENANT_ID).deploy();</span>
+
+        // Verify query
+<span class="nc" id="L933">        assertThat(repositoryService.createProcessDefinitionQuery().messageEventSubscriptionName(&quot;My message&quot;).count()).isEqualTo(2);</span>
+<span class="nc" id="L934">        assertThat(repositoryService.createProcessDefinitionQuery().messageEventSubscriptionName(&quot;My message&quot;).processDefinitionWithoutTenantId().count())</span>
+<span class="nc" id="L935">                .isEqualTo(1);</span>
+<span class="nc" id="L936">        assertThat(</span>
+<span class="nc" id="L937">                repositoryService.createProcessDefinitionQuery().messageEventSubscriptionName(&quot;My message&quot;).processDefinitionTenantId(TEST_TENANT_ID).count())</span>
+<span class="nc" id="L938">                .isEqualTo(1);</span>
+
+        // Start a process instance by message without tenant
+<span class="nc" id="L941">        runtimeService.startProcessInstanceByMessage(&quot;My message&quot;);</span>
+<span class="nc" id="L942">        runtimeService.startProcessInstanceByMessage(&quot;My message&quot;);</span>
+
+<span class="nc" id="L944">        assertThat(taskService.createTaskQuery().taskName(&quot;My task&quot;).count()).isEqualTo(2);</span>
+<span class="nc" id="L945">        assertThat(taskService.createTaskQuery().taskName(&quot;My task&quot;).taskWithoutTenantId().count()).isEqualTo(2);</span>
+<span class="nc" id="L946">        assertThat(taskService.createTaskQuery().taskName(&quot;My task&quot;).taskTenantId(TEST_TENANT_ID).count()).isZero();</span>
+
+        // Start a process instance by message with tenant
+<span class="nc" id="L949">        runtimeService.startProcessInstanceByMessageAndTenantId(&quot;My message&quot;, TEST_TENANT_ID);</span>
+<span class="nc" id="L950">        runtimeService.startProcessInstanceByMessageAndTenantId(&quot;My message&quot;, TEST_TENANT_ID);</span>
+<span class="nc" id="L951">        runtimeService.startProcessInstanceByMessageAndTenantId(&quot;My message&quot;, TEST_TENANT_ID);</span>
+<span class="nc" id="L952">        assertThat(taskService.createTaskQuery().taskName(&quot;My task&quot;).count()).isEqualTo(5);</span>
+<span class="nc" id="L953">        assertThat(taskService.createTaskQuery().taskName(&quot;My task&quot;).taskWithoutTenantId().count()).isEqualTo(2);</span>
+<span class="nc" id="L954">        assertThat(taskService.createTaskQuery().taskName(&quot;My task&quot;).taskTenantId(TEST_TENANT_ID).count()).isEqualTo(3);</span>
+
+        // Cleanup
+<span class="nc bnc" id="L957" title="All 2 branches missed.">        for (Deployment deployment : repositoryService.createDeploymentQuery().list()) {</span>
+<span class="nc" id="L958">            repositoryService.deleteDeployment(deployment.getId(), true);</span>
+<span class="nc" id="L959">        }</span>
+<span class="nc" id="L960">    }</span>
+
+    @Test
+    public void testStartProcessInstanceByMessageTenancyReversed() { // same as
+        // above,
+        // but now
+        // reversed
+
+        // Deploy process both with and without tenant
+<span class="nc" id="L969">        repositoryService.createDeployment().addClasspathResource(&quot;org/flowable/engine/test/api/tenant/TenancyTest.testMessageTenancy.bpmn20.xml&quot;).deploy();</span>
+<span class="nc" id="L970">        repositoryService.createDeployment().addClasspathResource(&quot;org/flowable/engine/test/api/tenant/TenancyTest.testMessageTenancy.bpmn20.xml&quot;)</span>
+<span class="nc" id="L971">                .tenantId(TEST_TENANT_ID).deploy();</span>
+
+        // Start a process instance by message with tenant
+<span class="nc" id="L974">        runtimeService.startProcessInstanceByMessageAndTenantId(&quot;My message&quot;, TEST_TENANT_ID);</span>
+<span class="nc" id="L975">        runtimeService.startProcessInstanceByMessageAndTenantId(&quot;My message&quot;, TEST_TENANT_ID);</span>
+<span class="nc" id="L976">        runtimeService.startProcessInstanceByMessageAndTenantId(&quot;My message&quot;, TEST_TENANT_ID);</span>
+<span class="nc" id="L977">        assertThat(taskService.createTaskQuery().taskName(&quot;My task&quot;).count()).isEqualTo(3);</span>
+<span class="nc" id="L978">        assertThat(taskService.createTaskQuery().taskName(&quot;My task&quot;).taskWithoutTenantId().count()).isZero();</span>
+<span class="nc" id="L979">        assertThat(taskService.createTaskQuery().taskName(&quot;My task&quot;).taskTenantId(TEST_TENANT_ID).count()).isEqualTo(3);</span>
+
+        // Start a process instance by message without tenant
+<span class="nc" id="L982">        runtimeService.startProcessInstanceByMessage(&quot;My message&quot;);</span>
+<span class="nc" id="L983">        runtimeService.startProcessInstanceByMessage(&quot;My message&quot;);</span>
+
+<span class="nc" id="L985">        assertThat(taskService.createTaskQuery().taskName(&quot;My task&quot;).count()).isEqualTo(5);</span>
+<span class="nc" id="L986">        assertThat(taskService.createTaskQuery().taskName(&quot;My task&quot;).taskWithoutTenantId().count()).isEqualTo(2);</span>
+<span class="nc" id="L987">        assertThat(taskService.createTaskQuery().taskName(&quot;My task&quot;).taskTenantId(TEST_TENANT_ID).count()).isEqualTo(3);</span>
+
+        // Cleanup
+<span class="nc bnc" id="L990" title="All 2 branches missed.">        for (Deployment deployment : repositoryService.createDeploymentQuery().list()) {</span>
+<span class="nc" id="L991">            repositoryService.deleteDeployment(deployment.getId(), true);</span>
+<span class="nc" id="L992">        }</span>
+<span class="nc" id="L993">    }</span>
+
+    // Bug from http://forums.activiti.org/content/callactiviti-tenant-id
+    @Test
+    public void testCallActivityWithTenant() {
+<span class="nc bnc" id="L998" title="All 2 branches missed.">        if (HistoryTestHelper.isHistoryLevelAtLeast(HistoryLevel.ACTIVITY, processEngineConfiguration)) {</span>
+<span class="nc" id="L999">            String tenantId = &quot;apache&quot;;</span>
+
+            // deploying both processes. Process 1 will call Process 2
+<span class="nc" id="L1002">            repositoryService.createDeployment()</span>
+<span class="nc" id="L1003">                    .addClasspathResource(&quot;org/flowable/engine/test/api/tenant/TenancyTest.testCallActivityWithTenant-process01.bpmn20.xml&quot;).tenantId(tenantId)</span>
+<span class="nc" id="L1004">                    .deploy();</span>
+<span class="nc" id="L1005">            repositoryService.createDeployment()</span>
+<span class="nc" id="L1006">                    .addClasspathResource(&quot;org/flowable/engine/test/api/tenant/TenancyTest.testCallActivityWithTenant-process02.bpmn20.xml&quot;).tenantId(tenantId)</span>
+<span class="nc" id="L1007">                    .deploy();</span>
+
+            // Starting Process 1. Process 1 will be executed successfully but
+            // when the call to process 2 is made internally it will throw the exception
+<span class="nc" id="L1011">            ProcessInstance processInstance = runtimeService</span>
+<span class="nc" id="L1012">                    .startProcessInstanceByKeyAndTenantId(&quot;process1&quot;, null, CollectionUtil.singletonMap(&quot;sendFor&quot;, &quot;test&quot;), tenantId);</span>
+<span class="nc" id="L1013">            assertThat(processInstance).isNotNull();</span>
+
+<span class="nc" id="L1015">            waitForHistoryJobExecutorToProcessAllJobs(7000, 100);</span>
+
+<span class="nc" id="L1017">            assertThat(historyService.createHistoricProcessInstanceQuery().processDefinitionKey(&quot;process2&quot;).processInstanceTenantId(tenantId).count())</span>
+<span class="nc" id="L1018">                    .isEqualTo(1);</span>
+<span class="nc" id="L1019">            assertThat(historyService.createHistoricProcessInstanceQuery().processDefinitionKey(&quot;process2&quot;).count()).isEqualTo(1);</span>
+
+            // following line if executed will give activiti object not found
+            // exception as the process1 is linked to a tenant id.
+<span class="nc" id="L1023">            assertThatThrownBy(() -&gt; runtimeService.startProcessInstanceByKey(&quot;process1&quot;));</span>
+
+            // Cleanup
+<span class="nc" id="L1026">            deleteDeployments();</span>
+        }
+<span class="nc" id="L1028">    }</span>
+
+    /*
+     * See https://activiti.atlassian.net/browse/ACT-4034
+     */
+    @Test
+    public void testGetLatestProcessDefinitionVersionForSameProcessDefinitionKey() {
+<span class="nc" id="L1035">        String tenant1 = &quot;tenant1&quot;;</span>
+<span class="nc" id="L1036">        String tenant2 = &quot;tenant2&quot;;</span>
+
+        // Tenant 1 ==&gt; version 4
+<span class="nc bnc" id="L1039" title="All 2 branches missed.">        for (int i = 0; i &lt; 4; i++) {</span>
+<span class="nc" id="L1040">            deployTestProcessWithTestTenant(tenant1);</span>
+        }
+
+        // Tenant 2 ==&gt; version 2
+<span class="nc bnc" id="L1044" title="All 2 branches missed.">        for (int i = 0; i &lt; 2; i++) {</span>
+<span class="nc" id="L1045">            deployTestProcessWithTestTenant(tenant2);</span>
+        }
+
+        // No tenant ==&gt; version 3
+<span class="nc bnc" id="L1049" title="All 2 branches missed.">        for (int i = 0; i &lt; 3; i++) {</span>
+<span class="nc" id="L1050">            deployTestProcessWithTwoTasksNoTenant();</span>
+        }
+
+<span class="nc" id="L1053">        ProcessDefinition processDefinition = repositoryService.createProcessDefinitionQuery()</span>
+<span class="nc" id="L1054">                .processDefinitionTenantId(tenant1)</span>
+<span class="nc" id="L1055">                .latestVersion()</span>
+<span class="nc" id="L1056">                .singleResult();</span>
+<span class="nc" id="L1057">        assertThat(processDefinition.getVersion()).isEqualTo(4);</span>
+
+<span class="nc" id="L1059">        processDefinition = repositoryService.createProcessDefinitionQuery()</span>
+<span class="nc" id="L1060">                .processDefinitionTenantId(tenant2)</span>
+<span class="nc" id="L1061">                .latestVersion()</span>
+<span class="nc" id="L1062">                .singleResult();</span>
+<span class="nc" id="L1063">        assertThat(processDefinition.getVersion()).isEqualTo(2);</span>
+
+<span class="nc" id="L1065">        processDefinition = repositoryService.createProcessDefinitionQuery()</span>
+<span class="nc" id="L1066">                .processDefinitionWithoutTenantId()</span>
+<span class="nc" id="L1067">                .latestVersion()</span>
+<span class="nc" id="L1068">                .singleResult();</span>
+<span class="nc" id="L1069">        assertThat(processDefinition.getVersion()).isEqualTo(3);</span>
+
+<span class="nc" id="L1071">        List&lt;ProcessDefinition&gt; processDefinitions = repositoryService.createProcessDefinitionQuery().latestVersion().list();</span>
+<span class="nc" id="L1072">        assertThat(processDefinitions).hasSize(3);</span>
+
+        // Verify they have different tenant ids
+<span class="nc" id="L1075">        int tenant1Count = 0;</span>
+<span class="nc" id="L1076">        int tenant2Count = 0;</span>
+<span class="nc" id="L1077">        int noTenantCount = 0;</span>
+<span class="nc bnc" id="L1078" title="All 2 branches missed.">        for (ProcessDefinition p : processDefinitions) {</span>
+<span class="nc bnc" id="L1079" title="All 4 branches missed.">            if (p.getTenantId() == null || p.getTenantId().equals(ProcessEngineConfiguration.NO_TENANT_ID)) {</span>
+<span class="nc" id="L1080">                noTenantCount++;</span>
+<span class="nc bnc" id="L1081" title="All 2 branches missed.">            } else if (p.getTenantId().equals(tenant1)) {</span>
+<span class="nc" id="L1082">                tenant1Count++;</span>
+<span class="nc bnc" id="L1083" title="All 2 branches missed.">            } else if (p.getTenantId().equals(tenant2)) {</span>
+<span class="nc" id="L1084">                tenant2Count++;</span>
+            }
+<span class="nc" id="L1086">        }</span>
+<span class="nc" id="L1087">        assertThat(tenant1Count).isEqualTo(1);</span>
+<span class="nc" id="L1088">        assertThat(tenant2Count).isEqualTo(1);</span>
+<span class="nc" id="L1089">        assertThat(noTenantCount).isEqualTo(1);</span>
+<span class="nc" id="L1090">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,221 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ResetExpiredJobsTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.jobexecutor</a> &gt; <span class="el_source">ResetExpiredJobsTest.java</span></div><h1>ResetExpiredJobsTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.test.jobexecutor;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+
+import org.flowable.common.engine.impl.interceptor.Command;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.common.engine.impl.interceptor.EngineConfigurationConstants;
+import org.flowable.engine.impl.test.PluggableFlowableTestCase;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.engine.test.Deployment;
+import org.flowable.job.api.Job;
+import org.flowable.job.api.JobQuery;
+import org.flowable.job.service.JobServiceConfiguration;
+import org.flowable.job.service.impl.asyncexecutor.FindExpiredJobsCmd;
+import org.flowable.job.service.impl.asyncexecutor.ResetExpiredJobsCmd;
+import org.flowable.job.service.impl.asyncexecutor.ResetExpiredJobsRunnable;
+import org.flowable.job.service.impl.cmd.AcquireJobsCmd;
+import org.flowable.job.service.impl.persistence.entity.JobEntity;
+import org.flowable.job.service.impl.persistence.entity.JobEntityImpl;
+import org.flowable.job.service.impl.persistence.entity.JobEntityManager;
+import org.flowable.job.service.impl.persistence.entity.JobInfoEntity;
+import org.junit.jupiter.api.Test;
+
+/**
+ * @author Joram Barrez
+ */
+<span class="nc" id="L45">public class ResetExpiredJobsTest extends PluggableFlowableTestCase {</span>
+
+    @Test
+    @Deployment
+    public void testResetExpiredJobs() {
+
+        // This first test 'mimics' the async executor:
+        // first the job will be acquired via the lowlevel API instead of using threads
+        // and then they will be reset, using the lowlevel API again.
+
+<span class="nc" id="L55">        Date startOfTestTime = new Date();</span>
+<span class="nc" id="L56">        processEngineConfiguration.getClock().setCurrentTime(startOfTestTime);</span>
+
+        // Starting process instance will make one job ready
+<span class="nc" id="L59">        runtimeService.startProcessInstanceByKey(&quot;myProcess&quot;);</span>
+<span class="nc" id="L60">        assertThat(managementService.createJobQuery().count()).isEqualTo(1);</span>
+
+        // Running the 'reset expired' logic should have no effect now
+<span class="nc" id="L63">        JobServiceConfiguration jobServiceConfiguration = (JobServiceConfiguration) processEngineConfiguration.getServiceConfigurations().get(EngineConfigurationConstants.KEY_JOB_SERVICE_CONFIG);</span>
+<span class="nc" id="L64">        int expiredJobsPagesSize = processEngineConfiguration.getAsyncExecutorResetExpiredJobsPageSize();</span>
+<span class="nc" id="L65">        List&lt;? extends JobInfoEntity&gt; expiredJobs = managementService.executeCommand(new FindExpiredJobsCmd(expiredJobsPagesSize, jobServiceConfiguration.getJobEntityManager(), jobServiceConfiguration));</span>
+<span class="nc" id="L66">        assertThat(expiredJobs).isEmpty();</span>
+<span class="nc" id="L67">        assertJobDetails(false);</span>
+
+        // Run the acquire logic. This should lock the job
+<span class="nc" id="L70">        managementService.executeCommand(new AcquireJobsCmd(processEngineConfiguration.getAsyncExecutor()));</span>
+<span class="nc" id="L71">        assertJobDetails(true);</span>
+
+        // Running the 'reset expired' logic should have no effect, the lock time is not yet passed
+<span class="nc" id="L74">        expiredJobs = managementService.executeCommand(new FindExpiredJobsCmd(expiredJobsPagesSize, jobServiceConfiguration.getJobEntityManager(), jobServiceConfiguration));</span>
+<span class="nc" id="L75">        assertThat(expiredJobs).isEmpty();</span>
+<span class="nc" id="L76">        assertJobDetails(true);</span>
+
+        // Move clock to past the lock time
+<span class="nc" id="L79">        Date newDate = new Date(startOfTestTime.getTime() + processEngineConfiguration.getAsyncExecutor().getAsyncJobLockTimeInMillis() + 10000);</span>
+<span class="nc" id="L80">        processEngineConfiguration.getClock().setCurrentTime(newDate);</span>
+
+        // Running the reset logic should now reset the lock
+<span class="nc" id="L83">        expiredJobs = managementService.executeCommand(new FindExpiredJobsCmd(expiredJobsPagesSize,  jobServiceConfiguration.getJobEntityManager(), jobServiceConfiguration));</span>
+<span class="nc" id="L84">        assertThat(expiredJobs).isNotEmpty();</span>
+
+<span class="nc" id="L86">        List&lt;String&gt; jobIds = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L87" title="All 2 branches missed.">        for (JobInfoEntity jobEntity : expiredJobs) {</span>
+<span class="nc" id="L88">            jobIds.add(jobEntity.getId());</span>
+<span class="nc" id="L89">        }</span>
+
+<span class="nc" id="L91">        managementService.executeCommand(new ResetExpiredJobsCmd(jobIds, jobServiceConfiguration.getJobEntityManager(), jobServiceConfiguration));</span>
+<span class="nc" id="L92">        assertJobDetails(false);</span>
+
+        // And it can be re-acquired
+<span class="nc" id="L95">        managementService.executeCommand(new AcquireJobsCmd(processEngineConfiguration.getAsyncExecutor()));</span>
+<span class="nc" id="L96">        assertJobDetails(true);</span>
+
+        // Start two new process instances, those jobs should not be locked
+<span class="nc" id="L99">        runtimeService.startProcessInstanceByKey(&quot;myProcess&quot;);</span>
+<span class="nc" id="L100">        runtimeService.startProcessInstanceByKey(&quot;myProcess&quot;);</span>
+<span class="nc" id="L101">        assertThat(managementService.createJobQuery().count()).isEqualTo(3);</span>
+<span class="nc" id="L102">        assertJobDetails(true);</span>
+
+<span class="nc" id="L104">        List&lt;Job&gt; unlockedJobs = managementService.createJobQuery().unlocked().list();</span>
+<span class="nc" id="L105">        assertThat(unlockedJobs).hasSize(2);</span>
+<span class="nc bnc" id="L106" title="All 2 branches missed.">        for (Job job : unlockedJobs) {</span>
+<span class="nc" id="L107">            JobEntity jobEntity = (JobEntity) job;</span>
+<span class="nc" id="L108">            assertThat(jobEntity.getLockOwner()).isNull();</span>
+<span class="nc" id="L109">            assertThat(jobEntity.getLockExpirationTime()).isNull();</span>
+<span class="nc" id="L110">        }</span>
+<span class="nc" id="L111">    }</span>
+    
+    @Test
+    @Deployment
+    public void testResetExpiredJobTimeout() {
+<span class="nc" id="L116">        Date startOfTestTime = new Date();</span>
+<span class="nc" id="L117">        processEngineConfiguration.getClock().setCurrentTime(startOfTestTime);</span>
+
+<span class="nc" id="L119">        runtimeService.startProcessInstanceByKey(&quot;myProcess&quot;);</span>
+<span class="nc" id="L120">        Job job = managementService.createJobQuery().singleResult();</span>
+<span class="nc" id="L121">        assertThat(job).isInstanceOf(JobEntity.class);</span>
+        
+<span class="nc" id="L123">        JobEntity jobEntity = (JobEntity) job;</span>
+<span class="nc" id="L124">        assertThat(jobEntity.getLockOwner()).isNull();</span>
+<span class="nc" id="L125">        assertThat(jobEntity.getLockExpirationTime()).isNull();</span>
+        
+<span class="nc" id="L127">        int expiredJobsPagesSize = processEngineConfiguration.getAsyncExecutorResetExpiredJobsPageSize();</span>
+<span class="nc" id="L128">        JobServiceConfiguration jobServiceConfiguration = (JobServiceConfiguration) processEngineConfiguration.getServiceConfigurations().get(EngineConfigurationConstants.KEY_JOB_SERVICE_CONFIG);</span>
+<span class="nc" id="L129">        List&lt;? extends JobInfoEntity&gt; expiredJobs = managementService.executeCommand(new FindExpiredJobsCmd(expiredJobsPagesSize, jobServiceConfiguration.getJobEntityManager(), jobServiceConfiguration));</span>
+<span class="nc" id="L130">        assertThat(expiredJobs).isEmpty();</span>
+
+        // Mimic job locking
+<span class="nc" id="L133">        managementService.executeCommand(commandContext -&gt; {</span>
+<span class="nc" id="L134">            JobEntity j = CommandContextUtil.getJobService(commandContext).findJobById(jobEntity.getId());</span>
+<span class="nc" id="L135">            j.setLockOwner(processEngineConfiguration.getAsyncExecutor().getLockOwner());</span>
+<span class="nc" id="L136">            j.setLockExpirationTime(new Date());</span>
+<span class="nc" id="L137">            return null;</span>
+        });
+
+        // Move time to current time + 1 second. This should make the job expried
+<span class="nc" id="L141">        processEngineConfiguration.getClock().setCurrentTime(new Date(new Date().getTime() + 1000));</span>
+      
+<span class="nc" id="L143">        expiredJobs = managementService.executeCommand(new FindExpiredJobsCmd(expiredJobsPagesSize, jobServiceConfiguration.getJobEntityManager(), jobServiceConfiguration));</span>
+<span class="nc" id="L144">        assertThat(expiredJobs).extracting(JobInfoEntity::getId).containsExactly(job.getId());</span>
+
+<span class="nc" id="L146">        List&lt;String&gt; jobIds = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L147" title="All 2 branches missed.">        for (JobInfoEntity j : expiredJobs) {</span>
+<span class="nc" id="L148">            jobIds.add(j.getId());</span>
+<span class="nc" id="L149">        }</span>
+<span class="nc" id="L150">        managementService.executeCommand(new ResetExpiredJobsCmd(jobIds, jobServiceConfiguration.getJobEntityManager(), jobServiceConfiguration));</span>
+<span class="nc" id="L151">        assertThat(managementService.executeCommand(new FindExpiredJobsCmd(expiredJobsPagesSize, jobServiceConfiguration.getJobEntityManager(), jobServiceConfiguration))).isEmpty();</span>
+        
+<span class="nc" id="L153">        JobEntity jobAfterExpiry = (JobEntity) managementService.createJobQuery().singleResult();</span>
+<span class="nc" id="L154">        assertThat(jobAfterExpiry).isNotNull();</span>
+<span class="nc" id="L155">        assertThat(jobAfterExpiry.getId()).isEqualTo(job.getId());</span>
+<span class="nc" id="L156">        assertThat(jobAfterExpiry.getLockExpirationTime()).isNull();</span>
+<span class="nc" id="L157">        assertThat(jobAfterExpiry.getLockOwner()).isNull();</span>
+<span class="nc" id="L158">    }</span>
+
+    @Test
+    public void testResetRunnableContinuesUntilNoMoreToReset() {
+<span class="nc" id="L162">        int nrOfJobsToCreate = processEngineConfiguration.getAsyncExecutorResetExpiredJobsPageSize() * 3;</span>
+
+<span class="nc bnc" id="L164" title="All 2 branches missed.">        for (int i = 0; i &lt; nrOfJobsToCreate; i++) {</span>
+<span class="nc" id="L165">            managementService.executeCommand(new Command&lt;Void&gt;() {</span>
+
+                @Override
+                public Void execute(CommandContext commandContext) {
+<span class="nc" id="L169">                    JobEntityManager jobEntityManager = processEngineConfiguration.getJobServiceConfiguration().getJobEntityManager();</span>
+<span class="nc" id="L170">                    JobEntity jobEntity = jobEntityManager.create();</span>
+
+<span class="nc" id="L172">                    jobEntity.setJobType(&quot;type&quot;);</span>
+
+                    // Set the time way back, so it's definitely expired
+<span class="nc" id="L175">                    jobEntity.setLockExpirationTime(Date.from(Instant.now().minus(100, ChronoUnit.DAYS)));</span>
+<span class="nc" id="L176">                    jobEntity.setLockOwner(&quot;claimed&quot;);</span>
+
+<span class="nc" id="L178">                    jobEntityManager.insert(jobEntity);</span>
+<span class="nc" id="L179">                    return null;</span>
+                }
+            });
+        }
+<span class="nc" id="L183">        assertThat(managementService.createJobQuery().count()).isEqualTo(nrOfJobsToCreate);</span>
+
+        // Running the reset expired runnable should trigger them all
+<span class="nc" id="L186">        ResetExpiredJobsRunnable resetExpiredJobsRunnable = new ResetExpiredJobsRunnable(&quot;test-reset-expired&quot;,</span>
+<span class="nc" id="L187">            processEngineConfiguration.getAsyncExecutor(), processEngineConfiguration.getJobServiceConfiguration().getJobEntityManager());</span>
+<span class="nc" id="L188">        resetExpiredJobsRunnable.resetJobs();</span>
+
+<span class="nc" id="L190">        List&lt;Job&gt; jobs = managementService.createJobQuery().list();</span>
+<span class="nc bnc" id="L191" title="All 2 branches missed.">        for (Job job : jobs) {</span>
+<span class="nc" id="L192">            JobEntityImpl jobEntity = (JobEntityImpl) job;</span>
+<span class="nc" id="L193">            assertThat(jobEntity.getLockOwner()).isNull();</span>
+<span class="nc" id="L194">            assertThat(jobEntity.getLockExpirationTime()).isNull();</span>
+
+<span class="nc" id="L196">            managementService.deleteJob(job.getId());</span>
+<span class="nc" id="L197">        }</span>
+<span class="nc" id="L198">    }</span>
+
+    protected void assertJobDetails(boolean locked) {
+<span class="nc" id="L201">        JobQuery jobQuery = managementService.createJobQuery();</span>
+
+<span class="nc bnc" id="L203" title="All 2 branches missed.">        if (locked) {</span>
+<span class="nc" id="L204">            jobQuery.locked();</span>
+        }
+
+<span class="nc" id="L207">        Job job = jobQuery.singleResult();</span>
+<span class="nc" id="L208">        assertThat(job).isInstanceOf(JobEntity.class);</span>
+<span class="nc" id="L209">        JobEntity jobEntity = (JobEntity) job;</span>
+
+<span class="nc bnc" id="L211" title="All 2 branches missed.">        if (locked) {</span>
+<span class="nc" id="L212">            assertThat(jobEntity.getLockOwner()).isNotNull();</span>
+<span class="nc" id="L213">            assertThat(jobEntity.getLockExpirationTime()).isNotNull();</span>
+        } else {
+<span class="nc" id="L215">            assertThat(jobEntity.getLockOwner()).isNull();</span>
+<span class="nc" id="L216">            assertThat(jobEntity.getLockExpirationTime()).isNull();</span>
+        }
+<span class="nc" id="L218">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,348 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ApacheHttpComponents5FlowableHttpClient.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.http.common.impl.apache.client5</a> &gt; <span class="el_source">ApacheHttpComponents5FlowableHttpClient.java</span></div><h1>ApacheHttpComponents5FlowableHttpClient.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.http.common.impl.apache.client5;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.UnsupportedEncodingException;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.nio.charset.Charset;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
+import java.util.regex.Pattern;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.hc.client5.http.async.HttpAsyncClient;
+import org.apache.hc.client5.http.async.methods.SimpleBody;
+import org.apache.hc.client5.http.async.methods.SimpleHttpResponse;
+import org.apache.hc.client5.http.async.methods.SimpleResponseConsumer;
+import org.apache.hc.client5.http.config.RequestConfig;
+import org.apache.hc.client5.http.entity.mime.HttpMultipartMode;
+import org.apache.hc.client5.http.entity.mime.MultipartEntityBuilder;
+import org.apache.hc.client5.http.impl.DefaultHttpRequestRetryStrategy;
+import org.apache.hc.client5.http.impl.async.CloseableHttpAsyncClient;
+import org.apache.hc.client5.http.impl.async.HttpAsyncClientBuilder;
+import org.apache.hc.client5.http.impl.async.HttpAsyncClients;
+import org.apache.hc.client5.http.impl.nio.PoolingAsyncClientConnectionManagerBuilder;
+import org.apache.hc.client5.http.protocol.HttpClientContext;
+import org.apache.hc.client5.http.ssl.DefaultClientTlsStrategy;
+import org.apache.hc.client5.http.ssl.NoopHostnameVerifier;
+import org.apache.hc.client5.http.ssl.TrustSelfSignedStrategy;
+import org.apache.hc.core5.concurrent.FutureCallback;
+import org.apache.hc.core5.http.ContentType;
+import org.apache.hc.core5.http.HttpEntity;
+import org.apache.hc.core5.http.HttpVersion;
+import org.apache.hc.core5.http.ParseException;
+import org.apache.hc.core5.http.io.entity.ByteArrayEntity;
+import org.apache.hc.core5.http.io.entity.EntityUtils;
+import org.apache.hc.core5.http.nio.AsyncRequestProducer;
+import org.apache.hc.core5.http.nio.entity.AsyncEntityProducers;
+import org.apache.hc.core5.http.nio.support.AsyncRequestBuilder;
+import org.apache.hc.core5.io.CloseMode;
+import org.apache.hc.core5.io.ModalCloseable;
+import org.apache.hc.core5.ssl.SSLContextBuilder;
+import org.apache.hc.core5.util.TimeValue;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.FlowableIllegalArgumentException;
+import org.flowable.http.common.api.HttpHeaders;
+import org.flowable.http.common.api.HttpRequest;
+import org.flowable.http.common.api.HttpResponse;
+import org.flowable.http.common.api.MultiValuePart;
+import org.flowable.http.common.api.client.AsyncExecutableHttpRequest;
+import org.flowable.http.common.api.client.FlowableAsyncHttpClient;
+import org.flowable.http.common.impl.HttpClientConfig;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * @author Filip Hrisafov
+ */
+public class ApacheHttpComponents5FlowableHttpClient implements FlowableAsyncHttpClient {
+
+<span class="nc" id="L77">    private static final Pattern PLUS_CHARACTER_PATTERN = Pattern.compile(&quot;\\+&quot;);</span>
+    private static final String ENCODED_PLUS_CHARACTER = &quot;%2B&quot;;
+<span class="nc" id="L79">    private static final Pattern SPACE_CHARACTER_PATTERN = Pattern.compile(&quot; &quot;);</span>
+    private static final String ENCODED_SPACE_CHARACTER = &quot;%20&quot;;
+
+<span class="nc" id="L82">    protected final Logger logger = LoggerFactory.getLogger(getClass());</span>
+
+    protected HttpAsyncClient client;
+    protected boolean closeClient;
+    protected int socketTimeout;
+    protected int connectTimeout;
+    protected int connectionRequestTimeout;
+
+    public ApacheHttpComponents5FlowableHttpClient(HttpClientConfig config) {
+<span class="nc" id="L91">        this(config, clientBuilder -&gt; {});</span>
+<span class="nc" id="L92">    }</span>
+
+<span class="nc" id="L94">    public ApacheHttpComponents5FlowableHttpClient(HttpClientConfig config, Consumer&lt;HttpAsyncClientBuilder&gt; clientBuilderCustomizer) {</span>
+<span class="nc" id="L95">        HttpAsyncClientBuilder httpClientBuilder = HttpAsyncClients.custom();</span>
+
+<span class="nc" id="L97">        PoolingAsyncClientConnectionManagerBuilder managerBuilder = PoolingAsyncClientConnectionManagerBuilder.create()</span>
+<span class="nc" id="L98">                .setMaxConnTotal(500);</span>
+        // https settings
+<span class="nc bnc" id="L100" title="All 2 branches missed.">        if (config.isDisableCertVerify()) {</span>
+
+            try {
+<span class="nc" id="L103">                SSLContextBuilder builder = SSLContextBuilder.create();</span>
+<span class="nc" id="L104">                builder.loadTrustMaterial(null, TrustSelfSignedStrategy.INSTANCE);</span>
+<span class="nc" id="L105">                managerBuilder.setTlsStrategy(new DefaultClientTlsStrategy(builder.build(), NoopHostnameVerifier.INSTANCE));</span>
+
+<span class="nc" id="L107">            } catch (Exception e) {</span>
+<span class="nc" id="L108">                logger.error(&quot;Could not configure HTTP client SSL self signed strategy&quot;, e);</span>
+<span class="nc" id="L109">            }</span>
+        }
+
+        // request retry settings
+<span class="nc" id="L113">        int retryCount = 0;</span>
+<span class="nc bnc" id="L114" title="All 2 branches missed.">        if (config.getRequestRetryLimit() &gt; 0) {</span>
+<span class="nc" id="L115">            retryCount = config.getRequestRetryLimit();</span>
+        }
+<span class="nc" id="L117">        httpClientBuilder.setRetryStrategy(new DefaultHttpRequestRetryStrategy(retryCount, TimeValue.ZERO_MILLISECONDS));</span>
+<span class="nc" id="L118">        clientBuilderCustomizer.accept(httpClientBuilder);</span>
+
+        // system settings
+<span class="nc bnc" id="L121" title="All 2 branches missed.">        if (config.isUseSystemProperties()) {</span>
+<span class="nc" id="L122">            httpClientBuilder.useSystemProperties();</span>
+<span class="nc" id="L123">            managerBuilder.useSystemProperties();</span>
+        }
+
+<span class="nc" id="L126">        httpClientBuilder.setConnectionManager(managerBuilder.build());</span>
+
+<span class="nc" id="L128">        CloseableHttpAsyncClient client = httpClientBuilder.build();</span>
+<span class="nc" id="L129">        client.start();</span>
+<span class="nc" id="L130">        this.client = client;</span>
+<span class="nc" id="L131">        this.closeClient = true;</span>
+
+<span class="nc" id="L133">        this.socketTimeout = config.getSocketTimeout();</span>
+<span class="nc" id="L134">        this.connectTimeout = config.getConnectTimeout();</span>
+<span class="nc" id="L135">        this.connectionRequestTimeout = config.getConnectionRequestTimeout();</span>
+<span class="nc" id="L136">    }</span>
+
+    public ApacheHttpComponents5FlowableHttpClient(HttpAsyncClient client, int socketTimeout, int connectTimeout,
+<span class="nc" id="L139">            int connectionRequestTimeout) {</span>
+<span class="nc" id="L140">        this.client = client;</span>
+<span class="nc" id="L141">        this.socketTimeout = socketTimeout;</span>
+<span class="nc" id="L142">        this.connectTimeout = connectTimeout;</span>
+<span class="nc" id="L143">        this.connectionRequestTimeout = connectionRequestTimeout;</span>
+<span class="nc" id="L144">    }</span>
+
+    public void close() {
+<span class="nc bnc" id="L147" title="All 4 branches missed.">        if (closeClient &amp;&amp; client instanceof ModalCloseable) {</span>
+<span class="nc" id="L148">            ((ModalCloseable) client).close(CloseMode.GRACEFUL);</span>
+        }
+<span class="nc" id="L150">    }</span>
+
+    @Override
+    public AsyncExecutableHttpRequest prepareRequest(HttpRequest requestInfo) {
+        try {
+            AsyncRequestBuilder request;
+<span class="nc" id="L156">            URI uri = createUri(requestInfo.getUrl());</span>
+<span class="nc bnc" id="L157" title="All 8 branches missed.">            switch (requestInfo.getMethod()) {</span>
+                case &quot;GET&quot;: {
+<span class="nc" id="L159">                    request = AsyncRequestBuilder.get(uri);</span>
+<span class="nc" id="L160">                    break;</span>
+                }
+                case &quot;POST&quot;: {
+<span class="nc" id="L163">                    request = AsyncRequestBuilder.post(uri);</span>
+<span class="nc" id="L164">                    setRequestEntity(requestInfo, request);</span>
+<span class="nc" id="L165">                    break;</span>
+                }
+                case &quot;PUT&quot;: {
+<span class="nc" id="L168">                    request = AsyncRequestBuilder.put(uri);</span>
+<span class="nc" id="L169">                    setRequestEntity(requestInfo, request);</span>
+<span class="nc" id="L170">                    break;</span>
+                }
+                case &quot;PATCH&quot;: {
+<span class="nc" id="L173">                    request = AsyncRequestBuilder.patch(uri);</span>
+<span class="nc" id="L174">                    setRequestEntity(requestInfo, request);</span>
+<span class="nc" id="L175">                    break;</span>
+                }
+                case &quot;DELETE&quot;: {
+<span class="nc" id="L178">                    request = AsyncRequestBuilder.delete(uri);</span>
+<span class="nc" id="L179">                    setRequestEntity(requestInfo, request);</span>
+<span class="nc" id="L180">                    break;</span>
+                }
+                case &quot;HEAD&quot;: {
+<span class="nc" id="L183">                    request = AsyncRequestBuilder.head(uri);</span>
+<span class="nc" id="L184">                    break;</span>
+                }
+                case &quot;OPTIONS&quot;: {
+<span class="nc" id="L187">                    request = AsyncRequestBuilder.options(uri);</span>
+<span class="nc" id="L188">                    break;</span>
+                }
+                default: {
+<span class="nc" id="L191">                    throw new FlowableException(requestInfo.getMethod() + &quot; HTTP method not supported&quot;);</span>
+                }
+            }
+
+<span class="nc bnc" id="L195" title="All 2 branches missed.">            if (requestInfo.getHttpHeaders() != null) {</span>
+<span class="nc" id="L196">                setHeaders(request, requestInfo.getHttpHeaders());</span>
+            }
+
+<span class="nc" id="L199">            return new ApacheHttpComponentsExecutableHttpRequest(request.build(), createRequestConfig(requestInfo));</span>
+<span class="nc" id="L200">        } catch (URISyntaxException ex) {</span>
+<span class="nc" id="L201">            throw new FlowableException(&quot;Invalid URL exception occurred&quot;, ex);</span>
+<span class="nc" id="L202">        } catch (IOException ex) {</span>
+<span class="nc" id="L203">            throw new FlowableException(&quot;IO exception occurred&quot;, ex);</span>
+        }
+    }
+
+    protected URI createUri(String url) throws URISyntaxException {
+<span class="nc" id="L208">        String uri = SPACE_CHARACTER_PATTERN.matcher(url).replaceAll(ENCODED_SPACE_CHARACTER);</span>
+<span class="nc" id="L209">        return new URI(PLUS_CHARACTER_PATTERN.matcher(uri).replaceAll(ENCODED_PLUS_CHARACTER));</span>
+    }
+
+    protected void setRequestEntity(HttpRequest requestInfo, AsyncRequestBuilder requestBase) throws UnsupportedEncodingException {
+<span class="nc bnc" id="L213" title="All 2 branches missed.">        if (requestInfo.getBody() != null) {</span>
+<span class="nc bnc" id="L214" title="All 2 branches missed.">            if (StringUtils.isNotEmpty(requestInfo.getBodyEncoding())) {</span>
+<span class="nc" id="L215">                requestBase.setEntity(AsyncEntityProducers.create(requestInfo.getBody(), Charset.forName(requestInfo.getBodyEncoding())));</span>
+            } else {
+<span class="nc" id="L217">                requestBase.setEntity(AsyncEntityProducers.create(requestInfo.getBody()));</span>
+            }
+<span class="nc bnc" id="L219" title="All 2 branches missed.">        } else if (requestInfo.getMultiValueParts() != null) {</span>
+<span class="nc" id="L220">            MultipartEntityBuilder entityBuilder = MultipartEntityBuilder.create();</span>
+<span class="nc" id="L221">            entityBuilder.setMode(HttpMultipartMode.LEGACY);</span>
+<span class="nc bnc" id="L222" title="All 2 branches missed.">            for (MultiValuePart part : requestInfo.getMultiValueParts()) {</span>
+<span class="nc" id="L223">                String name = part.getName();</span>
+<span class="nc" id="L224">                Object value = part.getBody();</span>
+<span class="nc bnc" id="L225" title="All 2 branches missed.">                if (value instanceof byte[]) {</span>
+<span class="nc" id="L226">                    entityBuilder.addBinaryBody(name, (byte[]) value, ContentType.DEFAULT_BINARY, part.getFilename());</span>
+<span class="nc bnc" id="L227" title="All 2 branches missed.">                } else if (value instanceof String) {</span>
+<span class="nc" id="L228">                    entityBuilder.addTextBody(name, (String) value);</span>
+<span class="nc bnc" id="L229" title="All 2 branches missed.">                } else if (value != null) {</span>
+<span class="nc" id="L230">                    throw new FlowableIllegalArgumentException(&quot;Value of type &quot; + value.getClass() + &quot; is not supported as multi part content&quot;);</span>
+                }
+<span class="nc" id="L232">            }</span>
+
+<span class="nc" id="L234">            try (HttpEntity multiPartEntity = entityBuilder.build();</span>
+<span class="nc" id="L235">                 ByteArrayOutputStream outputStream = new ByteArrayOutputStream((int) multiPartEntity.getContentLength())) {</span>
+<span class="nc" id="L236">                multiPartEntity.writeTo(outputStream);</span>
+<span class="nc" id="L237">                requestBase.setEntity(outputStream.toByteArray(), ContentType.parse(multiPartEntity.getContentType()));</span>
+<span class="nc" id="L238">            } catch (IOException e) {</span>
+<span class="nc" id="L239">                throw new FlowableException(&quot;Cannot create multi part entity&quot;, e);</span>
+<span class="nc" id="L240">            }</span>
+        }
+<span class="nc" id="L242">    }</span>
+
+    protected void setHeaders(AsyncRequestBuilder base, HttpHeaders headers) {
+<span class="nc bnc" id="L245" title="All 2 branches missed.">        for (Map.Entry&lt;String, List&lt;String&gt;&gt; entry : headers.entrySet()) {</span>
+<span class="nc" id="L246">            String headerName = entry.getKey();</span>
+<span class="nc bnc" id="L247" title="All 2 branches missed.">            for (String headerValue : entry.getValue()) {</span>
+<span class="nc" id="L248">                base.addHeader(headerName, headerValue);</span>
+<span class="nc" id="L249">            }</span>
+<span class="nc" id="L250">        }</span>
+<span class="nc" id="L251">    }</span>
+
+    protected RequestConfig createRequestConfig(HttpRequest request) {
+<span class="nc" id="L254">        return RequestConfig.custom()</span>
+<span class="nc bnc" id="L255" title="All 2 branches missed.">                .setRedirectsEnabled(!request.isNoRedirects())</span>
+<span class="nc bnc" id="L256" title="All 2 branches missed.">                .setResponseTimeout(request.getTimeout() == 0 ? socketTimeout : request.getTimeout(), TimeUnit.MILLISECONDS)</span>
+<span class="nc" id="L257">                .setConnectTimeout(connectTimeout, TimeUnit.MILLISECONDS)</span>
+<span class="nc" id="L258">                .setConnectionRequestTimeout(connectionRequestTimeout, TimeUnit.MILLISECONDS)</span>
+<span class="nc" id="L259">                .build();</span>
+    }
+
+    protected HttpResponse toFlowableHttpResponse(SimpleHttpResponse response) {
+<span class="nc" id="L263">        HttpResponse responseInfo = new HttpResponse();</span>
+
+<span class="nc" id="L265">        responseInfo.setStatusCode(response.getCode());</span>
+<span class="nc" id="L266">        responseInfo.setReason(response.getReasonPhrase());</span>
+<span class="nc bnc" id="L267" title="All 2 branches missed.">        responseInfo.setProtocol((response.getVersion() != null ? response.getVersion() : HttpVersion.HTTP_1_1).toString());</span>
+
+<span class="nc" id="L269">        HttpHeaders headers = null;</span>
+<span class="nc" id="L270">        Iterator&lt;org.apache.hc.core5.http.Header&gt; headerIterator = response.headerIterator();</span>
+<span class="nc bnc" id="L271" title="All 2 branches missed.">        while (headerIterator.hasNext()) {</span>
+<span class="nc bnc" id="L272" title="All 2 branches missed.">            if (headers == null) {</span>
+<span class="nc" id="L273">                headers = new HttpHeaders();</span>
+            }
+
+<span class="nc" id="L276">            org.apache.hc.core5.http.Header header = headerIterator.next();</span>
+<span class="nc" id="L277">            headers.add(header.getName(), header.getValue());</span>
+<span class="nc" id="L278">        }</span>
+
+<span class="nc" id="L280">        responseInfo.setHttpHeaders(headers);</span>
+
+<span class="nc" id="L282">        SimpleBody body = response.getBody();</span>
+<span class="nc bnc" id="L283" title="All 2 branches missed.">        if (body != null) {</span>
+<span class="nc bnc" id="L284" title="All 2 branches missed.">            if (body.isText()) {</span>
+<span class="nc" id="L285">                responseInfo.setBody(body.getBodyText());</span>
+<span class="nc" id="L286">                responseInfo.setBodyBytes(body.getBodyBytes());</span>
+            } else {
+                try {
+                    // We are creating a fake entity in order to rely on the creation of a String using the EntityUtils
+                    // They contain some special logic for picking the default charset based on the content type
+                    // (in case the content type doesn't have a charset)
+<span class="nc" id="L292">                    responseInfo.setBody(EntityUtils.toString(new ByteArrayEntity(body.getBodyBytes(), body.getContentType())));</span>
+<span class="nc" id="L293">                    responseInfo.setBodyBytes(body.getBodyBytes());</span>
+<span class="nc" id="L294">                } catch (IOException | ParseException e) {</span>
+<span class="nc" id="L295">                    throw new FlowableException(&quot;Failed to read body&quot;);</span>
+<span class="nc" id="L296">                }</span>
+            }
+        }
+
+<span class="nc" id="L300">        return responseInfo;</span>
+
+    }
+
+    protected class ApacheHttpComponentsExecutableHttpRequest implements AsyncExecutableHttpRequest {
+
+        protected final AsyncRequestProducer request;
+        protected final RequestConfig requestConfig;
+
+<span class="nc" id="L309">        public ApacheHttpComponentsExecutableHttpRequest(AsyncRequestProducer request, RequestConfig requestConfig) {</span>
+<span class="nc" id="L310">            this.request = request;</span>
+<span class="nc" id="L311">            this.requestConfig = requestConfig;</span>
+<span class="nc" id="L312">        }</span>
+
+        @Override
+        public CompletableFuture&lt;HttpResponse&gt; callAsync() {
+<span class="nc" id="L316">            CompletableFuture&lt;HttpResponse&gt; responseFuture = new CompletableFuture&lt;&gt;();</span>
+
+<span class="nc" id="L318">            HttpClientContext context = HttpClientContext.create();</span>
+<span class="nc" id="L319">            context.setRequestConfig(requestConfig);</span>
+<span class="nc" id="L320">            client.execute(</span>
+                    request,
+<span class="nc" id="L322">                    SimpleResponseConsumer.create(),</span>
+                    null,
+                    context,
+<span class="nc" id="L325">                    new FutureCallback&lt;&gt;() {</span>
+
+                        @Override
+                        public void completed(SimpleHttpResponse result) {
+<span class="nc" id="L329">                            responseFuture.complete(toFlowableHttpResponse(result));</span>
+<span class="nc" id="L330">                        }</span>
+
+                        @Override
+                        public void failed(Exception ex) {
+<span class="nc" id="L334">                            responseFuture.completeExceptionally(ex);</span>
+<span class="nc" id="L335">                        }</span>
+
+                        @Override
+                        public void cancelled() {
+<span class="nc" id="L339">                            responseFuture.cancel(true);</span>
+<span class="nc" id="L340">                        }</span>
+                    }
+            );
+
+<span class="nc" id="L344">            return responseFuture;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

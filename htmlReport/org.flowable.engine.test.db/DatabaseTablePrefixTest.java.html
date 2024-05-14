@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DatabaseTablePrefixTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.db</a> &gt; <span class="el_source">DatabaseTablePrefixTest.java</span></div><h1>DatabaseTablePrefixTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 20.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.flowable.engine.test.db;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.sql.Connection;
+import java.sql.SQLException;
+
+import javax.sql.DataSource;
+
+import org.apache.ibatis.datasource.pooled.PooledDataSource;
+import org.flowable.common.engine.impl.util.ReflectUtil;
+import org.flowable.engine.ProcessEngine;
+import org.flowable.engine.ProcessEngineConfiguration;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.junit.jupiter.api.Test;
+
+/**
+ * @author Daniel Meyer
+ * @author Joram Barrez
+ */
+<span class="nc" id="L34">public class DatabaseTablePrefixTest {</span>
+
+    @Test
+    public void testPerformDatabaseSchemaOperationCreate() throws Exception {
+
+<span class="nc" id="L39">        DataSource dataSource = createDataSourceAndSchema();</span>
+
+        // configure &amp; build two different process engines, each having a
+        // separate table prefix
+<span class="nc" id="L43">        ProcessEngineConfigurationImpl config1 = (ProcessEngineConfigurationImpl) ProcessEngineConfiguration.createStandaloneInMemProcessEngineConfiguration()</span>
+<span class="nc" id="L44">                .setDataSource(dataSource)</span>
+<span class="nc" id="L45">                .setDatabaseSchemaUpdate(&quot;NO_CHECK&quot;); // disable auto create/drop schema</span>
+<span class="nc" id="L46">        config1.setDatabaseTablePrefix(&quot;SCHEMA1.&quot;);</span>
+<span class="nc" id="L47">        config1.setValidateFlowable5EntitiesEnabled(false);</span>
+<span class="nc" id="L48">        config1.setDisableEventRegistry(true);</span>
+<span class="nc" id="L49">        config1.getPerformanceSettings().setValidateExecutionRelationshipCountConfigOnBoot(false);</span>
+<span class="nc" id="L50">        config1.getPerformanceSettings().setValidateTaskRelationshipCountConfigOnBoot(false);</span>
+<span class="nc" id="L51">        ProcessEngine engine1 = config1.buildProcessEngine();</span>
+
+<span class="nc" id="L53">        ProcessEngineConfigurationImpl config2 = (ProcessEngineConfigurationImpl) ProcessEngineConfiguration.createStandaloneInMemProcessEngineConfiguration()</span>
+<span class="nc" id="L54">                .setDataSource(dataSource)</span>
+<span class="nc" id="L55">                .setDatabaseSchemaUpdate(&quot;NO_CHECK&quot;); // disable auto create/drop schema</span>
+<span class="nc" id="L56">        config2.setDatabaseTablePrefix(&quot;SCHEMA2.&quot;);</span>
+<span class="nc" id="L57">        config2.setValidateFlowable5EntitiesEnabled(false);</span>
+<span class="nc" id="L58">        config2.setDisableEventRegistry(true);</span>
+<span class="nc" id="L59">        config2.getPerformanceSettings().setValidateExecutionRelationshipCountConfigOnBoot(false);</span>
+<span class="nc" id="L60">        config2.getPerformanceSettings().setValidateTaskRelationshipCountConfigOnBoot(false);</span>
+<span class="nc" id="L61">        ProcessEngine engine2 = config2.buildProcessEngine();</span>
+
+        // create the tables in SCHEMA1
+<span class="nc" id="L64">        Connection connection = dataSource.getConnection();</span>
+<span class="nc" id="L65">        connection.createStatement().execute(&quot;set schema SCHEMA1&quot;);</span>
+<span class="nc" id="L66">        engine1.getManagementService().databaseSchemaUpgrade(connection, &quot;&quot;, &quot;SCHEMA1&quot;);</span>
+<span class="nc" id="L67">        connection.close();</span>
+
+        // create the tables in SCHEMA2
+<span class="nc" id="L70">        connection = dataSource.getConnection();</span>
+<span class="nc" id="L71">        connection.createStatement().execute(&quot;set schema SCHEMA2&quot;);</span>
+<span class="nc" id="L72">        engine2.getManagementService().databaseSchemaUpgrade(connection, &quot;&quot;, &quot;SCHEMA2&quot;);</span>
+<span class="nc" id="L73">        connection.close();</span>
+
+        // if I deploy a process to one engine, it is not visible to the other
+        // engine:
+        try {
+<span class="nc" id="L78">            engine1.getRepositoryService().createDeployment().addClasspathResource(&quot;org/flowable/engine/test/db/oneJobProcess.bpmn20.xml&quot;).deploy();</span>
+
+<span class="nc" id="L80">            assertThat(engine1.getRepositoryService().createDeploymentQuery().count()).isEqualTo(1);</span>
+<span class="nc" id="L81">            assertThat(engine2.getRepositoryService().createDeploymentQuery().count()).isZero();</span>
+
+        } finally {
+<span class="nc" id="L84">            engine1.close();</span>
+<span class="nc" id="L85">            engine2.close();</span>
+        }
+<span class="nc" id="L87">    }</span>
+    
+    protected DataSource createDataSourceAndSchema() throws SQLException {
+        // both process engines will be using this datasource.
+<span class="nc" id="L91">        PooledDataSource pooledDataSource = new PooledDataSource(ReflectUtil.getClassLoader(), </span>
+                &quot;org.h2.Driver&quot;, &quot;jdbc:h2:mem:flowable-db-table-prefix-test;DB_CLOSE_DELAY=1000&quot;, &quot;sa&quot;, &quot;&quot;);
+
+        // create two schemas is the database
+<span class="nc" id="L95">        Connection connection = pooledDataSource.getConnection();</span>
+<span class="nc" id="L96">        connection.createStatement().execute(&quot;drop schema if exists SCHEMA1 cascade&quot;);</span>
+<span class="nc" id="L97">        connection.createStatement().execute(&quot;drop schema if exists SCHEMA2 cascade&quot;);</span>
+<span class="nc" id="L98">        connection.createStatement().execute(&quot;create schema SCHEMA1&quot;);</span>
+<span class="nc" id="L99">        connection.createStatement().execute(&quot;create schema SCHEMA2&quot;);</span>
+<span class="nc" id="L100">        connection.close();</span>
+<span class="nc" id="L101">        return pooledDataSource;</span>
+    }
+    
+    
+    @Test
+    public void testProcessEngineReboot() throws Exception {
+        
+<span class="nc" id="L108">        ProcessEngine processEngine1 = null;</span>
+<span class="nc" id="L109">        ProcessEngine processEngine2 = null;</span>
+        
+        try {
+            
+<span class="nc" id="L113">            createDataSourceAndSchema(); // Creating the schemas</span>
+        
+<span class="nc" id="L115">            processEngine1 = createProcessEngine(&quot;SCHEMA1&quot;);</span>
+<span class="nc" id="L116">            processEngine1.getRepositoryService().createDeployment()</span>
+<span class="nc" id="L117">                .addClasspathResource(&quot;org/flowable/engine/test/db/oneJobProcess.bpmn20.xml&quot;).deploy();</span>
+<span class="nc" id="L118">            assertThat(processEngine1.getRepositoryService().createDeploymentQuery().count()).isEqualTo(1);</span>
+            
+            // Boot second engine on other schema. Shouldn't be able to see the data
+<span class="nc" id="L121">            processEngine2 = createProcessEngine(&quot;SCHEMA2&quot;);</span>
+<span class="nc" id="L122">            assertThat(processEngine2.getRepositoryService().createDeploymentQuery().count()).isZero();</span>
+            
+            // Reboot both engines. The results should still be the same as before
+<span class="nc" id="L125">            processEngine1.close();</span>
+<span class="nc" id="L126">            processEngine2.close();</span>
+            
+<span class="nc" id="L128">            processEngine1 = createProcessEngine(&quot;SCHEMA1&quot;);</span>
+<span class="nc" id="L129">            processEngine2 = createProcessEngine(&quot;SCHEMA2&quot;);</span>
+            
+<span class="nc" id="L131">            assertThat(processEngine1.getRepositoryService().createDeploymentQuery().count()).isEqualTo(1);</span>
+<span class="nc" id="L132">            assertThat(processEngine2.getRepositoryService().createDeploymentQuery().count()).isZero();</span>
+            
+        } finally {
+<span class="nc bnc" id="L135" title="All 2 branches missed.">            if (processEngine1 != null) {</span>
+<span class="nc" id="L136">                processEngine1.close();</span>
+            }
+<span class="nc bnc" id="L138" title="All 2 branches missed.">            if (processEngine2 != null) {</span>
+<span class="nc" id="L139">                processEngine2.close();</span>
+            }
+        }
+<span class="nc" id="L142">    }</span>
+
+    protected ProcessEngine createProcessEngine(String schema) {
+<span class="nc" id="L145">        return ProcessEngineConfiguration.createStandaloneInMemProcessEngineConfiguration()</span>
+<span class="nc" id="L146">                .setJdbcUrl(&quot;jdbc:h2:mem:flowable-db-table-prefix-test;DB_CLOSE_DELAY=-1;SCHEMA=&quot; + schema)</span>
+<span class="nc" id="L147">                .setDatabaseSchemaUpdate(ProcessEngineConfiguration.DB_SCHEMA_UPDATE_TRUE)</span>
+<span class="nc" id="L148">                .setTablePrefixIsSchema(true)</span>
+<span class="nc" id="L149">                .setDatabaseTablePrefix(schema + &quot;.&quot;)</span>
+<span class="nc" id="L150">                .buildProcessEngine();</span>
+    }
+    
+  
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

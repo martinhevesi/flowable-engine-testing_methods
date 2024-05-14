@@ -1,0 +1,283 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DeploymentProcessDefinitionDeletionManagerImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.repository</a> &gt; <span class="el_source">DeploymentProcessDefinitionDeletionManagerImpl.java</span></div><h1>DeploymentProcessDefinitionDeletionManagerImpl.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.impl.repository;
+
+import java.util.List;
+
+import org.flowable.bpmn.constants.BpmnXMLConstants;
+import org.flowable.bpmn.model.BpmnModel;
+import org.flowable.bpmn.model.EventDefinition;
+import org.flowable.bpmn.model.ExtensionElement;
+import org.flowable.bpmn.model.Message;
+import org.flowable.bpmn.model.MessageEventDefinition;
+import org.flowable.bpmn.model.SignalEventDefinition;
+import org.flowable.bpmn.model.StartEvent;
+import org.flowable.bpmn.model.TimerEventDefinition;
+import org.flowable.common.engine.api.delegate.event.FlowableEngineEventType;
+import org.flowable.common.engine.api.delegate.event.FlowableEventDispatcher;
+import org.flowable.common.engine.api.scope.ScopeTypes;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.common.engine.impl.util.CollectionUtil;
+import org.flowable.engine.ProcessEngineConfiguration;
+import org.flowable.engine.delegate.event.impl.FlowableEventBuilder;
+import org.flowable.engine.impl.ProcessDefinitionQueryImpl;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.context.Context;
+import org.flowable.engine.impl.event.EventDefinitionExpressionUtil;
+import org.flowable.engine.impl.jobexecutor.TimerEventHandler;
+import org.flowable.engine.impl.jobexecutor.TimerStartEventJobHandler;
+import org.flowable.engine.impl.persistence.entity.ProcessDefinitionEntity;
+import org.flowable.engine.impl.persistence.entity.ProcessDefinitionEntityManager;
+import org.flowable.engine.impl.util.CorrelationUtil;
+import org.flowable.engine.impl.util.CountingEntityUtil;
+import org.flowable.engine.impl.util.ProcessDefinitionUtil;
+import org.flowable.engine.impl.util.TimerUtil;
+import org.flowable.engine.repository.ProcessDefinition;
+import org.flowable.eventsubscription.api.EventSubscription;
+import org.flowable.eventsubscription.api.EventSubscriptionBuilder;
+import org.flowable.eventsubscription.service.EventSubscriptionService;
+import org.flowable.eventsubscription.service.impl.persistence.entity.MessageEventSubscriptionEntity;
+import org.flowable.eventsubscription.service.impl.persistence.entity.SignalEventSubscriptionEntity;
+import org.flowable.job.service.TimerJobService;
+import org.flowable.job.service.impl.persistence.entity.TimerJobEntity;
+
+/**
+ * @author Filip Hrisafov
+ */
+public class DeploymentProcessDefinitionDeletionManagerImpl implements DeploymentProcessDefinitionDeletionManager {
+
+    protected final ProcessEngineConfigurationImpl engineConfiguration;
+
+<span class="nc" id="L61">    public DeploymentProcessDefinitionDeletionManagerImpl(ProcessEngineConfigurationImpl engineConfiguration) {</span>
+<span class="nc" id="L62">        this.engineConfiguration = engineConfiguration;</span>
+<span class="nc" id="L63">    }</span>
+
+    @Override
+    public void deleteDefinitionForDeployment(ProcessDefinition processDefinition, String deploymentId) {
+<span class="nc" id="L67">        deleteProcessDefinitionIdentityLinks(processDefinition);</span>
+<span class="nc" id="L68">        deleteEventSubscriptions(processDefinition);</span>
+<span class="nc" id="L69">        deleteProcessDefinitionInfo(processDefinition.getId());</span>
+
+<span class="nc" id="L71">        removeTimerStartJobs(processDefinition);</span>
+
+        // If previous process definition version has a timer/signal/message start event, it must be added
+        // Only if the currently deleted process definition is the latest version,
+        // we fall back to the previous timer/signal/message start event
+
+<span class="nc" id="L77">        restorePreviousStartEventsIfNeeded(processDefinition);</span>
+<span class="nc" id="L78">    }</span>
+
+    protected void deleteProcessDefinitionIdentityLinks(ProcessDefinition processDefinition) {
+<span class="nc" id="L81">        engineConfiguration.getIdentityLinkServiceConfiguration().getIdentityLinkService()</span>
+<span class="nc" id="L82">                .deleteIdentityLinksByProcessDefinitionId(processDefinition.getId());</span>
+<span class="nc" id="L83">    }</span>
+
+    protected void deleteEventSubscriptions(ProcessDefinition processDefinition) {
+<span class="nc" id="L86">        engineConfiguration.getEventSubscriptionServiceConfiguration().getEventSubscriptionService()</span>
+<span class="nc" id="L87">                .deleteEventSubscriptionsForProcessDefinition(processDefinition.getId());</span>
+<span class="nc" id="L88">    }</span>
+
+    protected void deleteProcessDefinitionInfo(String processDefinitionId) {
+<span class="nc" id="L91">        engineConfiguration.getProcessDefinitionInfoEntityManager().deleteProcessDefinitionInfo(processDefinitionId);</span>
+<span class="nc" id="L92">    }</span>
+
+    protected void removeTimerStartJobs(ProcessDefinition processDefinition) {
+<span class="nc" id="L95">        TimerJobService timerJobService = engineConfiguration.getJobServiceConfiguration().getTimerJobService();</span>
+<span class="nc" id="L96">        List&lt;TimerJobEntity&gt; timerStartJobs = timerJobService.findJobsByTypeAndProcessDefinitionId(TimerStartEventJobHandler.TYPE, processDefinition.getId());</span>
+<span class="nc bnc" id="L97" title="All 4 branches missed.">        if (timerStartJobs != null &amp;&amp; timerStartJobs.size() &gt; 0) {</span>
+<span class="nc bnc" id="L98" title="All 2 branches missed.">            for (TimerJobEntity timerStartJob : timerStartJobs) {</span>
+<span class="nc bnc" id="L99" title="All 4 branches missed.">                if (getEventDispatcher() != null &amp;&amp; getEventDispatcher().isEnabled()) {</span>
+<span class="nc" id="L100">                    getEventDispatcher().dispatchEvent(FlowableEventBuilder.createEntityEvent(FlowableEngineEventType.JOB_CANCELED,</span>
+<span class="nc" id="L101">                            timerStartJob, null, null, processDefinition.getId()), engineConfiguration.getEngineCfgKey());</span>
+                }
+
+<span class="nc" id="L104">                timerJobService.deleteTimerJob(timerStartJob);</span>
+<span class="nc" id="L105">            }</span>
+        }
+<span class="nc" id="L107">    }</span>
+
+    protected void restorePreviousStartEventsIfNeeded(ProcessDefinition processDefinition) {
+<span class="nc" id="L110">        ProcessDefinitionEntity latestProcessDefinition = findLatestProcessDefinition(processDefinition);</span>
+<span class="nc bnc" id="L111" title="All 4 branches missed.">        if (latestProcessDefinition != null &amp;&amp; processDefinition.getId().equals(latestProcessDefinition.getId())) {</span>
+
+            // Try to find a previous version (it could be some versions are missing due to deletions)
+<span class="nc" id="L114">            ProcessDefinition previousProcessDefinition = findNewLatestProcessDefinitionAfterRemovalOf(processDefinition);</span>
+<span class="nc bnc" id="L115" title="All 2 branches missed.">            if (previousProcessDefinition != null) {</span>
+
+<span class="nc" id="L117">                BpmnModel bpmnModel = ProcessDefinitionUtil.getBpmnModel(previousProcessDefinition.getId());</span>
+<span class="nc" id="L118">                org.flowable.bpmn.model.Process previousProcess = ProcessDefinitionUtil.getProcess(previousProcessDefinition.getId());</span>
+<span class="nc bnc" id="L119" title="All 2 branches missed.">                if (CollectionUtil.isNotEmpty(previousProcess.getFlowElements())) {</span>
+
+<span class="nc" id="L121">                    List&lt;StartEvent&gt; startEvents = previousProcess.findFlowElementsOfType(StartEvent.class);</span>
+
+<span class="nc bnc" id="L123" title="All 2 branches missed.">                    if (CollectionUtil.isNotEmpty(startEvents)) {</span>
+<span class="nc bnc" id="L124" title="All 2 branches missed.">                        for (StartEvent startEvent : startEvents) {</span>
+
+<span class="nc bnc" id="L126" title="All 2 branches missed.">                            if (CollectionUtil.isNotEmpty(startEvent.getEventDefinitions())) {</span>
+<span class="nc" id="L127">                                EventDefinition eventDefinition = startEvent.getEventDefinitions().get(0);</span>
+<span class="nc bnc" id="L128" title="All 2 branches missed.">                                if (eventDefinition instanceof TimerEventDefinition) {</span>
+<span class="nc" id="L129">                                    restoreTimerStartEvent(previousProcessDefinition, startEvent, eventDefinition);</span>
+<span class="nc bnc" id="L130" title="All 2 branches missed.">                                } else if (eventDefinition instanceof SignalEventDefinition) {</span>
+<span class="nc" id="L131">                                    restoreSignalStartEvent(previousProcessDefinition, bpmnModel, startEvent, eventDefinition);</span>
+<span class="nc bnc" id="L132" title="All 2 branches missed.">                                } else if (eventDefinition instanceof MessageEventDefinition) {</span>
+<span class="nc" id="L133">                                    restoreMessageStartEvent(previousProcessDefinition, bpmnModel, startEvent, eventDefinition);</span>
+                                }
+
+<span class="nc" id="L136">                            } else {</span>
+<span class="nc bnc" id="L137" title="All 2 branches missed.">                                if (startEvent.getExtensionElements().get(BpmnXMLConstants.ELEMENT_EVENT_TYPE) != null) {</span>
+<span class="nc" id="L138">                                    List&lt;ExtensionElement&gt; eventTypeElements = startEvent.getExtensionElements().get(BpmnXMLConstants.ELEMENT_EVENT_TYPE);</span>
+<span class="nc bnc" id="L139" title="All 2 branches missed.">                                    if (!eventTypeElements.isEmpty()) {</span>
+<span class="nc" id="L140">                                        String eventDefinitionKey = eventTypeElements.get(0).getElementText();</span>
+<span class="nc" id="L141">                                        restoreEventRegistryStartEvent(previousProcessDefinition, bpmnModel, startEvent, eventDefinitionKey);</span>
+                                    }
+                                }
+                            }
+
+<span class="nc" id="L146">                        }</span>
+                    }
+
+                }
+
+            }
+        }
+<span class="nc" id="L153">    }</span>
+
+    protected void restoreTimerStartEvent(ProcessDefinition previousProcessDefinition, StartEvent startEvent, EventDefinition eventDefinition) {
+<span class="nc" id="L156">        TimerEventDefinition timerEventDefinition = (TimerEventDefinition) eventDefinition;</span>
+<span class="nc" id="L157">        TimerJobEntity timer = TimerUtil.createTimerEntityForTimerEventDefinition((TimerEventDefinition) eventDefinition, startEvent,</span>
+<span class="nc" id="L158">                false, null, TimerStartEventJobHandler.TYPE, TimerEventHandler.createConfiguration(startEvent.getId(),</span>
+<span class="nc" id="L159">                        timerEventDefinition.getEndDate(), timerEventDefinition.getCalendarName()));</span>
+
+<span class="nc bnc" id="L161" title="All 2 branches missed.">        if (timer != null) {</span>
+<span class="nc" id="L162">            TimerJobEntity timerJob = TimerUtil.createTimerEntityForTimerEventDefinition(timerEventDefinition, startEvent,</span>
+<span class="nc" id="L163">                    false, null, TimerStartEventJobHandler.TYPE, TimerEventHandler.createConfiguration(startEvent.getId(),</span>
+<span class="nc" id="L164">                            timerEventDefinition.getEndDate(), timerEventDefinition.getCalendarName()));</span>
+
+<span class="nc" id="L166">            timerJob.setProcessDefinitionId(previousProcessDefinition.getId());</span>
+
+<span class="nc bnc" id="L168" title="All 2 branches missed.">            if (previousProcessDefinition.getTenantId() != null) {</span>
+<span class="nc" id="L169">                timerJob.setTenantId(previousProcessDefinition.getTenantId());</span>
+            }
+
+<span class="nc" id="L172">            engineConfiguration.getJobServiceConfiguration().getTimerJobService().scheduleTimerJob(timerJob);</span>
+        }
+<span class="nc" id="L174">    }</span>
+
+    protected void restoreSignalStartEvent(ProcessDefinition previousProcessDefinition, BpmnModel bpmnModel, StartEvent startEvent, EventDefinition eventDefinition) {
+<span class="nc" id="L177">        CommandContext commandContext = Context.getCommandContext();</span>
+<span class="nc" id="L178">        SignalEventDefinition signalEventDefinition = (SignalEventDefinition) eventDefinition;</span>
+<span class="nc" id="L179">        SignalEventSubscriptionEntity subscriptionEntity = engineConfiguration.getEventSubscriptionServiceConfiguration().getEventSubscriptionService().createSignalEventSubscription();</span>
+
+<span class="nc" id="L181">        String eventName = EventDefinitionExpressionUtil.determineSignalName(commandContext, signalEventDefinition, bpmnModel, null);</span>
+<span class="nc" id="L182">        subscriptionEntity.setEventName(eventName);</span>
+<span class="nc" id="L183">        subscriptionEntity.setActivityId(startEvent.getId());</span>
+<span class="nc" id="L184">        subscriptionEntity.setProcessDefinitionId(previousProcessDefinition.getId());</span>
+<span class="nc bnc" id="L185" title="All 2 branches missed.">        if (previousProcessDefinition.getTenantId() != null) {</span>
+<span class="nc" id="L186">            subscriptionEntity.setTenantId(previousProcessDefinition.getTenantId());</span>
+        }
+
+<span class="nc" id="L189">        engineConfiguration.getEventSubscriptionServiceConfiguration().getEventSubscriptionService().insertEventSubscription(subscriptionEntity);</span>
+<span class="nc" id="L190">        CountingEntityUtil.handleInsertEventSubscriptionEntityCount(subscriptionEntity);</span>
+<span class="nc" id="L191">    }</span>
+
+    protected void restoreMessageStartEvent(ProcessDefinition previousProcessDefinition, BpmnModel bpmnModel, StartEvent startEvent, EventDefinition eventDefinition) {
+<span class="nc" id="L194">        MessageEventDefinition messageEventDefinition = (MessageEventDefinition) eventDefinition;</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">        if (bpmnModel.containsMessageId(messageEventDefinition.getMessageRef())) {</span>
+<span class="nc" id="L196">            Message message = bpmnModel.getMessage(messageEventDefinition.getMessageRef());</span>
+<span class="nc" id="L197">            messageEventDefinition.setMessageRef(message.getName());</span>
+        }
+
+<span class="nc" id="L200">        CommandContext commandContext = Context.getCommandContext();</span>
+<span class="nc" id="L201">        MessageEventSubscriptionEntity newSubscription = engineConfiguration.getEventSubscriptionServiceConfiguration().getEventSubscriptionService().createMessageEventSubscription();</span>
+<span class="nc" id="L202">        String messageName = EventDefinitionExpressionUtil.determineMessageName(commandContext, messageEventDefinition, null);</span>
+<span class="nc" id="L203">        newSubscription.setEventName(messageName);</span>
+<span class="nc" id="L204">        newSubscription.setActivityId(startEvent.getId());</span>
+<span class="nc" id="L205">        newSubscription.setConfiguration(previousProcessDefinition.getId());</span>
+<span class="nc" id="L206">        newSubscription.setProcessDefinitionId(previousProcessDefinition.getId());</span>
+
+<span class="nc bnc" id="L208" title="All 2 branches missed.">        if (previousProcessDefinition.getTenantId() != null) {</span>
+<span class="nc" id="L209">            newSubscription.setTenantId(previousProcessDefinition.getTenantId());</span>
+        }
+
+<span class="nc" id="L212">        engineConfiguration.getEventSubscriptionServiceConfiguration().getEventSubscriptionService().insertEventSubscription(newSubscription);</span>
+<span class="nc" id="L213">        CountingEntityUtil.handleInsertEventSubscriptionEntityCount(newSubscription);</span>
+<span class="nc" id="L214">    }</span>
+
+    protected void restoreEventRegistryStartEvent(ProcessDefinition previousProcessDefinition, BpmnModel bpmnModel, StartEvent startEvent, String eventDefinitionKey) {
+<span class="nc" id="L217">        CommandContext commandContext = Context.getCommandContext();</span>
+<span class="nc" id="L218">        EventSubscriptionService eventSubscriptionService = engineConfiguration.getEventSubscriptionServiceConfiguration().getEventSubscriptionService();</span>
+<span class="nc" id="L219">        EventSubscriptionBuilder eventSubscriptionBuilder = eventSubscriptionService.createEventSubscriptionBuilder()</span>
+<span class="nc" id="L220">                .eventType(eventDefinitionKey)</span>
+<span class="nc" id="L221">                .activityId(startEvent.getId())</span>
+<span class="nc" id="L222">                .processDefinitionId(previousProcessDefinition.getId())</span>
+<span class="nc" id="L223">                .scopeType(ScopeTypes.BPMN)</span>
+<span class="nc" id="L224">                .configuration(CorrelationUtil.getCorrelationKey(BpmnXMLConstants.ELEMENT_EVENT_CORRELATION_PARAMETER, commandContext, startEvent, null));</span>
+
+<span class="nc bnc" id="L226" title="All 2 branches missed.">        if (previousProcessDefinition.getTenantId() != null) {</span>
+<span class="nc" id="L227">            eventSubscriptionBuilder.tenantId(previousProcessDefinition.getTenantId());</span>
+        }
+
+<span class="nc" id="L230">        EventSubscription eventSubscription = eventSubscriptionBuilder.create();</span>
+<span class="nc" id="L231">        CountingEntityUtil.handleInsertEventSubscriptionEntityCount(eventSubscription);</span>
+<span class="nc" id="L232">    }</span>
+
+    protected ProcessDefinitionEntity findLatestProcessDefinition(ProcessDefinition processDefinition) {
+<span class="nc" id="L235">        ProcessDefinitionEntity latestProcessDefinition = null;</span>
+<span class="nc bnc" id="L236" title="All 4 branches missed.">        if (processDefinition.getTenantId() != null &amp;&amp; !ProcessEngineConfiguration.NO_TENANT_ID.equals(processDefinition.getTenantId())) {</span>
+<span class="nc" id="L237">            latestProcessDefinition = getProcessDefinitionEntityManager()</span>
+<span class="nc" id="L238">                    .findLatestProcessDefinitionByKeyAndTenantId(processDefinition.getKey(), processDefinition.getTenantId());</span>
+        } else {
+<span class="nc" id="L240">            latestProcessDefinition = getProcessDefinitionEntityManager()</span>
+<span class="nc" id="L241">                    .findLatestProcessDefinitionByKey(processDefinition.getKey());</span>
+        }
+<span class="nc" id="L243">        return latestProcessDefinition;</span>
+    }
+
+    protected ProcessDefinition findNewLatestProcessDefinitionAfterRemovalOf(ProcessDefinition processDefinitionToBeRemoved) {
+
+        // The latest process definition is not necessarily the one with 'version -1' (some versions could have been deleted)
+        // Hence, the following logic
+
+<span class="nc" id="L251">        ProcessDefinitionQueryImpl query = new ProcessDefinitionQueryImpl();</span>
+<span class="nc" id="L252">        query.processDefinitionKey(processDefinitionToBeRemoved.getKey());</span>
+
+<span class="nc bnc" id="L254" title="All 2 branches missed.">        if (processDefinitionToBeRemoved.getTenantId() != null</span>
+<span class="nc bnc" id="L255" title="All 2 branches missed.">                &amp;&amp; !ProcessEngineConfiguration.NO_TENANT_ID.equals(processDefinitionToBeRemoved.getTenantId())) {</span>
+<span class="nc" id="L256">            query.processDefinitionTenantId(processDefinitionToBeRemoved.getTenantId());</span>
+        } else {
+<span class="nc" id="L258">            query.processDefinitionWithoutTenantId();</span>
+        }
+
+<span class="nc bnc" id="L261" title="All 2 branches missed.">        if (processDefinitionToBeRemoved.getVersion() &gt; 0) {</span>
+<span class="nc" id="L262">            query.processDefinitionVersionLowerThan(processDefinitionToBeRemoved.getVersion());</span>
+        }
+<span class="nc" id="L264">        query.orderByProcessDefinitionVersion().desc();</span>
+
+<span class="nc" id="L266">        query.setFirstResult(0);</span>
+<span class="nc" id="L267">        query.setMaxResults(1);</span>
+<span class="nc" id="L268">        List&lt;ProcessDefinition&gt; processDefinitions = getProcessDefinitionEntityManager().findProcessDefinitionsByQueryCriteria(query);</span>
+<span class="nc bnc" id="L269" title="All 4 branches missed.">        if (processDefinitions != null &amp;&amp; processDefinitions.size() &gt; 0) {</span>
+<span class="nc" id="L270">            return processDefinitions.get(0);</span>
+        }
+<span class="nc" id="L272">        return null;</span>
+    }
+
+    protected ProcessDefinitionEntityManager getProcessDefinitionEntityManager() {
+<span class="nc" id="L276">        return engineConfiguration.getProcessDefinitionEntityManager();</span>
+    }
+
+    protected FlowableEventDispatcher getEventDispatcher() {
+<span class="nc" id="L280">        return engineConfiguration.getEventDispatcher();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

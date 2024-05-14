@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ReactivateHistoricCaseInstanceCmd.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.cmmn.engine.impl.cmd</a> &gt; <span class="el_source">ReactivateHistoricCaseInstanceCmd.java</span></div><h1>ReactivateHistoricCaseInstanceCmd.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.cmmn.engine.impl.cmd;
+
+import java.io.Serializable;
+import java.util.Date;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.cmmn.api.history.HistoricCaseInstance;
+import org.flowable.cmmn.api.runtime.CaseInstance;
+import org.flowable.cmmn.api.runtime.CaseInstanceState;
+import org.flowable.cmmn.api.runtime.PlanItemInstanceState;
+import org.flowable.cmmn.engine.CmmnEngineConfiguration;
+import org.flowable.cmmn.engine.impl.persistence.entity.CaseInstanceEntity;
+import org.flowable.cmmn.engine.impl.persistence.entity.PlanItemInstanceEntity;
+import org.flowable.cmmn.engine.impl.persistence.entity.PlanItemInstanceEntityManager;
+import org.flowable.cmmn.engine.impl.reactivation.CaseReactivationBuilderImpl;
+import org.flowable.cmmn.engine.impl.repository.CaseDefinitionUtil;
+import org.flowable.cmmn.engine.impl.util.CommandContextUtil;
+import org.flowable.cmmn.model.Case;
+import org.flowable.cmmn.model.PlanItem;
+import org.flowable.cmmn.model.ReactivateEventListener;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.FlowableIllegalArgumentException;
+import org.flowable.common.engine.api.FlowableIllegalStateException;
+import org.flowable.common.engine.api.FlowableObjectNotFoundException;
+import org.flowable.common.engine.impl.identity.Authentication;
+import org.flowable.common.engine.impl.interceptor.Command;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+
+/**
+ * This command reactivates a history case instance by putting it back to the runtime and triggering the reactivation event on its CMMN model. If there is no
+ * reactivation event explicitly available, an exception is thrown.
+ *
+ * @author Micha Kiener
+ */
+public class ReactivateHistoricCaseInstanceCmd implements Command&lt;CaseInstance&gt;, Serializable {
+
+    private static final long serialVersionUID = 1L;
+    protected final CaseReactivationBuilderImpl reactivationBuilder;
+
+<span class="nc" id="L52">    public ReactivateHistoricCaseInstanceCmd(CaseReactivationBuilderImpl reactivationBuilder) {</span>
+<span class="nc" id="L53">        this.reactivationBuilder = reactivationBuilder;</span>
+<span class="nc" id="L54">    }</span>
+
+    @Override
+    public CaseInstance execute(CommandContext commandContext) {
+<span class="nc bnc" id="L58" title="All 2 branches missed.">        if (reactivationBuilder.getCaseInstanceId() == null) {</span>
+<span class="nc" id="L59">            throw new FlowableIllegalArgumentException(&quot;No historic case instance id provided&quot;);</span>
+        }
+
+        // Check if the historic case instance is found and if it is no longer running
+<span class="nc" id="L63">        CmmnEngineConfiguration cmmnEngineConfiguration = CommandContextUtil.getCmmnEngineConfiguration(commandContext);</span>
+<span class="nc" id="L64">        HistoricCaseInstance instance = cmmnEngineConfiguration.getHistoricCaseInstanceEntityManager().createHistoricCaseInstanceQuery()</span>
+<span class="nc" id="L65">            .caseInstanceId(reactivationBuilder.getCaseInstanceId())</span>
+<span class="nc" id="L66">            .singleResult();</span>
+
+<span class="nc bnc" id="L68" title="All 2 branches missed.">        if (instance == null) {</span>
+<span class="nc" id="L69">            throw new FlowableObjectNotFoundException(&quot;No historic case instance to be reactivated found with id: &quot; + reactivationBuilder.getCaseInstanceId(), HistoricCaseInstance.class);</span>
+        }
+<span class="nc bnc" id="L71" title="All 2 branches missed.">        if (instance.getEndTime() == null) {</span>
+<span class="nc" id="L72">            throw new FlowableIllegalStateException(&quot;Case instance is still running, cannot reactivate historic case instance: &quot; + reactivationBuilder.getCaseInstanceId());</span>
+        }
+
+        // move the case instance back to the runtime (this also checks, if the reactivation listener is even existent)
+<span class="nc" id="L76">        CaseInstanceEntity caseInstanceEntity = cmmnEngineConfiguration.getCaseInstanceHelper()</span>
+<span class="nc" id="L77">            .copyHistoricCaseInstanceToRuntime(instance);</span>
+
+        // reset the state to be active again and also set the last reactivation time as well as the current user triggering it
+<span class="nc" id="L80">        caseInstanceEntity.setState(CaseInstanceState.ACTIVE);</span>
+<span class="nc" id="L81">        caseInstanceEntity.setLastReactivationTime(cmmnEngineConfiguration.getClock().getCurrentTime());</span>
+<span class="nc" id="L82">        caseInstanceEntity.setLastReactivationUserId(Authentication.getAuthenticatedUserId());</span>
+
+        // set case variables, if the builder contains any
+<span class="nc bnc" id="L85" title="All 2 branches missed.">        if (reactivationBuilder.hasVariables()) {</span>
+<span class="nc" id="L86">            caseInstanceEntity.setVariables(reactivationBuilder.getVariables());</span>
+        }
+
+        // set transient case variables, if the builder contains any
+<span class="nc bnc" id="L90" title="All 2 branches missed.">        if (reactivationBuilder.hasTransientVariables()) {</span>
+<span class="nc" id="L91">            caseInstanceEntity.setTransientVariables(reactivationBuilder.getTransientVariables());</span>
+        }
+
+        // if there is an available condition on the reactivation event listener, evaluate it to make sure the listener is available for reactivation
+<span class="nc" id="L95">        Case caze = CaseDefinitionUtil.getCase(instance.getCaseDefinitionId());</span>
+<span class="nc" id="L96">        ReactivateEventListener reactivateEventListener = caze.getReactivateEventListener();</span>
+<span class="nc" id="L97">        String availableConditionExpression = reactivateEventListener.getReactivationAvailableConditionExpression();</span>
+<span class="nc bnc" id="L98" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(availableConditionExpression)) {</span>
+<span class="nc" id="L99">            Object listenerAvailable = CommandContextUtil.getCmmnEngineConfiguration()</span>
+<span class="nc" id="L100">                .getExpressionManager()</span>
+<span class="nc" id="L101">                .createExpression(availableConditionExpression)</span>
+<span class="nc" id="L102">                .getValue(caseInstanceEntity);</span>
+
+<span class="nc bnc" id="L104" title="All 2 branches missed.">            if (!Boolean.TRUE.equals(listenerAvailable)) {</span>
+<span class="nc" id="L105">                throw new FlowableIllegalStateException(&quot;The case instance &quot; + caseInstanceEntity.getId()</span>
+                    + &quot; cannot be reactivated, as the available condition of its reactivate event listener did not evaluate to true.&quot;);
+            }
+        }
+
+        // invoke the identity link interceptor to record the reactivation user
+<span class="nc bnc" id="L111" title="All 2 branches missed.">        if (cmmnEngineConfiguration.getIdentityLinkInterceptor() != null) {</span>
+<span class="nc" id="L112">            cmmnEngineConfiguration.getIdentityLinkInterceptor().handleReactivateCaseInstance(caseInstanceEntity);</span>
+        }
+        
+<span class="nc bnc" id="L115" title="All 2 branches missed.">        if (!reactivationBuilder.getTerminatedPlanItemDefinitionIds().isEmpty()) {</span>
+<span class="nc bnc" id="L116" title="All 2 branches missed.">            for (String planItemDefinitionId : reactivationBuilder.getTerminatedPlanItemDefinitionIds()) {</span>
+<span class="nc" id="L117">                PlanItem planItem = caze.getPlanModel().findPlanItemForPlanItemDefinitionInPlanFragmentOrDownwards(planItemDefinitionId);</span>
+<span class="nc bnc" id="L118" title="All 2 branches missed.">                if (planItem == null) {</span>
+<span class="nc" id="L119">                    throw new FlowableException(&quot;incorrect plan item definition id passed &quot; + planItemDefinitionId);</span>
+                }
+                
+<span class="nc" id="L122">                PlanItemInstanceEntityManager planItemInstanceEntityManager = cmmnEngineConfiguration.getPlanItemInstanceEntityManager();</span>
+<span class="nc" id="L123">                PlanItemInstanceEntity reactivatedPlanItemInstance = planItemInstanceEntityManager</span>
+<span class="nc" id="L124">                        .createPlanItemInstanceEntityBuilder()</span>
+<span class="nc" id="L125">                        .planItem(planItem)</span>
+<span class="nc" id="L126">                        .caseDefinitionId(caseInstanceEntity.getCaseDefinitionId())</span>
+<span class="nc" id="L127">                        .caseInstanceId(caseInstanceEntity.getId())</span>
+<span class="nc" id="L128">                        .tenantId(caseInstanceEntity.getTenantId())</span>
+<span class="nc" id="L129">                        .create();</span>
+                
+<span class="nc" id="L131">                Date currentTime = cmmnEngineConfiguration.getClock().getCurrentTime();</span>
+<span class="nc" id="L132">                reactivatedPlanItemInstance.setState(PlanItemInstanceState.TERMINATED);</span>
+<span class="nc" id="L133">                reactivatedPlanItemInstance.setEndedTime(currentTime);</span>
+<span class="nc" id="L134">                reactivatedPlanItemInstance.setTerminatedTime(currentTime);</span>
+<span class="nc" id="L135">                caseInstanceEntity.getChildPlanItemInstances().add(reactivatedPlanItemInstance);</span>
+                
+<span class="nc" id="L137">                cmmnEngineConfiguration.getCmmnHistoryManager().recordPlanItemInstanceReactivated(reactivatedPlanItemInstance);</span>
+<span class="nc" id="L138">            }</span>
+        }
+
+        // record the reactivation of the case in the history manager to also synchronize the new state and last reactivation data to the history
+<span class="nc" id="L142">        cmmnEngineConfiguration.getCmmnHistoryManager().recordHistoricCaseInstanceReactivated(caseInstanceEntity);</span>
+
+        // the reactivate operation will take care of triggering the reactivation event and re-initialize all necessary plan items according the model
+<span class="nc" id="L145">        CommandContextUtil.getAgenda(commandContext).planReactivateCaseInstanceOperation(caseInstanceEntity);</span>
+
+<span class="nc" id="L147">        return caseInstanceEntity;</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

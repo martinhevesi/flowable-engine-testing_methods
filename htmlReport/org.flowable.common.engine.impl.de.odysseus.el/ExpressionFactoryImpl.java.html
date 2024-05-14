@@ -1,0 +1,459 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ExpressionFactoryImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.common.engine.impl.de.odysseus.el</a> &gt; <span class="el_source">ExpressionFactoryImpl.java</span></div><h1>ExpressionFactoryImpl.java</h1><pre class="source lang-java linenums">/*
+ * Copyright 2006-2009 Odysseus Software GmbH
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.common.engine.impl.de.odysseus.el;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.lang.reflect.Constructor;
+import java.util.EnumSet;
+import java.util.Properties;
+
+import org.flowable.common.engine.impl.de.odysseus.el.misc.TypeConverter;
+import org.flowable.common.engine.impl.de.odysseus.el.tree.TreeBuilder;
+import org.flowable.common.engine.impl.de.odysseus.el.tree.TreeStore;
+import org.flowable.common.engine.impl.de.odysseus.el.tree.impl.Builder;
+import org.flowable.common.engine.impl.de.odysseus.el.tree.impl.Builder.Feature;
+import org.flowable.common.engine.impl.de.odysseus.el.tree.impl.Cache;
+import org.flowable.common.engine.impl.javax.el.ELContext;
+import org.flowable.common.engine.impl.javax.el.ELException;
+import org.flowable.common.engine.impl.javax.el.ExpressionFactory;
+
+/**
+ * Expression factory implementation.
+ * 
+ * This class is also used as an EL &quot;service provider&quot;. The &lt;em&gt;juel-spi&lt;/em&gt; jar file specifies this
+ * class as el expression factory implementation in
+ * &lt;code&gt;META-INF/services/javax.el.ExpressionFactory&lt;/code&gt;. Calling
+ * {@link ExpressionFactory#newInstance()} will then return an instance of this class, configured as
+ * described below.
+ * 
+ * If no properties are specified at construction time, properties are read from
+ * &lt;ol&gt;
+ * &lt;li&gt;
+ * If the file &lt;code&gt;JAVA_HOME/lib/el.properties&lt;/code&gt; exists and if it contains property
+ * &lt;code&gt;javax.el.ExpressionFactory&lt;/code&gt; whose value is the name of this class, these properties
+ * are taken as default properties.&lt;/li&gt;
+ * &lt;li&gt;Otherwise, if system property &lt;code&gt;javax.el.ExpressionFactory&lt;/code&gt; is set to the name of
+ * this class, the system properties {@link System#getProperties()} are taken as default properties.
+ * &lt;/li&gt;
+ * &lt;li&gt;
+ * &lt;code&gt;el.properties&lt;/code&gt; on your classpath. These properties override the properties from
+ * &lt;code&gt;JAVA_HOME/lib/el.properties&lt;/code&gt; or {@link System#getProperties()}.&lt;/li&gt;
+ * &lt;/ol&gt;
+ * There are also constructors to explicitly pass in an instance of {@link Properties}.
+ * 
+ * Having this, the following properties are read:
+ * &lt;ul&gt;
+ * &lt;li&gt;
+ * &lt;code&gt;javax.el.cacheSize&lt;/code&gt; - cache size (int, default is 1000)&lt;/li&gt;
+ * &lt;li&gt;
+ * &lt;code&gt;javax.el.methodInvocations&lt;/code&gt; - allow method invocations as in
+ * &lt;code&gt;${foo.bar(baz)}&lt;/code&gt; (boolean, default is &lt;code&gt;false&lt;/code&gt;).&lt;/li&gt;
+ * &lt;li&gt;
+ * &lt;code&gt;javax.el.nullProperties&lt;/code&gt; - resolve &lt;code&gt;null&lt;/code&gt; properties as in
+ * &lt;code&gt;${foo[null]}&lt;/code&gt; (boolean, default is &lt;code&gt;false&lt;/code&gt;).&lt;/li&gt;
+ * &lt;li&gt;
+ * &lt;code&gt;javax.el.varArgs&lt;/code&gt; - support function/method calls using varargs (boolean, default is
+ * &lt;code&gt;false&lt;/code&gt;).&lt;/li&gt;
+ * &lt;/ul&gt;
+ * 
+ * @author Christoph Beck
+ */
+public class ExpressionFactoryImpl extends ExpressionFactory {
+	/**
+	 * A profile provides a default set of language features that will define the builder's
+	 * behavior. A profile can be adjusted using the &lt;code&gt;javax.el.methodInvocations&lt;/code&gt;,
+	 * &lt;code&gt;javax.el.varArgs&lt;/code&gt; and &lt;code&gt;javax.el.nullProperties&lt;/code&gt; properties.
+	 * 
+	 * @since 2.2
+	 */
+<span class="nc" id="L85">	public enum Profile {</span>
+		/**
+		 * JEE5: none
+		 */
+<span class="nc" id="L89">		JEE5(EnumSet.noneOf(Feature.class)),</span>
+		/**
+		 * JEE6: &lt;code&gt;javax.el.methodInvocations&lt;/code&gt;, &lt;code&gt;javax.el.varArgs&lt;/code&gt;. This is the
+		 * default profile.
+		 */
+<span class="nc" id="L94">		JEE6(EnumSet.of(Feature.METHOD_INVOCATIONS, Feature.VARARGS));</span>
+
+		private final EnumSet&lt;Feature&gt; features;
+
+<span class="nc" id="L98">		private Profile(EnumSet&lt;Feature&gt; features) {</span>
+<span class="nc" id="L99">			this.features = features;</span>
+<span class="nc" id="L100">		}</span>
+
+		Feature[] features() {
+<span class="nc" id="L103">			return features.toArray(new Feature[features.size()]);</span>
+		}
+
+		boolean contains(Feature feature) {
+<span class="nc" id="L107">			return features.contains(feature);</span>
+		}
+	}
+
+	/**
+	 * &lt;code&gt;javax.el.methodInvocations&lt;/code&gt;
+	 */
+	public static final String PROP_METHOD_INVOCATIONS = &quot;javax.el.methodInvocations&quot;;
+
+	/**
+	 * &lt;code&gt;javax.el.varArgs&lt;/code&gt;
+	 */
+	public static final String PROP_VAR_ARGS = &quot;javax.el.varArgs&quot;;
+
+	/**
+	 * &lt;code&gt;javax.el.nullProperties&lt;/code&gt;
+	 */
+	public static final String PROP_NULL_PROPERTIES = &quot;javax.el.nullProperties&quot;;
+
+	/**
+	 * &lt;code&gt;javax.el.ignoreReturnType&lt;/code&gt;
+	 */
+	public static final String PROP_IGNORE_RETURN_TYPE = &quot;javax.el.ignoreReturnType&quot;;	
+	
+	/**
+	 * &lt;code&gt;javax.el.cacheSize&lt;/code&gt;
+	 */
+	public static final String PROP_CACHE_SIZE = &quot;javax.el.cacheSize&quot;;
+
+	protected final TreeStore store;
+	protected final TypeConverter converter;
+
+	/**
+	 * Create a new expression factory using the default builder and cache implementations. The
+	 * builder and cache are configured from &lt;code&gt;el.properties&lt;/code&gt; (see above). The maximum
+	 * cache size will be 1000 unless overridden in &lt;code&gt;el.properties&lt;/code&gt;. The builder profile
+	 * is {@link Profile#JEE6} (features may be overridden in &lt;code&gt;el.properties&lt;/code&gt;).
+	 */
+	public ExpressionFactoryImpl() {
+<span class="nc" id="L146">		this(Profile.JEE6);</span>
+<span class="nc" id="L147">	}</span>
+
+	/**
+	 * Create a new expression factory using the default builder and cache implementations. The
+	 * builder and cache are configured from the specified profile and &lt;code&gt;el.properties&lt;/code&gt;
+	 * (see above). The maximum cache size will be 1000 unless overridden in
+	 * &lt;code&gt;el.properties&lt;/code&gt;.
+	 * 
+	 * @param profile
+	 *            builder profile (features may be overridden in &lt;code&gt;el.properties&lt;/code&gt;)
+	 * 
+	 * @since 2.2
+	 */
+<span class="nc" id="L160">	public ExpressionFactoryImpl(Profile profile) {</span>
+<span class="nc" id="L161">		Properties properties = loadProperties(&quot;el.properties&quot;);</span>
+<span class="nc" id="L162">		this.store = createTreeStore(1000, profile, properties);</span>
+<span class="nc" id="L163">		this.converter = createTypeConverter(properties);</span>
+<span class="nc" id="L164">	}</span>
+
+	/**
+	 * Create a new expression factory using the default builder and cache implementations. The
+	 * builder and cache are configured using the specified properties. The maximum cache size will
+	 * be 1000 unless overridden by property &lt;code&gt;javax.el.cacheSize&lt;/code&gt;. The builder profile is
+	 * {@link Profile#JEE6} (features may be overridden in &lt;code&gt;properties&lt;/code&gt;).
+	 * 
+	 * @param properties
+	 *            used to initialize this factory (may be &lt;code&gt;null&lt;/code&gt;)
+	 */
+	public ExpressionFactoryImpl(Properties properties) {
+<span class="nc" id="L176">		this(Profile.JEE6, properties);</span>
+<span class="nc" id="L177">	}</span>
+
+	/**
+	 * Create a new expression factory using the default builder and cache implementations. The
+	 * builder and cache are configured using the specified profile and properties. The maximum
+	 * cache size will be 1000 unless overridden by property &lt;code&gt;javax.el.cacheSize&lt;/code&gt;.
+	 * 
+	 * @param profile
+	 *            builder profile (individual features may be overridden in properties)
+	 * @param properties
+	 *            used to initialize this factory (may be &lt;code&gt;null&lt;/code&gt;)
+	 * 
+	 * @since 2.2
+	 */
+<span class="nc" id="L191">	public ExpressionFactoryImpl(Profile profile, Properties properties) {</span>
+<span class="nc" id="L192">		this.store = createTreeStore(1000, profile, properties);</span>
+<span class="nc" id="L193">		this.converter = createTypeConverter(properties);</span>
+<span class="nc" id="L194">	}</span>
+
+	/**
+	 * Create a new expression factory using the default builder and cache implementations. The
+	 * builder and cache are configured using the specified properties. The maximum cache size will
+	 * be 1000 unless overridden by property &lt;code&gt;javax.el.cacheSize&lt;/code&gt;. The builder profile is
+	 * {@link Profile#JEE6} (individual features may be overridden in &lt;code&gt;properties&lt;/code&gt;).
+	 * 
+	 * @param properties
+	 *            used to initialize this factory (may be &lt;code&gt;null&lt;/code&gt;)
+	 * @param converter
+	 *            custom type converter
+	 */
+	public ExpressionFactoryImpl(Properties properties, TypeConverter converter) {
+<span class="nc" id="L208">		this(Profile.JEE6, properties, converter);</span>
+<span class="nc" id="L209">	}</span>
+
+	/**
+	 * Create a new expression factory using the default builder and cache implementations. The
+	 * builder and cache are configured using the specified profile and properties. The maximum
+	 * cache size will be 1000 unless overridden by property &lt;code&gt;javax.el.cacheSize&lt;/code&gt;.
+	 * 
+	 * @param profile
+	 *            builder profile (individual features may be overridden in properties)
+	 * @param properties
+	 *            used to initialize this factory (may be &lt;code&gt;null&lt;/code&gt;)
+	 * @param converter
+	 *            custom type converter
+	 * 
+	 * @since 2.2
+	 */
+<span class="nc" id="L225">	public ExpressionFactoryImpl(Profile profile, Properties properties, TypeConverter converter) {</span>
+<span class="nc" id="L226">		this.store = createTreeStore(1000, profile, properties);</span>
+<span class="nc" id="L227">		this.converter = converter;</span>
+<span class="nc" id="L228">	}</span>
+
+	/**
+	 * Create a new expression factory.
+	 * 
+	 * @param store
+	 *            the tree store used to parse and cache parse trees.
+	 */
+	public ExpressionFactoryImpl(TreeStore store) {
+<span class="nc" id="L237">		this(store, TypeConverter.DEFAULT);</span>
+<span class="nc" id="L238">	}</span>
+
+	/**
+	 * Create a new expression factory.
+	 * 
+	 * @param store
+	 *            the tree store used to parse and cache parse trees.
+	 * @param converter
+	 *            custom type converter
+	 */
+<span class="nc" id="L248">	public ExpressionFactoryImpl(TreeStore store, TypeConverter converter) {</span>
+<span class="nc" id="L249">		this.store = store;</span>
+<span class="nc" id="L250">		this.converter = converter;</span>
+<span class="nc" id="L251">	}</span>
+
+	private Properties loadDefaultProperties() {
+<span class="nc" id="L254">		String home = System.getProperty(&quot;java.home&quot;);</span>
+<span class="nc" id="L255">		String path = home + File.separator + &quot;lib&quot; + File.separator + &quot;el.properties&quot;;</span>
+<span class="nc" id="L256">		File file = new File(path);</span>
+		try {
+<span class="nc bnc" id="L258" title="All 2 branches missed.">			if (file.exists()) {</span>
+<span class="nc" id="L259">				Properties properties = new Properties();</span>
+<span class="nc" id="L260">				InputStream input = null;</span>
+				try {
+<span class="nc" id="L262">					properties.load(input = new FileInputStream(file));</span>
+<span class="nc" id="L263">				} catch (IOException e) {</span>
+<span class="nc" id="L264">					throw new ELException(&quot;Cannot read default EL properties&quot;, e);</span>
+				} finally {
+					try {
+<span class="nc" id="L267">						input.close();</span>
+<span class="nc" id="L268">					} catch (IOException e) {</span>
+						// ignore...
+<span class="nc" id="L270">					}</span>
+				}
+<span class="nc bnc" id="L272" title="All 2 branches missed.">				if (getClass().getName().equals(properties.getProperty(&quot;javax.el.ExpressionFactory&quot;))) {</span>
+<span class="nc" id="L273">					return properties;</span>
+				}
+			}
+<span class="nc" id="L276">		} catch (SecurityException e) {</span>
+			// ignore...
+<span class="nc" id="L278">		}</span>
+<span class="nc bnc" id="L279" title="All 2 branches missed.">		if (getClass().getName().equals(System.getProperty(&quot;javax.el.ExpressionFactory&quot;))) {</span>
+<span class="nc" id="L280">			return System.getProperties();</span>
+		}
+<span class="nc" id="L282">		return null;</span>
+	}
+
+	private Properties loadProperties(String path) {
+<span class="nc" id="L286">		Properties properties = new Properties(loadDefaultProperties());</span>
+
+		// try to find and load properties
+<span class="nc" id="L289">		InputStream input = null;</span>
+		try {
+<span class="nc" id="L291">			input = Thread.currentThread().getContextClassLoader().getResourceAsStream(path);</span>
+<span class="nc" id="L292">		} catch (SecurityException e) {</span>
+<span class="nc" id="L293">			input = ClassLoader.getSystemResourceAsStream(path);</span>
+<span class="nc" id="L294">		}</span>
+<span class="nc bnc" id="L295" title="All 2 branches missed.">		if (input != null) {</span>
+			try {
+<span class="nc" id="L297">				properties.load(input);</span>
+<span class="nc" id="L298">			} catch (IOException e) {</span>
+<span class="nc" id="L299">				throw new ELException(&quot;Cannot read EL properties&quot;, e);</span>
+			} finally {
+				try {
+<span class="nc" id="L302">					input.close();</span>
+<span class="nc" id="L303">				} catch (IOException e) {</span>
+					// ignore...
+<span class="nc" id="L305">				}</span>
+			}
+		}
+
+<span class="nc" id="L309">		return properties;</span>
+	}
+
+	private boolean getFeatureProperty(Profile profile, Properties properties, Feature feature, String property) {
+<span class="nc" id="L313">		return Boolean.valueOf(properties.getProperty(property, String.valueOf(profile.contains(feature))));</span>
+	}
+
+	/**
+	 * Create the factory's tree store. This implementation creates a new tree store using the
+	 * default builder and cache implementations. The builder and cache are configured using the
+	 * specified properties. The maximum cache size will be as specified unless overridden by
+	 * property &lt;code&gt;javax.el.cacheSize&lt;/code&gt;.
+	 */
+	protected TreeStore createTreeStore(int defaultCacheSize, Profile profile, Properties properties) {
+		// create builder
+<span class="nc" id="L324">		TreeBuilder builder = null;</span>
+<span class="nc bnc" id="L325" title="All 2 branches missed.">		if (properties == null) {</span>
+<span class="nc" id="L326">			builder = createTreeBuilder(null, profile.features());</span>
+		} else {
+<span class="nc" id="L328">			EnumSet&lt;Builder.Feature&gt; features = EnumSet.noneOf(Builder.Feature.class);</span>
+<span class="nc bnc" id="L329" title="All 2 branches missed.">			if (getFeatureProperty(profile, properties, Feature.METHOD_INVOCATIONS, PROP_METHOD_INVOCATIONS)) {</span>
+<span class="nc" id="L330">				features.add(Builder.Feature.METHOD_INVOCATIONS);</span>
+			}
+<span class="nc bnc" id="L332" title="All 2 branches missed.">			if (getFeatureProperty(profile, properties, Feature.VARARGS, PROP_VAR_ARGS)) {</span>
+<span class="nc" id="L333">				features.add(Builder.Feature.VARARGS);</span>
+			}
+<span class="nc bnc" id="L335" title="All 2 branches missed.">			if (getFeatureProperty(profile, properties, Feature.NULL_PROPERTIES, PROP_NULL_PROPERTIES)) {</span>
+<span class="nc" id="L336">				features.add(Builder.Feature.NULL_PROPERTIES);</span>
+			}
+<span class="nc bnc" id="L338" title="All 2 branches missed.">			if (getFeatureProperty(profile, properties, Feature.IGNORE_RETURN_TYPE, PROP_IGNORE_RETURN_TYPE)) {</span>
+<span class="nc" id="L339">				features.add(Builder.Feature.IGNORE_RETURN_TYPE);</span>
+			}
+<span class="nc" id="L341">			builder = createTreeBuilder(properties, features.toArray(new Builder.Feature[0]));</span>
+		}
+
+		// create cache
+<span class="nc" id="L345">		int cacheSize = defaultCacheSize;</span>
+<span class="nc bnc" id="L346" title="All 4 branches missed.">		if (properties != null &amp;&amp; properties.containsKey(PROP_CACHE_SIZE)) {</span>
+			try {
+<span class="nc" id="L348">				cacheSize = Integer.parseInt(properties.getProperty(PROP_CACHE_SIZE));</span>
+<span class="nc" id="L349">			} catch (NumberFormatException e) {</span>
+<span class="nc" id="L350">				throw new ELException(&quot;Cannot parse EL property &quot; + PROP_CACHE_SIZE, e);</span>
+<span class="nc" id="L351">			}</span>
+		}
+<span class="nc bnc" id="L353" title="All 2 branches missed.">		Cache cache = cacheSize &gt; 0 ? new Cache(cacheSize) : null;</span>
+
+<span class="nc" id="L355">		return new TreeStore(builder, cache);</span>
+	}
+
+	/**
+	 * Create the factory's type converter. This implementation takes the
+	 * &lt;code&gt;de.odysseus.el.misc.TypeConverter&lt;/code&gt; property as the name of a class implementing
+	 * the &lt;code&gt;de.odysseus.el.misc.TypeConverter&lt;/code&gt; interface. If the property is not set, the
+	 * default converter (&lt;code&gt;TypeConverter.DEFAULT&lt;/code&gt;) is used.
+	 */
+	protected TypeConverter createTypeConverter(Properties properties) {
+<span class="nc" id="L365">		Class&lt;?&gt; clazz = load(TypeConverter.class, properties);</span>
+<span class="nc bnc" id="L366" title="All 2 branches missed.">		if (clazz == null) {</span>
+<span class="nc" id="L367">			return TypeConverter.DEFAULT;</span>
+		}
+		try {
+<span class="nc" id="L370">			return TypeConverter.class.cast(clazz.newInstance());</span>
+<span class="nc" id="L371">		} catch (Exception e) {</span>
+<span class="nc" id="L372">			throw new ELException(&quot;TypeConverter &quot; + clazz + &quot; could not be instantiated&quot;, e);</span>
+		}
+	}
+
+	/**
+	 * Create the factory's builder. This implementation takes the
+	 * &lt;code&gt;de.odysseus.el.tree.TreeBuilder&lt;/code&gt; property as a name of a class implementing the
+	 * &lt;code&gt;de.odysseus.el.tree.TreeBuilder&lt;/code&gt; interface. If the property is not set, a plain
+	 * &lt;code&gt;de.odysseus.el.tree.impl.Builder&lt;/code&gt; is used. If the configured class is a subclass
+	 * of &lt;code&gt;de.odysseus.el.tree.impl.Builder&lt;/code&gt; and which provides a constructor taking an
+	 * array of &lt;code&gt;Builder.Feature&lt;/code&gt;, this constructor will be invoked. Otherwise, the
+	 * default constructor will be used.
+	 */
+	protected TreeBuilder createTreeBuilder(Properties properties, Feature... features) {
+<span class="nc" id="L386">		Class&lt;?&gt; clazz = load(TreeBuilder.class, properties);</span>
+<span class="nc bnc" id="L387" title="All 2 branches missed.">		if (clazz == null) {</span>
+<span class="nc" id="L388">			return createDefaultTreeBuilder(features);</span>
+		}
+		try {
+<span class="nc bnc" id="L391" title="All 2 branches missed.">			if (Builder.class.isAssignableFrom(clazz)) {</span>
+<span class="nc" id="L392">				Constructor&lt;?&gt; constructor = clazz.getConstructor(Feature[].class);</span>
+<span class="nc bnc" id="L393" title="All 2 branches missed.">				if (constructor == null) {</span>
+<span class="nc bnc" id="L394" title="All 4 branches missed.">					if (features == null || features.length == 0) {</span>
+<span class="nc" id="L395">						return TreeBuilder.class.cast(clazz.newInstance());</span>
+					} else {
+<span class="nc" id="L397">						throw new ELException(&quot;Builder &quot; + clazz + &quot; is missing constructor (can't pass features)&quot;);</span>
+					}
+				} else {
+<span class="nc" id="L400">					return TreeBuilder.class.cast(constructor.newInstance((Object) features));</span>
+				}
+			} else {
+<span class="nc" id="L403">				return TreeBuilder.class.cast(clazz.newInstance());</span>
+			}
+<span class="nc" id="L405">		} catch (Exception e) {</span>
+<span class="nc" id="L406">			throw new ELException(&quot;TreeBuilder &quot; + clazz + &quot; could not be instantiated&quot;, e);</span>
+		}
+	}
+
+	protected TreeBuilder createDefaultTreeBuilder(Feature... features) {
+<span class="nc" id="L411">		return new Builder(features);</span>
+	}
+
+	private Class&lt;?&gt; load(Class&lt;?&gt; clazz, Properties properties) {
+<span class="nc bnc" id="L415" title="All 2 branches missed.">		if (properties != null) {</span>
+<span class="nc" id="L416">			String className = properties.getProperty(clazz.getName());</span>
+<span class="nc bnc" id="L417" title="All 2 branches missed.">			if (className != null) {</span>
+				ClassLoader loader;
+				try {
+<span class="nc" id="L420">					loader = Thread.currentThread().getContextClassLoader();</span>
+<span class="nc" id="L421">				} catch (Exception e) {</span>
+<span class="nc" id="L422">					throw new ELException(&quot;Could not get context class loader&quot;, e);</span>
+<span class="nc" id="L423">				}</span>
+				try {
+<span class="nc bnc" id="L425" title="All 2 branches missed.">					return loader == null ? Class.forName(className) : loader.loadClass(className);</span>
+<span class="nc" id="L426">				} catch (ClassNotFoundException e) {</span>
+<span class="nc" id="L427">					throw new ELException(&quot;Class &quot; + className + &quot; not found&quot;, e);</span>
+<span class="nc" id="L428">				} catch (Exception e) {</span>
+<span class="nc" id="L429">					throw new ELException(&quot;Class &quot; + className + &quot; could not be instantiated&quot;, e);</span>
+				}
+			}
+		}
+<span class="nc" id="L433">		return null;</span>
+	}
+
+	@Override
+	public final Object coerceToType(Object obj, Class&lt;?&gt; targetType) {
+<span class="nc" id="L438">		return converter.convert(obj, targetType);</span>
+	}
+
+	@Override
+	public final ObjectValueExpression createValueExpression(Object instance, Class&lt;?&gt; expectedType) {
+<span class="nc" id="L443">		return new ObjectValueExpression(converter, instance, expectedType);</span>
+	}
+
+	@Override
+	public final TreeValueExpression createValueExpression(ELContext context, String expression, Class&lt;?&gt; expectedType) {
+<span class="nc" id="L448">		return new TreeValueExpression(store, context.getFunctionMapper(), context.getVariableMapper(), converter,</span>
+				expression, expectedType);
+	}
+
+	@Override
+	public final TreeMethodExpression createMethodExpression(ELContext context, String expression,
+			Class&lt;?&gt; expectedReturnType, Class&lt;?&gt;[] expectedParamTypes) {
+<span class="nc" id="L455">		return new TreeMethodExpression(store, context.getFunctionMapper(), context.getVariableMapper(), converter,</span>
+				expression, expectedReturnType, expectedParamTypes);
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

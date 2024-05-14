@@ -1,0 +1,406 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ContinueProcessOperation.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.agenda</a> &gt; <span class="el_source">ContinueProcessOperation.java</span></div><h1>ContinueProcessOperation.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.impl.agenda;
+
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+
+import org.flowable.bpmn.model.Activity;
+import org.flowable.bpmn.model.BoundaryEvent;
+import org.flowable.bpmn.model.CompensateEventDefinition;
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.FlowNode;
+import org.flowable.bpmn.model.SequenceFlow;
+import org.flowable.bpmn.model.SubProcess;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.delegate.event.FlowableEngineEventType;
+import org.flowable.common.engine.api.delegate.event.FlowableEventDispatcher;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.common.engine.impl.logging.LoggingSessionConstants;
+import org.flowable.common.engine.impl.util.CollectionUtil;
+import org.flowable.engine.delegate.BpmnError;
+import org.flowable.engine.delegate.ExecutionListener;
+import org.flowable.engine.delegate.event.impl.FlowableEventBuilder;
+import org.flowable.engine.impl.bpmn.behavior.BoundaryEventRegistryEventActivityBehavior;
+import org.flowable.engine.impl.bpmn.helper.ErrorPropagation;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.delegate.ActivityBehavior;
+import org.flowable.engine.impl.delegate.ActivityWithMigrationContextBehavior;
+import org.flowable.engine.impl.jobexecutor.AsyncContinuationJobHandler;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntity;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntityManager;
+import org.flowable.engine.impl.util.BpmnLoggingSessionUtil;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.engine.impl.util.JobUtil;
+import org.flowable.engine.impl.util.ProcessDefinitionUtil;
+import org.flowable.engine.interceptor.MigrationContext;
+import org.flowable.engine.logging.LogMDC;
+import org.flowable.job.api.Job;
+import org.flowable.job.service.JobService;
+import org.flowable.job.service.impl.persistence.entity.JobEntity;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Operation that takes the current {@link FlowElement} set on the {@link ExecutionEntity} and executes the associated {@link ActivityBehavior}. In the case of async, schedules a {@link Job}.
+ * 
+ * Also makes sure the {@link ExecutionListener} instances are called.
+ * 
+ * @author Joram Barrez
+ * @author Tijs Rademakers
+ */
+public class ContinueProcessOperation extends AbstractOperation {
+
+<span class="nc" id="L65">    private static final Logger LOGGER = LoggerFactory.getLogger(ContinueProcessOperation.class);</span>
+
+    protected boolean forceSynchronousOperation;
+    protected boolean inCompensation;
+    protected MigrationContext migrationContext;
+
+    public ContinueProcessOperation(CommandContext commandContext, ExecutionEntity execution,
+            boolean forceSynchronousOperation, boolean inCompensation, MigrationContext migrationContext) {
+
+<span class="nc" id="L74">        super(commandContext, execution);</span>
+<span class="nc" id="L75">        this.forceSynchronousOperation = forceSynchronousOperation;</span>
+<span class="nc" id="L76">        this.inCompensation = inCompensation;</span>
+<span class="nc" id="L77">        this.migrationContext = migrationContext;</span>
+<span class="nc" id="L78">    }</span>
+
+    public ContinueProcessOperation(CommandContext commandContext, ExecutionEntity execution) {
+<span class="nc" id="L81">        this(commandContext, execution, false, false, null);</span>
+<span class="nc" id="L82">    }</span>
+
+    @Override
+    public void run() {
+<span class="nc" id="L86">        FlowElement currentFlowElement = getCurrentFlowElement(execution);</span>
+<span class="nc bnc" id="L87" title="All 2 branches missed.">        if (currentFlowElement instanceof FlowNode) {</span>
+<span class="nc" id="L88">            continueThroughFlowNode((FlowNode) currentFlowElement);</span>
+<span class="nc bnc" id="L89" title="All 2 branches missed.">        } else if (currentFlowElement instanceof SequenceFlow) {</span>
+<span class="nc" id="L90">            continueThroughSequenceFlow((SequenceFlow) currentFlowElement);</span>
+        } else {
+<span class="nc" id="L92">            throw new FlowableException(&quot;Programmatic error: no current flow element found or invalid type: &quot; + currentFlowElement + &quot;. For &quot; + execution + &quot;. Halting.&quot;);</span>
+        }
+<span class="nc" id="L94">    }</span>
+
+    protected void executeProcessStartExecutionListeners() {
+<span class="nc" id="L97">        org.flowable.bpmn.model.Process process = ProcessDefinitionUtil.getProcess(execution.getProcessDefinitionId());</span>
+<span class="nc" id="L98">        executeExecutionListeners(process, execution.getParent(), ExecutionListener.EVENTNAME_START);</span>
+<span class="nc" id="L99">    }</span>
+
+    protected void continueThroughFlowNode(FlowNode flowNode) {
+        
+<span class="nc" id="L103">        execution.setActive(true);</span>
+
+        // Check if it's the initial flow element. If so, we must fire the execution listeners for the process too
+<span class="nc bnc" id="L106" title="All 2 branches missed.">        if (flowNode.getIncomingFlows() != null</span>
+<span class="nc bnc" id="L107" title="All 2 branches missed.">                &amp;&amp; flowNode.getIncomingFlows().size() == 0</span>
+<span class="nc bnc" id="L108" title="All 2 branches missed.">                &amp;&amp; flowNode.getSubProcess() == null) {</span>
+            
+<span class="nc" id="L110">            executeProcessStartExecutionListeners();</span>
+        }
+
+        // For a subprocess, a new child execution is created that will visit the steps of the subprocess
+        // The original execution that arrived here will wait until the subprocess is finished
+        // and will then be used to continue the process instance.
+<span class="nc bnc" id="L116" title="All 4 branches missed.">        if (!forceSynchronousOperation &amp;&amp; flowNode instanceof SubProcess) {</span>
+<span class="nc" id="L117">            createChildExecutionForSubProcess((SubProcess) flowNode);</span>
+        }
+
+<span class="nc bnc" id="L120" title="All 4 branches missed.">        if (flowNode instanceof Activity &amp;&amp; ((Activity) flowNode).hasMultiInstanceLoopCharacteristics()) {</span>
+            // the multi instance execution will look at async
+<span class="nc" id="L122">            executeMultiInstanceSynchronous(flowNode);</span>
+
+<span class="nc bnc" id="L124" title="All 4 branches missed.">        } else if (forceSynchronousOperation || !flowNode.isAsynchronous()) {</span>
+<span class="nc" id="L125">            executeSynchronous(flowNode);</span>
+
+        } else {
+<span class="nc" id="L128">            executeAsynchronous(flowNode);</span>
+        }
+<span class="nc" id="L130">    }</span>
+
+    protected void createChildExecutionForSubProcess(SubProcess subProcess) {
+<span class="nc" id="L133">        ExecutionEntity parentScopeExecution = findFirstParentScopeExecution(execution);</span>
+
+        // Create the sub process execution that can be used to set variables
+        // We create a new execution and delete the incoming one to have a proper scope that
+        // does not conflict anything with any existing scopes
+
+<span class="nc" id="L139">        ExecutionEntity subProcessExecution = CommandContextUtil.getExecutionEntityManager(commandContext).createChildExecution(parentScopeExecution);</span>
+<span class="nc" id="L140">        subProcessExecution.setCurrentFlowElement(subProcess);</span>
+<span class="nc" id="L141">        subProcessExecution.setScope(true);</span>
+
+<span class="nc" id="L143">        CommandContextUtil.getExecutionEntityManager(commandContext).deleteRelatedDataForExecution(execution, null, false);</span>
+<span class="nc" id="L144">        CommandContextUtil.getExecutionEntityManager(commandContext).delete(execution);</span>
+<span class="nc" id="L145">        execution = subProcessExecution;</span>
+<span class="nc" id="L146">    }</span>
+
+    protected void executeSynchronous(FlowNode flowNode) {
+<span class="nc" id="L149">        CommandContextUtil.getActivityInstanceEntityManager(commandContext).recordActivityStart(execution);</span>
+
+        // Execution listener: event 'start'
+<span class="nc bnc" id="L152" title="All 2 branches missed.">        if (CollectionUtil.isNotEmpty(flowNode.getExecutionListeners())) {</span>
+            try {
+<span class="nc" id="L154">                executeExecutionListeners(flowNode, ExecutionListener.EVENTNAME_START);</span>
+<span class="nc" id="L155">            } catch (BpmnError bpmnError) {</span>
+<span class="nc" id="L156">                ErrorPropagation.propagateError(bpmnError, execution);</span>
+<span class="nc" id="L157">                return;</span>
+<span class="nc" id="L158">            }</span>
+        }
+
+        // Create any boundary events, sub process boundary events will be created from the activity behavior
+<span class="nc" id="L162">        List&lt;ExecutionEntity&gt; boundaryEventExecutions = null;</span>
+<span class="nc" id="L163">        List&lt;BoundaryEvent&gt; boundaryEvents = null;</span>
+<span class="nc bnc" id="L164" title="All 4 branches missed.">        if (!inCompensation &amp;&amp; flowNode instanceof Activity) { // Only activities can have boundary events</span>
+<span class="nc" id="L165">            boundaryEvents = ((Activity) flowNode).getBoundaryEvents();</span>
+<span class="nc bnc" id="L166" title="All 2 branches missed.">            if (CollectionUtil.isNotEmpty(boundaryEvents)) {</span>
+<span class="nc" id="L167">                boundaryEventExecutions = createBoundaryEvents(boundaryEvents, execution);</span>
+            }
+        }
+
+        // Execute actual behavior
+<span class="nc" id="L172">        ActivityBehavior activityBehavior = (ActivityBehavior) flowNode.getBehavior();</span>
+
+<span class="nc bnc" id="L174" title="All 2 branches missed.">        if (activityBehavior != null) {</span>
+<span class="nc" id="L175">            executeActivityBehavior(activityBehavior, flowNode);</span>
+<span class="nc" id="L176">            executeBoundaryEvents(boundaryEvents, boundaryEventExecutions);</span>
+        } else {
+<span class="nc" id="L178">            executeBoundaryEvents(boundaryEvents, boundaryEventExecutions);</span>
+<span class="nc" id="L179">            LOGGER.debug(&quot;No activityBehavior on activity '{}' with execution {}&quot;, flowNode.getId(), execution.getId());</span>
+<span class="nc" id="L180">            CommandContextUtil.getAgenda().planTakeOutgoingSequenceFlowsOperation(execution, true);</span>
+        }
+<span class="nc" id="L182">    }</span>
+
+    protected void executeAsynchronous(FlowNode flowNode) {
+<span class="nc" id="L185">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc" id="L186">        JobService jobService = processEngineConfiguration.getJobServiceConfiguration().getJobService();</span>
+        
+<span class="nc" id="L188">        JobEntity job = JobUtil.createJob(execution, flowNode, AsyncContinuationJobHandler.TYPE, processEngineConfiguration);</span>
+        
+<span class="nc" id="L190">        jobService.createAsyncJob(job, flowNode.isExclusive());</span>
+<span class="nc" id="L191">        jobService.scheduleAsyncJob(job);</span>
+        
+<span class="nc bnc" id="L193" title="All 2 branches missed.">        if (processEngineConfiguration.isLoggingSessionEnabled()) {</span>
+<span class="nc" id="L194">            BpmnLoggingSessionUtil.addAsyncActivityLoggingData(&quot;Created async job for &quot; + flowNode.getId() + &quot;, with job id &quot; + job.getId(),</span>
+                            LoggingSessionConstants.TYPE_SERVICE_TASK_ASYNC_JOB, job, flowNode, execution);
+        }
+<span class="nc" id="L197">    }</span>
+
+    protected void executeMultiInstanceSynchronous(FlowNode flowNode) {
+
+<span class="nc bnc" id="L201" title="All 2 branches missed.">        if (!hasMultiInstanceRootExecution(execution, flowNode)) {</span>
+<span class="nc" id="L202">            execution = createMultiInstanceRootExecution(execution);</span>
+        }
+
+        // Execution listener: event 'start'
+<span class="nc bnc" id="L206" title="All 2 branches missed.">        if (CollectionUtil.isNotEmpty(flowNode.getExecutionListeners())) {</span>
+            try {
+<span class="nc" id="L208">                executeExecutionListeners(flowNode, ExecutionListener.EVENTNAME_START);</span>
+<span class="nc" id="L209">            } catch (BpmnError bpmnError) {</span>
+<span class="nc" id="L210">                ErrorPropagation.propagateError(bpmnError, execution);</span>
+<span class="nc" id="L211">               return;</span>
+<span class="nc" id="L212">            }</span>
+        }
+
+        // Execute the multi instance behavior
+<span class="nc" id="L216">        ActivityBehavior activityBehavior = (ActivityBehavior) flowNode.getBehavior();</span>
+
+<span class="nc bnc" id="L218" title="All 2 branches missed.">        if (activityBehavior != null) {</span>
+<span class="nc" id="L219">            executeActivityBehavior(activityBehavior, flowNode);</span>
+            
+<span class="nc bnc" id="L221" title="All 6 branches missed.">            if (execution.isMultiInstanceRoot() &amp;&amp; !execution.isDeleted() &amp;&amp; !execution.isEnded()) {</span>
+                // Create any boundary events, sub process boundary events will be created from the activity behavior
+<span class="nc" id="L223">                List&lt;ExecutionEntity&gt; boundaryEventExecutions = null;</span>
+<span class="nc" id="L224">                List&lt;BoundaryEvent&gt; boundaryEvents = null;</span>
+<span class="nc bnc" id="L225" title="All 4 branches missed.">                if (!inCompensation &amp;&amp; flowNode instanceof Activity) { // Only activities can have boundary events</span>
+<span class="nc" id="L226">                    boundaryEvents = ((Activity) flowNode).getBoundaryEvents();</span>
+<span class="nc bnc" id="L227" title="All 2 branches missed.">                    if (CollectionUtil.isNotEmpty(boundaryEvents)) {</span>
+<span class="nc" id="L228">                        boundaryEventExecutions = createBoundaryEvents(boundaryEvents, execution);</span>
+                    }
+                }
+                
+<span class="nc" id="L232">                executeBoundaryEvents(boundaryEvents, boundaryEventExecutions);</span>
+<span class="nc" id="L233">            }</span>
+            
+        } else {
+<span class="nc" id="L236">            throw new FlowableException(&quot;Expected an activity behavior in flow node &quot; + flowNode.getId() + &quot; for &quot; + execution);</span>
+        }
+<span class="nc" id="L238">    }</span>
+    
+    protected boolean hasMultiInstanceRootExecution(ExecutionEntity execution, FlowNode flowNode) {
+<span class="nc" id="L241">        ExecutionEntity currentExecution = execution.getParent();</span>
+<span class="nc bnc" id="L242" title="All 2 branches missed.">        while (currentExecution != null) {</span>
+<span class="nc bnc" id="L243" title="All 4 branches missed.">            if (currentExecution.isMultiInstanceRoot() &amp;&amp; flowNode.getId().equals(currentExecution.getActivityId())) {</span>
+<span class="nc" id="L244">                return true;</span>
+            }
+<span class="nc" id="L246">            currentExecution = currentExecution.getParent();</span>
+        }
+<span class="nc" id="L248">        return false;</span>
+    }
+    
+    protected ExecutionEntity createMultiInstanceRootExecution(ExecutionEntity execution) {
+<span class="nc" id="L252">        ExecutionEntity parentExecution = execution.getParent();</span>
+<span class="nc" id="L253">        FlowElement flowElement = execution.getCurrentFlowElement();</span>
+        
+<span class="nc" id="L255">        ExecutionEntityManager executionEntityManager = CommandContextUtil.getExecutionEntityManager();</span>
+<span class="nc" id="L256">        executionEntityManager.deleteRelatedDataForExecution(execution, null, false);</span>
+<span class="nc" id="L257">        executionEntityManager.delete(execution);</span>
+        
+<span class="nc" id="L259">        ExecutionEntity multiInstanceRootExecution = executionEntityManager.createChildExecution(parentExecution);</span>
+<span class="nc" id="L260">        multiInstanceRootExecution.setCurrentFlowElement(flowElement);</span>
+<span class="nc" id="L261">        multiInstanceRootExecution.setMultiInstanceRoot(true);</span>
+<span class="nc" id="L262">        multiInstanceRootExecution.setActive(false);</span>
+<span class="nc" id="L263">        return multiInstanceRootExecution;</span>
+    }
+
+    protected void executeActivityBehavior(ActivityBehavior activityBehavior, FlowNode flowNode) {
+<span class="nc" id="L267">        LOGGER.debug(&quot;Executing activityBehavior {} on activity '{}' with execution {}&quot;, activityBehavior.getClass(), flowNode.getId(), execution.getId());</span>
+
+<span class="nc" id="L269">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration();</span>
+<span class="nc" id="L270">        FlowableEventDispatcher eventDispatcher = null;</span>
+<span class="nc bnc" id="L271" title="All 2 branches missed.">        if (processEngineConfiguration != null) {</span>
+<span class="nc" id="L272">            eventDispatcher = processEngineConfiguration.getEventDispatcher();</span>
+        }
+<span class="nc bnc" id="L274" title="All 4 branches missed.">        if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+
+<span class="nc bnc" id="L276" title="All 4 branches missed.">            if (flowNode instanceof Activity &amp;&amp; ((Activity) flowNode).hasMultiInstanceLoopCharacteristics()) {</span>
+<span class="nc" id="L277">                processEngineConfiguration.getEventDispatcher().dispatchEvent(</span>
+<span class="nc" id="L278">                        FlowableEventBuilder.createMultiInstanceActivityEvent(FlowableEngineEventType.MULTI_INSTANCE_ACTIVITY_STARTED, flowNode.getId(),</span>
+<span class="nc" id="L279">                                flowNode.getName(), execution.getId(), execution.getProcessInstanceId(), execution.getProcessDefinitionId(), flowNode), processEngineConfiguration.getEngineCfgKey());</span>
+            }
+            else {
+<span class="nc" id="L282">                processEngineConfiguration.getEventDispatcher().dispatchEvent(</span>
+<span class="nc" id="L283">                        FlowableEventBuilder.createActivityEvent(FlowableEngineEventType.ACTIVITY_STARTED, flowNode.getId(), flowNode.getName(), execution.getId(),</span>
+<span class="nc" id="L284">                                execution.getProcessInstanceId(), execution.getProcessDefinitionId(), flowNode), processEngineConfiguration.getEngineCfgKey());</span>
+            }
+        }
+        
+<span class="nc bnc" id="L288" title="All 2 branches missed.">        if (processEngineConfiguration.isLoggingSessionEnabled()) {</span>
+<span class="nc" id="L289">            BpmnLoggingSessionUtil.addExecuteActivityBehaviorLoggingData(LoggingSessionConstants.TYPE_ACTIVITY_BEHAVIOR_EXECUTE, </span>
+                            activityBehavior, flowNode, execution);
+        }
+
+        try {
+<span class="nc bnc" id="L294" title="All 4 branches missed.">            if (migrationContext != null &amp;&amp; activityBehavior instanceof ActivityWithMigrationContextBehavior) {</span>
+<span class="nc" id="L295">                ActivityWithMigrationContextBehavior activityWithMigrationContextBehavior = (ActivityWithMigrationContextBehavior) activityBehavior;</span>
+<span class="nc" id="L296">                activityWithMigrationContextBehavior.execute(execution, migrationContext);</span>
+<span class="nc" id="L297">            } else {</span>
+<span class="nc" id="L298">                activityBehavior.execute(execution);</span>
+            }
+            
+<span class="nc" id="L301">        } catch (RuntimeException e) {</span>
+<span class="nc bnc" id="L302" title="All 2 branches missed.">            if (LogMDC.isMDCEnabled()) {</span>
+<span class="nc" id="L303">                LogMDC.putMDCExecution(execution);</span>
+            }
+<span class="nc" id="L305">            throw e;</span>
+<span class="nc" id="L306">        }</span>
+<span class="nc" id="L307">    }</span>
+
+    protected void continueThroughSequenceFlow(SequenceFlow sequenceFlow) {
+        // Execution listener. Sequenceflow only 'take' makes sense ... but we've supported all three since the beginning
+<span class="nc bnc" id="L311" title="All 2 branches missed.">        if (CollectionUtil.isNotEmpty(sequenceFlow.getExecutionListeners())) {</span>
+            try {
+<span class="nc" id="L313">                executeExecutionListeners(sequenceFlow, ExecutionListener.EVENTNAME_START);</span>
+<span class="nc" id="L314">                executeExecutionListeners(sequenceFlow, ExecutionListener.EVENTNAME_TAKE);</span>
+<span class="nc" id="L315">                executeExecutionListeners(sequenceFlow, ExecutionListener.EVENTNAME_END);</span>
+<span class="nc" id="L316">            } catch (BpmnError bpmnError) {</span>
+<span class="nc" id="L317">                ErrorPropagation.propagateError(bpmnError, execution);</span>
+<span class="nc" id="L318">                return;</span>
+<span class="nc" id="L319">            }</span>
+        }
+
+        // Firing event that transition is being taken
+<span class="nc" id="L323">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration();</span>
+<span class="nc" id="L324">        FlowableEventDispatcher eventDispatcher = null;</span>
+<span class="nc bnc" id="L325" title="All 2 branches missed.">        if (processEngineConfiguration != null) {</span>
+<span class="nc" id="L326">            eventDispatcher = processEngineConfiguration.getEventDispatcher();</span>
+        }
+<span class="nc bnc" id="L328" title="All 4 branches missed.">        if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L329">            FlowElement sourceFlowElement = sequenceFlow.getSourceFlowElement();</span>
+<span class="nc" id="L330">            FlowElement targetFlowElement = sequenceFlow.getTargetFlowElement();</span>
+<span class="nc" id="L331">            processEngineConfiguration.getEventDispatcher().dispatchEvent(</span>
+<span class="nc" id="L332">                    FlowableEventBuilder.createSequenceFlowTakenEvent(</span>
+                            execution,
+                            FlowableEngineEventType.SEQUENCEFLOW_TAKEN,
+<span class="nc" id="L335">                            sequenceFlow.getId(),</span>
+<span class="nc bnc" id="L336" title="All 2 branches missed.">                            sourceFlowElement != null ? sourceFlowElement.getId() : null,</span>
+<span class="nc bnc" id="L337" title="All 2 branches missed.">                            sourceFlowElement != null ? sourceFlowElement.getName() : null,</span>
+<span class="nc bnc" id="L338" title="All 2 branches missed.">                            sourceFlowElement != null ? sourceFlowElement.getClass().getName() : null,</span>
+<span class="nc bnc" id="L339" title="All 2 branches missed.">                            sourceFlowElement != null ? ((FlowNode) sourceFlowElement).getBehavior() : null,</span>
+<span class="nc bnc" id="L340" title="All 2 branches missed.">                            targetFlowElement != null ? targetFlowElement.getId() : null,</span>
+<span class="nc bnc" id="L341" title="All 2 branches missed.">                            targetFlowElement != null ? targetFlowElement.getName() : null,</span>
+<span class="nc bnc" id="L342" title="All 2 branches missed.">                            targetFlowElement != null ? targetFlowElement.getClass().getName() : null,</span>
+<span class="nc bnc" id="L343" title="All 2 branches missed.">                            targetFlowElement != null ? ((FlowNode) targetFlowElement).getBehavior() : null), processEngineConfiguration.getEngineCfgKey());</span>
+        }
+
+<span class="nc" id="L346">        CommandContextUtil.getActivityInstanceEntityManager(commandContext).recordSequenceFlowTaken(execution);</span>
+
+<span class="nc" id="L348">        FlowElement targetFlowElement = sequenceFlow.getTargetFlowElement();</span>
+<span class="nc" id="L349">        execution.setCurrentFlowElement(targetFlowElement);</span>
+
+<span class="nc" id="L351">        LOGGER.debug(&quot;Sequence flow '{}' encountered. Continuing process by following it using execution {}&quot;, sequenceFlow.getId(), execution.getId());</span>
+
+<span class="nc" id="L353">        execution.setActive(targetFlowElement instanceof FlowNode);</span>
+<span class="nc" id="L354">        agenda.planContinueProcessOperation(execution);</span>
+<span class="nc" id="L355">    }</span>
+
+    protected List&lt;ExecutionEntity&gt; createBoundaryEvents(List&lt;BoundaryEvent&gt; boundaryEvents, ExecutionEntity execution) {
+
+<span class="nc" id="L359">        List&lt;ExecutionEntity&gt; boundaryEventExecutions = new ArrayList&lt;&gt;(boundaryEvents.size());</span>
+
+        // The parent execution becomes a scope, and a child execution is created for each of the boundary events
+<span class="nc bnc" id="L362" title="All 2 branches missed.">        for (BoundaryEvent boundaryEvent : boundaryEvents) {</span>
+
+<span class="nc bnc" id="L364" title="All 2 branches missed.">            if (!(boundaryEvent.getBehavior() instanceof BoundaryEventRegistryEventActivityBehavior)) {</span>
+<span class="nc bnc" id="L365" title="All 2 branches missed.">                if (CollectionUtil.isEmpty(boundaryEvent.getEventDefinitions())</span>
+<span class="nc bnc" id="L366" title="All 2 branches missed.">                        || (boundaryEvent.getEventDefinitions().get(0) instanceof CompensateEventDefinition)) {</span>
+<span class="nc" id="L367">                    continue;</span>
+                }
+            }
+
+            // A Child execution of the current execution is created to represent the boundary event being active
+<span class="nc" id="L372">            ExecutionEntity childExecutionEntity = CommandContextUtil.getExecutionEntityManager(commandContext).createChildExecution(execution);</span>
+<span class="nc" id="L373">            childExecutionEntity.setParentId(execution.getId());</span>
+<span class="nc" id="L374">            childExecutionEntity.setCurrentFlowElement(boundaryEvent);</span>
+<span class="nc" id="L375">            childExecutionEntity.setScope(false);</span>
+<span class="nc" id="L376">            boundaryEventExecutions.add(childExecutionEntity);</span>
+            
+<span class="nc" id="L378">            CommandContextUtil.getActivityInstanceEntityManager(commandContext).recordActivityStart(childExecutionEntity);</span>
+            
+<span class="nc" id="L380">            ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc bnc" id="L381" title="All 2 branches missed.">            if (processEngineConfiguration.isLoggingSessionEnabled()) {</span>
+<span class="nc" id="L382">                BpmnLoggingSessionUtil.addLoggingData(BpmnLoggingSessionUtil.getBoundaryCreateEventType(boundaryEvent), </span>
+<span class="nc" id="L383">                                &quot;Creating boundary event (&quot; + BpmnLoggingSessionUtil.getBoundaryEventType(boundaryEvent) + </span>
+<span class="nc" id="L384">                                &quot;) for execution id &quot; + childExecutionEntity.getId(), childExecutionEntity);</span>
+            }
+<span class="nc" id="L386">        }</span>
+
+<span class="nc" id="L388">        return boundaryEventExecutions;</span>
+    }
+
+    protected void executeBoundaryEvents(List&lt;BoundaryEvent&gt; boundaryEvents, List&lt;ExecutionEntity&gt; boundaryEventExecutions) {
+<span class="nc bnc" id="L392" title="All 2 branches missed.">        if (!CollectionUtil.isEmpty(boundaryEventExecutions)) {</span>
+<span class="nc" id="L393">            Iterator&lt;BoundaryEvent&gt; boundaryEventsIterator = boundaryEvents.iterator();</span>
+<span class="nc" id="L394">            Iterator&lt;ExecutionEntity&gt; boundaryEventExecutionsIterator = boundaryEventExecutions.iterator();</span>
+
+<span class="nc bnc" id="L396" title="All 4 branches missed.">            while (boundaryEventsIterator.hasNext() &amp;&amp; boundaryEventExecutionsIterator.hasNext()) {</span>
+<span class="nc" id="L397">                BoundaryEvent boundaryEvent = boundaryEventsIterator.next();</span>
+<span class="nc" id="L398">                ExecutionEntity boundaryEventExecution = boundaryEventExecutionsIterator.next();</span>
+<span class="nc" id="L399">                ActivityBehavior boundaryEventBehavior = ((ActivityBehavior) boundaryEvent.getBehavior());</span>
+<span class="nc" id="L400">                LOGGER.debug(&quot;Executing boundary event activityBehavior {} with execution {}&quot;, boundaryEventBehavior.getClass(), boundaryEventExecution.getId());</span>
+<span class="nc" id="L401">                boundaryEventBehavior.execute(boundaryEventExecution);</span>
+<span class="nc" id="L402">            }</span>
+        }
+<span class="nc" id="L404">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

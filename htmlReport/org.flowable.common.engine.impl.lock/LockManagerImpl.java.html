@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>LockManagerImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.common.engine.impl.lock</a> &gt; <span class="el_source">LockManagerImpl.java</span></div><h1>LockManagerImpl.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.common.engine.impl.lock;
+
+import java.sql.SQLIntegrityConstraintViolationException;
+import java.time.Duration;
+import java.util.function.Supplier;
+
+import org.apache.commons.lang3.StringUtils;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.FlowableOptimisticLockingException;
+import org.flowable.common.engine.impl.cfg.TransactionPropagation;
+import org.flowable.common.engine.impl.cmd.GetLockValueCmd;
+import org.flowable.common.engine.impl.cmd.LockCmd;
+import org.flowable.common.engine.impl.cmd.ReleaseLockCmd;
+import org.flowable.common.engine.impl.interceptor.Command;
+import org.flowable.common.engine.impl.interceptor.CommandConfig;
+import org.flowable.common.engine.impl.interceptor.CommandExecutor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * @author Filip Hrisafov
+ */
+public class LockManagerImpl implements LockManager {
+
+<span class="nc" id="L37">    protected static final Logger LOGGER = LoggerFactory.getLogger(LockManagerImpl.class);</span>
+    protected static final int LOCK_NAME_MAX_LENGTH = 64;
+
+    protected CommandExecutor commandExecutor;
+    protected String lockName;
+    protected Duration lockPollRate;
+    protected String engineType;
+    protected CommandConfig lockCommandConfig;
+    protected boolean hasAcquiredLock;
+    protected Duration lockForceAcquireAfter;
+
+    public LockManagerImpl(CommandExecutor commandExecutor, String lockName, Duration lockPollRate, String engineType) {
+<span class="nc" id="L49">        this(commandExecutor, lockName, lockPollRate, null, engineType);</span>
+<span class="nc" id="L50">    }</span>
+
+<span class="nc" id="L52">    public LockManagerImpl(CommandExecutor commandExecutor, String lockName, Duration lockPollRate, Duration forceAcquireAfter, String engineType) {</span>
+<span class="nc" id="L53">        this.commandExecutor = commandExecutor;</span>
+<span class="nc bnc" id="L54" title="All 2 branches missed.">        if (lockName.length() &gt; 64) {</span>
+<span class="nc" id="L55">            this.lockName = StringUtils.substring(lockName, 0, LOCK_NAME_MAX_LENGTH);</span>
+<span class="nc" id="L56">            LOGGER.info(&quot;Lock name {} was longer than {} characters. Using abbreviated lock name {}&quot;, lockName, LOCK_NAME_MAX_LENGTH, this.lockName);</span>
+        } else {
+
+<span class="nc" id="L59">            this.lockName = lockName;</span>
+        }
+<span class="nc" id="L61">        this.lockPollRate = lockPollRate;</span>
+<span class="nc" id="L62">        this.engineType = engineType;</span>
+<span class="nc" id="L63">        this.lockCommandConfig = new CommandConfig(false, TransactionPropagation.REQUIRES_NEW);</span>
+<span class="nc" id="L64">        this.lockForceAcquireAfter = forceAcquireAfter;</span>
+<span class="nc" id="L65">    }</span>
+
+    @Override
+    public void waitForLock(Duration waitTime) {
+<span class="nc" id="L69">        long timeToGiveUp = System.currentTimeMillis()+ waitTime.toMillis();</span>
+<span class="nc" id="L70">        boolean locked = false;</span>
+<span class="nc bnc" id="L71" title="All 4 branches missed.">        while (!locked &amp;&amp; (System.currentTimeMillis() &lt; timeToGiveUp)) {</span>
+<span class="nc" id="L72">            locked = acquireLock();</span>
+<span class="nc bnc" id="L73" title="All 2 branches missed.">            if (!locked) {</span>
+                try {
+<span class="nc" id="L75">                    Thread.sleep(getLockPollRate().toMillis());</span>
+<span class="nc" id="L76">                } catch (InterruptedException e) {</span>
+<span class="nc" id="L77">                    Thread.currentThread().interrupt();</span>
+<span class="nc" id="L78">                }</span>
+            }
+        }
+
+<span class="nc bnc" id="L82" title="All 2 branches missed.">        if (!locked) {</span>
+<span class="nc" id="L83">            String lockValue = executeCommand(new GetLockValueCmd(lockName, engineType));</span>
+<span class="nc" id="L84">            throw new FlowableException(&quot;Could not acquire lock &quot; + lockName + &quot;. Current lock value: &quot; + lockValue);</span>
+        }
+<span class="nc" id="L86">    }</span>
+
+    @Override
+    public boolean acquireLock() {
+<span class="nc" id="L90">        return acquireLock(lockForceAcquireAfter);</span>
+    }
+
+    @Override
+    public boolean acquireLock(Duration lockForceAcquireAfter) {
+<span class="nc bnc" id="L95" title="All 2 branches missed.">        if (hasAcquiredLock) {</span>
+<span class="nc" id="L96">            return true;</span>
+        }
+
+        try {
+<span class="nc" id="L100">            hasAcquiredLock = executeCommand(new LockCmd(lockName, lockForceAcquireAfter, engineType));</span>
+<span class="nc bnc" id="L101" title="All 2 branches missed.">            if (hasAcquiredLock) {</span>
+<span class="nc" id="L102">                LOGGER.debug(&quot;Successfully acquired lock {}&quot;, lockName);</span>
+            }
+<span class="nc" id="L104">        } catch (FlowableOptimisticLockingException ex) {</span>
+<span class="nc" id="L105">            LOGGER.debug(&quot;Failed to acquire lock {} due to optimistic locking&quot;, lockName, ex);</span>
+<span class="nc" id="L106">            hasAcquiredLock = false;</span>
+<span class="nc" id="L107">        } catch (FlowableException ex) {</span>
+<span class="nc bnc" id="L108" title="All 2 branches missed.">            if (ex.getClass().equals(FlowableException.class)) {</span>
+                // If it is a FlowableException then log a warning and wait to try again
+<span class="nc" id="L110">                LOGGER.warn(&quot;Failed to acquire lock {} due to unknown exception&quot;, lockName, ex);</span>
+<span class="nc" id="L111">                hasAcquiredLock = false;</span>
+            } else {
+                // Re-throw any other Flowable specific exception
+<span class="nc" id="L114">                throw ex;</span>
+            }
+<span class="nc" id="L116">        } catch (RuntimeException ex) {</span>
+<span class="nc bnc" id="L117" title="All 2 branches missed.">            if (ex.getCause() instanceof SQLIntegrityConstraintViolationException) {</span>
+                // This can happen if 2 nodes try to acquire a lock in the exact same time
+<span class="nc" id="L119">                LOGGER.debug(&quot;Failed to acquire lock {} due to constraint violation&quot;, lockName, ex);</span>
+            } else {
+<span class="nc" id="L121">                LOGGER.info(&quot;Failed to acquire lock {} due to unknown exception&quot;, lockName, ex);</span>
+            }
+<span class="nc" id="L123">            hasAcquiredLock = false;</span>
+<span class="nc" id="L124">        }</span>
+<span class="nc" id="L125">        return hasAcquiredLock;</span>
+    }
+
+    @Override
+    public void releaseLock() {
+<span class="nc" id="L130">        executeCommand(new ReleaseLockCmd(lockName, engineType, false));</span>
+<span class="nc" id="L131">        LOGGER.debug(&quot;successfully released lock {}&quot;, lockName);</span>
+<span class="nc" id="L132">        hasAcquiredLock = false;</span>
+<span class="nc" id="L133">    }</span>
+
+    @Override
+    public void releaseAndDeleteLock() {
+<span class="nc" id="L137">        executeCommand(new ReleaseLockCmd(lockName, engineType, true));</span>
+<span class="nc" id="L138">        LOGGER.debug(&quot;successfully released and deleted lock {}&quot;, lockName);</span>
+<span class="nc" id="L139">        hasAcquiredLock = false;</span>
+<span class="nc" id="L140">    }</span>
+
+    @Override
+    public &lt;T&gt; T waitForLockRunAndRelease(Duration waitTime, Supplier&lt;T&gt; supplier) {
+<span class="nc" id="L144">        waitForLock(waitTime);</span>
+        try {
+<span class="nc" id="L146">            return supplier.get();</span>
+        } finally {
+<span class="nc" id="L148">            releaseLock();</span>
+        }
+    }
+
+    protected &lt;T&gt; T executeCommand(Command&lt;T&gt; command) {
+<span class="nc" id="L153">        return commandExecutor.execute(lockCommandConfig, command);</span>
+    }
+
+    protected Duration getLockPollRate() {
+<span class="nc" id="L157">        return lockPollRate;</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

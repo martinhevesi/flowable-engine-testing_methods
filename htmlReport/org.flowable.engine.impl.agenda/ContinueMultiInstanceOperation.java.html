@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ContinueMultiInstanceOperation.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.impl.agenda</a> &gt; <span class="el_source">ContinueMultiInstanceOperation.java</span></div><h1>ContinueMultiInstanceOperation.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.flowable.engine.impl.agenda;
+
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.FlowNode;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.delegate.event.FlowableEngineEventType;
+import org.flowable.common.engine.api.delegate.event.FlowableEventDispatcher;
+import org.flowable.common.engine.impl.interceptor.CommandContext;
+import org.flowable.common.engine.impl.util.CollectionUtil;
+import org.flowable.engine.delegate.BpmnError;
+import org.flowable.engine.delegate.ExecutionListener;
+import org.flowable.engine.delegate.event.impl.FlowableEventBuilder;
+import org.flowable.engine.impl.bpmn.behavior.MultiInstanceActivityBehavior;
+import org.flowable.engine.impl.bpmn.helper.ErrorPropagation;
+import org.flowable.engine.impl.cfg.ProcessEngineConfigurationImpl;
+import org.flowable.engine.impl.delegate.ActivityBehavior;
+import org.flowable.engine.impl.jobexecutor.AsyncContinuationJobHandler;
+import org.flowable.engine.impl.persistence.entity.ExecutionEntity;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.engine.impl.util.JobUtil;
+import org.flowable.engine.logging.LogMDC;
+import org.flowable.job.service.JobService;
+import org.flowable.job.service.impl.persistence.entity.JobEntity;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Special operation when executing an instance of a multi-instance. It's similar to the {@link ContinueProcessOperation}, but simpler, as it doesn't need to cater for as many use cases.
+ * 
+ * @author Joram Barrez
+ * @author Tijs Rademakers
+ */
+public class ContinueMultiInstanceOperation extends AbstractOperation {
+
+<span class="nc" id="L47">    private static final Logger LOGGER = LoggerFactory.getLogger(ContinueMultiInstanceOperation.class);</span>
+    
+    protected ExecutionEntity multiInstanceRootExecution;
+    protected int loopCounter;
+
+    public ContinueMultiInstanceOperation(CommandContext commandContext, ExecutionEntity execution, ExecutionEntity multiInstanceRootExecution, int loopCounter) {
+<span class="nc" id="L53">        super(commandContext, execution);</span>
+<span class="nc" id="L54">        this.multiInstanceRootExecution = multiInstanceRootExecution;</span>
+<span class="nc" id="L55">        this.loopCounter = loopCounter;</span>
+<span class="nc" id="L56">    }</span>
+
+    @Override
+    public void run() {
+<span class="nc" id="L60">        FlowElement currentFlowElement = getCurrentFlowElement(execution);</span>
+<span class="nc bnc" id="L61" title="All 2 branches missed.">        if (currentFlowElement instanceof FlowNode) {</span>
+<span class="nc" id="L62">            continueThroughMultiInstanceFlowNode((FlowNode) currentFlowElement);</span>
+        } else {
+<span class="nc" id="L64">            throw new RuntimeException(&quot;Programmatic error: no valid multi instance flow node, type: &quot; + currentFlowElement + &quot;. Halting.&quot;);</span>
+        }
+<span class="nc" id="L66">    }</span>
+
+    protected void continueThroughMultiInstanceFlowNode(FlowNode flowNode) {
+<span class="nc" id="L69">        setLoopCounterVariable(flowNode);</span>
+<span class="nc bnc" id="L70" title="All 2 branches missed.">        if (!flowNode.isAsynchronous()) {</span>
+<span class="nc" id="L71">            executeSynchronous(flowNode);</span>
+        } else {
+<span class="nc" id="L73">            executeAsynchronous(flowNode);</span>
+        }
+<span class="nc" id="L75">    }</span>
+
+    protected void executeSynchronous(FlowNode flowNode) {
+<span class="nc" id="L78">        CommandContextUtil.getActivityInstanceEntityManager(commandContext).recordActivityStart(execution);</span>
+        
+        // Execution listener
+<span class="nc bnc" id="L81" title="All 2 branches missed.">        if (CollectionUtil.isNotEmpty(flowNode.getExecutionListeners())) {</span>
+            try {
+<span class="nc" id="L83">                executeExecutionListeners(flowNode, ExecutionListener.EVENTNAME_START);</span>
+<span class="nc" id="L84">            } catch (BpmnError e) {</span>
+<span class="nc" id="L85">                ErrorPropagation.propagateError(e, execution);</span>
+<span class="nc" id="L86">                return;</span>
+<span class="nc" id="L87">            }</span>
+        }
+        
+        // Execute actual behavior
+<span class="nc" id="L91">        ActivityBehavior activityBehavior = (ActivityBehavior) flowNode.getBehavior();</span>
+<span class="nc" id="L92">        LOGGER.debug(&quot;Executing activityBehavior {} on activity '{}' with execution {}&quot;, activityBehavior.getClass(), flowNode.getId(), execution.getId());</span>
+
+<span class="nc" id="L94">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc" id="L95">        FlowableEventDispatcher eventDispatcher = null;</span>
+<span class="nc bnc" id="L96" title="All 2 branches missed.">        if (processEngineConfiguration != null) {</span>
+<span class="nc" id="L97">            eventDispatcher = processEngineConfiguration.getEventDispatcher();</span>
+        }
+<span class="nc bnc" id="L99" title="All 4 branches missed.">        if (eventDispatcher != null &amp;&amp; eventDispatcher.isEnabled()) {</span>
+<span class="nc" id="L100">            processEngineConfiguration.getEventDispatcher().dispatchEvent(</span>
+<span class="nc" id="L101">                    FlowableEventBuilder.createActivityEvent(FlowableEngineEventType.ACTIVITY_STARTED, flowNode.getId(), flowNode.getName(), execution.getId(),</span>
+<span class="nc" id="L102">                            execution.getProcessInstanceId(), execution.getProcessDefinitionId(), flowNode), processEngineConfiguration.getEngineCfgKey());</span>
+        }
+
+        try {
+<span class="nc" id="L106">            activityBehavior.execute(execution);</span>
+<span class="nc" id="L107">        } catch (BpmnError error) {</span>
+            // re-throw business fault so that it can be caught by an Error Intermediate Event or Error Event Sub-Process in the process
+<span class="nc" id="L109">            ErrorPropagation.propagateError(error, execution);</span>
+<span class="nc" id="L110">        } catch (RuntimeException e) {</span>
+<span class="nc bnc" id="L111" title="All 2 branches missed.">            if (LogMDC.isMDCEnabled()) {</span>
+<span class="nc" id="L112">                LogMDC.putMDCExecution(execution);</span>
+            }
+<span class="nc" id="L114">            throw e;</span>
+<span class="nc" id="L115">        }</span>
+<span class="nc" id="L116">    }</span>
+
+    protected void executeAsynchronous(FlowNode flowNode) {
+<span class="nc" id="L119">        ProcessEngineConfigurationImpl processEngineConfiguration = CommandContextUtil.getProcessEngineConfiguration(commandContext);</span>
+<span class="nc" id="L120">        JobService jobService = processEngineConfiguration.getJobServiceConfiguration().getJobService();</span>
+        
+<span class="nc" id="L122">        JobEntity job = JobUtil.createJob(execution, flowNode, AsyncContinuationJobHandler.TYPE, processEngineConfiguration);</span>
+        
+<span class="nc" id="L124">        jobService.createAsyncJob(job, flowNode.isExclusive());</span>
+<span class="nc" id="L125">        jobService.scheduleAsyncJob(job);</span>
+<span class="nc" id="L126">    }</span>
+    
+    protected ActivityBehavior setLoopCounterVariable(FlowNode flowNode) {
+<span class="nc" id="L129">        ActivityBehavior activityBehavior = (ActivityBehavior) flowNode.getBehavior();</span>
+<span class="nc bnc" id="L130" title="All 2 branches missed.">        if (!(activityBehavior instanceof MultiInstanceActivityBehavior)) {</span>
+<span class="nc" id="L131">            throw new FlowableException(&quot;Programmatic error: expected multi instance activity behavior, but got &quot; + activityBehavior.getClass());</span>
+        }
+<span class="nc" id="L133">        MultiInstanceActivityBehavior multiInstanceActivityBehavior = (MultiInstanceActivityBehavior) activityBehavior;</span>
+<span class="nc" id="L134">        String elementIndexVariable = multiInstanceActivityBehavior.getCollectionElementIndexVariable();</span>
+<span class="nc" id="L135">        execution.setVariableLocal(elementIndexVariable, loopCounter);</span>
+<span class="nc" id="L136">        return activityBehavior;</span>
+    }
+    
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

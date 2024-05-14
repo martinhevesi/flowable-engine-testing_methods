@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TransactionRollbackTest.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">jacoco.exec</a> &gt; <a href="index.source.html" class="el_package">org.flowable.engine.test.transactions</a> &gt; <span class="el_source">TransactionRollbackTest.java</span></div><h1>TransactionRollbackTest.java</h1><pre class="source lang-java linenums">/* Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.flowable.engine.test.transactions;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.impl.interceptor.Command;
+import org.flowable.engine.ManagementService;
+import org.flowable.engine.delegate.DelegateExecution;
+import org.flowable.engine.delegate.JavaDelegate;
+import org.flowable.engine.impl.delegate.ActivityBehavior;
+import org.flowable.engine.impl.test.PluggableFlowableTestCase;
+import org.flowable.engine.impl.util.CommandContextUtil;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.engine.test.Deployment;
+import org.flowable.task.api.Task;
+import org.junit.jupiter.api.Test;
+
+/**
+ * @author Tom Baeyens
+ * @author Joram Barrez
+ */
+<span class="nc" id="L36">public class TransactionRollbackTest extends PluggableFlowableTestCase {</span>
+
+<span class="nc" id="L38">    public static class Buzzz implements ActivityBehavior {</span>
+
+        private static final long serialVersionUID = 1L;
+
+        @Override
+        public void execute(DelegateExecution execution) {
+<span class="nc" id="L44">            throw new FlowableException(&quot;Buzzz&quot;);</span>
+        }
+    }
+
+<span class="nc" id="L48">    public static class NestedCommandDelegate implements JavaDelegate {</span>
+
+        @Override
+        public void execute(DelegateExecution execution) {
+            try {
+<span class="nc" id="L53">                ManagementService managementService = CommandContextUtil.getProcessEngineConfiguration().getManagementService();</span>
+<span class="nc" id="L54">                managementService.executeCommand((Command&lt;Void&gt;) commandContext -&gt; { throw new RuntimeException(&quot;exception from service task&quot;); });</span>
+<span class="nc" id="L55">            } catch (Exception e) {</span>
+<span class="nc" id="L56">                e.printStackTrace();</span>
+<span class="nc" id="L57">            }</span>
+
+<span class="nc" id="L59">            execution.setVariable(&quot;theVariable&quot;, &quot;test&quot;);</span>
+<span class="nc" id="L60">        }</span>
+
+    }
+
+    @Test
+    @Deployment
+    public void testRollback() {
+<span class="nc" id="L67">        assertThatThrownBy(() -&gt; runtimeService.startProcessInstanceByKey(&quot;RollbackProcess&quot;))</span>
+<span class="nc" id="L68">                .as(&quot;Starting the process instance should throw an exception&quot;)</span>
+<span class="nc" id="L69">                .isInstanceOf(Exception.class)</span>
+<span class="nc" id="L70">                .hasMessageContaining(&quot;Buzzz&quot;);</span>
+
+<span class="nc" id="L72">        assertThat(runtimeService.createExecutionQuery().count()).isZero();</span>
+<span class="nc" id="L73">    }</span>
+
+    @Test
+    @Deployment(resources = { &quot;org/flowable/engine/test/transactions/trivial.bpmn20.xml&quot;, &quot;org/flowable/engine/test/transactions/rollbackAfterSubProcess.bpmn20.xml&quot; })
+    public void testRollbackAfterSubProcess() {
+<span class="nc" id="L78">        assertThatThrownBy(() -&gt; runtimeService.startProcessInstanceByKey(&quot;RollbackAfterSubProcess&quot;))</span>
+<span class="nc" id="L79">                .as(&quot;Starting the process instance should throw an exception&quot;)</span>
+<span class="nc" id="L80">                .isInstanceOf(Exception.class)</span>
+<span class="nc" id="L81">                .hasMessageContaining(&quot;Buzzz&quot;);</span>
+<span class="nc" id="L82">        assertThat(runtimeService.createExecutionQuery().count()).isZero();</span>
+<span class="nc" id="L83">    }</span>
+
+    @Test
+    @Deployment
+    public void testNoRollbackInNestedCommand() {
+<span class="nc" id="L88">        ProcessInstance processInstance = runtimeService.createProcessInstanceBuilder().processDefinitionKey(&quot;testProcess&quot;).start();</span>
+
+        // The task should be created, as the service task with an exception is try-catched in the delegate.
+<span class="nc" id="L91">        Task task = taskService.createTaskQuery().processInstanceId(processInstance.getId()).singleResult();</span>
+<span class="nc" id="L92">        assertThat(task).isNotNull();</span>
+
+<span class="nc" id="L94">        String variable = (String) runtimeService.getVariable(processInstance.getId(), &quot;theVariable&quot;);</span>
+<span class="nc" id="L95">        assertThat(variable).isEqualTo(&quot;test&quot;);</span>
+<span class="nc" id="L96">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>
